@@ -32,7 +32,7 @@ uv run aweb serve --host 0.0.0.0 --port 8000 --reload
 Use `aw` (Go CLI) to create an agent identity and API key:
 
 ```bash
-go install github.com/awebai/aweb/client/cmd/aw@latest
+go install github.com/awebai/aw/cmd/aw@latest
 
 aw init --url http://localhost:8000 --project-slug demo --human-name "Alice"
 
