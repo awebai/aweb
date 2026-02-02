@@ -1,0 +1,531 @@
+from __future__ import annotations
+
+import asyncio
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
+
+from aweb.api import create_app
+from aweb.auth import hash_api_key
+
+
+def _auth_headers(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+def _deadline(seconds: int = 5) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+async def _seed_basic_project(aweb_db_infra):
+    aweb_db = aweb_db_infra.get_manager("aweb")
+
+    project_id = uuid.uuid4()
+    agent_1_id = uuid.uuid4()
+    agent_2_id = uuid.uuid4()
+
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        project_id,
+        "test-project",
+        "Test Project",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        agent_1_id,
+        project_id,
+        "agent-1",
+        "Agent One",
+        "agent",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        agent_2_id,
+        project_id,
+        "agent-2",
+        "Agent Two",
+        "agent",
+    )
+
+    api_key_1 = f"aw_sk_{uuid.uuid4().hex}"
+    api_key_2 = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        project_id,
+        agent_1_id,
+        api_key_1[:12],
+        hash_api_key(api_key_1),
+        True,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        project_id,
+        agent_2_id,
+        api_key_2[:12],
+        hash_api_key(api_key_2),
+        True,
+    )
+
+    return {
+        "project_id": str(project_id),
+        "agent_1_id": str(agent_1_id),
+        "agent_2_id": str(agent_2_id),
+        "api_key_1": api_key_1,
+        "api_key_2": api_key_2,
+    }
+
+
+async def _collect_sse_text(
+    *,
+    client: AsyncClient,
+    url: str,
+    params: dict[str, str],
+    headers: dict[str, str],
+) -> str:
+    # Note: httpx ASGITransport may buffer the full response body. For these tests we
+    # intentionally set a short deadline so the stream naturally terminates.
+    resp = await client.get(url, params=params, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.text
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_session_uniqueness_pending_read_flow(aweb_db_infra):
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+            msg1 = "hello"
+            msg2 = "reverse"
+
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={
+                    "to_aliases": ["agent-2"],
+                    "message": msg1,
+                    "leaving": False,
+                },
+            )
+            assert r1.status_code == 200, r1.text
+            d1 = r1.json()
+
+            r2 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_2,
+                json={
+                    "to_aliases": ["agent-1"],
+                    "message": msg2,
+                    "leaving": False,
+                },
+            )
+            assert r2.status_code == 200, r2.text
+            d2 = r2.json()
+            assert d2["session_id"] == d1["session_id"]
+
+            pending = await client.get(
+                "/v1/chat/pending",
+                headers=headers_2,
+            )
+            assert pending.status_code == 200, pending.text
+            p = pending.json()
+            found = next((c for c in (p.get("pending") or []) if c.get("session_id") == d1["session_id"]), None)
+            assert found is not None
+            assert found["last_from"] in ("agent-1", "agent-2")
+            assert isinstance(found["unread_count"], int)
+
+            unread = await client.get(
+                f"/v1/chat/sessions/{d1['session_id']}/messages",
+                headers=headers_2,
+                params={"unread_only": True, "limit": 1000},
+            )
+            assert unread.status_code == 200, unread.text
+            msgs = unread.json().get("messages") or []
+            assert len(msgs) >= 1
+
+            # Mark read up to the latest message.
+            last_message_id = msgs[-1]["message_id"]
+            mark = await client.post(
+                f"/v1/chat/sessions/{d1['session_id']}/read",
+                headers=headers_2,
+                json={"up_to_message_id": last_message_id},
+            )
+            assert mark.status_code == 200, mark.text
+            assert mark.json().get("success") is True
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_sse_replay_live_and_read_receipt(aweb_db_infra):
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=10.0) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            create = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={
+                    "to_aliases": ["agent-2"],
+                    "message": "baseline",
+                    "leaving": False,
+                },
+            )
+            assert create.status_code == 200, create.text
+            session_id = create.json()["session_id"]
+            baseline_message_id = create.json()["message_id"]
+
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            # Replay should include baseline.
+            replay_text = await _collect_sse_text(
+                client=client,
+                url=sse_path,
+                params={"deadline": _deadline(1)},
+                headers=headers_2,
+            )
+            assert baseline_message_id in replay_text
+
+            # Live message after connect: start stream and send while it's open.
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(2)},
+                    headers=headers_2,
+                )
+            )
+            await asyncio.sleep(0.25)
+            live = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={
+                    "to_aliases": ["agent-2"],
+                    "message": "live",
+                    "leaving": False,
+                },
+            )
+            assert live.status_code == 200, live.text
+            live_message_id = live.json()["message_id"]
+            stream_text = await stream_task
+            assert live_message_id in stream_text
+
+            # Read receipt: start agent1 stream then mark read as agent2.
+            rr_stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(2)},
+                    headers=headers_1,
+                )
+            )
+            await asyncio.sleep(0.25)
+            mark = await client.post(
+                f"/v1/chat/sessions/{session_id}/read",
+                headers=headers_2,
+                json={"up_to_message_id": live_message_id},
+            )
+            assert mark.status_code == 200, mark.text
+            rr_text = await rr_stream_task
+            assert '"type": "read_receipt"' in rr_text
+            assert live_message_id in rr_text
+            assert "agent-2" in rr_text
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_send_message_in_existing_session(aweb_db_infra):
+    """POST /v1/chat/sessions/{session_id}/messages sends in an existing session."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session first
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Send a follow-up message in the same session
+            r2 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_2,
+                json={"body": "hi back"},
+            )
+            assert r2.status_code == 200, r2.text
+            d2 = r2.json()
+            assert "message_id" in d2
+            assert d2["delivered"] is True
+            assert d2["extends_wait_seconds"] == 0
+
+            # Verify message appears in history
+            history = await client.get(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_1,
+            )
+            assert history.status_code == 200, history.text
+            msgs = history.json()["messages"]
+            bodies = [m["body"] for m in msgs]
+            assert "hello" in bodies
+            assert "hi back" in bodies
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_send_message_hang_on(aweb_db_infra):
+    """POST /v1/chat/sessions/{session_id}/messages with hang_on=true returns extends_wait_seconds."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Start SSE stream, then send hang-on message while it's open
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(2)},
+                    headers=headers_1,
+                )
+            )
+            await asyncio.sleep(0.25)
+
+            r2 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_2,
+                json={"body": "hang on, thinking...", "hang_on": True},
+            )
+            assert r2.status_code == 200, r2.text
+            d2 = r2.json()
+            assert d2["extends_wait_seconds"] == 300
+            assert d2["delivered"] is True
+
+            # Verify SSE stream contains hang_on=true and extends_wait_seconds
+            stream_text = await stream_task
+            assert '"hang_on": true' in stream_text
+            assert '"extends_wait_seconds": 300' in stream_text
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_send_message_non_participant_rejected(aweb_db_infra):
+    """POST /v1/chat/sessions/{session_id}/messages rejects non-participants."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    aweb_db = aweb_db_infra.get_manager("aweb")
+
+    # Create a third agent that is NOT part of the chat
+    agent_3_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        agent_3_id,
+        uuid.UUID(seeded["project_id"]),
+        "agent-3",
+        "Agent Three",
+        "agent",
+    )
+    api_key_3 = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        uuid.UUID(seeded["project_id"]),
+        agent_3_id,
+        api_key_3[:12],
+        hash_api_key(api_key_3),
+        True,
+    )
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_3 = _auth_headers(api_key_3)
+
+            # Create session between agent-1 and agent-2
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # agent-3 tries to send to that session
+            r2 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_3,
+                json={"body": "intruder"},
+            )
+            assert r2.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_send_message_nonexistent_session(aweb_db_infra):
+    """POST /v1/chat/sessions/{session_id}/messages returns 404 for nonexistent session."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            fake_session = str(uuid.uuid4())
+
+            r = await client.post(
+                f"/v1/chat/sessions/{fake_session}/messages",
+                headers=headers_1,
+                json={"body": "hello"},
+            )
+            assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_send_message_cross_project_rejected(aweb_db_infra):
+    """POST /v1/chat/sessions/{session_id}/messages rejects cross-project access."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    aweb_db = aweb_db_infra.get_manager("aweb")
+
+    # Create a second project with its own agent
+    project_2_id = uuid.uuid4()
+    agent_other_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        project_2_id, "other-project", "Other Project",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        agent_other_id, project_2_id, "other-agent", "Other Agent", "agent",
+    )
+    api_key_other = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        project_2_id, agent_other_id, api_key_other[:12], hash_api_key(api_key_other), True,
+    )
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_other = _auth_headers(api_key_other)
+
+            # Create session in project 1
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Agent from project 2 tries to send to project 1's session
+            r2 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_other,
+                json={"body": "intruder"},
+            )
+            assert r2.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_list_sessions(aweb_db_infra):
+    """GET /v1/chat/sessions lists sessions the agent participates in."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # No sessions yet
+            r0 = await client.get("/v1/chat/sessions", headers=headers_1)
+            assert r0.status_code == 200, r0.text
+            assert r0.json()["sessions"] == []
+
+            # Create a session
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Both agents should see it
+            r2 = await client.get("/v1/chat/sessions", headers=headers_1)
+            assert r2.status_code == 200, r2.text
+            sessions = r2.json()["sessions"]
+            assert len(sessions) == 1
+            assert sessions[0]["session_id"] == session_id
+            assert "agent-1" in sessions[0]["participants"]
+            assert "agent-2" in sessions[0]["participants"]
+            assert "created_at" in sessions[0]
+
+            r3 = await client.get("/v1/chat/sessions", headers=headers_2)
+            assert r3.status_code == 200, r3.text
+            assert len(r3.json()["sessions"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_list_sessions_tenant_isolation(aweb_db_infra):
+    """GET /v1/chat/sessions does not return sessions from other projects."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    aweb_db = aweb_db_infra.get_manager("aweb")
+
+    # Create a second project with its own agent
+    project_2_id = uuid.uuid4()
+    agent_other_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        project_2_id, "other-project", "Other Project",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        agent_other_id, project_2_id, "other-agent", "Other Agent", "agent",
+    )
+    api_key_other = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        project_2_id, agent_other_id, api_key_other[:12], hash_api_key(api_key_other), True,
+    )
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_other = _auth_headers(api_key_other)
+
+            # Create a session in project 1
+            await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+
+            # Agent in project 2 should see no sessions
+            r = await client.get("/v1/chat/sessions", headers=headers_other)
+            assert r.status_code == 200, r.text
+            assert r.json()["sessions"] == []
