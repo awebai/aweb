@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
@@ -18,11 +17,6 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
     This endpoint exists primarily so BeadHub (as a separate service) can
     validate incoming Bearer tokens without owning API key verification.
     """
-    # In proxy-header mode, the core may not have a Bearer token to introspect.
-    if os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on"):
-        project_id = await get_project_from_auth(request, db)
-        return {"project_id": project_id}
-
     token = parse_bearer_token(request)
     if token is None:
         # get_project_from_auth() would already have raised; keep defensive behavior.

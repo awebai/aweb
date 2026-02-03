@@ -74,6 +74,12 @@ class ReleaseRequest(BaseModel):
     resource_key: str = Field(..., min_length=1, max_length=4096)
 
 
+class RevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prefix: Optional[str] = Field(None, max_length=4096)
+
+
 class RenewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -234,6 +240,46 @@ async def release(request: Request, payload: ReleaseRequest, db=Depends(get_db))
         )
 
     return {"status": "released", "resource_key": payload.resource_key}
+
+
+@router.post("/revoke")
+async def revoke(
+    request: Request,
+    payload: RevokeRequest,
+    db=Depends(get_db),
+) -> dict[str, Any]:
+    """Force-release reservations in this project.
+
+    Intended for admin/support tooling and recovery from stale locks.
+    The operation is project-scoped via auth.
+
+    Optional prefix narrows the revoked set to resource_key LIKE '<prefix>%'.
+    """
+    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    _actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+
+    aweb_db = db.get_manager("aweb")
+    if payload.prefix:
+        rows = await aweb_db.fetch_all(
+            """
+            DELETE FROM {{tables.reservations}}
+            WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+            RETURNING 1
+            """,
+            UUID(project_id),
+            payload.prefix,
+        )
+    else:
+        rows = await aweb_db.fetch_all(
+            """
+            DELETE FROM {{tables.reservations}}
+            WHERE project_id = $1
+            RETURNING 1
+            """,
+            UUID(project_id),
+        )
+
+    return {"status": "revoked", "deleted": len(rows)}
 
 
 @router.get("", response_model=ListResponse)
