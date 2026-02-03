@@ -67,7 +67,7 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
     """Bootstrap an aweb project, agent, and API key.
 
     This is an OSS convenience endpoint intended for clean-start deployments.
-    Cloud wrappers typically own project creation and API key issuance.
+    Wrapper deployments typically own project creation and API key issuance.
     """
     try:
         result = await bootstrap_identity(

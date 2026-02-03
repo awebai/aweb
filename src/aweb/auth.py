@@ -1,7 +1,7 @@
 """Authentication + project scoping for aweb.
 
 This module was extracted from BeadHub's OSS core. It remains compatible with the
-existing deployment patterns (standalone OSS Bearer project keys + Cloud internal
+existing deployment patterns (standalone OSS Bearer project keys + proxy-injected
 auth context headers), but it is now owned by `aweb`.
 """
 
@@ -127,7 +127,7 @@ def _internal_auth_header_value(
 def _parse_internal_auth_context(request: Request) -> Optional[InternalAuthContext]:
     """Parse and validate proxy-injected auth context headers.
 
-    This is intended for Cloud/wrapper deployments where the wrapper authenticates the caller
+    This is intended for proxy/wrapper deployments where the wrapper authenticates the caller
     (JWT/cookie/API key) and injects project scope to the core service.
 
     Supported signature:

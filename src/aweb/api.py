@@ -2,7 +2,7 @@
 
 Important: `aweb` MUST NOT import from `beadhub`. This module is intentionally
 minimal until the aweb routes and storage are implemented per
-`../beadhub-sot/source-of-truth/beadhub-aweb-split.md`.
+`docs/aweb.md`.
 """
 
 from __future__ import annotations

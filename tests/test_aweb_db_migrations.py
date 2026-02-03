@@ -98,7 +98,7 @@ async def test_aweb_migrations_apply(test_db_with_schema):
         "INSERT INTO {{tables.projects}} (tenant_id, slug, name) VALUES ($1, $2, $3)",
         tenant_id,
         "test-project",
-        "Cloud Project",
+        "Hosted Project",
     )
 
     with pytest.raises(Exception):
@@ -106,5 +106,5 @@ async def test_aweb_migrations_apply(test_db_with_schema):
             "INSERT INTO {{tables.projects}} (tenant_id, slug, name) VALUES ($1, $2, $3)",
             tenant_id,
             "test-project",
-            "Cloud Project Duplicate",
+            "Hosted Project Duplicate",
         )

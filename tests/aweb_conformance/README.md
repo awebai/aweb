@@ -38,5 +38,4 @@ project identity:
 ## Notes
 
 - These tests intentionally do **not** import or start the app in-process. They are black-box.
-- Future beads add coverage for mail/chat/reservations semantics as specified in
-  `../beadhub-sot/source-of-truth/beadhub-aweb-split.md`.
+- Future beads add coverage for mail/chat/reservations semantics as specified in `docs/aweb.md`.
