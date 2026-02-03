@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Literal, Optional
 from uuid import UUID
@@ -13,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
@@ -103,7 +106,17 @@ async def _ensure_session(
             UUID(project_id),
             p_hash,
         )
-        assert existing is not None
+        if existing is None:
+            logger.error(
+                "Chat session not found after INSERT ON CONFLICT DO NOTHING. "
+                "project_id=%s participant_hash=%s",
+                project_id,
+                p_hash,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create or retrieve chat session",
+            )
         session_id = existing["session_id"]
 
     for agent in agent_rows:

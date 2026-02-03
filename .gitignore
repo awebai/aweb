@@ -154,3 +154,4 @@ llmring-server
 .beads/redirect
 .playwright-mcp/
 .env.beadhub
+.aw/

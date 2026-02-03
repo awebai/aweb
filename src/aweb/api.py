@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 
+from aweb.auth import validate_auth_config
 from aweb.db import DatabaseInfra
 from aweb.routes.auth import router as auth_router
 from aweb.routes.agents import router as agents_router
@@ -49,6 +50,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Validate auth configuration before starting
+        validate_auth_config()
+
         if db_infra is None:
             # Standalone mode: initialize our own infra.
             infra = DatabaseInfra()

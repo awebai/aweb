@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import uuid
 from typing import Any, Optional, Protocol, TypedDict
 
 from fastapi import HTTPException, Request
+
+logger = logging.getLogger(__name__)
 
 class DatabaseLike(Protocol):
     def get_manager(self, name: str = "aweb") -> Any: ...
@@ -70,15 +73,43 @@ class InternalAuthContext(TypedDict):
 
 
 def _get_aweb_internal_auth_secret() -> Optional[str]:
-    return (
-        os.getenv("AWEB_INTERNAL_AUTH_SECRET")
-        or os.getenv("BEADHUB_INTERNAL_AUTH_SECRET")
-        or os.getenv("SESSION_SECRET_KEY")
-    )
+    """Get the internal auth secret for proxy header verification.
+
+    Only returns AWEB_INTERNAL_AUTH_SECRET or BEADHUB_INTERNAL_AUTH_SECRET.
+    Does NOT fall back to SESSION_SECRET_KEY - the internal auth secret must be
+    explicitly configured when proxy headers are trusted.
+    """
+    return os.getenv("AWEB_INTERNAL_AUTH_SECRET") or os.getenv("BEADHUB_INTERNAL_AUTH_SECRET")
 
 
 def _trust_aweb_proxy_headers() -> bool:
     return os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class AuthConfigurationError(Exception):
+    """Raised when auth configuration is invalid at startup."""
+
+    pass
+
+
+def validate_auth_config() -> None:
+    """Validate auth configuration at startup.
+
+    Call this during app initialization to fail fast if proxy headers are trusted
+    but no internal auth secret is configured.
+
+    Raises:
+        AuthConfigurationError: If AWEB_TRUST_PROXY_HEADERS=1 but no internal
+            auth secret (AWEB_INTERNAL_AUTH_SECRET or BEADHUB_INTERNAL_AUTH_SECRET)
+            is configured.
+    """
+    if _trust_aweb_proxy_headers() and not _get_aweb_internal_auth_secret():
+        msg = (
+            "AWEB_TRUST_PROXY_HEADERS is enabled but no internal auth secret is configured. "
+            "Set AWEB_INTERNAL_AUTH_SECRET or BEADHUB_INTERNAL_AUTH_SECRET."
+        )
+        logger.error(msg)
+        raise AuthConfigurationError(msg)
 
 
 def _internal_auth_header_value(
@@ -146,6 +177,10 @@ def _parse_internal_auth_context(request: Request) -> Optional[InternalAuthConte
 
     secret = _get_aweb_internal_auth_secret()
     if not secret:
+        logger.error(
+            "AWEB_TRUST_PROXY_HEADERS is enabled but no internal auth secret is configured. "
+            "Set AWEB_INTERNAL_AUTH_SECRET or BEADHUB_INTERNAL_AUTH_SECRET."
+        )
         raise HTTPException(status_code=500, detail="Internal auth secret not configured")
 
     expected = _internal_auth_header_value(
