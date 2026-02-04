@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.alias_allocator import suggest_next_name_prefix
-from aweb.auth import get_project_from_auth, validate_project_slug
+from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
-from aweb.presence import list_agent_presences_by_ids
+from aweb.presence import DEFAULT_PRESENCE_TTL_SECONDS, list_agent_presences_by_ids, update_agent_presence
 
 router = APIRouter(prefix="/v1/agents", tags=["aweb-agents"])
 
@@ -126,4 +126,42 @@ async def list_agents(request: Request, db=Depends(get_db), redis=Depends(get_re
         ))
 
     return ListAgentsResponse(project_id=project_id, agents=agents)
+
+
+class HeartbeatResponse(BaseModel):
+    agent_id: str
+    last_seen: str
+    ttl_seconds: int
+
+
+@router.post("/heartbeat", response_model=HeartbeatResponse)
+async def heartbeat(request: Request, db=Depends(get_db), redis=Depends(get_redis)):
+    """Report agent liveness. Refreshes presence TTL in Redis (best-effort)."""
+    project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
+
+    # Look up the agent's alias for presence
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT alias
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        UUID(agent_id),
+        UUID(project_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    ttl = DEFAULT_PRESENCE_TTL_SECONDS
+    last_seen = await update_agent_presence(
+        redis,
+        agent_id=agent_id,
+        alias=row["alias"],
+        project_id=project_id,
+        ttl_seconds=ttl,
+    )
+
+    return HeartbeatResponse(agent_id=agent_id, last_seen=last_seen, ttl_seconds=ttl)
 
