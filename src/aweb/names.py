@@ -31,4 +31,3 @@ CLASSIC_NAMES = (
     "yara",
     "zoe",
 )
-

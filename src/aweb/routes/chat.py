@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -42,6 +42,7 @@ def _parse_deadline(value: str) -> datetime:
 def _participant_hash(agent_ids: list[str]) -> str:
     normalized = sorted({str(UUID(a)) for a in agent_ids})
     return hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
+
 
 async def _get_agent_by_id(db, *, project_id: str, agent_id: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
@@ -237,7 +238,9 @@ async def create_or_send(request: Request, payload: CreateSessionRequest, db=Dep
     return CreateSessionResponse(
         session_id=str(session_id),
         message_id=str(msg_row["message_id"]),
-        participants=[{"agent_id": str(r["agent_id"]), "alias": r["alias"]} for r in participants_rows],
+        participants=[
+            {"agent_id": str(r["agent_id"]), "alias": r["alias"]} for r in participants_rows
+        ],
         sse_url=f"/v1/chat/sessions/{session_id}/stream",
         targets_connected=[],
         targets_left=targets_left,
@@ -540,7 +543,9 @@ async def _sse_events(
         session_id,
     )
     recent = list(reversed(recent))
-    last_message_at = recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
+    last_message_at = (
+        recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
+    )
 
     for r in recent:
         is_hang_on = bool(r["hang_on"])
@@ -611,7 +616,9 @@ async def _sse_events(
                 "type": "read_receipt",
                 "session_id": str(session_id),
                 "reader_alias": r["alias"],
-                "up_to_message_id": str(r["last_read_message_id"]) if r["last_read_message_id"] else "",
+                "up_to_message_id": (
+                    str(r["last_read_message_id"]) if r["last_read_message_id"] else ""
+                ),
                 "extends_wait_seconds": 0,
                 "timestamp": r["last_read_at"].isoformat(),
             }

@@ -41,4 +41,3 @@ def suggest_next_name_prefix(existing_aliases: Iterable[str]) -> str | None:
         if candidate not in used:
             return candidate
     return None
-

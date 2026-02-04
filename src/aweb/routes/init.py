@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Optional
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aweb.bootstrap import AliasExhaustedError, bootstrap_identity
 from aweb.auth import validate_project_slug
+from aweb.bootstrap import AliasExhaustedError, bootstrap_identity
 from aweb.deps import get_db
 
 router = APIRouter(prefix="/v1/init", tags=["aweb-init"])

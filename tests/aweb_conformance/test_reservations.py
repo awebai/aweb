@@ -9,7 +9,9 @@ from .harness import AwebTarget
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_reservation_acquire_conflict_release_cycle(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_reservation_acquire_conflict_release_cycle(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     resource_key = f"conformance:{uuid.uuid4().hex}"
 
     acquire_1 = await aweb_client.post(
@@ -66,7 +68,9 @@ async def test_reservation_acquire_conflict_release_cycle(aweb_client, aweb_clie
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_reservation_renew_requires_ownership(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_reservation_renew_requires_ownership(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     resource_key = f"conformance:{uuid.uuid4().hex}"
 
     acquire = await aweb_client.post(

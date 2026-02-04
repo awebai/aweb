@@ -5,8 +5,8 @@ import pytest
 from fastapi import HTTPException
 
 from aweb.auth import (
-    INTERNAL_BEADHUB_AUTH_HEADER,
     INTERNAL_ACTOR_ID_HEADER,
+    INTERNAL_BEADHUB_AUTH_HEADER,
     INTERNAL_PROJECT_HEADER,
     INTERNAL_USER_HEADER,
     AuthConfigurationError,
@@ -98,9 +98,7 @@ class TestAwebProxyHeaders:
             validate_auth_config()
         assert "AWEB_TRUST_PROXY_HEADERS is enabled" in str(exc_info.value)
 
-    def test_validate_auth_config_passes_when_proxy_headers_trusted_with_secret(
-        self, monkeypatch
-    ):
+    def test_validate_auth_config_passes_when_proxy_headers_trusted_with_secret(self, monkeypatch):
         """Validate that startup check passes when proxy headers trusted with secret configured."""
         monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
         monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "test-secret")
@@ -116,9 +114,7 @@ class TestAwebProxyHeaders:
         validate_auth_config()  # Should not raise - proxy headers not trusted
 
     @pytest.mark.asyncio
-    async def test_request_fails_500_when_proxy_headers_trusted_but_no_secret(
-        self, monkeypatch
-    ):
+    async def test_request_fails_500_when_proxy_headers_trusted_but_no_secret(self, monkeypatch):
         """Verify runtime request fails with 500 when proxy headers trusted but secret missing."""
         monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
         monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)

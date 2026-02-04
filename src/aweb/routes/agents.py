@@ -8,7 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
-from aweb.presence import DEFAULT_PRESENCE_TTL_SECONDS, list_agent_presences_by_ids, update_agent_presence
+from aweb.presence import (
+    DEFAULT_PRESENCE_TTL_SECONDS,
+    list_agent_presences_by_ids,
+    update_agent_presence,
+)
 
 router = APIRouter(prefix="/v1/agents", tags=["aweb-agents"])
 
@@ -31,7 +35,9 @@ class SuggestAliasPrefixResponse(BaseModel):
 
 
 @router.post("/suggest-alias-prefix", response_model=SuggestAliasPrefixResponse)
-async def suggest_alias_prefix(payload: SuggestAliasPrefixRequest, db=Depends(get_db)) -> SuggestAliasPrefixResponse:
+async def suggest_alias_prefix(
+    payload: SuggestAliasPrefixRequest, db=Depends(get_db)
+) -> SuggestAliasPrefixResponse:
     """Suggest the next available classic alias prefix for a project.
 
     - Does not allocate (no project/agent/key creation).
@@ -115,15 +121,17 @@ async def list_agents(request: Request, db=Depends(get_db), redis=Depends(get_re
     for r in rows:
         aid = str(r["agent_id"])
         p = presence_map.get(aid)
-        agents.append(AgentView(
-            agent_id=aid,
-            alias=r["alias"],
-            human_name=r.get("human_name"),
-            agent_type=r.get("agent_type"),
-            status=p["status"] if p else None,
-            last_seen=p["last_seen"] if p else None,
-            online=p is not None,
-        ))
+        agents.append(
+            AgentView(
+                agent_id=aid,
+                alias=r["alias"],
+                human_name=r.get("human_name"),
+                agent_type=r.get("agent_type"),
+                status=p["status"] if p else None,
+                last_seen=p["last_seen"] if p else None,
+                online=p is not None,
+            )
+        )
 
     return ListAgentsResponse(project_id=project_id, agents=agents)
 
@@ -164,4 +172,3 @@ async def heartbeat(request: Request, db=Depends(get_db), redis=Depends(get_redi
     )
 
     return HeartbeatResponse(agent_id=agent_id, last_seen=last_seen, ttl_seconds=ttl)
-

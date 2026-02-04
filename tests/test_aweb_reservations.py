@@ -155,7 +155,9 @@ async def test_aweb_reservations_list_prefix_filter(aweb_db_infra):
                 )
                 assert resp.status_code in (200, 201), resp.text
 
-            listed = await client.get("/v1/reservations", headers=headers, params={"prefix": prefix})
+            listed = await client.get(
+                "/v1/reservations", headers=headers, params={"prefix": prefix}
+            )
             assert listed.status_code == 200, listed.text
             items = listed.json().get("reservations") or []
             keys = [i.get("resource_key") for i in items]

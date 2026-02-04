@@ -19,8 +19,10 @@ from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseLike(Protocol):
     def get_manager(self, name: str = "aweb") -> Any: ...
+
 
 def _sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()

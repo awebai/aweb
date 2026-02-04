@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import pytest
 
@@ -38,7 +38,9 @@ async def _wait_for_matching_event(
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_chat_sse_replays_recent_history(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_chat_sse_replays_recent_history(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     body = f"replay-{uuid.uuid4().hex}"
     create = await aweb_client.post(
         "/v1/chat/sessions",

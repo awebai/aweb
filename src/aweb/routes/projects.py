@@ -28,4 +28,3 @@ async def current_project(request: Request, db=Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Project not found")
 
     return {"project_id": str(row["project_id"]), "slug": row["slug"], "name": row["name"]}
-

@@ -41,13 +41,22 @@ async def test_get_presence_nonexistent(async_redis):
 @pytest.mark.asyncio
 async def test_list_presences_by_project(async_redis):
     await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
     )
     await update_agent_presence(
-        async_redis, agent_id="a2", alias="bob", project_id="proj-1",
+        async_redis,
+        agent_id="a2",
+        alias="bob",
+        project_id="proj-1",
     )
     await update_agent_presence(
-        async_redis, agent_id="a3", alias="carol", project_id="proj-2",
+        async_redis,
+        agent_id="a3",
+        alias="carol",
+        project_id="proj-2",
     )
 
     proj1 = await list_agent_presences_by_project(async_redis, "proj-1")
@@ -63,10 +72,16 @@ async def test_list_presences_by_project(async_redis):
 @pytest.mark.asyncio
 async def test_list_presences_by_ids(async_redis):
     await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
     )
     await update_agent_presence(
-        async_redis, agent_id="a2", alias="bob", project_id="proj-1",
+        async_redis,
+        agent_id="a2",
+        alias="bob",
+        project_id="proj-1",
     )
 
     result = await list_agent_presences_by_ids(async_redis, ["a1"])
@@ -86,10 +101,16 @@ async def test_list_presences_by_ids(async_redis):
 @pytest.mark.asyncio
 async def test_clear_presence(async_redis):
     await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
     )
     await update_agent_presence(
-        async_redis, agent_id="a2", alias="bob", project_id="proj-1",
+        async_redis,
+        agent_id="a2",
+        alias="bob",
+        project_id="proj-1",
     )
 
     deleted = await clear_agent_presence(async_redis, ["a1"])
@@ -103,13 +124,17 @@ async def test_clear_presence(async_redis):
 async def test_presence_ttl_expires(async_redis):
     """Presence with very short TTL should expire."""
     await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
         ttl_seconds=1,
     )
     presence = await get_agent_presence(async_redis, "a1")
     assert presence is not None
 
     import asyncio
+
     await asyncio.sleep(1.5)
 
     presence = await get_agent_presence(async_redis, "a1")
@@ -120,14 +145,21 @@ async def test_presence_ttl_expires(async_redis):
 async def test_update_refreshes_presence(async_redis):
     """Updating presence should refresh the TTL and last_seen."""
     ts1 = await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
     )
 
     import asyncio
+
     await asyncio.sleep(0.1)
 
     ts2 = await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
     )
     assert ts2 > ts1
 
@@ -139,15 +171,22 @@ async def test_update_refreshes_presence(async_redis):
 async def test_stale_index_entries_cleaned_lazily(async_redis):
     """When presence expires but index entry remains, listing should clean up."""
     await update_agent_presence(
-        async_redis, agent_id="a1", alias="alice", project_id="proj-1",
+        async_redis,
+        agent_id="a1",
+        alias="alice",
+        project_id="proj-1",
         ttl_seconds=1,
     )
     await update_agent_presence(
-        async_redis, agent_id="a2", alias="bob", project_id="proj-1",
+        async_redis,
+        agent_id="a2",
+        alias="bob",
+        project_id="proj-1",
         ttl_seconds=3600,
     )
 
     import asyncio
+
     await asyncio.sleep(1.5)
 
     # a1's presence expired, but index may still reference it

@@ -187,7 +187,9 @@ async def test_aweb_cross_project_actions_are_rejected(aweb_db_infra):
             )
             assert ok.status_code in (200, 201), ok.text
 
-            listed = await client.get("/v1/reservations", headers=headers_1, params={"prefix": "isolation:"})
+            listed = await client.get(
+                "/v1/reservations", headers=headers_1, params={"prefix": "isolation:"}
+            )
             assert listed.status_code == 200, listed.text
             keys = [r.get("resource_key") for r in (listed.json().get("reservations") or [])]
             assert resource_key not in keys

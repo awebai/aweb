@@ -41,7 +41,9 @@ async def test_chat_creates_persistent_session_and_returns_expected_shape(
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_chat_session_is_unique_for_participant_set(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_chat_session_is_unique_for_participant_set(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     msg_1 = f"m1-{uuid.uuid4().hex}"
     msg_2 = f"m2-{uuid.uuid4().hex}"
 
@@ -74,7 +76,9 @@ async def test_chat_session_is_unique_for_participant_set(aweb_client, aweb_clie
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_chat_pending_and_mark_read_flow(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_chat_pending_and_mark_read_flow(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     msg = f"pending-{uuid.uuid4().hex}"
 
     send = await aweb_client.post(
@@ -127,7 +131,9 @@ async def test_chat_pending_and_mark_read_flow(aweb_client, aweb_client_2, aweb_
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_chat_targets_left_semantics(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_chat_targets_left_semantics(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     # 1) Agent 2 sends a leaving message to Agent 1.
     leave = await aweb_client_2.post(
         "/v1/chat/sessions",

@@ -12,7 +12,9 @@ from .db_utils import build_database_url
 
 logger = logging.getLogger(__name__)
 
-TEST_REDIS_URL = os.getenv("AWEB_TEST_REDIS_URL", os.getenv("REDIS_URL", "redis://localhost:6379/15"))
+TEST_REDIS_URL = os.getenv(
+    "AWEB_TEST_REDIS_URL", os.getenv("REDIS_URL", "redis://localhost:6379/15")
+)
 
 
 def auth_headers(api_key: str) -> dict[str, str]:
@@ -33,7 +35,7 @@ async def async_redis() -> AsyncGenerator[AsyncRedis, None]:
 
 
 @pytest_asyncio.fixture
-async def aweb_db_infra(monkeypatch) -> AsyncGenerator["aweb.db.DatabaseInfra", None]:
+async def aweb_db_infra(monkeypatch) -> AsyncGenerator["aweb.db.DatabaseInfra", None]:  # noqa: F405
     from aweb.db import DatabaseInfra as AwebDatabaseInfra
 
     test_config = DatabaseTestConfig.from_env()

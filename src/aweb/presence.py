@@ -134,9 +134,7 @@ async def _filter_valid_agent_ids(
     if not members:
         return []
 
-    agent_ids = [
-        m.decode("utf-8") if isinstance(m, bytes) else m for m in members
-    ]
+    agent_ids = [m.decode("utf-8") if isinstance(m, bytes) else m for m in members]
 
     pipe = redis.pipeline()
     for aid in agent_ids:

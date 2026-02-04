@@ -18,4 +18,3 @@ def get_db(request: Request) -> Any:
 def get_redis(request: Request) -> Any:
     """Return the Redis handle from `app.state` (if configured)."""
     return request.app.state.redis
-

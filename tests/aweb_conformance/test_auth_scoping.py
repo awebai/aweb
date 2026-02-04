@@ -67,7 +67,10 @@ async def test_cross_project_chat_alias_resolution_is_rejected(
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
 async def test_cross_project_reservation_acquire_is_rejected(
-    aweb_client, aweb_other_client, aweb_target: AwebTarget, aweb_other_target: AwebOtherTarget | None
+    aweb_client,
+    aweb_other_client,
+    aweb_target: AwebTarget,
+    aweb_other_target: AwebOtherTarget | None,
 ) -> None:
     if aweb_other_target is None:
         pytest.skip("Missing AWEB_OTHER_* env vars")
@@ -99,7 +102,9 @@ async def test_cross_project_reservation_acquire_is_rejected(
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_write_requests_must_not_accept_project_selector_fields(aweb_client, aweb_target: AwebTarget) -> None:
+async def test_write_requests_must_not_accept_project_selector_fields(
+    aweb_client, aweb_target: AwebTarget
+) -> None:
     # These endpoints MUST reject client-provided project selectors (clean-start).
     fake_project_id = str(uuid.uuid4())
 

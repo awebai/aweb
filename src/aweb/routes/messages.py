@@ -30,7 +30,7 @@ class SendMessageRequest(BaseModel):
 
     @field_validator("to_agent_id")
     @classmethod
-    def _validate_agent_id(cls, v: str) -> str:
+    def _validate_agent_id(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
         try:
@@ -87,7 +87,9 @@ class AckResponse(BaseModel):
 
 
 @router.post("", response_model=SendMessageResponse)
-async def send_message(request: Request, payload: SendMessageRequest, db=Depends(get_db)) -> SendMessageResponse:
+async def send_message(
+    request: Request, payload: SendMessageRequest, db=Depends(get_db)
+) -> SendMessageResponse:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
 
@@ -236,6 +238,8 @@ async def acknowledge(
         UUID(project_id),
         message_uuid,
     )
-    acknowledged_at = updated["read_at"].isoformat() if updated and updated["read_at"] else _now_iso()
+    acknowledged_at = (
+        updated["read_at"].isoformat() if updated and updated["read_at"] else _now_iso()
+    )
 
     return AckResponse(message_id=str(message_uuid), acknowledged_at=acknowledged_at)

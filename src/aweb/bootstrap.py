@@ -175,9 +175,7 @@ async def bootstrap_identity(
                 break
 
             if allocated_alias is None:
-                raise AliasExhaustedError(
-                    "All name prefixes are taken."
-                )
+                raise AliasExhaustedError("All name prefixes are taken.")
             alias = allocated_alias
 
         api_key, key_prefix, key_hash = generate_api_key()

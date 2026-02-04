@@ -9,7 +9,9 @@ from .harness import AwebTarget
 
 @pytest.mark.aweb_conformance
 @pytest.mark.asyncio
-async def test_mail_send_inbox_ack_roundtrip(aweb_client, aweb_client_2, aweb_target: AwebTarget) -> None:
+async def test_mail_send_inbox_ack_roundtrip(
+    aweb_client, aweb_client_2, aweb_target: AwebTarget
+) -> None:
     subject = f"conformance-{uuid.uuid4().hex[:8]}"
     body = f"hello-{uuid.uuid4().hex}"
 
@@ -55,7 +57,7 @@ async def test_mail_send_inbox_ack_roundtrip(aweb_client, aweb_client_2, aweb_ta
         params={"unread_only": True, "limit": 200},
     )
     assert inbox_after.status_code == 200, inbox_after.text
-    messages_after = (inbox_after.json().get("messages") or [])
+    messages_after = inbox_after.json().get("messages") or []
     assert all(m.get("message_id") != message_id for m in messages_after)
 
 

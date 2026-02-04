@@ -25,4 +25,3 @@ def get_settings() -> Settings:
         log_level=os.getenv("AWEB_LOG_LEVEL", "info"),
         reload=os.getenv("AWEB_RELOAD", "false").lower() == "true",
     )
-

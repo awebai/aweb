@@ -8,8 +8,6 @@ minimal until the aweb routes and storage are implemented per
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any
-
 from typing import Optional
 
 from fastapi import FastAPI, Request
@@ -17,8 +15,8 @@ from redis.asyncio import Redis
 
 from aweb.auth import validate_auth_config
 from aweb.db import DatabaseInfra
-from aweb.routes.auth import router as auth_router
 from aweb.routes.agents import router as agents_router
+from aweb.routes.auth import router as auth_router
 from aweb.routes.chat import router as chat_router
 from aweb.routes.init import router as init_router
 from aweb.routes.messages import router as messages_router

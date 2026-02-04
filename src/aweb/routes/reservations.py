@@ -200,7 +200,11 @@ async def renew(request: Request, payload: RenewRequest, db=Depends(get_db)) -> 
             expires_at,
         )
 
-    return {"status": "renewed", "resource_key": payload.resource_key, "expires_at": expires_at.isoformat()}
+    return {
+        "status": "renewed",
+        "resource_key": payload.resource_key,
+        "expires_at": expires_at.isoformat(),
+    }
 
 
 @router.post("/release")

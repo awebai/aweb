@@ -4,8 +4,8 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
-from aweb.auth import hash_api_key
 from aweb.api import create_app
+from aweb.auth import hash_api_key
 
 
 @pytest.mark.asyncio

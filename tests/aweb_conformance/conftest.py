@@ -7,8 +7,13 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from .harness import AwebTarget, bootstrap_target, require_conformance_enabled
-from .harness import AwebOtherTarget, maybe_other_target
+from .harness import (
+    AwebOtherTarget,
+    AwebTarget,
+    bootstrap_target,
+    maybe_other_target,
+    require_conformance_enabled,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -55,7 +60,9 @@ async def aweb_client_2(aweb_target: AwebTarget) -> AsyncIterator[httpx.AsyncCli
 
 
 @pytest_asyncio.fixture
-async def aweb_other_client(aweb_other_target: AwebOtherTarget | None) -> AsyncIterator[httpx.AsyncClient]:
+async def aweb_other_client(
+    aweb_other_target: AwebOtherTarget | None,
+) -> AsyncIterator[httpx.AsyncClient]:
     if aweb_other_target is None:
         pytest.skip("Set AWEB_OTHER_API_KEY/AWEB_OTHER_AGENT_* to run cross-project scoping tests")
     async with httpx.AsyncClient(

@@ -39,7 +39,9 @@ class AwebClient:
         return resp.json()
 
     async def introspect(self, *, authorization: str) -> dict:
-        return await self._request_json("GET", "/v1/auth/introspect", headers={"Authorization": authorization})
+        return await self._request_json(
+            "GET", "/v1/auth/introspect", headers={"Authorization": authorization}
+        )
 
     async def introspect_project_id(self, *, authorization: str) -> str:
         data = await self.introspect(authorization=authorization)
@@ -49,7 +51,9 @@ class AwebClient:
         return project_id
 
     async def current_project(self, *, authorization: str) -> dict:
-        return await self._request_json("GET", "/v1/projects/current", headers={"Authorization": authorization})
+        return await self._request_json(
+            "GET", "/v1/projects/current", headers={"Authorization": authorization}
+        )
 
     async def send_message(
         self,

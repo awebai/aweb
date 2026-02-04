@@ -135,7 +135,10 @@ async def test_aweb_chat_session_uniqueness_pending_read_flow(aweb_db_infra):
             )
             assert pending.status_code == 200, pending.text
             p = pending.json()
-            found = next((c for c in (p.get("pending") or []) if c.get("session_id") == d1["session_id"]), None)
+            found = next(
+                (c for c in (p.get("pending") or []) if c.get("session_id") == d1["session_id"]),
+                None,
+            )
             assert found is not None
             assert found["last_from"] in ("agent-1", "agent-2")
             assert isinstance(found["unread_count"], int)
@@ -166,7 +169,9 @@ async def test_aweb_chat_sse_replay_live_and_read_receipt(aweb_db_infra):
     app = create_app(db_infra=aweb_db_infra, redis=None)
 
     async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=10.0) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
             headers_1 = _auth_headers(seeded["api_key_1"])
             headers_2 = _auth_headers(seeded["api_key_2"])
 
@@ -411,16 +416,26 @@ async def test_aweb_chat_send_message_cross_project_rejected(aweb_db_infra):
     agent_other_id = uuid.uuid4()
     await aweb_db.execute(
         "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_2_id, "other-project", "Other Project",
+        project_2_id,
+        "other-project",
+        "Other Project",
     )
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
-        agent_other_id, project_2_id, "other-agent", "Other Agent", "agent",
+        agent_other_id,
+        project_2_id,
+        "other-agent",
+        "Other Agent",
+        "agent",
     )
     api_key_other = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
         "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
-        project_2_id, agent_other_id, api_key_other[:12], hash_api_key(api_key_other), True,
+        project_2_id,
+        agent_other_id,
+        api_key_other[:12],
+        hash_api_key(api_key_other),
+        True,
     )
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
@@ -499,16 +514,26 @@ async def test_aweb_chat_list_sessions_tenant_isolation(aweb_db_infra):
     agent_other_id = uuid.uuid4()
     await aweb_db.execute(
         "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_2_id, "other-project", "Other Project",
+        project_2_id,
+        "other-project",
+        "Other Project",
     )
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
-        agent_other_id, project_2_id, "other-agent", "Other Agent", "agent",
+        agent_other_id,
+        project_2_id,
+        "other-agent",
+        "Other Agent",
+        "agent",
     )
     api_key_other = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
         "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
-        project_2_id, agent_other_id, api_key_other[:12], hash_api_key(api_key_other), True,
+        project_2_id,
+        agent_other_id,
+        api_key_other[:12],
+        hash_api_key(api_key_other),
+        True,
     )
 
     app = create_app(db_infra=aweb_db_infra, redis=None)

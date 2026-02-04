@@ -72,7 +72,6 @@ packages = ["src/aweb"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
-include = '\\.pyi?$'
 
 [tool.isort]
 profile = "black"

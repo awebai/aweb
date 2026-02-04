@@ -1,5 +1,5 @@
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 import pytest
 from pgdbm.migrations import AsyncMigrationManager

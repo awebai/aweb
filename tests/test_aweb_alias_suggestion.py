@@ -48,4 +48,3 @@ async def test_suggest_alias_prefix_skips_used_prefixes(aweb_db_infra):
             data = resp.json()
             assert data["project_id"] is not None
             assert data["name_prefix"] == "bob"
-
