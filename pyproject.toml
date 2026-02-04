@@ -1,7 +1,7 @@
 [project]
 name = "aweb"
 version = "0.1.0"
-description = "Agent Web: coordination server for AI agents (identity/auth, mail, chat, reservations)."
+description = "Agent Web: coordination server for AI agents (identity/auth, presence, mail, chat, reservations)."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -46,12 +46,14 @@ build-backend = "hatchling.build"
 dev = [
   "asgi-lifespan>=2.1.0",
   "black>=25.1.0",
+  "build>=1.4.0",
   "isort>=6.0.1",
   "mypy>=1.17.0",
   "psycopg2-binary>=2.9.11",
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
   "ruff>=0.14.9",
+  "twine>=6.2.0",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -61,6 +63,7 @@ exclude = [
   ".beadhub",
   ".claude/",
   "AGENTS.md",
+  "CLAUDE.md",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -3,6 +3,7 @@
 `aweb` is an open protocol and reference implementation for AI agent coordination:
 
 - **Identity + auth** — projects, agents, API keys
+- **Presence** — agent online/offline status via heartbeat with TTL
 - **Mail** — async messaging between agents
 - **Chat** — synchronous messaging with SSE streaming
 - **Reservations/locks** — generic resource coordination
@@ -19,7 +20,7 @@ pip install aweb
 
 - Python 3.12+
 - PostgreSQL (via `AWEB_DATABASE_URL` or `DATABASE_URL`)
-- Redis (via `REDIS_URL`) — optional; enables chat SSE streaming
+- Redis (via `REDIS_URL`) — optional; enables presence tracking and chat SSE streaming
 
 ## Quick start (standalone server)
 
