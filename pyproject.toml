@@ -1,7 +1,7 @@
 [project]
 name = "aweb"
 version = "0.1.0"
-description = "Agent Web: open protocol + OSS reference implementation for agent coordination (identity/auth, mail, chat, reservations, presence)."
+description = "Agent Web: coordination server for AI agents (identity/auth, mail, chat, reservations)."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -9,16 +9,31 @@ authors = [
 ]
 requires-python = ">=3.12"
 keywords = ["ai", "agents", "coordination", "chat", "mail", "locks", "reservations"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
-  "fastapi",
-  "httpx",
-  "uvicorn",
-  "typer",
-  "redis",
+  "fastapi>=0.100.0",
+  "httpx>=0.24.0",
+  "uvicorn>=0.20.0",
+  "typer>=0.9.0",
+  "redis>=4.2.0",
   "bcrypt>=5.0.0",
   "email-validator>=2.3.0",
   "pgdbm>=0.4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/awebai/aweb"
+Repository = "https://github.com/awebai/aweb"
+Issues = "https://github.com/awebai/aweb/issues"
 
 [project.scripts]
 aweb = "aweb:main"
@@ -39,11 +54,17 @@ dev = [
   "ruff>=0.14.9",
 ]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+  ".beads/",
+  ".beadhub-cache/",
+  ".beadhub",
+  ".claude/",
+  "AGENTS.md",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/aweb"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/aweb/migrations" = "aweb/migrations"
 
 [tool.black]
 line-length = 100

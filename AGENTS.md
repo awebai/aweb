@@ -1,15 +1,15 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **bdh** (beads and beadhub) for issue tracking and coordination between agents.
 
 ## Quick Reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+bdh ready              # Find available work
+bdh show <id>          # View issue details
+bdh update <id> --status in_progress  # Claim work
+bdh close <id>         # Complete work
+bdh sync               # Sync with git
 ```
 
 ## Landing the Plane (Session Completion)
@@ -24,7 +24,7 @@ bd sync               # Sync with git
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
+   bdh sync
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -38,15 +38,14 @@ bd sync               # Sync with git
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
-
-> **IMPORTANT**: This project uses `bdh` (BeadHub) for coordination. Always use `bdh` commands instead of `bd`. The `bdh` wrapper coordinates work across agents and syncs with the BeadHub server.
-
+<!-- BEADHUB:START -->
 ## BeadHub Coordination
 
 This project uses `bdh` for multi-agent coordination. Run `bdh :policy` for instructions.
 
 ```bash
-bdh :status    # your identity
-bdh :policy    # READ AND FOLLOW
+bdh :policy    # READ AND FOLLOW, these are the rules for you, do this when you start your session (now).
+bdh :status    # your identity + team status
 bdh ready      # find work
 ```
+<!-- BEADHUB:END -->

@@ -1,57 +1,84 @@
 # aweb (Agent Web)
 
-`aweb` is an open protocol (and OSS reference implementation) for agent coordination:
+`aweb` is an open protocol and reference implementation for AI agent coordination:
 
-- identity + auth (projects, agents, API keys)
-- mail (async)
-- chat (sync + SSE)
-- reservations/locks (generic resource keys)
-- presence (best-effort)
+- **Identity + auth** — projects, agents, API keys
+- **Mail** — async messaging between agents
+- **Chat** — synchronous messaging with SSE streaming
+- **Reservations/locks** — generic resource coordination
 
-This repo is intentionally **domain-agnostic** (no beads/repos/workspaces).
+Domain-agnostic by design: `aweb` provides coordination primitives without imposing application semantics.
 
-## Prereqs
+## Install
+
+```bash
+pip install aweb
+```
+
+## Requirements
 
 - Python 3.12+
-- `uv`
-- PostgreSQL available via `AWEB_DATABASE_URL` (or `DATABASE_URL`)
-- Redis available via `REDIS_URL` (optional in some tests; required for presence/chat streaming)
+- PostgreSQL (via `AWEB_DATABASE_URL` or `DATABASE_URL`)
+- Redis (via `REDIS_URL`) — optional; enables chat SSE streaming
 
-## Run server (standalone)
+## Quick start (standalone server)
 
 ```bash
-uv sync
-export AWEB_DATABASE_URL=postgresql://USER:PASS@HOST:5432/DBNAME
+export AWEB_DATABASE_URL=postgresql://user:pass@localhost:5432/aweb
 export REDIS_URL=redis://localhost:6379/0
 
-uv run aweb serve --host 0.0.0.0 --port 8000 --reload
+aweb serve --host 0.0.0.0 --port 8000
 ```
 
-## Onboarding (no curl)
+The server runs database migrations automatically on startup.
 
-Use `aw` (Go CLI) to create an agent identity and API key:
+## Library usage
 
-```bash
-go install github.com/awebai/aw/cmd/aw@latest
+Embed aweb routes into an existing FastAPI application:
 
-aw init --url http://localhost:8000 --project-slug demo --human-name "Alice"
+```python
+from aweb.api import create_app
+from aweb.db import DatabaseInfra
 
-# Credentials are written to ~/.config/aw/config.yaml (override via AW_CONFIG_PATH).
-# Use --print-exports for scripting/CI.
+# Standalone: aweb manages its own database pool
+app = create_app()
+
+# Shared pool: pass in your own DatabaseInfra
+infra = DatabaseInfra()
+await infra.initialize()
+app = create_app(db_infra=infra)
 ```
 
-## Run tests
+## Configuration
 
-Tests use local Postgres/Redis fixtures (no Docker-based fixtures).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWEB_DATABASE_URL` | — | PostgreSQL connection string |
+| `DATABASE_URL` | — | Fallback if `AWEB_DATABASE_URL` not set |
+| `REDIS_URL` | — | Redis connection string |
+| `AWEB_HOST` | `0.0.0.0` | Server bind address |
+| `AWEB_PORT` | `8001` | Server bind port |
+| `AWEB_LOG_LEVEL` | `info` | Uvicorn log level |
+
+## Development
+
+Tests require local PostgreSQL and Redis:
 
 ```bash
+export DATABASE_URL=postgresql://user:pass@localhost:5432/aweb_test
+export REDIS_URL=redis://localhost:6379/0
+uv sync
 uv run pytest
 ```
 
-## Conformance (black-box)
+### Conformance tests
 
-The `tests/aweb_conformance/` suite is opt-in and targets a running aweb-compatible server.
+The `tests/aweb_conformance/` suite runs black-box tests against a live aweb-compatible server:
 
 ```bash
 AWEB_CONFORMANCE=1 AWEB_URL=http://localhost:8000 uv run pytest -q tests/aweb_conformance
 ```
+
+## License
+
+MIT
