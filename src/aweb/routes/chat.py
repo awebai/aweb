@@ -635,7 +635,7 @@ async def _sse_events(
                 "up_to_message_id": (
                     str(r["last_read_message_id"]) if r["last_read_message_id"] else ""
                 ),
-                "extends_wait_seconds": 0,
+                "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
                 "timestamp": r["last_read_at"].isoformat(),
             }
             yield f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"

@@ -335,6 +335,7 @@ async def test_aweb_chat_sse_replay_live_and_read_receipt(aweb_db_infra):
             assert '"type": "read_receipt"' in rr_text
             assert live_message_id in rr_text
             assert "agent-2" in rr_text
+            assert '"extends_wait_seconds": 300' in rr_text
 
 
 @pytest.mark.asyncio
