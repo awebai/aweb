@@ -116,6 +116,43 @@ async def test_aweb_chat_session_uniqueness_pending_read_flow(aweb_db_infra):
             assert r1.status_code == 200, r1.text
             d1 = r1.json()
 
+            # Check pending BEFORE agent-2 replies — agent-2's reply will
+            # auto-advance their read receipt, clearing the unread count.
+            pending = await client.get(
+                "/v1/chat/pending",
+                headers=headers_2,
+            )
+            assert pending.status_code == 200, pending.text
+            p = pending.json()
+            found = next(
+                (c for c in (p.get("pending") or []) if c.get("session_id") == d1["session_id"]),
+                None,
+            )
+            assert found is not None
+            assert found["last_from"] == "agent-1"
+            assert found["unread_count"] == 1
+
+            # Fetch unread messages and mark-read BEFORE agent-2 replies,
+            # since replying auto-advances the read receipt.
+            unread = await client.get(
+                f"/v1/chat/sessions/{d1['session_id']}/messages",
+                headers=headers_2,
+                params={"unread_only": True, "limit": 1000},
+            )
+            assert unread.status_code == 200, unread.text
+            msgs = unread.json().get("messages") or []
+            assert len(msgs) >= 1
+
+            last_message_id = msgs[-1]["message_id"]
+            mark = await client.post(
+                f"/v1/chat/sessions/{d1['session_id']}/read",
+                headers=headers_2,
+                json={"up_to_message_id": last_message_id},
+            )
+            assert mark.status_code == 200, mark.text
+            assert mark.json().get("success") is True
+
+            # Agent-2 replies — session uniqueness check.
             r2 = await client.post(
                 "/v1/chat/sessions",
                 headers=headers_2,
@@ -129,38 +166,94 @@ async def test_aweb_chat_session_uniqueness_pending_read_flow(aweb_db_infra):
             d2 = r2.json()
             assert d2["session_id"] == d1["session_id"]
 
-            pending = await client.get(
-                "/v1/chat/pending",
-                headers=headers_2,
+
+@pytest.mark.asyncio
+async def test_aweb_chat_sender_reply_clears_pending(aweb_db_infra):
+    """Replying in a chat session advances the sender's read receipt, clearing pending."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Agent-1 sends "hello" to agent-2
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
             )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Agent-2 should see 1 unread from agent-1
+            pending = await client.get("/v1/chat/pending", headers=headers_2)
             assert pending.status_code == 200, pending.text
             p = pending.json()
             found = next(
-                (c for c in (p.get("pending") or []) if c.get("session_id") == d1["session_id"]),
+                (c for c in p["pending"] if c["session_id"] == session_id),
                 None,
             )
             assert found is not None
-            assert found["last_from"] in ("agent-1", "agent-2")
-            assert isinstance(found["unread_count"], int)
+            assert found["unread_count"] == 1
+            assert found["last_from"] == "agent-1"
 
-            unread = await client.get(
-                f"/v1/chat/sessions/{d1['session_id']}/messages",
+            # Agent-2 replies via create_or_send
+            r2 = await client.post(
+                "/v1/chat/sessions",
                 headers=headers_2,
-                params={"unread_only": True, "limit": 1000},
+                json={"to_aliases": ["agent-1"], "message": "got it", "leaving": False},
             )
-            assert unread.status_code == 200, unread.text
-            msgs = unread.json().get("messages") or []
-            assert len(msgs) >= 1
+            assert r2.status_code == 200, r2.text
 
-            # Mark read up to the latest message.
-            last_message_id = msgs[-1]["message_id"]
-            mark = await client.post(
-                f"/v1/chat/sessions/{d1['session_id']}/read",
-                headers=headers_2,
-                json={"up_to_message_id": last_message_id},
+            # Agent-2 should now have NO pending (reply advanced read receipt)
+            pending2 = await client.get("/v1/chat/pending", headers=headers_2)
+            assert pending2.status_code == 200, pending2.text
+            p2 = pending2.json()
+            found2 = next(
+                (c for c in p2["pending"] if c["session_id"] == session_id),
+                None,
             )
-            assert mark.status_code == 200, mark.text
-            assert mark.json().get("success") is True
+            assert found2 is None, f"Expected no pending for agent-2, got: {found2}"
+
+            # Also verify via send_message endpoint
+            # Agent-1 sends another message
+            r3 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_1,
+                json={"body": "follow-up"},
+            )
+            assert r3.status_code == 200, r3.text
+
+            # Agent-2 sees 1 unread again
+            pending3 = await client.get("/v1/chat/pending", headers=headers_2)
+            assert pending3.status_code == 200, pending3.text
+            p3 = pending3.json()
+            found3 = next(
+                (c for c in p3["pending"] if c["session_id"] == session_id),
+                None,
+            )
+            assert found3 is not None
+            assert found3["unread_count"] == 1
+
+            # Agent-2 replies via send_message
+            r4 = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_2,
+                json={"body": "got that too"},
+            )
+            assert r4.status_code == 200, r4.text
+
+            # Agent-2 should again have no pending
+            pending4 = await client.get("/v1/chat/pending", headers=headers_2)
+            assert pending4.status_code == 200, pending4.text
+            p4 = pending4.json()
+            found4 = next(
+                (c for c in p4["pending"] if c["session_id"] == session_id),
+                None,
+            )
+            assert found4 is None, f"Expected no pending after send_message reply, got: {found4}"
 
 
 @pytest.mark.asyncio

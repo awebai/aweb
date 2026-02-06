@@ -214,13 +214,29 @@ async def create_or_send(request: Request, payload: CreateSessionRequest, db=Dep
         """
         INSERT INTO {{tables.chat_messages}} (session_id, from_agent_id, from_alias, body, sender_leaving)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING message_id
+        RETURNING message_id, created_at
         """,
         session_id,
         UUID(actor_id),
         sender["alias"],
         payload.message,
         bool(payload.leaving),
+    )
+
+    # Advance sender's read receipt — sending implies having read up to this point.
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_read_receipts}}
+            (session_id, agent_id, last_read_message_id, last_read_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (session_id, agent_id) DO UPDATE
+        SET last_read_message_id = EXCLUDED.last_read_message_id,
+            last_read_at = EXCLUDED.last_read_at
+        """,
+        session_id,
+        UUID(actor_id),
+        msg_row["message_id"],
+        msg_row["created_at"],
     )
 
     participants_rows = await aweb_db.fetch_all(
@@ -747,7 +763,7 @@ async def send_message(
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING message_id
+        RETURNING message_id, created_at
         """,
         session_uuid,
         agent_uuid,
@@ -755,6 +771,22 @@ async def send_message(
         payload.body,
         False,  # sender_leaving only set via create_session with leaving=true
         bool(payload.hang_on),
+    )
+
+    # Advance sender's read receipt — sending implies having read up to this point.
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_read_receipts}}
+            (session_id, agent_id, last_read_message_id, last_read_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (session_id, agent_id) DO UPDATE
+        SET last_read_message_id = EXCLUDED.last_read_message_id,
+            last_read_at = EXCLUDED.last_read_at
+        """,
+        session_uuid,
+        agent_uuid,
+        msg_row["message_id"],
+        msg_row["created_at"],
     )
 
     return SendMessageResponse(
