@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -648,3 +649,353 @@ async def test_aweb_chat_list_sessions_tenant_isolation(aweb_db_infra):
             r = await client.get("/v1/chat/sessions", headers=headers_other)
             assert r.status_code == 200, r.text
             assert r.json()["sessions"] == []
+
+
+@pytest.mark.asyncio
+async def test_sse_registers_waiting_in_redis(aweb_db_infra, async_redis):
+    """SSE stream registers agent in Redis on connect and removes on disconnect."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Start SSE stream for agent-2.
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(2)},
+                    headers=headers_2,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Mid-stream: agent-2 should be registered in Redis.
+            key = f"chat:waiting:{session_id}"
+            score = await async_redis.zscore(key, seeded["agent_2_id"])
+            assert score is not None, "agent-2 should be registered as waiting in Redis"
+
+            # Wait for stream to end.
+            await stream_task
+
+            # After stream ends: agent-2 should be removed.
+            score_after = await async_redis.zscore(key, seeded["agent_2_id"])
+            assert score_after is None, "agent-2 should be unregistered after SSE ends"
+
+
+@pytest.mark.asyncio
+async def test_sse_message_includes_sender_waiting_true(aweb_db_infra, async_redis):
+    """SSE message events include sender_waiting=true when sender has active SSE."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Start SSE for agent-1 (so agent-1 is "waiting").
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            agent1_stream = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(3)},
+                    headers=headers_1,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Start SSE for agent-2 to receive live messages.
+            agent2_stream = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(3)},
+                    headers=headers_2,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Agent-1 sends a message while both SSE streams are active.
+            send = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_1,
+                json={"body": "are you there?"},
+            )
+            assert send.status_code == 200, send.text
+
+            # Wait for both streams to end.
+            agent2_text = await agent2_stream
+            await agent1_stream
+
+            # Parse message events from agent-2's stream and find the live one.
+            for line in agent2_text.split("\n"):
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    if data.get("type") == "message" and data.get("body") == "are you there?":
+                        assert data["sender_waiting"] is True, (
+                            f"Expected sender_waiting=true, got {data}"
+                        )
+                        break
+            else:
+                raise AssertionError("Did not find 'are you there?' message in SSE stream")
+
+
+@pytest.mark.asyncio
+async def test_sse_message_sender_waiting_false_without_redis(aweb_db_infra):
+    """SSE message events include sender_waiting=false when redis is None."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Collect SSE replay events.
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1)},
+                headers=headers_2,
+            )
+
+            # All message events should have sender_waiting=false.
+            for line in sse_text.split("\n"):
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    if data.get("type") == "message":
+                        assert data["sender_waiting"] is False, (
+                            f"Expected sender_waiting=false without redis, got {data}"
+                        )
+
+
+@pytest.mark.asyncio
+async def test_pending_sender_waiting_true(aweb_db_infra, async_redis):
+    """GET /v1/chat/pending shows sender_waiting=true when sender has active SSE."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Agent-1 sends.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Agent-1 starts SSE (so they're "waiting").
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(3)},
+                    headers=headers_1,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Agent-2 checks pending.
+            pending = await client.get("/v1/chat/pending", headers=headers_2)
+            assert pending.status_code == 200, pending.text
+            p = pending.json()
+            found = next(
+                (c for c in p["pending"] if c["session_id"] == session_id),
+                None,
+            )
+            assert found is not None
+            assert found["sender_waiting"] is True
+
+            await stream_task
+
+
+@pytest.mark.asyncio
+async def test_pending_sender_waiting_false_no_sse(aweb_db_infra, async_redis):
+    """GET /v1/chat/pending shows sender_waiting=false when sender has no SSE."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Agent-1 sends but does NOT start SSE.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Agent-2 checks pending — sender_waiting should be false.
+            pending = await client.get("/v1/chat/pending", headers=headers_2)
+            assert pending.status_code == 200, pending.text
+            p = pending.json()
+            found = next(
+                (c for c in p["pending"] if c["session_id"] == session_id),
+                None,
+            )
+            assert found is not None
+            assert found["sender_waiting"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_or_send_targets_connected(aweb_db_infra, async_redis):
+    """POST /v1/chat/sessions returns connected targets when they have active SSE."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session first.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "initial", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Agent-2 starts SSE.
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(3)},
+                    headers=headers_2,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Agent-1 sends again — should see agent-2 as connected.
+            r2 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "followup", "leaving": False},
+            )
+            assert r2.status_code == 200, r2.text
+            assert "agent-2" in r2.json()["targets_connected"]
+
+            await stream_task
+
+
+@pytest.mark.asyncio
+async def test_create_or_send_targets_connected_empty(aweb_db_infra, async_redis):
+    """POST /v1/chat/sessions returns empty targets_connected when no SSE streams."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["targets_connected"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_sender_waiting(aweb_db_infra, async_redis):
+    """GET /v1/chat/sessions includes sender_waiting when other participant has SSE."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=async_redis)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Create a session.
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "hello", "leaving": False},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Agent-1 starts SSE.
+            sse_path = f"/v1/chat/sessions/{session_id}/stream"
+            stream_task = asyncio.create_task(
+                _collect_sse_text(
+                    client=client,
+                    url=sse_path,
+                    params={"deadline": _deadline(3)},
+                    headers=headers_1,
+                )
+            )
+            await asyncio.sleep(0.3)
+
+            # Agent-2 lists sessions — should see sender_waiting=true.
+            r2 = await client.get("/v1/chat/sessions", headers=headers_2)
+            assert r2.status_code == 200, r2.text
+            sessions = r2.json()["sessions"]
+            assert len(sessions) == 1
+            assert sessions[0]["sender_waiting"] is True
+
+            await stream_task

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID
@@ -13,7 +14,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
-from aweb.deps import get_db
+from aweb.chat_waiting import (
+    get_waiting_agents,
+    is_agent_waiting,
+    register_waiting,
+    unregister_waiting,
+)
+from aweb.deps import get_db, get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +189,9 @@ class CreateSessionResponse(BaseModel):
 
 
 @router.post("/sessions", response_model=CreateSessionResponse)
-async def create_or_send(request: Request, payload: CreateSessionRequest, db=Depends(get_db)):
+async def create_or_send(
+    request: Request, payload: CreateSessionRequest, db=Depends(get_db), redis=Depends(get_redis)
+):
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
 
@@ -251,6 +260,13 @@ async def create_or_send(request: Request, payload: CreateSessionRequest, db=Dep
 
     targets_left = await _targets_left(db, session_id=session_id, target_agent_ids=target_ids)
 
+    waiting_ids = await get_waiting_agents(redis, str(session_id), target_ids)
+    waiting_set = set(waiting_ids)
+    targets_connected = [
+        r["alias"] for r in participants_rows
+        if str(r["agent_id"]) in waiting_set and str(r["agent_id"]) in set(target_ids)
+    ]
+
     return CreateSessionResponse(
         session_id=str(session_id),
         message_id=str(msg_row["message_id"]),
@@ -258,7 +274,7 @@ async def create_or_send(request: Request, payload: CreateSessionRequest, db=Dep
             {"agent_id": str(r["agent_id"]), "alias": r["alias"]} for r in participants_rows
         ],
         sse_url=f"/v1/chat/sessions/{session_id}/stream",
-        targets_connected=[],
+        targets_connected=targets_connected,
         targets_left=targets_left,
     )
 
@@ -272,6 +288,7 @@ class PendingResponse(BaseModel):
 async def pending(
     request: Request,
     db=Depends(get_db),
+    redis=Depends(get_redis),
 ) -> PendingResponse:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
@@ -285,6 +302,7 @@ async def pending(
         SELECT
             s.session_id,
             array_agg(p2.alias ORDER BY p2.alias) AS participants,
+            array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids,
             lm.body AS last_message,
             lm.from_alias AS last_from,
             lm.created_at AS last_activity,
@@ -330,8 +348,13 @@ async def pending(
         UUID(actor_id),
     )
 
-    return PendingResponse(
-        pending=[
+    pending_items = []
+    for r in rows:
+        other_ids = [
+            pid for pid in (r["participant_ids"] or []) if pid != actor_id
+        ]
+        waiting = await get_waiting_agents(redis, str(r["session_id"]), other_ids)
+        pending_items.append(
             {
                 "session_id": str(r["session_id"]),
                 "participants": list(r["participants"] or []),
@@ -339,11 +362,13 @@ async def pending(
                 "last_from": r["last_from"] or "",
                 "unread_count": int(r["unread_count"] or 0),
                 "last_activity": r["last_activity"].isoformat() if r["last_activity"] else "",
-                "sender_waiting": False,
+                "sender_waiting": len(waiting) > 0,
                 "time_remaining_seconds": 0,
             }
-            for r in rows
-        ],
+        )
+
+    return PendingResponse(
+        pending=pending_items,
         messages_waiting=int(mail_unread or 0),
     )
 
@@ -538,109 +563,134 @@ async def mark_read(
 async def _sse_events(
     *,
     db,
+    redis,
     session_id: UUID,
     agent_id: UUID,
     deadline: datetime,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
-    # Emit an immediate keepalive so ASGI transports that wait for first body chunk
-    # can start streaming without blocking on initial DB work.
-    yield ": keepalive\n\n"
+    agent_id_str = str(agent_id)
+    session_id_str = str(session_id)
 
-    # Replay recent history (bounded).
-    recent = await aweb_db.fetch_all(
-        """
-        SELECT message_id, from_alias, body, created_at, sender_leaving, hang_on
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-        ORDER BY created_at DESC
-        LIMIT 50
-        """,
-        session_id,
-    )
-    recent = list(reversed(recent))
-    last_message_at = (
-        recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
-    )
+    await register_waiting(redis, session_id_str, agent_id_str)
+    last_refresh = time.monotonic()
 
-    for r in recent:
-        is_hang_on = bool(r["hang_on"])
-        payload = {
-            "type": "message",
-            "session_id": str(session_id),
-            "message_id": str(r["message_id"]),
-            "from_agent": r["from_alias"],
-            "body": r["body"],
-            "sender_leaving": bool(r["sender_leaving"]),
-            "hang_on": is_hang_on,
-            "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-            "timestamp": r["created_at"].isoformat(),
-        }
-        yield f"event: message\ndata: {json.dumps(payload)}\n\n"
+    try:
+        # Emit an immediate keepalive so ASGI transports that wait for first body chunk
+        # can start streaming without blocking on initial DB work.
+        yield ": keepalive\n\n"
 
-    last_receipt_at = datetime.now(timezone.utc)
-
-    while datetime.now(timezone.utc) < deadline:
-        # New messages.
-        new_msgs = await aweb_db.fetch_all(
+        # Replay recent history (bounded).
+        recent = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, body, created_at, sender_leaving, hang_on
+            SELECT message_id, from_agent_id, from_alias, body, created_at, sender_leaving, hang_on
             FROM {{tables.chat_messages}}
-            WHERE session_id = $1 AND created_at > $2
-            ORDER BY created_at ASC
-            LIMIT 200
+            WHERE session_id = $1
+            ORDER BY created_at DESC
+            LIMIT 50
             """,
             session_id,
-            last_message_at,
         )
-        for r in new_msgs:
-            last_message_at = max(last_message_at, r["created_at"])
+        recent = list(reversed(recent))
+        last_message_at = (
+            recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
+        )
+
+        for r in recent:
             is_hang_on = bool(r["hang_on"])
+            sender_waiting = await is_agent_waiting(
+                redis, session_id_str, str(r["from_agent_id"])
+            )
             payload = {
                 "type": "message",
-                "session_id": str(session_id),
+                "session_id": session_id_str,
                 "message_id": str(r["message_id"]),
                 "from_agent": r["from_alias"],
                 "body": r["body"],
                 "sender_leaving": bool(r["sender_leaving"]),
+                "sender_waiting": sender_waiting,
                 "hang_on": is_hang_on,
                 "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                 "timestamp": r["created_at"].isoformat(),
             }
             yield f"event: message\ndata: {json.dumps(payload)}\n\n"
 
-        # Read receipts from others.
-        receipts = await aweb_db.fetch_all(
-            """
-            SELECT rr.agent_id, rr.last_read_message_id, rr.last_read_at, p.alias
-            FROM {{tables.chat_read_receipts}} rr
-            JOIN {{tables.chat_session_participants}} p
-              ON p.session_id = rr.session_id AND p.agent_id = rr.agent_id
-            WHERE rr.session_id = $1
-              AND rr.agent_id <> $2
-              AND rr.last_read_at IS NOT NULL
-              AND rr.last_read_at > $3
-            ORDER BY rr.last_read_at ASC
-            """,
-            session_id,
-            agent_id,
-            last_receipt_at,
-        )
-        for r in receipts:
-            last_receipt_at = max(last_receipt_at, r["last_read_at"])
-            payload = {
-                "type": "read_receipt",
-                "session_id": str(session_id),
-                "reader_alias": r["alias"],
-                "up_to_message_id": (
-                    str(r["last_read_message_id"]) if r["last_read_message_id"] else ""
-                ),
-                "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
-                "timestamp": r["last_read_at"].isoformat(),
-            }
-            yield f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"
+        last_receipt_at = datetime.now(timezone.utc)
 
-        await asyncio.sleep(0.1)
+        while datetime.now(timezone.utc) < deadline:
+            # Refresh registration every 30s.
+            now_mono = time.monotonic()
+            if now_mono - last_refresh >= 30:
+                await register_waiting(redis, session_id_str, agent_id_str)
+                last_refresh = now_mono
+
+            # New messages.
+            new_msgs = await aweb_db.fetch_all(
+                """
+                SELECT message_id, from_agent_id, from_alias, body, created_at,
+                       sender_leaving, hang_on
+                FROM {{tables.chat_messages}}
+                WHERE session_id = $1 AND created_at > $2
+                ORDER BY created_at ASC
+                LIMIT 200
+                """,
+                session_id,
+                last_message_at,
+            )
+            for r in new_msgs:
+                last_message_at = max(last_message_at, r["created_at"])
+                is_hang_on = bool(r["hang_on"])
+                sender_waiting = await is_agent_waiting(
+                    redis, session_id_str, str(r["from_agent_id"])
+                )
+                payload = {
+                    "type": "message",
+                    "session_id": session_id_str,
+                    "message_id": str(r["message_id"]),
+                    "from_agent": r["from_alias"],
+                    "body": r["body"],
+                    "sender_leaving": bool(r["sender_leaving"]),
+                    "sender_waiting": sender_waiting,
+                    "hang_on": is_hang_on,
+                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                    "timestamp": r["created_at"].isoformat(),
+                }
+                yield f"event: message\ndata: {json.dumps(payload)}\n\n"
+
+            # Read receipts from others.
+            receipts = await aweb_db.fetch_all(
+                """
+                SELECT rr.agent_id, rr.last_read_message_id, rr.last_read_at, p.alias
+                FROM {{tables.chat_read_receipts}} rr
+                JOIN {{tables.chat_session_participants}} p
+                  ON p.session_id = rr.session_id AND p.agent_id = rr.agent_id
+                WHERE rr.session_id = $1
+                  AND rr.agent_id <> $2
+                  AND rr.last_read_at IS NOT NULL
+                  AND rr.last_read_at > $3
+                ORDER BY rr.last_read_at ASC
+                """,
+                session_id,
+                agent_id,
+                last_receipt_at,
+            )
+            for r in receipts:
+                last_receipt_at = max(last_receipt_at, r["last_read_at"])
+                payload = {
+                    "type": "read_receipt",
+                    "session_id": session_id_str,
+                    "reader_alias": r["alias"],
+                    "up_to_message_id": (
+                        str(r["last_read_message_id"]) if r["last_read_message_id"] else ""
+                    ),
+                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
+                    "timestamp": r["last_read_at"].isoformat(),
+                }
+                yield f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"
+
+            await asyncio.sleep(0.1)
+    finally:
+        await unregister_waiting(redis, session_id_str, agent_id_str)
 
 
 @router.get("/sessions/{session_id}/stream")
@@ -649,6 +699,7 @@ async def stream(
     session_id: str,
     deadline: str = Query(..., min_length=1),
     db=Depends(get_db),
+    redis=Depends(get_redis),
 ):
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     try:
@@ -683,7 +734,10 @@ async def stream(
     deadline_dt = _parse_deadline(deadline)
 
     return StreamingResponse(
-        _sse_events(db=db, session_id=session_uuid, agent_id=agent_uuid, deadline=deadline_dt),
+        _sse_events(
+            db=db, redis=redis, session_id=session_uuid,
+            agent_id=agent_uuid, deadline=deadline_dt,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
@@ -805,6 +859,7 @@ class SessionListItem(BaseModel):
     session_id: str
     participants: list[str]
     created_at: str
+    sender_waiting: bool = False
 
 
 class SessionListResponse(BaseModel):
@@ -815,6 +870,7 @@ class SessionListResponse(BaseModel):
 async def list_sessions(
     request: Request,
     db=Depends(get_db),
+    redis=Depends(get_redis),
 ) -> SessionListResponse:
     """List chat sessions for the authenticated agent.
 
@@ -829,7 +885,8 @@ async def list_sessions(
     rows = await aweb_db.fetch_all(
         """
         SELECT s.session_id, s.created_at,
-               array_agg(p2.alias ORDER BY p2.alias) AS participants
+               array_agg(p2.alias ORDER BY p2.alias) AS participants,
+               array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids
         FROM {{tables.chat_sessions}} s
         JOIN {{tables.chat_session_participants}} p
           ON p.session_id = s.session_id AND p.agent_id = $2
@@ -843,13 +900,19 @@ async def list_sessions(
         agent_uuid,
     )
 
-    sessions = [
-        SessionListItem(
-            session_id=str(row["session_id"]),
-            participants=list(row["participants"] or []),
-            created_at=row["created_at"].isoformat(),
+    sessions = []
+    for row in rows:
+        other_ids = [
+            pid for pid in (row["participant_ids"] or []) if pid != actor_id
+        ]
+        waiting = await get_waiting_agents(redis, str(row["session_id"]), other_ids)
+        sessions.append(
+            SessionListItem(
+                session_id=str(row["session_id"]),
+                participants=list(row["participants"] or []),
+                created_at=row["created_at"].isoformat(),
+                sender_waiting=len(waiting) > 0,
+            )
         )
-        for row in rows
-    ]
 
     return SessionListResponse(sessions=sessions)
