@@ -263,7 +263,8 @@ async def create_or_send(
     waiting_ids = await get_waiting_agents(redis, str(session_id), target_ids)
     waiting_set = set(waiting_ids)
     targets_connected = [
-        r["alias"] for r in participants_rows
+        r["alias"]
+        for r in participants_rows
         if str(r["agent_id"]) in waiting_set and str(r["agent_id"]) in set(target_ids)
     ]
 
@@ -350,9 +351,7 @@ async def pending(
 
     pending_items = []
     for r in rows:
-        other_ids = [
-            pid for pid in (r["participant_ids"] or []) if pid != actor_id
-        ]
+        other_ids = [pid for pid in (r["participant_ids"] or []) if pid != actor_id]
         waiting = await get_waiting_agents(redis, str(r["session_id"]), other_ids)
         pending_items.append(
             {
@@ -598,9 +597,7 @@ async def _sse_events(
 
         for r in recent:
             is_hang_on = bool(r["hang_on"])
-            sender_waiting = await is_agent_waiting(
-                redis, session_id_str, str(r["from_agent_id"])
-            )
+            sender_waiting = await is_agent_waiting(redis, session_id_str, str(r["from_agent_id"]))
             payload = {
                 "type": "message",
                 "session_id": session_id_str,
@@ -735,8 +732,11 @@ async def stream(
 
     return StreamingResponse(
         _sse_events(
-            db=db, redis=redis, session_id=session_uuid,
-            agent_id=agent_uuid, deadline=deadline_dt,
+            db=db,
+            redis=redis,
+            session_id=session_uuid,
+            agent_id=agent_uuid,
+            deadline=deadline_dt,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -902,9 +902,7 @@ async def list_sessions(
 
     sessions = []
     for row in rows:
-        other_ids = [
-            pid for pid in (row["participant_ids"] or []) if pid != actor_id
-        ]
+        other_ids = [pid for pid in (row["participant_ids"] or []) if pid != actor_id]
         waiting = await get_waiting_agents(redis, str(row["session_id"]), other_ids)
         sessions.append(
             SessionListItem(

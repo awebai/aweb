@@ -760,9 +760,9 @@ async def test_sse_message_includes_sender_waiting_true(aweb_db_infra, async_red
                 if line.startswith("data: "):
                     data = json.loads(line[6:])
                     if data.get("type") == "message" and data.get("body") == "are you there?":
-                        assert data["sender_waiting"] is True, (
-                            f"Expected sender_waiting=true, got {data}"
-                        )
+                        assert (
+                            data["sender_waiting"] is True
+                        ), f"Expected sender_waiting=true, got {data}"
                         break
             else:
                 raise AssertionError("Did not find 'are you there?' message in SSE stream")
@@ -803,9 +803,9 @@ async def test_sse_message_sender_waiting_false_without_redis(aweb_db_infra):
                 if line.startswith("data: "):
                     data = json.loads(line[6:])
                     if data.get("type") == "message":
-                        assert data["sender_waiting"] is False, (
-                            f"Expected sender_waiting=false without redis, got {data}"
-                        )
+                        assert (
+                            data["sender_waiting"] is False
+                        ), f"Expected sender_waiting=false without redis, got {data}"
 
 
 @pytest.mark.asyncio
