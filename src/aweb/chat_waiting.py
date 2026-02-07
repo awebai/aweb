@@ -2,12 +2,30 @@
 
 Tracks which agents have active SSE streams on a chat session. Uses
 ZADD with timestamp scores for registration, ZSCORE for presence checks,
-and ZREM for cleanup. All functions gracefully degrade when redis is None.
+and ZREM for cleanup. All functions gracefully degrade when redis is None
+or on Redis errors.
 """
 
 from __future__ import annotations
 
+import logging
 import time
+
+logger = logging.getLogger(__name__)
+
+# Lua script for atomic stale-entry cleanup: only removes the member if
+# its score is still below the cutoff (avoids TOCTOU race with concurrent refresh).
+_STALE_CHECK_SCRIPT = """
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score then
+    return -1
+end
+if tonumber(score) < tonumber(ARGV[2]) then
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    return 0
+end
+return 1
+"""
 
 
 def _chat_waiting_key(session_id: str) -> str:
@@ -24,9 +42,12 @@ async def register_waiting(
     if redis is None:
         return
 
-    key = _chat_waiting_key(session_id)
-    await redis.zadd(key, {agent_id: time.time()})
-    await redis.expire(key, ttl_seconds)
+    try:
+        key = _chat_waiting_key(session_id)
+        await redis.zadd(key, {agent_id: time.time()})
+        await redis.expire(key, ttl_seconds)
+    except Exception:
+        logger.warning("Failed to register waiting for %s in %s", agent_id, session_id)
 
 
 async def unregister_waiting(
@@ -38,7 +59,10 @@ async def unregister_waiting(
     if redis is None:
         return
 
-    await redis.zrem(_chat_waiting_key(session_id), agent_id)
+    try:
+        await redis.zrem(_chat_waiting_key(session_id), agent_id)
+    except Exception:
+        logger.warning("Failed to unregister waiting for %s in %s", agent_id, session_id)
 
 
 async def is_agent_waiting(
@@ -51,16 +75,15 @@ async def is_agent_waiting(
     if redis is None:
         return False
 
-    key = _chat_waiting_key(session_id)
-    score = await redis.zscore(key, agent_id)
-    if score is None:
+    try:
+        key = _chat_waiting_key(session_id)
+        cutoff = time.time() - max_age_seconds
+        # Atomic check-and-cleanup: returns 1 if fresh, 0 if stale (removed), -1 if absent.
+        result = await redis.eval(_STALE_CHECK_SCRIPT, 1, key, agent_id, cutoff)
+        return result == 1
+    except Exception:
+        logger.warning("Failed to check waiting for %s in %s", agent_id, session_id)
         return False
-
-    if time.time() - score > max_age_seconds:
-        await redis.zrem(key, agent_id)
-        return False
-
-    return True
 
 
 async def get_waiting_agents(
@@ -73,17 +96,21 @@ async def get_waiting_agents(
     if redis is None or not agent_ids:
         return []
 
-    key = _chat_waiting_key(session_id)
-    cutoff = time.time() - max_age_seconds
+    try:
+        key = _chat_waiting_key(session_id)
+        cutoff = time.time() - max_age_seconds
 
-    pipe = redis.pipeline()
-    for aid in agent_ids:
-        pipe.zscore(key, aid)
-    scores = await pipe.execute()
+        pipe = redis.pipeline()
+        for aid in agent_ids:
+            pipe.zscore(key, aid)
+        scores = await pipe.execute()
 
-    waiting = []
-    for aid, score in zip(agent_ids, scores):
-        if score is not None and score >= cutoff:
-            waiting.append(aid)
+        waiting = []
+        for aid, score in zip(agent_ids, scores):
+            if score is not None and score >= cutoff:
+                waiting.append(aid)
 
-    return waiting
+        return waiting
+    except Exception:
+        logger.warning("Failed to get waiting agents for %s", session_id)
+        return []

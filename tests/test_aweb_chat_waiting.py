@@ -66,6 +66,19 @@ async def test_get_waiting_agents_batch(async_redis):
 
 
 @pytest.mark.asyncio
+async def test_session_isolation(async_redis):
+    session_a = "sess-aaa"
+    session_b = "sess-bbb"
+    agent_id = "agent-111"
+
+    await register_waiting(async_redis, session_a, agent_id)
+
+    assert await is_agent_waiting(async_redis, session_a, agent_id) is True
+    assert await is_agent_waiting(async_redis, session_b, agent_id) is False
+    assert await get_waiting_agents(async_redis, session_b, [agent_id]) == []
+
+
+@pytest.mark.asyncio
 async def test_none_redis_graceful():
     session_id = "sess-005"
     agent_id = "agent-ddd"
