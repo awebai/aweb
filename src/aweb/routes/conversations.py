@@ -71,32 +71,36 @@ async def list_conversations(
         actor_uuid,
     )
 
-    # Resolve participants for each mail conversation.
-    mail_items: list[dict] = []
-    for row in mail_rows:
-        conv_id = row["conversation_id"]
-
-        # Get distinct participants for this thread
+    # Batch-resolve participants for all mail conversations in one query.
+    conv_ids = [row["conversation_id"] for row in mail_rows]
+    participants_map: dict[str, list[str]] = {cid: [] for cid in conv_ids}
+    if conv_ids:
         part_rows = await aweb_db.fetch_all(
             """
-            SELECT DISTINCT a.alias
+            SELECT COALESCE(m.thread_id, m.message_id)::text AS conv_id, a.alias
             FROM {{tables.messages}} m
             JOIN {{tables.agents}} a ON a.agent_id IN (m.from_agent_id, m.to_agent_id)
             WHERE m.project_id = $1
-              AND COALESCE(m.thread_id, m.message_id)::text = $2
+              AND COALESCE(m.thread_id, m.message_id)::text = ANY($2)
+            GROUP BY COALESCE(m.thread_id, m.message_id), a.alias
             ORDER BY a.alias
             """,
             project_uuid,
-            conv_id,
+            conv_ids,
         )
+        for r in part_rows:
+            participants_map[r["conv_id"]].append(r["alias"])
 
+    mail_items: list[dict] = []
+    for row in mail_rows:
+        conv_id = row["conversation_id"]
         preview = (row["last_body"] or "")[:100]
 
         mail_items.append(
             {
                 "conversation_type": "mail",
                 "conversation_id": conv_id,
-                "participants": [r["alias"] for r in part_rows],
+                "participants": participants_map.get(conv_id, []),
                 "subject": row["subject"] or "",
                 "last_message_at": row["last_message_at"],
                 "last_message_from": row["last_from"] or "",
@@ -172,7 +176,7 @@ async def list_conversations(
     # Apply limit
     page = combined[:limit]
     next_cursor: str | None = None
-    if len(combined) > limit:
+    if len(page) == limit and len(combined) > limit:
         last = page[-1]["last_message_at"]
         next_cursor = last.isoformat() if hasattr(last, "isoformat") else str(last)
 

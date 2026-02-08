@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_project_from_auth
 from aweb.deps import get_db
+
+CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.\-]+$")
 
 router = APIRouter(prefix="/v1/contacts", tags=["aweb-contacts"])
 
@@ -16,6 +19,16 @@ class CreateContactRequest(BaseModel):
 
     contact_address: str = Field(..., min_length=1, max_length=256)
     label: str | None = None
+
+    @field_validator("contact_address")
+    @classmethod
+    def _validate_contact_address(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("contact_address must not be empty")
+        if not CONTACT_ADDRESS_PATTERN.match(v):
+            raise ValueError("Invalid contact_address format")
+        return v
 
 
 class ContactView(BaseModel):
