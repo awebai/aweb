@@ -566,6 +566,7 @@ async def _sse_events(
     session_id: UUID,
     agent_id: UUID,
     deadline: datetime,
+    after: datetime | None = None,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     agent_id_str = str(agent_id)
@@ -579,41 +580,44 @@ async def _sse_events(
         # can start streaming without blocking on initial DB work.
         yield ": keepalive\n\n"
 
-        # Replay recent history (bounded).
-        recent = await aweb_db.fetch_all(
-            """
-            SELECT message_id, from_agent_id, from_alias, body, created_at, sender_leaving, hang_on
-            FROM {{tables.chat_messages}}
-            WHERE session_id = $1
-            ORDER BY created_at DESC
-            LIMIT 50
-            """,
-            session_id,
-        )
-        recent = list(reversed(recent))
-        last_message_at = (
-            recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
-        )
+        if after is not None:
+            # Replay only messages newer than the given timestamp (catches the
+            # send→SSE connect race window without replaying full history).
+            recent = await aweb_db.fetch_all(
+                """
+                SELECT message_id, from_agent_id, from_alias, body, created_at,
+                       sender_leaving, hang_on
+                FROM {{tables.chat_messages}}
+                WHERE session_id = $1 AND created_at > $2
+                ORDER BY created_at ASC
+                LIMIT 50
+                """,
+                session_id,
+                after,
+            )
+            last_message_at = recent[-1]["created_at"] if recent else after
 
-        # Batch-check sender waiting status for all replay messages.
-        replay_sender_ids = list({str(r["from_agent_id"]) for r in recent})
-        replay_waiting = set(await get_waiting_agents(redis, session_id_str, replay_sender_ids))
+            replay_sender_ids = list({str(r["from_agent_id"]) for r in recent})
+            replay_waiting = set(await get_waiting_agents(redis, session_id_str, replay_sender_ids))
 
-        for r in recent:
-            is_hang_on = bool(r["hang_on"])
-            payload = {
-                "type": "message",
-                "session_id": session_id_str,
-                "message_id": str(r["message_id"]),
-                "from_agent": r["from_alias"],
-                "body": r["body"],
-                "sender_leaving": bool(r["sender_leaving"]),
-                "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
-                "hang_on": is_hang_on,
-                "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                "timestamp": r["created_at"].isoformat(),
-            }
-            yield f"event: message\ndata: {json.dumps(payload)}\n\n"
+            for r in recent:
+                is_hang_on = bool(r["hang_on"])
+                payload = {
+                    "type": "message",
+                    "session_id": session_id_str,
+                    "message_id": str(r["message_id"]),
+                    "from_agent": r["from_alias"],
+                    "body": r["body"],
+                    "sender_leaving": bool(r["sender_leaving"]),
+                    "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
+                    "hang_on": is_hang_on,
+                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                    "timestamp": r["created_at"].isoformat(),
+                }
+                yield f"event: message\ndata: {json.dumps(payload)}\n\n"
+        else:
+            # No replay — poll only for messages arriving after now.
+            last_message_at = datetime.now(timezone.utc)
 
         last_receipt_at = datetime.now(timezone.utc)
 
@@ -698,6 +702,7 @@ async def stream(
     request: Request,
     session_id: str,
     deadline: str = Query(..., min_length=1),
+    after: str | None = Query(None),
     db=Depends(get_db),
     redis=Depends(get_redis),
 ):
@@ -733,6 +738,16 @@ async def stream(
 
     deadline_dt = _parse_deadline(deadline)
 
+    after_dt: datetime | None = None
+    if after is not None:
+        try:
+            after_dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid after format")
+        if after_dt.tzinfo is None:
+            raise HTTPException(status_code=422, detail="after must be timezone-aware")
+        after_dt = after_dt.astimezone(timezone.utc)
+
     return StreamingResponse(
         _sse_events(
             db=db,
@@ -740,6 +755,7 @@ async def stream(
             session_id=session_uuid,
             agent_id=agent_uuid,
             deadline=deadline_dt,
+            after=after_dt,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},

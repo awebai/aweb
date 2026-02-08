@@ -41,6 +41,7 @@ async def _wait_for_matching_event(
 async def test_chat_sse_replays_recent_history(
     aweb_client, aweb_client_2, aweb_target: AwebTarget
 ) -> None:
+    before_send = datetime.now(timezone.utc).isoformat()
     body = f"replay-{uuid.uuid4().hex}"
     create = await aweb_client.post(
         "/v1/chat/sessions",
@@ -57,10 +58,11 @@ async def test_chat_sse_replays_recent_history(
 
     sse_url = f"/v1/chat/sessions/{session_id}/stream"
 
+    # Use after= to request replay of messages since before the send.
     event, payload = await _wait_for_matching_event(
         aweb_client=aweb_client_2,
         url=sse_url,
-        params={"deadline": _now_deadline(10)},
+        params={"deadline": _now_deadline(10), "after": before_send},
         predicate=lambda ev, pl: ev.event == "message" and pl.get("message_id") == sent_message_id,
         timeout_seconds=5.0,
     )

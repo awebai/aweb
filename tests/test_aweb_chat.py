@@ -269,6 +269,7 @@ async def test_aweb_chat_sse_replay_live_and_read_receipt(aweb_db_infra):
             headers_1 = _auth_headers(seeded["api_key_1"])
             headers_2 = _auth_headers(seeded["api_key_2"])
 
+            before_send = datetime.now(timezone.utc).isoformat()
             create = await client.post(
                 "/v1/chat/sessions",
                 headers=headers_1,
@@ -283,11 +284,11 @@ async def test_aweb_chat_sse_replay_live_and_read_receipt(aweb_db_infra):
             baseline_message_id = create.json()["message_id"]
 
             sse_path = f"/v1/chat/sessions/{session_id}/stream"
-            # Replay should include baseline.
+            # Replay with after= before the send should include baseline.
             replay_text = await _collect_sse_text(
                 client=client,
                 url=sse_path,
-                params={"deadline": _deadline(1)},
+                params={"deadline": _deadline(1), "after": before_send},
                 headers=headers_2,
             )
             assert baseline_message_id in replay_text
@@ -999,3 +1000,137 @@ async def test_list_sessions_sender_waiting(aweb_db_infra, async_redis):
             assert sessions[0]["sender_waiting"] is True
 
             await stream_task
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_no_after_skips_replay(aweb_db_infra):
+    """Without 'after' param, SSE stream should not replay history."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Send a message to create a session with history.
+            create = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "old message", "leaving": False},
+            )
+            assert create.status_code == 200, create.text
+            session_id = create.json()["session_id"]
+            old_message_id = create.json()["message_id"]
+
+            # Connect SSE without 'after' — should NOT replay the old message.
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1)},
+                headers=headers_2,
+            )
+            assert old_message_id not in sse_text
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_after_replays_only_newer(aweb_db_infra):
+    """With 'after' param, SSE stream replays only messages newer than the timestamp."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Send first message.
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "first", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+            first_id = r1.json()["message_id"]
+
+            # Record timestamp between messages.
+            after_ts = datetime.now(timezone.utc).isoformat()
+            await asyncio.sleep(0.05)
+
+            # Send second message.
+            r2 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "second", "leaving": False},
+            )
+            assert r2.status_code == 200, r2.text
+            second_id = r2.json()["message_id"]
+
+            # Connect SSE with after=after_ts — should replay second but not first.
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1), "after": after_ts},
+                headers=headers_2,
+            )
+            assert first_id not in sse_text
+            assert second_id in sse_text
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_after_catches_race_window(aweb_db_infra):
+    """after param catches messages sent between POST and SSE connect (the race window)."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Agent-1 sends initial message.
+            r1 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "setup", "leaving": False},
+            )
+            assert r1.status_code == 200, r1.text
+            session_id = r1.json()["session_id"]
+
+            # Agent-1 sends again and records the timestamp.
+            send_time = datetime.now(timezone.utc).isoformat()
+            await asyncio.sleep(0.05)
+
+            r2 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "ping", "leaving": False},
+            )
+            assert r2.status_code == 200, r2.text
+            ping_id = r2.json()["message_id"]
+
+            # Simulate race: agent-2 replies BEFORE agent-1 connects SSE.
+            r3 = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_2,
+                json={"to_aliases": ["agent-1"], "message": "pong", "leaving": False},
+            )
+            assert r3.status_code == 200, r3.text
+            pong_id = r3.json()["message_id"]
+
+            # Agent-1 connects SSE with after=send_time — should see both ping and pong.
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1), "after": send_time},
+                headers=headers_1,
+            )
+            assert ping_id in sse_text
+            assert pong_id in sse_text
