@@ -280,9 +280,7 @@ async def test_list_agents_include_internal_shows_all(aweb_db_infra):
             )
 
             # With include_internal=true, both should appear
-            resp = await c.get(
-                "/v1/agents", headers=headers, params={"include_internal": "true"}
-            )
+            resp = await c.get("/v1/agents", headers=headers, params={"include_internal": "true"})
             assert resp.status_code == 200
             agents = resp.json()["agents"]
             aliases = {a["alias"] for a in agents}
