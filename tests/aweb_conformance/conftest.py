@@ -65,6 +65,7 @@ async def aweb_other_client(
 ) -> AsyncIterator[httpx.AsyncClient]:
     if aweb_other_target is None:
         pytest.skip("Set AWEB_OTHER_API_KEY/AWEB_OTHER_AGENT_* to run cross-project scoping tests")
+    assert aweb_other_target is not None  # mypy: skip is NoReturn
     async with httpx.AsyncClient(
         base_url=aweb_other_target.base_url,
         headers={"Authorization": f"Bearer {aweb_other_target.api_key}"},

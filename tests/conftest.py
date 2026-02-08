@@ -8,6 +8,8 @@ from pgdbm.fixtures.conftest import *  # noqa: F401,F403
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from redis.asyncio import Redis as AsyncRedis
 
+from aweb.db import DatabaseInfra as AwebDatabaseInfra  # noqa: F401
+
 from .db_utils import build_database_url
 
 logger = logging.getLogger(__name__)
@@ -35,8 +37,7 @@ async def async_redis() -> AsyncGenerator[AsyncRedis, None]:
 
 
 @pytest_asyncio.fixture
-async def aweb_db_infra(monkeypatch) -> AsyncGenerator["aweb.db.DatabaseInfra", None]:  # noqa: F405
-    from aweb.db import DatabaseInfra as AwebDatabaseInfra
+async def aweb_db_infra(monkeypatch) -> AsyncGenerator[AwebDatabaseInfra, None]:  # noqa: F405
 
     test_config = DatabaseTestConfig.from_env()
     test_db = AsyncTestDatabase(test_config)

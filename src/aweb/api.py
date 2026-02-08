@@ -18,6 +18,8 @@ from aweb.db import DatabaseInfra
 from aweb.routes.agents import router as agents_router
 from aweb.routes.auth import router as auth_router
 from aweb.routes.chat import router as chat_router
+from aweb.routes.contacts import router as contacts_router
+from aweb.routes.conversations import router as conversations_router
 from aweb.routes.init import router as init_router
 from aweb.routes.messages import router as messages_router
 from aweb.routes.projects import router as projects_router
@@ -30,6 +32,8 @@ def include_aweb_routers(app: FastAPI) -> None:
     app.include_router(auth_router)
     app.include_router(agents_router)
     app.include_router(chat_router)
+    app.include_router(contacts_router)
+    app.include_router(conversations_router)
     app.include_router(messages_router)
     app.include_router(projects_router)
     app.include_router(reservations_router)

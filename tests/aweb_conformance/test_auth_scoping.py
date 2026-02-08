@@ -31,6 +31,7 @@ async def test_cross_project_mail_send_is_rejected(
 ) -> None:
     if aweb_other_target is None:
         pytest.skip("Missing AWEB_OTHER_* env vars")
+    assert aweb_other_target is not None  # mypy: skip is NoReturn
 
     resp = await aweb_client.post(
         "/v1/messages",
@@ -52,6 +53,7 @@ async def test_cross_project_chat_alias_resolution_is_rejected(
 ) -> None:
     if aweb_other_target is None:
         pytest.skip("Missing AWEB_OTHER_* env vars")
+    assert aweb_other_target is not None  # mypy: skip is NoReturn
 
     resp = await aweb_client.post(
         "/v1/chat/sessions",

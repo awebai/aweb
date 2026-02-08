@@ -87,6 +87,7 @@ class AgentView(BaseModel):
     alias: str
     human_name: str | None = None
     agent_type: str | None = None
+    access_mode: str = "open"
     status: str | None = None
     last_seen: str | None = None
     online: bool = False
@@ -105,7 +106,7 @@ async def list_agents(request: Request, db=Depends(get_db), redis=Depends(get_re
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, human_name, agent_type
+        SELECT agent_id, alias, human_name, agent_type, access_mode
         FROM {{tables.agents}}
         WHERE project_id = $1 AND deleted_at IS NULL
         ORDER BY alias
@@ -127,6 +128,7 @@ async def list_agents(request: Request, db=Depends(get_db), redis=Depends(get_re
                 alias=r["alias"],
                 human_name=r.get("human_name"),
                 agent_type=r.get("agent_type"),
+                access_mode=r.get("access_mode", "open"),
                 status=p["status"] if p else None,
                 last_seen=p["last_seen"] if p else None,
                 online=p is not None,
@@ -172,3 +174,64 @@ async def heartbeat(request: Request, db=Depends(get_db), redis=Depends(get_redi
     )
 
     return HeartbeatResponse(agent_id=agent_id, last_seen=last_seen, ttl_seconds=ttl)
+
+
+VALID_ACCESS_MODES = {"open", "contacts_only"}
+
+
+class PatchAgentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    access_mode: str | None = None
+
+    @field_validator("access_mode")
+    @classmethod
+    def _validate_access_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_ACCESS_MODES:
+            raise ValueError(f"access_mode must be one of {sorted(VALID_ACCESS_MODES)}")
+        return v
+
+
+class PatchAgentResponse(BaseModel):
+    agent_id: str
+    access_mode: str
+
+
+@router.patch("/{agent_id}", response_model=PatchAgentResponse)
+async def patch_agent(
+    request: Request, agent_id: str, payload: PatchAgentRequest, db=Depends(get_db)
+) -> PatchAgentResponse:
+    project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    try:
+        agent_uuid = UUID(agent_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, access_mode
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    new_access_mode = payload.access_mode if payload.access_mode is not None else row["access_mode"]
+
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET access_mode = $1
+        WHERE agent_id = $2 AND project_id = $3
+        """,
+        new_access_mode,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    return PatchAgentResponse(agent_id=str(agent_uuid), access_mode=new_access_mode)

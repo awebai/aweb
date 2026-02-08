@@ -1,10 +1,11 @@
 {
-  "last_sync": "2026-02-07T23:48:15.351927Z",
+  "last_sync": "2026-02-08T09:57:05.369534Z",
   "protocol_version": 1,
   "issue_hashes": {
     "aweb-2n8": "v1:22054f8de8ac84843867d123bb61b65272680a759d76b0ec30823607bd35289d",
     "aweb-3ty": "v1:1b819497ed62cf752984c4ee0d490398cf269232c8e2fc3a3d5986cebc9dd46b",
     "aweb-5y5": "v1:b75c0bc871a6cadf06d0d5d9094e3eef5d56916aa2c61bc0ebc1d9d21ffdafd0",
+    "aweb-7jq": "v1:e0cb547ebc654f251bf37d7deb38b2e761b6ab813f191678291aec9f870b0960",
     "aweb-91t": "v1:fc67f2ecf3344e34aa64a69ce02b35de202f23c4af8f5269217ec4b45ff0a08b",
     "aweb-acs": "v1:c98b1e56beef754c5b1e739c571e2826f410998a42ce0fac3346bd65a236f58f",
     "aweb-axv": "v1:2c66eddfa7c83bb68c2b7aace6368a0c27bd90b54eada767e4502f9baf8c3f63",
