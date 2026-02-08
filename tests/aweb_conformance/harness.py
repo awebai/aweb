@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional
 
 import httpx
-import pytest
 
 
 @dataclass(frozen=True)
@@ -125,8 +124,3 @@ async def sse_events(
             if line.startswith("data:"):
                 data_lines.append(line[len("data:") :].lstrip())
                 continue
-
-
-def require_conformance_enabled() -> None:
-    if os.getenv("AWEB_CONFORMANCE", "").strip() not in ("1", "true", "yes", "on"):
-        pytest.skip("Set AWEB_CONFORMANCE=1 to run aweb conformance tests")

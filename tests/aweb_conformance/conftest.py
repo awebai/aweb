@@ -20,7 +20,6 @@ from .harness import (
     AwebTarget,
     bootstrap_target,
     maybe_other_target,
-    require_conformance_enabled,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,11 +27,6 @@ logger = logging.getLogger(__name__)
 TEST_SERVER_PORT = 18766
 TEST_SERVER_URL = f"http://localhost:{TEST_SERVER_PORT}"
 TEST_REDIS_URL = os.getenv("AWEB_TEST_REDIS_URL", "redis://localhost:6379/15")
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _require_enabled() -> None:
-    require_conformance_enabled()
 
 
 def _wait_for_server(url: str, timeout: float = 15.0) -> bool:

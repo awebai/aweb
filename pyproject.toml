@@ -117,5 +117,5 @@ known-first-party = ["aweb"]
 
 [tool.pytest.ini_options]
 markers = [
-  "aweb_conformance: black-box conformance tests (skipped unless AWEB_CONFORMANCE=1)",
+  "aweb_conformance: black-box conformance tests against a live aweb server",
 ]

@@ -38,7 +38,7 @@ help:
 	@echo ""
 	@echo "  Testing:"
 	@echo "    make test           - Run unit/integration tests"
-	@echo "    make conformance    - Run black-box conformance tests (requires AWEB_URL + AWEB_CONFORMANCE=1)"
+	@echo "    make conformance    - Run black-box conformance tests (auto-starts server)"
 	@echo ""
 	@echo "  Code Quality:"
 	@echo "    make fmt            - Format (black + isort)"
@@ -197,7 +197,7 @@ test:
 	uv run pytest
 
 conformance:
-	AWEB_CONFORMANCE=1 uv run pytest -q tests/aweb_conformance
+	uv run pytest -q tests/aweb_conformance
 
 #
 # Code Quality
