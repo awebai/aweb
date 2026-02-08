@@ -444,3 +444,20 @@ async def test_conversations_preview_truncated(aweb_db_infra):
             convs = resp.json()["conversations"]
             assert len(convs) == 1
             assert len(convs[0]["last_message_preview"]) == 100
+
+
+@pytest.mark.asyncio
+async def test_conversations_malformed_cursor_rejected(aweb_db_infra):
+    """Malformed cursor value should return 422, not be silently ignored."""
+    seeded = await _seed_two_agents(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                "/v1/conversations",
+                headers=_headers(seeded["api_key_1"]),
+                params={"cursor": "not-a-timestamp"},
+            )
+            assert resp.status_code == 422
+            assert "cursor" in resp.json()["detail"].lower()

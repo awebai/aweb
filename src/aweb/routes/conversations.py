@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
@@ -47,7 +47,7 @@ async def list_conversations(
         try:
             cursor_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
         except Exception:
-            cursor_dt = None
+            raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     # --- Mail conversations ---
     # Group by COALESCE(thread_id, message_id) to treat standalone mails as their own thread.
