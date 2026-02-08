@@ -595,9 +595,12 @@ async def _sse_events(
             recent[-1]["created_at"] if recent else datetime.fromtimestamp(0, tz=timezone.utc)
         )
 
+        # Batch-check sender waiting status for all replay messages.
+        replay_sender_ids = list({str(r["from_agent_id"]) for r in recent})
+        replay_waiting = set(await get_waiting_agents(redis, session_id_str, replay_sender_ids))
+
         for r in recent:
             is_hang_on = bool(r["hang_on"])
-            sender_waiting = await is_agent_waiting(redis, session_id_str, str(r["from_agent_id"]))
             payload = {
                 "type": "message",
                 "session_id": session_id_str,
@@ -605,7 +608,7 @@ async def _sse_events(
                 "from_agent": r["from_alias"],
                 "body": r["body"],
                 "sender_leaving": bool(r["sender_leaving"]),
-                "sender_waiting": sender_waiting,
+                "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
                 "hang_on": is_hang_on,
                 "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                 "timestamp": r["created_at"].isoformat(),

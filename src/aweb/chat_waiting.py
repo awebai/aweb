@@ -44,8 +44,10 @@ async def register_waiting(
 
     try:
         key = _chat_waiting_key(session_id)
-        await redis.zadd(key, {agent_id: time.time()})
-        await redis.expire(key, ttl_seconds)
+        pipe = redis.pipeline()
+        pipe.zadd(key, {agent_id: time.time()})
+        pipe.expire(key, ttl_seconds)
+        await pipe.execute()
     except Exception:
         logger.warning("Failed to register waiting for %s in %s", agent_id, session_id)
 
