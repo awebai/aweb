@@ -36,14 +36,18 @@ def _parse_uuid(value: str, *, field: str) -> str:
         raise ValueError(f"Invalid {field} format")
 
 
-def _parse_deadline(value: str) -> datetime:
+def _parse_timestamp(value: str, label: str = "timestamp") -> datetime:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
-        raise HTTPException(status_code=422, detail="Invalid deadline format")
+        raise HTTPException(status_code=422, detail=f"Invalid {label} format")
     if dt.tzinfo is None:
-        raise HTTPException(status_code=422, detail="deadline must be timezone-aware")
+        raise HTTPException(status_code=422, detail=f"{label} must be timezone-aware")
     return dt.astimezone(timezone.utc)
+
+
+def _parse_deadline(value: str) -> datetime:
+    return _parse_timestamp(value, "deadline")
 
 
 def _participant_hash(agent_ids: list[str]) -> str:
@@ -738,15 +742,7 @@ async def stream(
 
     deadline_dt = _parse_deadline(deadline)
 
-    after_dt: datetime | None = None
-    if after is not None:
-        try:
-            after_dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
-        except Exception:
-            raise HTTPException(status_code=422, detail="Invalid after format")
-        if after_dt.tzinfo is None:
-            raise HTTPException(status_code=422, detail="after must be timezone-aware")
-        after_dt = after_dt.astimezone(timezone.utc)
+    after_dt = _parse_timestamp(after, "after") if after is not None else None
 
     return StreamingResponse(
         _sse_events(

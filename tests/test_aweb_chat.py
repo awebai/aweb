@@ -1134,3 +1134,74 @@ async def test_sse_stream_after_catches_race_window(aweb_db_infra):
             )
             assert ping_id in sse_text
             assert pong_id in sse_text
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_after_rejects_naive_timestamp(aweb_db_infra):
+    """Naive timestamp (no timezone) in after param should be rejected with 422."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            create = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "msg", "leaving": False},
+            )
+            assert create.status_code == 200, create.text
+            session_id = create.json()["session_id"]
+
+            resp = await client.get(
+                f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1), "after": "2026-01-01T00:00:00"},
+                headers=headers_2,
+            )
+            assert resp.status_code == 422
+            assert "after" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_after_accepts_non_utc_timezone(aweb_db_infra):
+    """Non-UTC timezone in after param should be accepted and converted correctly."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", timeout=10.0
+        ) as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Send a message.
+            before_send = datetime.now(timezone.utc).isoformat()
+            await asyncio.sleep(0.05)
+            create = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "tz-test", "leaving": False},
+            )
+            assert create.status_code == 200, create.text
+            session_id = create.json()["session_id"]
+            msg_id = create.json()["message_id"]
+
+            # Use after with +05:30 offset that is equivalent to before_send.
+            from datetime import timezone as tz
+
+            utc_dt = datetime.fromisoformat(before_send)
+            offset = tz(timedelta(hours=5, minutes=30))
+            offset_ts = utc_dt.astimezone(offset).isoformat()
+
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": _deadline(1), "after": offset_ts},
+                headers=headers_2,
+            )
+            assert msg_id in sse_text
