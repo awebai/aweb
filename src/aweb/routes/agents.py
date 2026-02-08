@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.alias_allocator import suggest_next_name_prefix
@@ -99,16 +99,23 @@ class ListAgentsResponse(BaseModel):
 
 
 @router.get("", response_model=ListAgentsResponse)
-async def list_agents(request: Request, db=Depends(get_db), redis=Depends(get_redis)):
+async def list_agents(
+    request: Request,
+    include_internal: bool = Query(False),
+    db=Depends(get_db),
+    redis=Depends(get_redis),
+):
     """List all agents in the authenticated project with online status."""
     project_id = await get_project_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
 
+    type_filter = "" if include_internal else "AND agent_type != 'human'"
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT agent_id, alias, human_name, agent_type, access_mode
-        FROM {{tables.agents}}
+        FROM {{{{tables.agents}}}}
         WHERE project_id = $1 AND deleted_at IS NULL
+          {type_filter}
         ORDER BY alias
         """,
         UUID(project_id),

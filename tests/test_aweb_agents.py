@@ -220,3 +220,71 @@ async def test_patch_agent_revert_to_open(aweb_db_infra):
             )
             assert resp.status_code == 200
             assert resp.json()["access_mode"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_list_agents_hides_internal_by_default(aweb_db_infra):
+    """Agents with agent_type='human' (internal auth bridge actors) are excluded by default."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            data = await _init_project(c, "test/agents-internal", "alice")
+            headers = {"Authorization": f"Bearer {data['api_key']}"}
+
+            # Manually insert an internal agent (agent_type='human')
+            aweb_db = aweb_db_infra.get_manager("aweb")
+            from uuid import UUID
+
+            await aweb_db.execute(
+                """
+                INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type)
+                VALUES ($1, $2, $3, $4)
+                """,
+                UUID(data["project_id"]),
+                "cowork-internal",
+                "Internal Actor",
+                "human",
+            )
+
+            # Default listing should hide the internal agent
+            resp = await c.get("/v1/agents", headers=headers)
+            assert resp.status_code == 200
+            agents = resp.json()["agents"]
+            aliases = {a["alias"] for a in agents}
+            assert "alice" in aliases
+            assert "cowork-internal" not in aliases
+
+
+@pytest.mark.asyncio
+async def test_list_agents_include_internal_shows_all(aweb_db_infra):
+    """With include_internal=true, internal agents are included."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            data = await _init_project(c, "test/agents-include", "alice")
+            headers = {"Authorization": f"Bearer {data['api_key']}"}
+
+            # Manually insert an internal agent
+            aweb_db = aweb_db_infra.get_manager("aweb")
+            from uuid import UUID
+
+            await aweb_db.execute(
+                """
+                INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type)
+                VALUES ($1, $2, $3, $4)
+                """,
+                UUID(data["project_id"]),
+                "cowork-internal",
+                "Internal Actor",
+                "human",
+            )
+
+            # With include_internal=true, both should appear
+            resp = await c.get(
+                "/v1/agents", headers=headers, params={"include_internal": "true"}
+            )
+            assert resp.status_code == 200
+            agents = resp.json()["agents"]
+            aliases = {a["alias"] for a in agents}
+            assert "alice" in aliases
+            assert "cowork-internal" in aliases
