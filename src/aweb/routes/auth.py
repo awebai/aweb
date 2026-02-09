@@ -29,14 +29,14 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
     if _trust_aweb_proxy_headers():
         internal = _parse_internal_auth_context(request)
         if internal is not None:
-            result: dict = {
+            internal_result: dict = {
                 "project_id": internal["project_id"],
                 "agent_id": internal["actor_id"],
             }
             if internal["principal_type"] == "k":
-                result["api_key_id"] = internal["principal_id"]
+                internal_result["api_key_id"] = internal["principal_id"]
             elif internal["principal_type"] == "u":
-                result["user_id"] = internal["principal_id"]
+                internal_result["user_id"] = internal["principal_id"]
 
             aweb_db = db.get_manager("aweb")
             agent = await aweb_db.fetch_one(
@@ -49,10 +49,10 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
                 UUID(internal["project_id"]),
             )
             if agent:
-                result["alias"] = agent["alias"]
-                result["human_name"] = agent.get("human_name") or ""
-                result["agent_type"] = agent.get("agent_type") or "agent"
-            return result
+                internal_result["alias"] = agent["alias"]
+                internal_result["human_name"] = agent.get("human_name") or ""
+                internal_result["agent_type"] = agent.get("agent_type") or "agent"
+            return internal_result
 
     token = parse_bearer_token(request)
     if token is None:
