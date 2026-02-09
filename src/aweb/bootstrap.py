@@ -7,7 +7,7 @@ from uuid import UUID
 import asyncpg.exceptions
 
 from aweb.alias_allocator import AliasExhaustedError, candidate_name_prefixes, used_name_prefixes
-from aweb.auth import hash_api_key, validate_project_slug
+from aweb.auth import hash_api_key, validate_agent_alias, validate_project_slug
 
 
 def generate_api_key() -> tuple[str, str, str]:
@@ -79,7 +79,7 @@ async def bootstrap_identity(
     aweb_db = db.get_manager("aweb")
 
     project_slug = validate_project_slug(project_slug.strip())
-    alias = alias.strip() if alias is not None else None
+    alias = validate_agent_alias(alias.strip()) if alias is not None and alias.strip() else None
     human_name = (human_name or "").strip()
     agent_type = (agent_type or "agent").strip() or "agent"
 
@@ -155,6 +155,7 @@ async def bootstrap_identity(
             for prefix in candidate_name_prefixes():
                 if prefix in used_prefixes:
                     continue
+                prefix = validate_agent_alias(prefix)
                 try:
                     agent = await tx.fetch_one(
                         """

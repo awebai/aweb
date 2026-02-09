@@ -116,3 +116,30 @@ async def test_aweb_mail_send_inbox_ack_roundtrip(aweb_db_infra):
             assert all(
                 m.get("message_id") != message_id for m in inbox_after.json().get("messages", [])
             )
+
+
+@pytest.mark.asyncio
+async def test_aweb_mail_rejects_to_alias_with_slash(aweb_db_infra):
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            init_1 = await client.post(
+                "/v1/init",
+                json={"project_slug": "test/aweb-mail-alias-slash", "alias": "agent-1"},
+            )
+            assert init_1.status_code == 200, init_1.text
+            api_key_1 = init_1.json()["api_key"]
+
+            init_2 = await client.post(
+                "/v1/init",
+                json={"project_slug": "test/aweb-mail-alias-slash", "alias": "agent-2"},
+            )
+            assert init_2.status_code == 200, init_2.text
+
+            send = await client.post(
+                "/v1/messages",
+                headers=_auth_headers(api_key_1),
+                json={"to_alias": "acme/agent-2", "body": "hello"},
+            )
+            assert send.status_code == 422, send.text
+            assert "Invalid alias format" in send.text

@@ -1205,3 +1205,20 @@ async def test_sse_stream_after_accepts_non_utc_timezone(aweb_db_infra):
                 headers=headers_2,
             )
             assert msg_id in sse_text
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_rejects_to_aliases_with_slash(aweb_db_infra):
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["acme/agent-2"], "message": "hi", "leaving": False},
+            )
+            assert r.status_code == 422, r.text
+            assert "Invalid alias format" in r.text

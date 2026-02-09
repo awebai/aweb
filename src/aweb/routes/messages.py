@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
+from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
 from aweb.deps import get_db
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
 
@@ -46,7 +46,7 @@ class SendMessageRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("to_alias must not be empty")
-        return v
+        return validate_agent_alias(v)
 
     @field_validator("thread_id")
     @classmethod

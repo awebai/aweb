@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
+from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
 from aweb.chat_waiting import (
     get_waiting_agents,
     is_agent_waiting,
@@ -181,6 +181,19 @@ class CreateSessionRequest(BaseModel):
     to_aliases: list[str] = Field(..., min_length=1)
     message: str
     leaving: bool = False
+
+    @field_validator("to_aliases")
+    @classmethod
+    def _validate_to_aliases(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values or []:
+            value = (value or "").strip()
+            if not value:
+                continue
+            cleaned.append(validate_agent_alias(value))
+        if not cleaned:
+            raise ValueError("to_aliases must not be empty")
+        return cleaned
 
 
 class CreateSessionResponse(BaseModel):

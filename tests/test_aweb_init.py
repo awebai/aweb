@@ -120,3 +120,22 @@ async def test_aweb_init_allocates_next_alias_when_taken(aweb_db_infra):
             data = init.json()
             # "alice" is treated as taken when any existing alias uses the "alice" prefix.
             assert data["alias"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_aweb_init_rejects_alias_with_slash(aweb_db_infra):
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            init = await client.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/aweb-init-alias-slash",
+                    "project_name": "Test Aweb Init Alias Slash",
+                    "alias": "acme/researcher",
+                    "human_name": "Test Human",
+                    "agent_type": "agent",
+                },
+            )
+            assert init.status_code == 422, init.text
+            assert "Invalid alias format" in init.text

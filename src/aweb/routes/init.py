@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aweb.auth import validate_project_slug
+from aweb.auth import validate_agent_alias, validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, bootstrap_identity
 from aweb.deps import get_db
 
@@ -39,7 +39,7 @@ class InitRequest(BaseModel):
         v = v.strip()
         if not v:
             return None
-        return v
+        return validate_agent_alias(v)
 
     @field_validator("agent_type")
     @classmethod

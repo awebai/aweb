@@ -59,6 +59,11 @@ def verify_api_key_hash(key: str, key_hash: str) -> bool:
 PROJECT_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9/_.\\-]+$")
 PROJECT_SLUG_MAX_LENGTH = 256
 
+# Valid agent alias pattern: alphanumeric plus '_' and '-', no slashes.
+# '/' is reserved for network addresses like "org/alias".
+AGENT_ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\\-]*$")
+AGENT_ALIAS_MAX_LENGTH = 64
+
 
 INTERNAL_BEADHUB_AUTH_HEADER = "X-BH-Auth"
 INTERNAL_PROJECT_HEADER = "X-Project-ID"
@@ -328,6 +333,24 @@ def validate_project_slug(project_slug: str) -> str:
     if not PROJECT_SLUG_PATTERN.match(project_slug):
         raise ValueError("Invalid project_slug format")
     return project_slug
+
+
+def validate_agent_alias(alias: str) -> str:
+    """Validate an agent alias and return the normalized alias.
+
+    '/' is reserved for network addresses in the form "org/alias" and is not
+    allowed within a plain agent alias.
+    """
+    value = (alias or "").strip()
+    if not value:
+        raise ValueError("alias must not be empty")
+    if len(value) > AGENT_ALIAS_MAX_LENGTH:
+        raise ValueError("alias too long")
+    if "/" in value:
+        raise ValueError("Invalid alias format")
+    if not AGENT_ALIAS_PATTERN.match(value):
+        raise ValueError("Invalid alias format")
+    return value
 
 
 async def get_project_from_auth(
