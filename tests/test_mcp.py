@@ -93,6 +93,27 @@ async def _mcp_call(
     return resp.json()
 
 
+async def _tool_call(
+    mc: AsyncClient, tool_name: str, arguments: dict, session_id: str, headers: dict
+) -> dict:
+    """Call an MCP tool and return the parsed JSON result."""
+    result = await _mcp_call(
+        mc, "tools/call", {"name": tool_name, "arguments": arguments}, session_id, headers=headers
+    )
+    content = result["result"]["content"]
+    assert len(content) >= 1
+    assert content[0]["type"] == "text"
+    return json.loads(content[0]["text"])
+
+
+async def _setup_mcp_session(aweb_db_infra, slug: str, alias: str) -> tuple[str, dict]:
+    """Create agent via REST, return (api_key, agent_data)."""
+    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            return await _init_agent(rc, slug, alias)
+
+
 # ---------------------------------------------------------------------------
 # Scaffold tests
 # ---------------------------------------------------------------------------
@@ -127,75 +148,177 @@ async def test_mcp_initialize_without_auth_rejected(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_mcp_initialize_with_auth(aweb_db_infra):
-    """Authenticated MCP initialization succeeds and returns tools."""
-    # Bootstrap an agent via the REST API first
-    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
-    async with LifespanManager(rest_app):
-        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
-            agent = await _init_agent(rc, "mcp-test", "alice")
-            api_key = agent["api_key"]
+    """Authenticated MCP initialization succeeds."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-init", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
 
-    # Now test the MCP app
     mcp_app = create_mcp_app(db_infra=aweb_db_infra)
-    auth = {"Authorization": f"Bearer {api_key}"}
-
     async with LifespanManager(mcp_app):
         async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
-            result, session_id = await _mcp_initialize(mc, headers=auth)
-            assert "result" in result
+            result, _ = await _mcp_initialize(mc, headers=auth)
             assert result["result"]["serverInfo"]["name"] == "aweb"
 
 
 @pytest.mark.asyncio
-async def test_mcp_lists_tools(aweb_db_infra):
-    """tools/list returns the registered aweb tools."""
-    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
-    async with LifespanManager(rest_app):
-        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
-            agent = await _init_agent(rc, "mcp-tools", "alice")
-            api_key = agent["api_key"]
+async def test_mcp_lists_all_tools(aweb_db_infra):
+    """tools/list returns all registered aweb tools."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-tools", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
 
     mcp_app = create_mcp_app(db_infra=aweb_db_infra)
-    auth = {"Authorization": f"Bearer {api_key}"}
-
     async with LifespanManager(mcp_app):
         async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
             _, session_id = await _mcp_initialize(mc, headers=auth)
             result = await _mcp_call(mc, "tools/list", {}, session_id, headers=auth)
 
-            tools = result["result"]["tools"]
-            tool_names = {t["name"] for t in tools}
-            assert "whoami" in tool_names
+            tool_names = {t["name"] for t in result["result"]["tools"]}
+            expected = {
+                "whoami",
+                "send_mail",
+                "check_inbox",
+                "ack_message",
+                "list_agents",
+                "heartbeat",
+            }
+            assert expected == tool_names
 
 
 # ---------------------------------------------------------------------------
-# whoami tool test
+# whoami
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_mcp_whoami(aweb_db_infra):
     """whoami tool returns the authenticated agent's identity."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-whoami", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            data = await _tool_call(mc, "whoami", {}, sid, auth)
+
+            assert data["alias"] == "alice"
+            assert data["project_id"] == agent["project_id"]
+            assert data["agent_id"] == agent["agent_id"]
+
+
+# ---------------------------------------------------------------------------
+# Mail tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_and_check_mail(aweb_db_infra):
+    """send_mail delivers a message that check_inbox retrieves."""
+    # Create two agents in the same project
     rest_app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(rest_app):
         async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
-            agent = await _init_agent(rc, "mcp-whoami", "alice")
-            api_key = agent["api_key"]
+            alice = await _init_agent(rc, "mcp-mail", "alice")
+            bob = await _init_agent(rc, "mcp-mail", "bob")
 
     mcp_app = create_mcp_app(db_infra=aweb_db_infra)
-    auth = {"Authorization": f"Bearer {api_key}"}
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
 
     async with LifespanManager(mcp_app):
         async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
-            _, session_id = await _mcp_initialize(mc, headers=auth)
-            result = await _mcp_call(
-                mc, "tools/call", {"name": "whoami", "arguments": {}}, session_id, headers=auth
+            # Alice sends mail to bob
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            send_result = await _tool_call(
+                mc,
+                "send_mail",
+                {"to_alias": "bob", "subject": "Hello", "body": "Hi Bob!"},
+                sid_a,
+                auth_alice,
             )
+            assert send_result["status"] == "delivered"
+            message_id = send_result["message_id"]
 
-            content = result["result"]["content"]
-            assert len(content) == 1
-            assert content[0]["type"] == "text"
-            data = json.loads(content[0]["text"])
-            assert data["alias"] == "alice"
-            assert data["project_id"] == agent["project_id"]
+            # Bob checks inbox
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            inbox = await _tool_call(mc, "check_inbox", {"unread_only": True}, sid_b, auth_bob)
+            assert len(inbox["messages"]) == 1
+            msg = inbox["messages"][0]
+            assert msg["from_alias"] == "alice"
+            assert msg["subject"] == "Hello"
+            assert msg["body"] == "Hi Bob!"
+            assert msg["read"] is False
+
+            # Bob acks the message
+            ack = await _tool_call(mc, "ack_message", {"message_id": message_id}, sid_b, auth_bob)
+            assert ack["status"] == "acknowledged"
+
+            # Inbox is now empty when filtering unread
+            inbox2 = await _tool_call(mc, "check_inbox", {"unread_only": True}, sid_b, auth_bob)
+            assert len(inbox2["messages"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_to_nonexistent_agent(aweb_db_infra):
+    """send_mail returns error for unknown recipient."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-mail-err", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            data = await _tool_call(
+                mc,
+                "send_mail",
+                {"to_alias": "nobody", "body": "test"},
+                sid,
+                auth,
+            )
+            assert "error" in data
+
+
+# ---------------------------------------------------------------------------
+# list_agents
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_agents(aweb_db_infra):
+    """list_agents returns all agents in the project."""
+    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            alice = await _init_agent(rc, "mcp-agents", "alice")
+            await _init_agent(rc, "mcp-agents", "bob")
+
+    auth = {"Authorization": f"Bearer {alice['api_key']}"}
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            data = await _tool_call(mc, "list_agents", {}, sid, auth)
+
+            aliases = {a["alias"] for a in data["agents"]}
+            assert aliases == {"alice", "bob"}
+            assert data["project_id"] == alice["project_id"]
+
+
+# ---------------------------------------------------------------------------
+# heartbeat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_heartbeat_without_redis(aweb_db_infra):
+    """heartbeat gracefully handles missing Redis."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-hb", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            data = await _tool_call(mc, "heartbeat", {}, sid, auth)
+            # Should still return agent info even without Redis
             assert data["agent_id"] == agent["agent_id"]

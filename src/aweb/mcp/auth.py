@@ -12,11 +12,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-
-from fastapi import HTTPException
 
 from aweb.auth import verify_bearer_token_details
 
