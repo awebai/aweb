@@ -24,7 +24,13 @@ from aweb.mcp.tools.chat import chat_history as _chat_history_impl
 from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
 from aweb.mcp.tools.chat import chat_read as _chat_read_impl
 from aweb.mcp.tools.chat import chat_send as _chat_send_impl
+from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
+from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
+from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
+from aweb.mcp.tools.locks import lock_acquire as _lock_acquire_impl
+from aweb.mcp.tools.locks import lock_list as _lock_list_impl
+from aweb.mcp.tools.locks import lock_release as _lock_release_impl
 from aweb.mcp.tools.mail import ack_message as _ack_message_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
@@ -153,6 +159,57 @@ def _register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis
         return await _chat_read_impl(
             db_infra, session_id=session_id, up_to_message_id=up_to_message_id
         )
+
+    # -- Contacts --
+
+    @mcp.tool(
+        name="contacts_list",
+        description="List all contacts in the project's address book.",
+    )
+    async def contacts_list() -> str:
+        return await _contacts_list_impl(db_infra)
+
+    @mcp.tool(
+        name="contacts_add",
+        description="Add a contact address to the project's address book.",
+    )
+    async def contacts_add(contact_address: str, label: str = "") -> str:
+        return await _contacts_add_impl(db_infra, contact_address=contact_address, label=label)
+
+    @mcp.tool(
+        name="contacts_remove",
+        description="Remove a contact from the project's address book.",
+    )
+    async def contacts_remove(contact_id: str) -> str:
+        return await _contacts_remove_impl(db_infra, contact_id=contact_id)
+
+    # -- Locks (Reservations) --
+
+    @mcp.tool(
+        name="lock_acquire",
+        description=(
+            "Acquire a distributed lock on a resource. TTL is clamped to 60-3600 seconds. "
+            "Returns error if the resource is already locked by another agent."
+        ),
+    )
+    async def lock_acquire(resource_key: str, ttl_seconds: int = 60, metadata: str = "") -> str:
+        return await _lock_acquire_impl(
+            db_infra, resource_key=resource_key, ttl_seconds=ttl_seconds, metadata=metadata
+        )
+
+    @mcp.tool(
+        name="lock_release",
+        description="Release a distributed lock. Idempotent — succeeds even if expired.",
+    )
+    async def lock_release(resource_key: str) -> str:
+        return await _lock_release_impl(db_infra, resource_key=resource_key)
+
+    @mcp.tool(
+        name="lock_list",
+        description="List active locks in the project. Optional prefix filter.",
+    )
+    async def lock_list(prefix: str = "") -> str:
+        return await _lock_list_impl(db_infra, prefix=prefix)
 
 
 def create_mcp_app(

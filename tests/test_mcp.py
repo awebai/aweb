@@ -184,6 +184,12 @@ async def test_mcp_lists_all_tools(aweb_db_infra):
                 "chat_pending",
                 "chat_history",
                 "chat_read",
+                "contacts_list",
+                "contacts_add",
+                "contacts_remove",
+                "lock_acquire",
+                "lock_release",
+                "lock_list",
             }
             assert expected == tool_names
 
@@ -580,3 +586,119 @@ async def test_mcp_chat_send_to_nonexistent_agent(aweb_db_infra):
                 auth,
             )
             assert "error" in data
+
+
+# ---------------------------------------------------------------------------
+# Contacts tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_contacts_add_list_remove(aweb_db_infra):
+    """contacts_add, contacts_list, contacts_remove work end-to-end."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-contacts", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+
+            # Add a contact
+            added = await _tool_call(
+                mc, "contacts_add", {"contact_address": "other-project"}, sid, auth
+            )
+            assert added["status"] == "added"
+            assert added["contact_address"] == "other-project"
+            contact_id = added["contact_id"]
+
+            # List contacts
+            listed = await _tool_call(mc, "contacts_list", {}, sid, auth)
+            assert len(listed["contacts"]) == 1
+            assert listed["contacts"][0]["contact_address"] == "other-project"
+
+            # Remove contact
+            removed = await _tool_call(mc, "contacts_remove", {"contact_id": contact_id}, sid, auth)
+            assert removed["status"] == "removed"
+
+            # List is now empty
+            listed2 = await _tool_call(mc, "contacts_list", {}, sid, auth)
+            assert len(listed2["contacts"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_contacts_add_duplicate(aweb_db_infra):
+    """contacts_add returns error for duplicate contacts."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-contacts-dup", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            await _tool_call(mc, "contacts_add", {"contact_address": "ext"}, sid, auth)
+            dup = await _tool_call(mc, "contacts_add", {"contact_address": "ext"}, sid, auth)
+            assert "error" in dup
+
+
+# ---------------------------------------------------------------------------
+# Lock tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_lock_acquire_release(aweb_db_infra):
+    """lock_acquire and lock_release work end-to-end."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-locks", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+
+            # Acquire lock
+            acquired = await _tool_call(
+                mc, "lock_acquire", {"resource_key": "build/main"}, sid, auth
+            )
+            assert acquired["status"] == "acquired"
+            assert acquired["resource_key"] == "build/main"
+
+            # List shows the lock
+            locks = await _tool_call(mc, "lock_list", {}, sid, auth)
+            assert len(locks["reservations"]) == 1
+            assert locks["reservations"][0]["resource_key"] == "build/main"
+
+            # Release lock
+            released = await _tool_call(
+                mc, "lock_release", {"resource_key": "build/main"}, sid, auth
+            )
+            assert released["status"] == "released"
+
+            # List is now empty
+            locks2 = await _tool_call(mc, "lock_list", {}, sid, auth)
+            assert len(locks2["reservations"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_lock_acquire_conflict(aweb_db_infra):
+    """lock_acquire returns error when resource is already locked."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-locks-conflict")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+
+            # Alice acquires
+            await _tool_call(mc, "lock_acquire", {"resource_key": "deploy"}, sid_a, auth_alice)
+
+            # Bob tries to acquire same lock
+            conflict = await _tool_call(
+                mc, "lock_acquire", {"resource_key": "deploy"}, sid_b, auth_bob
+            )
+            assert "error" in conflict
+            assert conflict["holder_alias"] == "alice"
