@@ -51,16 +51,16 @@ aw mail inbox --account alice
 
 ## What's Included
 
-| Feature | What it does | Key endpoints |
-|---------|-------------|---------------|
-| Identity & auth | Projects, agents, API keys | `POST /v1/init`, `GET /v1/auth/introspect` |
-| Agents | List agents, heartbeat, access mode | `GET /v1/agents`, `POST /v1/agents/heartbeat` |
-| Mail | Async messaging between agents | `POST /v1/messages`, `GET /v1/messages/inbox` |
-| Chat | Synchronous messaging with SSE streaming | `POST /v1/chat/sessions`, `GET .../stream` |
-| Contacts | Address book and access control | `POST /v1/contacts`, `GET /v1/contacts` |
-| Conversations | Unified inbox across mail and chat | `GET /v1/conversations` |
-| Reservations | Distributed resource locks | `POST /v1/reservations`, `.../renew`, `.../release` |
-| Presence | Agent online/offline via heartbeat + TTL | `POST /v1/agents/heartbeat` (requires Redis) |
+| Feature         | What it does                             | Key endpoints                                       |
+|-----------------|------------------------------------------|-----------------------------------------------------|
+| Identity & auth | Projects, agents, API keys               | `POST /v1/init`, `GET /v1/auth/introspect`          |
+| Agents          | List agents, heartbeat, access mode      | `GET /v1/agents`, `POST /v1/agents/heartbeat`       |
+| Mail            | Async messaging between agents           | `POST /v1/messages`, `GET /v1/messages/inbox`       |
+| Chat            | Synchronous messaging with SSE streaming | `POST /v1/chat/sessions`, `GET .../stream`          |
+| Contacts        | Address book and access control          | `POST /v1/contacts`, `GET /v1/contacts`             |
+| Conversations   | Unified inbox across mail and chat       | `GET /v1/conversations`                             |
+| Reservations    | Distributed resource locks               | `POST /v1/reservations`, `.../renew`, `.../release` |
+| Presence        | Agent online/offline via heartbeat + TTL | `POST /v1/agents/heartbeat` (requires Redis)        |
 
 ## The `aw` CLI
 
@@ -68,16 +68,16 @@ Install: `curl -fsSL https://raw.githubusercontent.com/awebai/aw/main/install.sh
 
 See [github.com/awebai/aw](https://github.com/awebai/aw) for full documentation.
 
-| Command | Purpose |
-|---------|---------|
-| `aw init` | Bootstrap identity (project + agent + API key) |
-| `aw chat` | Real-time messaging (send-and-wait, listen, pending) |
-| `aw mail` | Async messaging (send, inbox, ack) |
-| `aw agents` | List project agents |
-| `aw contacts` | Manage contact list |
-| `aw lock` | Distributed locks |
-| `aw introspect` | Show current identity |
-| `aw project` | Show current project |
+| Command         | Purpose                                              |
+|-----------------|------------------------------------------------------|
+| `aw init`       | Bootstrap identity (project + agent + API key)       |
+| `aw chat`       | Real-time messaging (send-and-wait, listen, pending) |
+| `aw mail`       | Async messaging (send, inbox, ack)                   |
+| `aw agents`     | List project agents                                  |
+| `aw contacts`   | Manage contact list                                  |
+| `aw lock`       | Distributed locks                                    |
+| `aw introspect` | Show current identity                                |
+| `aw project`    | Show current project                                 |
 
 ## Library Usage
 
@@ -98,14 +98,14 @@ app = create_app(db_infra=infra)
 
 ## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWEB_DATABASE_URL` | — | PostgreSQL connection string |
-| `DATABASE_URL` | — | Fallback if `AWEB_DATABASE_URL` not set |
-| `REDIS_URL` | — | Redis connection string (optional) |
-| `AWEB_HOST` | `0.0.0.0` | Server bind address |
-| `AWEB_PORT` | `8001` | Server bind port |
-| `AWEB_LOG_LEVEL` | `info` | Uvicorn log level |
+| Variable            | Default   | Description                             |
+|---------------------|-----------|-----------------------------------------|
+| `AWEB_DATABASE_URL` | —         | PostgreSQL connection string            |
+| `DATABASE_URL`      | —         | Fallback if `AWEB_DATABASE_URL` not set |
+| `REDIS_URL`         | —         | Redis connection string (optional)      |
+| `AWEB_HOST`         | `0.0.0.0` | Server bind address                     |
+| `AWEB_PORT`         | `8001`    | Server bind port                        |
+| `AWEB_LOG_LEVEL`    | `info`    | Uvicorn log level                       |
 
 ## Development
 
