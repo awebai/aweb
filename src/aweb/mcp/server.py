@@ -20,6 +20,10 @@ from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
 from aweb.mcp.tools.agents import list_agents as _list_agents_impl
+from aweb.mcp.tools.chat import chat_history as _chat_history_impl
+from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
+from aweb.mcp.tools.chat import chat_read as _chat_read_impl
+from aweb.mcp.tools.chat import chat_send as _chat_send_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import ack_message as _ack_message_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
@@ -89,6 +93,66 @@ def _register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis
     )
     async def heartbeat() -> str:
         return await _heartbeat_impl(db_infra, redis)
+
+    # -- Chat --
+
+    @mcp.tool(
+        name="chat_send",
+        description=(
+            "Send a real-time chat message. Provide to_alias for a new conversation "
+            "or session_id to reply in an existing one. Set wait=true to block until "
+            "the other agent replies (recommended for conversations)."
+        ),
+    )
+    async def chat_send(
+        message: str,
+        to_alias: str = "",
+        session_id: str = "",
+        wait: bool = False,
+        wait_seconds: int = 120,
+        leaving: bool = False,
+        hang_on: bool = False,
+    ) -> str:
+        return await _chat_send_impl(
+            db_infra,
+            redis,
+            message=message,
+            to_alias=to_alias,
+            session_id=session_id,
+            wait=wait,
+            wait_seconds=wait_seconds,
+            leaving=leaving,
+            hang_on=hang_on,
+        )
+
+    @mcp.tool(
+        name="chat_pending",
+        description="List conversations with unread messages waiting for you.",
+    )
+    async def chat_pending() -> str:
+        return await _chat_pending_impl(db_infra, redis)
+
+    @mcp.tool(
+        name="chat_history",
+        description="Get message history for a chat session.",
+    )
+    async def chat_history(
+        session_id: str,
+        unread_only: bool = False,
+        limit: int = 50,
+    ) -> str:
+        return await _chat_history_impl(
+            db_infra, session_id=session_id, unread_only=unread_only, limit=limit
+        )
+
+    @mcp.tool(
+        name="chat_read",
+        description="Mark chat messages as read up to a given message ID.",
+    )
+    async def chat_read(session_id: str, up_to_message_id: str) -> str:
+        return await _chat_read_impl(
+            db_infra, session_id=session_id, up_to_message_id=up_to_message_id
+        )
 
 
 def create_mcp_app(

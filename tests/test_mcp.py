@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -106,7 +107,7 @@ async def _tool_call(
     return json.loads(content[0]["text"])
 
 
-async def _setup_mcp_session(aweb_db_infra, slug: str, alias: str) -> tuple[str, dict]:
+async def _setup_mcp_session(aweb_db_infra, slug: str, alias: str) -> dict:
     """Create agent via REST, return (api_key, agent_data)."""
     rest_app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(rest_app):
@@ -179,6 +180,10 @@ async def test_mcp_lists_all_tools(aweb_db_infra):
                 "ack_message",
                 "list_agents",
                 "heartbeat",
+                "chat_send",
+                "chat_pending",
+                "chat_history",
+                "chat_read",
             }
             assert expected == tool_names
 
@@ -322,3 +327,256 @@ async def test_mcp_heartbeat_without_redis(aweb_db_infra):
             data = await _tool_call(mc, "heartbeat", {}, sid, auth)
             # Should still return agent info even without Redis
             assert data["agent_id"] == agent["agent_id"]
+
+
+# ---------------------------------------------------------------------------
+# Chat tools
+# ---------------------------------------------------------------------------
+
+
+async def _setup_two_agents(aweb_db_infra, slug: str):
+    """Create two agents (alice, bob) in the same project via REST."""
+    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            alice = await _init_agent(rc, slug, "alice")
+            bob = await _init_agent(rc, slug, "bob")
+    return alice, bob
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_and_receive(aweb_db_infra):
+    """chat_send creates a session and delivers a message that chat_pending shows."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-chat")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            # Alice sends a chat message to Bob
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "Hey Bob!"},
+                sid_a,
+                auth_alice,
+            )
+            assert result["delivered"] is True
+            assert "session_id" in result
+            session_id = result["session_id"]
+
+            # Bob sees it in pending
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            pending = await _tool_call(mc, "chat_pending", {}, sid_b, auth_bob)
+            assert len(pending["pending"]) == 1
+            assert pending["pending"][0]["session_id"] == session_id
+            assert pending["pending"][0]["unread_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_history(aweb_db_infra):
+    """chat_history returns messages for a session."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-chat-hist")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "Hello"},
+                sid_a,
+                auth_alice,
+            )
+            session_id = result["session_id"]
+
+            # Bob gets history
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            history = await _tool_call(
+                mc,
+                "chat_history",
+                {"session_id": session_id},
+                sid_b,
+                auth_bob,
+            )
+            assert len(history["messages"]) == 1
+            assert history["messages"][0]["body"] == "Hello"
+            assert history["messages"][0]["from_alias"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_read(aweb_db_infra):
+    """chat_read marks messages as read."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-chat-read")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "Read me"},
+                sid_a,
+                auth_alice,
+            )
+            session_id = result["session_id"]
+            message_id = result["message_id"]
+
+            # Bob marks it as read
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            read_result = await _tool_call(
+                mc,
+                "chat_read",
+                {"session_id": session_id, "up_to_message_id": message_id},
+                sid_b,
+                auth_bob,
+            )
+            assert read_result["status"] == "read"
+            assert read_result["messages_marked"] == 1
+
+            # Pending is now empty
+            pending = await _tool_call(mc, "chat_pending", {}, sid_b, auth_bob)
+            assert len(pending["pending"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_reply_in_session(aweb_db_infra):
+    """chat_send with session_id replies in an existing session."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-chat-reply")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            # Alice starts conversation
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "Question?"},
+                sid_a,
+                auth_alice,
+            )
+            session_id = result["session_id"]
+
+            # Bob replies using session_id
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            reply = await _tool_call(
+                mc,
+                "chat_send",
+                {"session_id": session_id, "message": "Answer!"},
+                sid_b,
+                auth_bob,
+            )
+            assert reply["delivered"] is True
+            assert reply["session_id"] == session_id
+
+            # Alice sees both messages in history
+            history = await _tool_call(
+                mc,
+                "chat_history",
+                {"session_id": session_id},
+                sid_a,
+                auth_alice,
+            )
+            assert len(history["messages"]) == 2
+            assert history["messages"][0]["body"] == "Question?"
+            assert history["messages"][1]["body"] == "Answer!"
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_wait(aweb_db_infra):
+    """chat_send with wait=true returns the reply when it arrives."""
+    alice, bob = await _setup_two_agents(aweb_db_infra, "mcp-chat-wait")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+
+            # Alice sends with wait=true in background
+            async def alice_send():
+                return await _tool_call(
+                    mc,
+                    "chat_send",
+                    {"to_alias": "bob", "message": "Ping?", "wait": True, "wait_seconds": 5},
+                    sid_a,
+                    auth_alice,
+                )
+
+            send_task = asyncio.create_task(alice_send())
+            await asyncio.sleep(0.8)  # Let alice's polling start
+
+            # Bob replies
+            # First, get session_id from pending
+            pending = await _tool_call(mc, "chat_pending", {}, sid_b, auth_bob)
+            assert len(pending["pending"]) == 1
+            session_id = pending["pending"][0]["session_id"]
+
+            await _tool_call(
+                mc,
+                "chat_send",
+                {"session_id": session_id, "message": "Pong!"},
+                sid_b,
+                auth_bob,
+            )
+
+            # Alice's wait should return with the reply
+            result = await asyncio.wait_for(send_task, timeout=10)
+            assert result["timed_out"] is False
+            assert len(result["replies"]) >= 1
+            assert result["replies"][0]["body"] == "Pong!"
+            assert result["replies"][0]["from_alias"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_wait_timeout(aweb_db_infra):
+    """chat_send with wait=true returns timed_out when no reply arrives."""
+    alice, _ = await _setup_two_agents(aweb_db_infra, "mcp-chat-timeout")
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "Hello?", "wait": True, "wait_seconds": 1},
+                sid_a,
+                auth_alice,
+            )
+            assert result["timed_out"] is True
+            assert result["replies"] == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_to_nonexistent_agent(aweb_db_infra):
+    """chat_send returns error for unknown recipient."""
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-chat-err", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+            data = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "nobody", "message": "test"},
+                sid,
+                auth,
+            )
+            assert "error" in data
