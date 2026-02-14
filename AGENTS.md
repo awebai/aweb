@@ -1,3 +1,6 @@
+## Project Context
+See [docs/sot.md](docs/sot.md) for what this repo is, how it fits in the ecosystem, and key patterns.
+
 <!-- BEADHUB:START -->
 ## BeadHub Coordination Rules
 
