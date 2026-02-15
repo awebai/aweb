@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
 from aweb.deps import get_db
+from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
@@ -127,6 +128,17 @@ async def send_message(
         priority=payload.priority,
         thread_id=payload.thread_id,
     )
+    await fire_mutation_hook(
+        request,
+        "message.sent",
+        {
+            "message_id": str(message_id),
+            "from_agent_id": actor_id,
+            "to_agent_id": to_agent_id,
+            "subject": payload.subject,
+        },
+    )
+
     return SendMessageResponse(
         message_id=str(message_id),
         status="delivered",
@@ -240,6 +252,15 @@ async def acknowledge(
     )
     acknowledged_at = (
         updated["read_at"].isoformat() if updated and updated["read_at"] else _now_iso()
+    )
+
+    await fire_mutation_hook(
+        request,
+        "message.acknowledged",
+        {
+            "message_id": str(message_uuid),
+            "agent_id": actor_id,
+        },
     )
 
     return AckResponse(message_id=str(message_uuid), acknowledged_at=acknowledged_at)

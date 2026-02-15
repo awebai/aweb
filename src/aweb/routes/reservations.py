@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db
+from aweb.hooks import fire_mutation_hook
 
 router = APIRouter(prefix="/v1/reservations", tags=["aweb-reservations"])
 
@@ -149,6 +150,16 @@ async def acquire(request: Request, payload: AcquireRequest, db=Depends(get_db))
             json.dumps(payload.metadata or {}),
         )
 
+    await fire_mutation_hook(
+        request,
+        "reservation.acquired",
+        {
+            "resource_key": payload.resource_key,
+            "holder_agent_id": actor_id,
+            "ttl_seconds": ttl,
+        },
+    )
+
     return {
         "status": "acquired",
         "project_id": project_id,
@@ -242,6 +253,15 @@ async def release(request: Request, payload: ReleaseRequest, db=Depends(get_db))
             UUID(project_id),
             payload.resource_key,
         )
+
+    await fire_mutation_hook(
+        request,
+        "reservation.released",
+        {
+            "resource_key": payload.resource_key,
+            "holder_agent_id": actor_id,
+        },
+    )
 
     return {"status": "released", "resource_key": payload.resource_key}
 

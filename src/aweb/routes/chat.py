@@ -21,6 +21,7 @@ from aweb.chat_waiting import (
     unregister_waiting,
 )
 from aweb.deps import get_db, get_redis
+from aweb.hooks import fire_mutation_hook
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,16 @@ async def create_or_send(
         for r in participants_rows
         if str(r["agent_id"]) in waiting_set and str(r["agent_id"]) in set(target_ids)
     ]
+
+    await fire_mutation_hook(
+        request,
+        "chat.message_sent",
+        {
+            "session_id": str(session_id),
+            "message_id": str(msg_row["message_id"]),
+            "from_agent_id": actor_id,
+        },
+    )
 
     return CreateSessionResponse(
         session_id=str(session_id),
@@ -869,6 +880,16 @@ async def send_message(
         agent_uuid,
         msg_row["message_id"],
         msg_row["created_at"],
+    )
+
+    await fire_mutation_hook(
+        request,
+        "chat.message_sent",
+        {
+            "session_id": str(session_uuid),
+            "message_id": str(msg_row["message_id"]),
+            "from_agent_id": actor_id,
+        },
     )
 
     return SendMessageResponse(
