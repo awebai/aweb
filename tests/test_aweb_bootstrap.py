@@ -82,6 +82,32 @@ async def test_bootstrap_identity_with_project_id(aweb_db_infra: DatabaseInfra):
     assert result.project_id == pid
     assert result.alias == "alice"
     assert result.api_key.startswith("aw_sk_")
+    assert result.created is True
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_identity_idempotent_cloud_path(aweb_db_infra: DatabaseInfra):
+    """Calling bootstrap_identity twice with same project_id+alias reuses the agent."""
+    pid = str(uuid.uuid4())
+    first = await bootstrap_identity(
+        aweb_db_infra,
+        project_slug="cloud-proj",
+        project_id=pid,
+        alias="alice",
+    )
+    assert first.created is True
+
+    second = await bootstrap_identity(
+        aweb_db_infra,
+        project_slug="cloud-proj",
+        project_id=pid,
+        alias="alice",
+    )
+    assert second.created is False
+    assert second.project_id == first.project_id
+    assert second.agent_id == first.agent_id
+    # Each call issues a new API key.
+    assert second.api_key != first.api_key
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,64 @@ class EnsuredProject:
     name: str
 
 
+async def _resolve_project(
+    tx,
+    *,
+    project_slug: str,
+    project_name: str,
+    project_id: str | None,
+    tenant_id: str | None,
+) -> dict:
+    """Find or create a project row within an existing transaction.
+
+    When project_id is provided (cloud path), lookup is by PK and slug is
+    only used for the initial INSERT.  When omitted (OSS path), lookup is
+    by slug and the ID is auto-generated.
+    """
+    if project_id is not None:
+        project = await tx.fetch_one(
+            """
+            SELECT project_id, slug, name
+            FROM {{tables.projects}}
+            WHERE project_id = $1 AND deleted_at IS NULL
+            """,
+            UUID(project_id),
+        )
+        if not project:
+            tenant_uuid = UUID(tenant_id) if tenant_id else None
+            project = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
+                VALUES ($1, $2, $3, $4)
+                RETURNING project_id, slug, name
+                """,
+                UUID(project_id),
+                project_slug,
+                project_name or "",
+                tenant_uuid,
+            )
+    else:
+        project = await tx.fetch_one(
+            """
+            SELECT project_id, slug, name
+            FROM {{tables.projects}}
+            WHERE slug = $1 AND deleted_at IS NULL
+            """,
+            project_slug,
+        )
+        if not project:
+            project = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.projects}} (slug, name)
+                VALUES ($1, $2)
+                RETURNING project_id, slug, name
+                """,
+                project_slug,
+                project_name or "",
+            )
+    return dict(project)
+
+
 async def ensure_project(
     db,
     *,
@@ -48,49 +106,13 @@ async def ensure_project(
     project_slug = validate_project_slug(project_slug.strip())
 
     async with aweb_db.transaction() as tx:
-        if project_id is not None:
-            # Caller owns the identity — look up by PK, ignoring slug.
-            project = await tx.fetch_one(
-                """
-                SELECT project_id, slug, name
-                FROM {{tables.projects}}
-                WHERE project_id = $1 AND deleted_at IS NULL
-                """,
-                UUID(project_id),
-            )
-            if not project:
-                tenant_uuid = UUID(tenant_id) if tenant_id else None
-                project = await tx.fetch_one(
-                    """
-                    INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
-                    VALUES ($1, $2, $3, $4)
-                    RETURNING project_id, slug, name
-                    """,
-                    UUID(project_id),
-                    project_slug,
-                    project_name or "",
-                    tenant_uuid,
-                )
-        else:
-            # OSS path — look up by slug, auto-generate ID.
-            project = await tx.fetch_one(
-                """
-                SELECT project_id, slug, name
-                FROM {{tables.projects}}
-                WHERE slug = $1 AND deleted_at IS NULL
-                """,
-                project_slug,
-            )
-            if not project:
-                project = await tx.fetch_one(
-                    """
-                    INSERT INTO {{tables.projects}} (slug, name)
-                    VALUES ($1, $2)
-                    RETURNING project_id, slug, name
-                    """,
-                    project_slug,
-                    project_name or "",
-                )
+        project = await _resolve_project(
+            tx,
+            project_slug=project_slug,
+            project_name=project_name,
+            project_id=project_id,
+            tenant_id=tenant_id,
+        )
 
     return EnsuredProject(
         project_id=str(project["project_id"]),
@@ -118,47 +140,13 @@ async def bootstrap_identity(
     agent_type = (agent_type or "agent").strip() or "agent"
 
     async with aweb_db.transaction() as tx:
-        if project_id is not None:
-            project = await tx.fetch_one(
-                """
-                SELECT project_id, slug, name
-                FROM {{tables.projects}}
-                WHERE project_id = $1 AND deleted_at IS NULL
-                """,
-                UUID(project_id),
-            )
-            if not project:
-                tenant_uuid = UUID(tenant_id) if tenant_id else None
-                project = await tx.fetch_one(
-                    """
-                    INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
-                    VALUES ($1, $2, $3, $4)
-                    RETURNING project_id, slug, name
-                    """,
-                    UUID(project_id),
-                    project_slug,
-                    project_name or "",
-                    tenant_uuid,
-                )
-        else:
-            project = await tx.fetch_one(
-                """
-                SELECT project_id, slug, name
-                FROM {{tables.projects}}
-                WHERE slug = $1 AND deleted_at IS NULL
-                """,
-                project_slug,
-            )
-            if not project:
-                project = await tx.fetch_one(
-                    """
-                    INSERT INTO {{tables.projects}} (slug, name)
-                    VALUES ($1, $2)
-                    RETURNING project_id, slug, name
-                    """,
-                    project_slug,
-                    project_name or "",
-                )
+        project = await _resolve_project(
+            tx,
+            project_slug=project_slug,
+            project_name=project_name,
+            project_id=project_id,
+            tenant_id=tenant_id,
+        )
 
         resolved_project_id = str(project["project_id"])
         actual_project_slug = project["slug"]
