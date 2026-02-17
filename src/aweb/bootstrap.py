@@ -36,29 +36,61 @@ class EnsuredProject:
     name: str
 
 
-async def ensure_project(db, *, project_slug: str, project_name: str = "") -> EnsuredProject:
+async def ensure_project(
+    db,
+    *,
+    project_slug: str,
+    project_name: str = "",
+    project_id: str | None = None,
+    tenant_id: str | None = None,
+) -> EnsuredProject:
     aweb_db = db.get_manager("aweb")
     project_slug = validate_project_slug(project_slug.strip())
 
     async with aweb_db.transaction() as tx:
-        project = await tx.fetch_one(
-            """
-            SELECT project_id, slug, name
-            FROM {{tables.projects}}
-            WHERE slug = $1 AND deleted_at IS NULL
-            """,
-            project_slug,
-        )
-        if not project:
+        if project_id is not None:
+            # Caller owns the identity — look up by PK, ignoring slug.
             project = await tx.fetch_one(
                 """
-                INSERT INTO {{tables.projects}} (slug, name)
-                VALUES ($1, $2)
-                RETURNING project_id, slug, name
+                SELECT project_id, slug, name
+                FROM {{tables.projects}}
+                WHERE project_id = $1 AND deleted_at IS NULL
+                """,
+                UUID(project_id),
+            )
+            if not project:
+                tenant_uuid = UUID(tenant_id) if tenant_id else None
+                project = await tx.fetch_one(
+                    """
+                    INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING project_id, slug, name
+                    """,
+                    UUID(project_id),
+                    project_slug,
+                    project_name or "",
+                    tenant_uuid,
+                )
+        else:
+            # OSS path — look up by slug, auto-generate ID.
+            project = await tx.fetch_one(
+                """
+                SELECT project_id, slug, name
+                FROM {{tables.projects}}
+                WHERE slug = $1 AND deleted_at IS NULL
                 """,
                 project_slug,
-                project_name or "",
             )
+            if not project:
+                project = await tx.fetch_one(
+                    """
+                    INSERT INTO {{tables.projects}} (slug, name)
+                    VALUES ($1, $2)
+                    RETURNING project_id, slug, name
+                    """,
+                    project_slug,
+                    project_name or "",
+                )
 
     return EnsuredProject(
         project_id=str(project["project_id"]),
@@ -72,6 +104,8 @@ async def bootstrap_identity(
     *,
     project_slug: str,
     project_name: str = "",
+    project_id: str | None = None,
+    tenant_id: str | None = None,
     alias: str | None,
     human_name: str = "",
     agent_type: str = "agent",
@@ -84,31 +118,51 @@ async def bootstrap_identity(
     agent_type = (agent_type or "agent").strip() or "agent"
 
     async with aweb_db.transaction() as tx:
-        project = await tx.fetch_one(
-            """
-            SELECT project_id, slug, name
-            FROM {{tables.projects}}
-            WHERE slug = $1 AND deleted_at IS NULL
-            """,
-            project_slug,
-        )
-        if project:
-            project_id = str(project["project_id"])
-            actual_project_slug = project["slug"]
-            actual_project_name = project.get("name") or ""
+        if project_id is not None:
+            project = await tx.fetch_one(
+                """
+                SELECT project_id, slug, name
+                FROM {{tables.projects}}
+                WHERE project_id = $1 AND deleted_at IS NULL
+                """,
+                UUID(project_id),
+            )
+            if not project:
+                tenant_uuid = UUID(tenant_id) if tenant_id else None
+                project = await tx.fetch_one(
+                    """
+                    INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING project_id, slug, name
+                    """,
+                    UUID(project_id),
+                    project_slug,
+                    project_name or "",
+                    tenant_uuid,
+                )
         else:
             project = await tx.fetch_one(
                 """
-                INSERT INTO {{tables.projects}} (slug, name)
-                VALUES ($1, $2)
-                RETURNING project_id, slug, name
+                SELECT project_id, slug, name
+                FROM {{tables.projects}}
+                WHERE slug = $1 AND deleted_at IS NULL
                 """,
                 project_slug,
-                project_name or "",
             )
-            project_id = str(project["project_id"])
-            actual_project_slug = project["slug"]
-            actual_project_name = project.get("name") or ""
+            if not project:
+                project = await tx.fetch_one(
+                    """
+                    INSERT INTO {{tables.projects}} (slug, name)
+                    VALUES ($1, $2)
+                    RETURNING project_id, slug, name
+                    """,
+                    project_slug,
+                    project_name or "",
+                )
+
+        resolved_project_id = str(project["project_id"])
+        actual_project_slug = project["slug"]
+        actual_project_name = project.get("name") or ""
 
         created = False
         agent_id: str
@@ -119,7 +173,7 @@ async def bootstrap_identity(
                 FROM {{tables.agents}}
                 WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
                 """,
-                UUID(project_id),
+                UUID(resolved_project_id),
                 alias,
             )
             if agent:
@@ -132,7 +186,7 @@ async def bootstrap_identity(
                     VALUES ($1, $2, $3, $4)
                     RETURNING agent_id, alias
                     """,
-                    UUID(project_id),
+                    UUID(resolved_project_id),
                     alias,
                     human_name,
                     agent_type,
@@ -147,7 +201,7 @@ async def bootstrap_identity(
                 WHERE project_id = $1 AND deleted_at IS NULL
                 ORDER BY alias
                 """,
-                UUID(project_id),
+                UUID(resolved_project_id),
             )
             used_prefixes = used_name_prefixes([(row.get("alias") or "") for row in existing])
 
@@ -163,7 +217,7 @@ async def bootstrap_identity(
                         VALUES ($1, $2, $3, $4)
                         RETURNING agent_id, alias
                         """,
-                        UUID(project_id),
+                        UUID(resolved_project_id),
                         prefix,
                         human_name,
                         agent_type,
@@ -185,14 +239,14 @@ async def bootstrap_identity(
             INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active)
             VALUES ($1, $2, $3, $4, TRUE)
             """,
-            UUID(project_id),
+            UUID(resolved_project_id),
             UUID(agent_id),
             key_prefix,
             key_hash,
         )
 
     return BootstrapIdentityResult(
-        project_id=project_id,
+        project_id=resolved_project_id,
         project_slug=actual_project_slug,
         project_name=actual_project_name,
         agent_id=agent_id,
