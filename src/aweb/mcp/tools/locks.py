@@ -64,9 +64,9 @@ async def lock_acquire(
     meta_dict: dict = {}
     if metadata:
         try:
-            meta_dict = json.loads(metadata)
-            if not isinstance(meta_dict, dict):
-                meta_dict = {}
+            parsed = json.loads(metadata)
+            if isinstance(parsed, dict):
+                meta_dict = parsed
         except Exception:
             return json.dumps({"error": "metadata must be a valid JSON object"})
 

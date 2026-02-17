@@ -24,7 +24,7 @@ def _participant_hash(agent_ids: list[str]) -> str:
     return hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
 
 
-async def _ensure_session(aweb_db, *, project_id: str, agent_rows: list[dict]) -> UUID:
+async def _ensure_session(aweb_db, *, project_id: str, agent_rows: list[dict]) -> UUID | None:
     """Create or find a chat session for a set of participants."""
     p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
@@ -51,7 +51,7 @@ async def _ensure_session(aweb_db, *, project_id: str, agent_rows: list[dict]) -
             p_hash,
         )
         if existing is None:
-            return None  # type: ignore[return-value]
+            return None
         session_id = existing["session_id"]
 
     for agent in agent_rows:
@@ -269,6 +269,8 @@ async def chat_send(
             leaving=leaving,
             hang_on=hang_on,
         )
+        if msg is None:
+            return json.dumps({"error": "Failed to send message"})
     else:
         # Send in existing session.
         try:

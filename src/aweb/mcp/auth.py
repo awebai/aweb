@@ -144,7 +144,7 @@ class MCPAuthMiddleware:
             return None
 
         return AuthContext(
-            project_id=details["project_id"],
+            project_id=str(details["project_id"]),
             agent_id=agent_id,
-            api_key_id=details["api_key_id"],
+            api_key_id=str(details["api_key_id"]),
         )
