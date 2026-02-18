@@ -72,12 +72,24 @@ class MCPAuthMiddleware:
 
         request = Request(scope)
 
-        # Try proxy-header auth first (claweb sets signed internal headers).
-        ctx = self._resolve_proxy_auth(request)
-        if ctx is None:
+        if _trust_aweb_proxy_headers():
+            # Proxy mode: proxy auth is the only path — never fall back to Bearer.
+            try:
+                ctx = self._resolve_proxy_auth(request)
+            except HTTPException:
+                ctx = None
+            if ctx is None:
+                response = JSONResponse(
+                    {"error": "Authentication required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+        else:
             ctx = await self._resolve_bearer_auth(request, scope, receive, send)
-        if ctx is None:
-            return  # Response already sent by _resolve_bearer_auth.
+            if ctx is None:
+                return  # Response already sent by _resolve_bearer_auth.
 
         cv_token = _auth_context.set(ctx)
         try:
@@ -87,13 +99,12 @@ class MCPAuthMiddleware:
 
     @staticmethod
     def _resolve_proxy_auth(request: Request) -> AuthContext | None:
-        """Resolve auth from signed proxy headers (claweb mode)."""
-        if not _trust_aweb_proxy_headers():
-            return None
-        try:
-            internal = _parse_internal_auth_context(request)
-        except HTTPException:
-            return None
+        """Resolve auth from signed proxy headers (claweb mode).
+
+        Raises HTTPException on invalid signatures — callers must not swallow it.
+        Returns None only when no proxy headers are present at all.
+        """
+        internal = _parse_internal_auth_context(request)
         if internal is None:
             return None
         actor_id = (internal.get("actor_id") or "").strip()
