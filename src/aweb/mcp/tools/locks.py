@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from aweb.mcp.auth import get_auth
+from aweb.sql import escape_like
 
 RESERVATION_MIN_TTL_SECONDS = 60
 RESERVATION_MAX_TTL_SECONDS = 3600
@@ -174,17 +175,18 @@ async def lock_list(db_infra, *, prefix: str = "") -> str:
     now = datetime.now(timezone.utc)
 
     if prefix:
+        like_pattern = escape_like(prefix) + "%"
         rows = await aweb_db.fetch_all(
             """
             SELECT project_id, resource_key, holder_agent_id, holder_alias,
                    acquired_at, expires_at, metadata_json
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE ($3 || '%')
+            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE $3 ESCAPE '\\'
             ORDER BY resource_key ASC
             """,
             UUID(auth.project_id),
             now,
-            prefix,
+            like_pattern,
         )
     else:
         rows = await aweb_db.fetch_all(

@@ -163,3 +163,97 @@ async def test_aweb_reservations_list_prefix_filter(aweb_db_infra):
             keys = [i.get("resource_key") for i in items]
             assert key_in in keys
             assert key_out not in keys
+
+
+@pytest.mark.asyncio
+async def test_aweb_reservations_list_prefix_escapes_like_wildcards(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+
+            key_percent = "%" + uuid.uuid4().hex
+            key_underscore = "_" + uuid.uuid4().hex
+            key_backslash = "\\" + uuid.uuid4().hex
+            key_other = "conformance:" + uuid.uuid4().hex
+
+            for key in (key_percent, key_underscore, key_backslash, key_other):
+                resp = await client.post(
+                    "/v1/reservations",
+                    headers=headers,
+                    json={
+                        "resource_key": key,
+                        "ttl_seconds": 60,
+                        "metadata": {},
+                    },
+                )
+                assert resp.status_code in (200, 201), resp.text
+
+            listed_percent = await client.get(
+                "/v1/reservations", headers=headers, params={"prefix": "%"}
+            )
+            assert listed_percent.status_code == 200, listed_percent.text
+            keys_percent = [i.get("resource_key") for i in listed_percent.json().get("reservations") or []]
+            assert key_percent in keys_percent
+            assert key_other not in keys_percent
+
+            listed_underscore = await client.get(
+                "/v1/reservations", headers=headers, params={"prefix": "_"}
+            )
+            assert listed_underscore.status_code == 200, listed_underscore.text
+            keys_underscore = [
+                i.get("resource_key") for i in listed_underscore.json().get("reservations") or []
+            ]
+            assert key_underscore in keys_underscore
+            assert key_other not in keys_underscore
+
+            listed_backslash = await client.get(
+                "/v1/reservations", headers=headers, params={"prefix": "\\"}
+            )
+            assert listed_backslash.status_code == 200, listed_backslash.text
+            keys_backslash = [
+                i.get("resource_key") for i in listed_backslash.json().get("reservations") or []
+            ]
+            assert key_backslash in keys_backslash
+            assert key_other not in keys_backslash
+
+
+@pytest.mark.asyncio
+async def test_aweb_reservations_revoke_prefix_escapes_like_wildcards(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+
+            key_percent = "%" + uuid.uuid4().hex
+            key_other = "conformance:" + uuid.uuid4().hex
+
+            for key in (key_percent, key_other):
+                resp = await client.post(
+                    "/v1/reservations",
+                    headers=headers,
+                    json={
+                        "resource_key": key,
+                        "ttl_seconds": 60,
+                        "metadata": {},
+                    },
+                )
+                assert resp.status_code in (200, 201), resp.text
+
+            revoked = await client.post(
+                "/v1/reservations/revoke",
+                headers=headers,
+                json={"prefix": "%"},
+            )
+            assert revoked.status_code == 200, revoked.text
+            assert revoked.json().get("deleted") == 1
+
+            listed = await client.get("/v1/reservations", headers=headers)
+            assert listed.status_code == 200, listed.text
+            keys = [i.get("resource_key") for i in listed.json().get("reservations") or []]
+            assert key_other in keys
+            assert key_percent not in keys

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
+from aweb.sql import escape_like
 
 router = APIRouter(prefix="/v1/reservations", tags=["aweb-reservations"])
 
@@ -284,14 +285,15 @@ async def revoke(
 
     aweb_db = db.get_manager("aweb")
     if payload.prefix:
+        like_pattern = escape_like(payload.prefix) + "%"
         rows = await aweb_db.fetch_all(
             """
             DELETE FROM {{tables.reservations}}
-            WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+            WHERE project_id = $1 AND resource_key LIKE $2 ESCAPE '\\'
             RETURNING 1
             """,
             UUID(project_id),
-            payload.prefix,
+            like_pattern,
         )
     else:
         rows = await aweb_db.fetch_all(
@@ -328,16 +330,17 @@ async def list_reservations(
             now,
         )
     else:
+        like_pattern = escape_like(prefix) + "%"
         rows = await aweb_db.fetch_all(
             """
             SELECT project_id, resource_key, holder_agent_id, holder_alias, acquired_at, expires_at, metadata_json
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE ($3 || '%')
+            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE $3 ESCAPE '\\'
             ORDER BY resource_key ASC
             """,
             UUID(project_id),
             now,
-            prefix,
+            like_pattern,
         )
 
     return ListResponse(

@@ -702,3 +702,22 @@ async def test_mcp_lock_acquire_conflict(aweb_db_infra):
             )
             assert "error" in conflict
             assert conflict["holder_alias"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_lock_list_prefix_escapes_like_wildcards(aweb_db_infra):
+    agent = await _setup_mcp_session(aweb_db_infra, "mcp-locks-prefix-escape", "alice")
+    auth = {"Authorization": f"Bearer {agent['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid = await _mcp_initialize(mc, headers=auth)
+
+            await _tool_call(mc, "lock_acquire", {"resource_key": "%build"}, sid, auth)
+            await _tool_call(mc, "lock_acquire", {"resource_key": "build/main"}, sid, auth)
+
+            filtered = await _tool_call(mc, "lock_list", {"prefix": "%"}, sid, auth)
+            keys = [r["resource_key"] for r in filtered.get("reservations", [])]
+            assert "%build" in keys
+            assert "build/main" not in keys
