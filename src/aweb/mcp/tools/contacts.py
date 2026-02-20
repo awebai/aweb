@@ -8,7 +8,7 @@ from uuid import UUID
 
 from aweb.mcp.auth import get_auth
 
-CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.\-]+$")
+CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 
 
 async def contacts_list(db_infra) -> str:

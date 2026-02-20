@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.auth import get_project_from_auth
 from aweb.deps import get_db
 
-CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.\-]+$")
+CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 
 router = APIRouter(prefix="/v1/contacts", tags=["aweb-contacts"])
 

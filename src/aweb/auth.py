@@ -56,12 +56,12 @@ def verify_api_key_hash(key: str, key_hash: str) -> bool:
 
 
 # Valid project_slug pattern: alphanumeric, slashes, underscores, hyphens, dots
-PROJECT_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9/_.\\-]+$")
+PROJECT_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 PROJECT_SLUG_MAX_LENGTH = 256
 
 # Valid agent alias pattern: alphanumeric plus '_' and '-', no slashes.
 # '/' is reserved for network addresses like "org/alias".
-AGENT_ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\\-]*$")
+AGENT_ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 AGENT_ALIAS_MAX_LENGTH = 64
 
 
