@@ -385,6 +385,155 @@ async def agent_log(
     )
 
 
+class RotateKeyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_did: str
+    new_public_key: str
+    custody: str
+    rotation_proof: str
+    timestamp: str
+
+    @field_validator("custody")
+    @classmethod
+    def _validate_custody(cls, v: str) -> str:
+        if v not in ("self", "custodial"):
+            raise ValueError("custody must be 'self' or 'custodial'")
+        return v
+
+
+class RotateKeyResponse(BaseModel):
+    status: str
+    old_did: str | None
+    new_did: str
+    custody: str
+
+
+@router.put("/{agent_id}/rotate", response_model=RotateKeyResponse)
+async def rotate_key(
+    request: Request,
+    agent_id: str,
+    payload: RotateKeyRequest,
+    db=Depends(get_db),
+) -> RotateKeyResponse:
+    """Rotate an agent's signing key.
+
+    Persistent agents only. Verifies the rotation proof (signed by old key).
+    If graduating custodial->self, destroys the encrypted private key.
+    """
+    import base64 as _base64
+    import json as _json
+
+    from nacl.signing import VerifyKey
+
+    project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    try:
+        agent_uuid = UUID(agent_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, did, public_key, custody, lifetime, signing_key_enc
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if row["lifetime"] == "ephemeral":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot rotate key for an ephemeral agent. Deregister and create a new agent instead.",
+        )
+
+    # Verify rotation proof: signed by old key
+    old_did = row["did"]
+    old_public_key_hex = row["public_key"]
+
+    if old_public_key_hex:
+        try:
+            old_public_key = bytes.fromhex(old_public_key_hex)
+            canonical = _json.dumps(
+                {
+                    "new_did": payload.new_did,
+                    "old_did": old_did,
+                    "operation": "rotate",
+                    "timestamp": payload.timestamp,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+
+            padded = payload.rotation_proof + "=" * (-len(payload.rotation_proof) % 4)
+            sig_bytes = _base64.b64decode(padded, validate=True)
+
+            verify_key = VerifyKey(old_public_key)
+            verify_key.verify(canonical, sig_bytes)
+        except Exception:
+            raise HTTPException(status_code=403, detail="Invalid rotation proof")
+    else:
+        raise HTTPException(status_code=403, detail="Agent has no public key to verify proof against")
+
+    # Update agent record
+    graduating = row["custody"] == "custodial" and payload.custody == "self"
+
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET did = $1,
+            public_key = $2,
+            custody = $3,
+            signing_key_enc = CASE WHEN $4::bool THEN NULL ELSE signing_key_enc END
+        WHERE agent_id = $5 AND project_id = $6
+        """,
+        payload.new_did,
+        payload.new_public_key,
+        payload.custody,
+        graduating,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    # Append rotation log entry
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did, new_did, signed_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        "rotate",
+        old_did,
+        payload.new_did,
+        old_did,
+    )
+
+    await fire_mutation_hook(
+        request,
+        "agent.key_rotated",
+        {
+            "agent_id": str(agent_uuid),
+            "project_id": project_id,
+            "old_did": old_did,
+            "new_did": payload.new_did,
+            "custody": payload.custody,
+        },
+    )
+
+    return RotateKeyResponse(
+        status="rotated",
+        old_did=old_did,
+        new_did=payload.new_did,
+        custody=payload.custody,
+    )
+
+
 class DeregisterAgentResponse(BaseModel):
     agent_id: str
     status: str
