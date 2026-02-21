@@ -467,7 +467,9 @@ async def rotate_key(
     old_public_key_hex = row["public_key"]
 
     if not old_public_key_hex:
-        raise HTTPException(status_code=403, detail="Agent has no public key to verify proof against")
+        raise HTTPException(
+            status_code=403, detail="Agent has no public key to verify proof against"
+        )
 
     try:
         old_public_key = bytes.fromhex(old_public_key_hex)
@@ -549,6 +551,196 @@ async def rotate_key(
         old_did=old_did,
         new_did=payload.new_did,
         custody=payload.custody,
+    )
+
+
+class RetireAgentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    successor_agent_id: str
+    retirement_proof: str | None = None
+    timestamp: str | None = None
+
+    @field_validator("successor_agent_id")
+    @classmethod
+    def _validate_successor_id(cls, v: str) -> str:
+        try:
+            return str(UUID(v.strip()))
+        except Exception:
+            raise ValueError("Invalid successor_agent_id format")
+
+
+class RetireAgentResponse(BaseModel):
+    status: str
+    agent_id: str
+    successor_agent_id: str
+
+
+@router.put("/{agent_id}/retire", response_model=RetireAgentResponse)
+async def retire_agent(
+    request: Request,
+    agent_id: str,
+    payload: RetireAgentRequest,
+    db=Depends(get_db),
+) -> RetireAgentResponse:
+    """Retire a persistent agent with a designated successor.
+
+    For self-custodial agents: requires a retirement_proof (Ed25519 sig by the
+    agent's current key over the canonical retirement payload).
+    For custodial agents: server signs the proof on behalf.
+    Ephemeral agents → 400 (use deregister instead).
+    """
+    import base64 as _base64
+    import json as _json
+
+    from nacl.exceptions import BadSignatureError
+    from nacl.signing import VerifyKey
+
+    from aweb.custody import decrypt_signing_key, get_custody_key
+    from aweb.signing import sign_message
+
+    project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    try:
+        agent_uuid = UUID(agent_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, did, public_key, custody, lifetime, status, signing_key_enc
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if row["lifetime"] == "ephemeral":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot retire an ephemeral agent. Use the deregister endpoint instead.",
+        )
+
+    if row["status"] == "retired":
+        raise HTTPException(status_code=400, detail="Agent is already retired")
+
+    if row["status"] == "deregistered":
+        raise HTTPException(status_code=400, detail="Agent is already deregistered")
+
+    # Validate successor exists in the same project
+    successor_uuid = UUID(payload.successor_agent_id)
+    successor = await aweb_db.fetch_one(
+        """
+        SELECT agent_id FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        successor_uuid,
+        UUID(project_id),
+    )
+    if successor is None:
+        raise HTTPException(status_code=404, detail="Successor agent not found in this project")
+
+    # Verify or generate retirement proof
+    timestamp = payload.timestamp or ""
+    canonical = _json.dumps(
+        {
+            "operation": "retire",
+            "successor_agent_id": payload.successor_agent_id,
+            "timestamp": timestamp,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    if row["custody"] == "custodial" and payload.retirement_proof is None:
+        # Server signs on behalf of custodial agent
+        master_key = get_custody_key()
+        if master_key is None:
+            raise HTTPException(status_code=500, detail="Custody key not configured")
+        if row["signing_key_enc"] is None:
+            raise HTTPException(status_code=500, detail="Agent has no signing key")
+        try:
+            private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to decrypt signing key")
+        sign_message(private_key, canonical)
+    else:
+        # Self-custodial: verify proof provided by caller
+        if not payload.retirement_proof:
+            raise HTTPException(
+                status_code=422, detail="retirement_proof is required for self-custodial agents"
+            )
+
+        old_public_key_hex = row["public_key"]
+        if not old_public_key_hex:
+            raise HTTPException(
+                status_code=403, detail="Agent has no public key to verify proof against"
+            )
+
+        try:
+            old_public_key = bytes.fromhex(old_public_key_hex)
+        except ValueError:
+            raise HTTPException(status_code=500, detail="Corrupt public key in database")
+
+        try:
+            padded = payload.retirement_proof + "=" * (-len(payload.retirement_proof) % 4)
+            sig_bytes = _base64.b64decode(padded, validate=True)
+        except Exception:
+            raise HTTPException(status_code=403, detail="Malformed retirement proof encoding")
+
+        try:
+            verify_key = VerifyKey(old_public_key)
+            verify_key.verify(canonical, sig_bytes)
+        except BadSignatureError:
+            raise HTTPException(status_code=403, detail="Invalid retirement proof")
+        except Exception:
+            raise HTTPException(status_code=403, detail="Retirement proof verification error")
+
+    # Update agent status
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET status = 'retired', successor_agent_id = $1
+        WHERE agent_id = $2 AND project_id = $3
+        """,
+        successor_uuid,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    # Append retire entry to agent_log
+    metadata = _json.dumps({"successor_agent_id": payload.successor_agent_id})
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did, metadata)
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        "retire",
+        row["did"],
+        metadata,
+    )
+
+    await fire_mutation_hook(
+        request,
+        "agent.retired",
+        {
+            "agent_id": str(agent_uuid),
+            "project_id": project_id,
+            "did": row["did"],
+            "successor_agent_id": payload.successor_agent_id,
+        },
+    )
+
+    return RetireAgentResponse(
+        status="retired",
+        agent_id=str(agent_uuid),
+        successor_agent_id=payload.successor_agent_id,
     )
 
 
