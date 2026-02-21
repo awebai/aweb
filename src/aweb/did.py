@@ -4,6 +4,8 @@ Implements the did:key method per clawdid/sot.md §2.2:
 multicodec 0xed01 prefix + base58btc encoding + "did:key:z" prefix.
 """
 
+from __future__ import annotations
+
 import base58 as b58
 from nacl.signing import SigningKey
 
