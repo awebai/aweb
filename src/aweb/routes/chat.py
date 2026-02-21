@@ -182,6 +182,10 @@ class CreateSessionRequest(BaseModel):
     to_aliases: list[str] = Field(..., min_length=1)
     message: str
     leaving: bool = False
+    from_did: str | None = None
+    to_did: str | None = None
+    signature: str | None = None
+    signing_key_id: str | None = None
 
     @field_validator("to_aliases")
     @classmethod
@@ -239,8 +243,10 @@ async def create_or_send(
     aweb_db = db.get_manager("aweb")
     msg_row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.chat_messages}} (session_id, from_agent_id, from_alias, body, sender_leaving)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_agent_id, from_alias, body, sender_leaving,
+             from_did, to_did, signature, signing_key_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING message_id, created_at
         """,
         session_id,
@@ -248,6 +254,10 @@ async def create_or_send(
         sender["alias"],
         payload.message,
         bool(payload.leaving),
+        payload.from_did,
+        payload.to_did,
+        payload.signature,
+        payload.signing_key_id,
     )
 
     # Advance sender's read receipt — sending implies having read up to this point.
@@ -455,7 +465,8 @@ async def history(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT message_id, from_alias, body, created_at, sender_leaving
+        SELECT message_id, from_alias, body, created_at, sender_leaving,
+               from_did, to_did, signature, signing_key_id
         FROM {{tables.chat_messages}}
         WHERE session_id = $1
           AND ($2::bool IS FALSE OR (created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz) AND from_agent_id <> $4))
@@ -478,6 +489,10 @@ async def history(
                 "body": r["body"],
                 "timestamp": r["created_at"].isoformat(),
                 "sender_leaving": bool(r["sender_leaving"]),
+                "from_did": r["from_did"],
+                "to_did": r["to_did"],
+                "signature": r["signature"],
+                "signing_key_id": r["signing_key_id"],
             }
             for r in rows
         ]
@@ -792,6 +807,10 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
+    from_did: str | None = None
+    to_did: str | None = None
+    signature: str | None = None
+    signing_key_id: str | None = None
 
 
 class SendMessageResponse(BaseModel):
@@ -854,8 +873,9 @@ async def send_message(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
+             from_did, to_did, signature, signing_key_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING message_id, created_at
         """,
         session_uuid,
@@ -864,6 +884,10 @@ async def send_message(
         payload.body,
         False,  # sender_leaving only set via create_session with leaving=true
         bool(payload.hang_on),
+        payload.from_did,
+        payload.to_did,
+        payload.signature,
+        payload.signing_key_id,
     )
 
     # Advance sender's read receipt — sending implies having read up to this point.
