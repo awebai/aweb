@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -242,3 +243,63 @@ async def patch_agent(
     )
 
     return PatchAgentResponse(agent_id=str(agent_uuid), access_mode=new_access_mode)
+
+
+class ResolveAgentResponse(BaseModel):
+    did: str | None
+    address: str
+    agent_id: str
+    human_name: str | None
+    public_key: str | None
+    server: str
+    custody: str | None
+    lifetime: str
+    status: str
+
+
+@router.get("/resolve/{namespace}/{alias}", response_model=ResolveAgentResponse)
+async def resolve_agent(
+    request: Request,
+    namespace: str,
+    alias: str,
+    db=Depends(get_db),
+) -> ResolveAgentResponse:
+    """Resolve an agent by namespace (project slug) and alias.
+
+    Authenticated but NOT project-scoped — any valid API key can resolve any agent.
+    Per clawdid/sot.md §4.6.
+    """
+    # Auth check: caller must have a valid API key
+    await get_project_from_auth(request, db)
+
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT a.agent_id, a.alias, a.human_name, a.did, a.public_key,
+               a.custody, a.lifetime, a.status, p.slug
+        FROM {{tables.agents}} a
+        JOIN {{tables.projects}} p ON a.project_id = p.project_id
+        WHERE p.slug = $1
+          AND a.alias = $2
+          AND a.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+        """,
+        namespace,
+        alias,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    server_url = os.environ.get("AWEB_SERVER_URL", "")
+
+    return ResolveAgentResponse(
+        did=row["did"],
+        address=f"{namespace}/{alias}",
+        agent_id=str(row["agent_id"]),
+        human_name=row.get("human_name"),
+        public_key=row["public_key"],
+        server=server_url,
+        custody=row["custody"],
+        lifetime=row["lifetime"],
+        status=row["status"],
+    )
