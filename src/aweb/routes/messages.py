@@ -28,6 +28,10 @@ class SendMessageRequest(BaseModel):
     body: str
     priority: MessagePriority = "normal"
     thread_id: Optional[str] = None
+    from_did: Optional[str] = None
+    to_did: Optional[str] = None
+    signature: Optional[str] = None
+    signing_key_id: Optional[str] = None
 
     @field_validator("to_agent_id")
     @classmethod
@@ -76,6 +80,10 @@ class InboxMessage(BaseModel):
     thread_id: Optional[str]
     read_at: Optional[str]
     created_at: str
+    from_did: Optional[str] = None
+    to_did: Optional[str] = None
+    signature: Optional[str] = None
+    signing_key_id: Optional[str] = None
 
 
 class InboxResponse(BaseModel):
@@ -127,6 +135,10 @@ async def send_message(
         body=payload.body,
         priority=payload.priority,
         thread_id=payload.thread_id,
+        from_did=payload.from_did,
+        to_did=payload.to_did,
+        signature=payload.signature,
+        signing_key_id=payload.signing_key_id,
     )
     await fire_mutation_hook(
         request,
@@ -164,7 +176,8 @@ async def inbox(
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT message_id, from_agent_id, from_alias, subject, body, priority, thread_id, read_at, created_at
+        SELECT message_id, from_agent_id, from_alias, subject, body, priority, thread_id, read_at, created_at,
+               from_did, to_did, signature, signing_key_id
         FROM {{tables.messages}}
         WHERE project_id = $1
           AND to_agent_id = $2
@@ -190,6 +203,10 @@ async def inbox(
                 thread_id=str(r["thread_id"]) if r["thread_id"] is not None else None,
                 read_at=r["read_at"].isoformat() if r["read_at"] is not None else None,
                 created_at=r["created_at"].isoformat(),
+                from_did=r["from_did"],
+                to_did=r["to_did"],
+                signature=r["signature"],
+                signing_key_id=r["signing_key_id"],
             )
             for r in rows
         ]

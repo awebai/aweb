@@ -49,6 +49,10 @@ async def deliver_message(
     body: str,
     priority: MessagePriority,
     thread_id: str | None,
+    from_did: str | None = None,
+    to_did: str | None = None,
+    signature: str | None = None,
+    signing_key_id: str | None = None,
 ) -> tuple[UUID, datetime]:
     project_uuid = _parse_uuid(project_id, field_name="project_id")
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id")
@@ -69,8 +73,9 @@ async def deliver_message(
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
+             from_did, to_did, signature, signing_key_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
         project_uuid,
@@ -81,6 +86,10 @@ async def deliver_message(
         body,
         priority,
         thread_uuid,
+        from_did,
+        to_did,
+        signature,
+        signing_key_id,
     )
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create message")
