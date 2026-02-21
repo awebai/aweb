@@ -404,7 +404,56 @@ Add DID/custody/lifetime/status fields to `GET /v1/agents` response and update M
 
 ---
 
-## 11. What is NOT in scope
+## 11. Integration contracts
+
+### 11.1 BeadHub (agreed with alice, 2026-02-21)
+
+BeadHub embeds aweb as a library — mounts aweb routers, shares the same FastAPI app, same PostgreSQL (3 schemas: aweb, server, beads), same Redis. `workspace_id = agent_id` (same UUID).
+
+**aweb provides:**
+1. New nullable columns on `agents` table (backward compat, explicit-column queries safe)
+2. `bootstrap_identity()` accepts `custody` + `lifetime` params, generates keypair for custodial
+3. `DELETE /v1/agents/{agent_id}` for ephemeral deregistration (any project member can call)
+4. Transparent message signing for custodial agents (no caller changes to `deliver_message()`)
+5. `verify_bearer_token` unchanged — DID/signing is additive
+6. `GET /v1/agents` returns `did`/`custody`/`lifetime`/`status`
+7. Mutation events: `agent.created` (step 3), `agent.deregistered` (step 5), `agent.key_rotated`, `agent.retired`
+8. `AWEB_CUSTODY_KEY` is optional — if unset, agents are created without DID and messages go unsigned
+
+**BeadHub does:**
+1. Pass `custody='custodial'`, `lifetime='ephemeral'` in `bootstrap_identity()` calls
+2. Chain `DELETE /v1/agents/{agent_id}` into workspace deletion flow
+3. Add `did`, `custody`, `lifetime` to agent list and status API responses
+4. Handle `agent.created` and `agent.deregistered` mutation events for SSE dashboard updates
+
+**BeadHub does NOT need:**
+- Resolution endpoint (cross-project, ClaWeb concern)
+- Key rotation or retirement endpoints (persistent-only)
+- Client-side signing (custodial agents, server signs)
+- `AWEB_CUSTODY_KEY` config (aweb-level; beadhub-cloud's deployment wires it)
+
+**Deregistration auth:** Any authenticated agent in the same project can deregister an ephemeral agent. Rationale: ephemeral agents are disposable, trust is project-level, and the stale-cleanup use case requires peer-callable deletion.
+
+**Sequencing:** BeadHub needs steps 1–5 only (crypto modules, migrations, registration, deregistration). Rotation, retirement, and announcements are ClaWeb-only. Ping alice before cutting a release with migration 013.
+
+### 11.2 ClaWeb (agreed with quinn, 2026-02-21)
+
+ClaWeb is the hosted aweb instance with user/namespace/billing. Currently does direct INSERTs into aweb tables — will refactor to call `/v1/init` instead.
+
+**Split:** aweb = data plane (agent identity, lifecycle, message envelope). ClaWeb = control plane (users, namespaces, plans, billing, handles).
+
+**Key decisions:**
+- Handles are ClaWeb-only — aweb has no concept of `@handle`
+- `projects.slug` IS the namespace
+- Resolution endpoint (`GET /v1/agents/resolve/{namespace}/{alias}`) is cross-project (exception to normal scoping)
+- ClaWeb stops direct aweb-table INSERTs, calls `/v1/init` instead
+- New identity endpoints are under `/v1/*` with existing auth
+
+**Sequencing:** aweb lands schema + registration first, then ClaWeb integrates.
+
+---
+
+## 12. What is NOT in scope
 
 - **ClaWDID registry** — separate service, not part of aweb. Comes in Phase 2.
 - **Cross-server messaging** — requires address format decision (§9.1 of parent doc). Comes in Phase 3.
