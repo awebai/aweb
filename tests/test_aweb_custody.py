@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import secrets
 
 import pytest
 import pytest_asyncio
 
 from aweb.did import did_from_public_key, generate_keypair
-from aweb.signing import canonical_payload, verify_signature, VerifyResult
-
+from aweb.signing import VerifyResult, canonical_payload, verify_signature
 
 # --- encrypt / decrypt ---
 
@@ -112,8 +110,6 @@ class TestSignOnBehalf:
     @pytest_asyncio.fixture
     async def seeded_custodial_agent(self, aweb_db_infra, monkeypatch):
         """Create a project with a custodial agent that has an encrypted signing key."""
-        from uuid import UUID
-
         from aweb.custody import encrypt_signing_key
 
         master_key = secrets.token_bytes(32)
@@ -180,12 +176,15 @@ class TestSignOnBehalf:
             "body": "hello from custodial agent",
             "timestamp": "2026-02-21T12:00:00Z",
         }
-        signature = await sign_on_behalf(seed["agent_id"], message_fields, aweb_db_infra)
-        assert signature is not None
+        result = await sign_on_behalf(seed["agent_id"], message_fields, aweb_db_infra)
+        assert result is not None
+        from_did, signature, signing_key_id = result
+        assert from_did == seed["did"]
+        assert signing_key_id == seed["did"]
 
         payload = canonical_payload(message_fields)
-        result = verify_signature(seed["did"], payload, signature)
-        assert result == VerifyResult.VERIFIED
+        verify_result = verify_signature(seed["did"], payload, signature)
+        assert verify_result == VerifyResult.VERIFIED
 
     @pytest.mark.asyncio
     async def test_sign_on_behalf_returns_none_when_no_custody_key(
@@ -209,22 +208,20 @@ class TestSignOnBehalf:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_sign_on_behalf_raises_for_unknown_agent(self, aweb_db_infra, monkeypatch):
+    async def test_sign_on_behalf_returns_none_for_unknown_agent(self, aweb_db_infra, monkeypatch):
         from aweb.custody import sign_on_behalf
 
         monkeypatch.setenv("AWEB_CUSTODY_KEY", secrets.token_hex(32))
         import uuid
 
-        with pytest.raises(ValueError, match="not found"):
-            await sign_on_behalf(str(uuid.uuid4()), {"body": "x"}, aweb_db_infra)
+        result = await sign_on_behalf(str(uuid.uuid4()), {"body": "x"}, aweb_db_infra)
+        assert result is None
 
     @pytest.mark.asyncio
-    async def test_sign_on_behalf_raises_for_self_custodial_agent(
+    async def test_sign_on_behalf_returns_none_for_self_custodial_agent(
         self, aweb_db_infra, monkeypatch
     ):
-        """Self-custodial agents have no encrypted key — signing on behalf should fail."""
-        from uuid import UUID
-
+        """Self-custodial agents have no encrypted key — signing on behalf should return None."""
         monkeypatch.setenv("AWEB_CUSTODY_KEY", secrets.token_hex(32))
 
         private_key, public_key = generate_keypair()
@@ -259,12 +256,12 @@ class TestSignOnBehalf:
 
         from aweb.custody import sign_on_behalf
 
-        with pytest.raises(ValueError, match="no encrypted signing key"):
-            await sign_on_behalf(
-                str(agent["agent_id"]),
-                {"body": "x"},
-                aweb_db_infra,
-            )
+        result = await sign_on_behalf(
+            str(agent["agent_id"]),
+            {"body": "x"},
+            aweb_db_infra,
+        )
+        assert result is None
 
 
 # --- destroy_signing_key ---
@@ -319,8 +316,9 @@ class TestDestroySigningKey:
 
     @pytest.mark.asyncio
     async def test_destroy_raises_for_unknown_agent(self, aweb_db_infra):
-        from aweb.custody import destroy_signing_key
         import uuid
+
+        from aweb.custody import destroy_signing_key
 
         with pytest.raises(ValueError, match="not found"):
             await destroy_signing_key(str(uuid.uuid4()), aweb_db_infra)

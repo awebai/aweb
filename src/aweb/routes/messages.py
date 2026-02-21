@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
@@ -140,6 +141,39 @@ async def send_message(
         signature=payload.signature,
         signing_key_id=payload.signing_key_id,
     )
+
+    # Server-side custodial signing: if caller didn't provide a signature,
+    # try to sign on behalf of the sender.
+    if payload.signature is None:
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": sender["alias"],
+                "from_did": payload.from_did or "",
+                "to": to_agent_id,
+                "to_did": payload.to_did or "",
+                "type": "mail",
+                "subject": payload.subject,
+                "body": payload.body,
+                "timestamp": created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            from_did, sig, signing_key_id = sign_result
+            aweb_db = db.get_manager("aweb")
+            await aweb_db.execute(
+                """
+                UPDATE {{tables.messages}}
+                SET from_did = $1, signature = $2, signing_key_id = $3
+                WHERE message_id = $4
+                """,
+                from_did,
+                sig,
+                signing_key_id,
+                message_id,
+            )
+
     await fire_mutation_hook(
         request,
         "message.sent",
