@@ -306,6 +306,85 @@ async def resolve_agent(
     )
 
 
+class AgentLogEntry(BaseModel):
+    log_id: str
+    operation: str
+    old_did: str | None
+    new_did: str | None
+    signed_by: str | None
+    entry_signature: str | None
+    metadata: dict | None
+    created_at: str
+
+
+class AgentLogResponse(BaseModel):
+    agent_id: str
+    address: str
+    log: list[AgentLogEntry]
+
+
+@router.get("/{agent_id}/log", response_model=AgentLogResponse)
+async def agent_log(
+    request: Request,
+    agent_id: str,
+    db=Depends(get_db),
+) -> AgentLogResponse:
+    """Return the lifecycle audit log for an agent.
+
+    Append-only log of create, rotate, retire, deregister, custody_change events.
+    Ordered by created_at ASC. Authenticated, project-scoped.
+    """
+    project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    try:
+        agent_uuid = UUID(agent_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+
+    agent = await aweb_db.fetch_one(
+        """
+        SELECT a.agent_id, a.alias, p.slug
+        FROM {{tables.agents}} a
+        JOIN {{tables.projects}} p ON a.project_id = p.project_id
+        WHERE a.agent_id = $1 AND a.project_id = $2
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT log_id, operation, old_did, new_did, signed_by, entry_signature, metadata, created_at
+        FROM {{tables.agent_log}}
+        WHERE agent_id = $1 AND project_id = $2
+        ORDER BY created_at ASC
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    return AgentLogResponse(
+        agent_id=str(agent_uuid),
+        address=f"{agent['slug']}/{agent['alias']}",
+        log=[
+            AgentLogEntry(
+                log_id=str(r["log_id"]),
+                operation=r["operation"],
+                old_did=r["old_did"],
+                new_did=r["new_did"],
+                signed_by=r["signed_by"],
+                entry_signature=r["entry_signature"],
+                metadata=dict(r["metadata"]) if r["metadata"] else None,
+                created_at=r["created_at"].isoformat(),
+            )
+            for r in rows
+        ],
+    )
+
+
 class DeregisterAgentResponse(BaseModel):
     agent_id: str
     status: str
