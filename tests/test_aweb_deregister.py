@@ -286,6 +286,30 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
+    """Deregistering the same agent twice should return 404 the second time."""
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_ephemeral_agent(aweb_db, project_slug="double-dereg", alias="agent", master_key=master_key)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp1 = await c.delete(
+                f"/v1/agents/{seed['agent_id']}",
+                headers=_auth(seed["api_key"]),
+            )
+            assert resp1.status_code == 200
+
+            resp2 = await c.delete(
+                f"/v1/agents/{seed['agent_id']}",
+                headers=_auth(seed["api_key"]),
+            )
+            assert resp2.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_deregister_requires_auth(aweb_db_infra, monkeypatch):
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
