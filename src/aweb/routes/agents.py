@@ -467,9 +467,7 @@ async def rotate_key(
     old_public_key_hex = row["public_key"]
 
     if not old_public_key_hex:
-        raise HTTPException(
-            status_code=403, detail="Agent has no public key to verify proof against"
-        )
+        raise HTTPException(status_code=403, detail="Agent has no public key to verify proof against")
 
     try:
         old_public_key = bytes.fromhex(old_public_key_hex)
@@ -532,6 +530,21 @@ async def rotate_key(
         old_did,
         payload.new_did,
         old_did,
+    )
+
+    # Store rotation announcement for per-peer injection (§5.4)
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.rotation_announcements}}
+            (agent_id, project_id, old_did, new_did, rotation_timestamp, old_key_signature)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        old_did,
+        payload.new_did,
+        payload.timestamp,
+        payload.rotation_proof,
     )
 
     await fire_mutation_hook(
@@ -753,6 +766,7 @@ async def retire_agent(
         agent_id=str(agent_uuid),
         successor_agent_id=payload.successor_agent_id,
     )
+
 
 
 class DeregisterAgentResponse(BaseModel):

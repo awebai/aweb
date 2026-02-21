@@ -20,7 +20,8 @@ async def list_agents(db_infra, redis) -> str:
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, human_name, agent_type, access_mode
+        SELECT agent_id, alias, human_name, agent_type, access_mode,
+               did, custody, lifetime, status
         FROM {{tables.agents}}
         WHERE project_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
         ORDER BY alias
@@ -44,6 +45,10 @@ async def list_agents(db_infra, redis) -> str:
                 "agent_type": r.get("agent_type") or "agent",
                 "access_mode": r.get("access_mode", "open"),
                 "online": p is not None,
+                "did": r.get("did") or "",
+                "custody": r.get("custody") or "",
+                "lifetime": r.get("lifetime") or "persistent",
+                "status": r.get("status") or "active",
             }
         )
 

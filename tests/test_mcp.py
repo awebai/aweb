@@ -214,6 +214,10 @@ async def test_mcp_whoami(aweb_db_infra):
             assert data["alias"] == "alice"
             assert data["project_id"] == agent["project_id"]
             assert data["agent_id"] == agent["agent_id"]
+            assert "did" in data
+            assert "custody" in data
+            assert "lifetime" in data
+            assert data["lifetime"] == "persistent"
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +317,12 @@ async def test_mcp_list_agents(aweb_db_infra):
             aliases = {a["alias"] for a in data["agents"]}
             assert aliases == {"alice", "bob"}
             assert data["project_id"] == alice["project_id"]
+            # Identity fields present on each agent
+            for a in data["agents"]:
+                assert "did" in a
+                assert "custody" in a
+                assert "lifetime" in a
+                assert "status" in a
 
 
 # ---------------------------------------------------------------------------

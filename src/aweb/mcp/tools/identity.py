@@ -15,7 +15,7 @@ async def whoami(db_infra) -> str:
 
     agent = await aweb_db.fetch_one(
         """
-        SELECT alias, human_name, agent_type
+        SELECT alias, human_name, agent_type, did, custody, lifetime
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
         """,
@@ -31,5 +31,8 @@ async def whoami(db_infra) -> str:
         result["alias"] = agent["alias"]
         result["human_name"] = agent.get("human_name") or ""
         result["agent_type"] = agent.get("agent_type") or "agent"
+        result["did"] = agent.get("did") or ""
+        result["custody"] = agent.get("custody") or ""
+        result["lifetime"] = agent.get("lifetime") or "persistent"
 
     return json.dumps(result)

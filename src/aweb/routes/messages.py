@@ -12,6 +12,7 @@ from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
+from aweb.rotation_announcements import acknowledge_rotation, get_pending_announcements
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
@@ -71,6 +72,13 @@ class SendMessageResponse(BaseModel):
     delivered_at: str
 
 
+class RotationAnnouncement(BaseModel):
+    old_did: str
+    new_did: str
+    timestamp: str
+    old_key_signature: str
+
+
 class InboxMessage(BaseModel):
     message_id: str
     from_agent_id: str
@@ -85,6 +93,7 @@ class InboxMessage(BaseModel):
     to_did: Optional[str] = None
     signature: Optional[str] = None
     signing_key_id: Optional[str] = None
+    rotation_announcement: Optional[RotationAnnouncement] = None
 
 
 class InboxResponse(BaseModel):
@@ -179,6 +188,12 @@ async def send_message(
         created_at=created_at,
     )
 
+    # Sending a message to an agent implicitly acknowledges their rotation
+    aweb_db = db.get_manager("aweb")
+    await acknowledge_rotation(
+        aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id)
+    )
+
     await fire_mutation_hook(
         request,
         "message.sent",
@@ -230,8 +245,17 @@ async def inbox(
         int(limit),
     )
 
-    return InboxResponse(
-        messages=[
+    # Look up pending rotation announcements for message senders
+    sender_ids = list({r["from_agent_id"] for r in rows})
+    announcements = await get_pending_announcements(
+        aweb_db, sender_ids=sender_ids, recipient_id=UUID(actor_id)
+    )
+
+    messages = []
+    for r in rows:
+        ann_data = announcements.get(str(r["from_agent_id"]))
+        ann = RotationAnnouncement(**ann_data) if ann_data else None
+        messages.append(
             InboxMessage(
                 message_id=str(r["message_id"]),
                 from_agent_id=str(r["from_agent_id"]),
@@ -246,10 +270,11 @@ async def inbox(
                 to_did=r["to_did"],
                 signature=r["signature"],
                 signing_key_id=r["signing_key_id"],
+                rotation_announcement=ann,
             )
-            for r in rows
-        ]
-    )
+        )
+
+    return InboxResponse(messages=messages)
 
 
 @router.post("/{message_id}/ack", response_model=AckResponse)

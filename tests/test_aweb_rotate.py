@@ -34,9 +34,7 @@ def _make_rotation_proof(old_private_key: bytes, old_did: str, new_did: str, tim
     return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
 
 
-async def _seed_persistent_self_custodial(
-    aweb_db, *, slug: str = "rotate-proj", alias: str = "agent"
-):
+async def _seed_persistent_self_custodial(aweb_db, *, slug: str = "rotate-proj", alias: str = "agent"):
     """Create a persistent self-custodial agent."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
@@ -316,9 +314,7 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_persistent_custodial(
-        aweb_db, slug="grad-test", alias="grad", master_key=master_key
-    )
+    seed = await _seed_persistent_custodial(aweb_db, slug="grad-test", alias="grad", master_key=master_key)
 
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
