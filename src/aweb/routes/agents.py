@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
+from aweb.hooks import fire_mutation_hook
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
     list_agent_presences_by_ids,
@@ -303,3 +304,87 @@ async def resolve_agent(
         lifetime=row["lifetime"],
         status=row["status"],
     )
+
+
+class DeregisterAgentResponse(BaseModel):
+    agent_id: str
+    status: str
+
+
+@router.delete("/{agent_id}", response_model=DeregisterAgentResponse)
+async def deregister_agent(
+    request: Request,
+    agent_id: str,
+    db=Depends(get_db),
+) -> DeregisterAgentResponse:
+    """Deregister an ephemeral agent.
+
+    Destroys the signing key, sets status to 'deregistered', soft-deletes
+    (sets deleted_at so the alias can be reused). Rejects persistent agents
+    with 400 — use the retire endpoint instead.
+
+    Auth: any authenticated agent in the same project can call this
+    (peer-callable for stale workspace cleanup).
+    """
+    project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    try:
+        agent_uuid = UUID(agent_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, did, lifetime, signing_key_enc
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if row["lifetime"] == "persistent":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot deregister a persistent agent. Use the retire endpoint instead.",
+        )
+
+    # Destroy signing key, set status, soft-delete
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET signing_key_enc = NULL,
+            status = 'deregistered',
+            deleted_at = NOW()
+        WHERE agent_id = $1 AND project_id = $2
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    # Append deregister entry to agent_log
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did)
+        VALUES ($1, $2, $3, $4)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        "deregister",
+        row["did"],
+    )
+
+    await fire_mutation_hook(
+        request,
+        "agent.deregistered",
+        {
+            "agent_id": str(agent_uuid),
+            "project_id": project_id,
+            "did": row["did"],
+        },
+    )
+
+    return DeregisterAgentResponse(agent_id=str(agent_uuid), status="deregistered")
