@@ -329,6 +329,69 @@ async def test_retire_rejects_unknown_successor(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_retire_rejects_self_succession(aweb_db_infra):
+    """An agent cannot name itself as its own successor."""
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    data = await _seed_project_with_agents(aweb_db, custody="self")
+
+    timestamp = "2026-02-21T12:00:00Z"
+    # Sign a proof with self as successor
+    proof = _sign_retirement_proof(data["seed"], data["agent_id"], timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                f"/v1/agents/{data['agent_id']}/retire",
+                headers=_auth(data["api_key"]),
+                json={
+                    "successor_agent_id": data["agent_id"],
+                    "retirement_proof": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 400
+            assert "itself" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_retire_log_includes_signed_by(aweb_db_infra):
+    """Retirement log entry includes signed_by and entry_signature."""
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    data = await _seed_project_with_agents(aweb_db, custody="self")
+
+    timestamp = "2026-02-21T12:00:00Z"
+    proof = _sign_retirement_proof(data["seed"], data["successor_id"], timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                f"/v1/agents/{data['agent_id']}/retire",
+                headers=_auth(data["api_key"]),
+                json={
+                    "successor_agent_id": data["successor_id"],
+                    "retirement_proof": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 200
+
+    log = await aweb_db.fetch_one(
+        "SELECT signed_by, entry_signature FROM {{tables.agent_log}} WHERE agent_id = $1 AND operation = $2",
+        uuid.UUID(data["agent_id"]),
+        "retire",
+    )
+    assert log is not None
+    assert log["signed_by"] == data["did"]
+    assert log["entry_signature"] == proof
+
+
+@pytest.mark.asyncio
 async def test_retire_already_retired_agent(aweb_db_infra):
     """Cannot retire an agent that is already retired."""
     aweb_db_infra: DatabaseInfra

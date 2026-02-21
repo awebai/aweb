@@ -631,8 +631,12 @@ async def retire_agent(
     if row["status"] == "deregistered":
         raise HTTPException(status_code=400, detail="Agent is already deregistered")
 
-    # Validate successor exists in the same project
+    # Validate successor exists in the same project and is not self
     successor_uuid = UUID(payload.successor_agent_id)
+    if successor_uuid == agent_uuid:
+        raise HTTPException(
+            status_code=400, detail="An agent cannot name itself as its own successor"
+        )
     successor = await aweb_db.fetch_one(
         """
         SELECT agent_id FROM {{tables.agents}}
@@ -656,6 +660,8 @@ async def retire_agent(
         separators=(",", ":"),
     ).encode("utf-8")
 
+    entry_signature: str | None = None
+
     if row["custody"] == "custodial" and payload.retirement_proof is None:
         # Server signs on behalf of custodial agent
         master_key = get_custody_key()
@@ -667,7 +673,7 @@ async def retire_agent(
             private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to decrypt signing key")
-        sign_message(private_key, canonical)
+        entry_signature = sign_message(private_key, canonical)
     else:
         # Self-custodial: verify proof provided by caller
         if not payload.retirement_proof:
@@ -700,6 +706,8 @@ async def retire_agent(
         except Exception:
             raise HTTPException(status_code=403, detail="Retirement proof verification error")
 
+        entry_signature = payload.retirement_proof
+
     # Update agent status
     await aweb_db.execute(
         """
@@ -716,13 +724,16 @@ async def retire_agent(
     metadata = _json.dumps({"successor_agent_id": payload.successor_agent_id})
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did, metadata)
-        VALUES ($1, $2, $3, $4, $5::jsonb)
+        INSERT INTO {{tables.agent_log}}
+            (agent_id, project_id, operation, old_did, signed_by, entry_signature, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         """,
         agent_uuid,
         UUID(project_id),
         "retire",
         row["did"],
+        row["did"],
+        entry_signature,
         metadata,
     )
 
