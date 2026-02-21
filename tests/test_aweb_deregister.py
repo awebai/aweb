@@ -116,7 +116,9 @@ async def test_deregister_ephemeral_agent(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="dereg-test", alias="alice", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="dereg-test", alias="alice", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -136,7 +138,9 @@ async def test_deregister_clears_signing_key(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="key-clear", alias="bob", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="key-clear", alias="bob", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -162,7 +166,9 @@ async def test_deregister_creates_log_entry(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="log-test", alias="charlie", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="log-test", alias="charlie", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -188,7 +194,9 @@ async def test_deregister_rejects_persistent_agent(aweb_db_infra, monkeypatch):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
     # Create project + ephemeral agent for auth
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="persist-test", alias="temp", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="persist-test", alias="temp", master_key=master_key
+    )
     # Add a persistent agent to the same project
     persistent = await _seed_persistent_agent(aweb_db, project_id=uuid.UUID(seed["project_id"]))
 
@@ -200,7 +208,10 @@ async def test_deregister_rejects_persistent_agent(aweb_db_infra, monkeypatch):
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 400
-            assert "persistent" in resp.json()["detail"].lower() or "retire" in resp.json()["detail"].lower()
+            assert (
+                "persistent" in resp.json()["detail"].lower()
+                or "retire" in resp.json()["detail"].lower()
+            )
 
 
 @pytest.mark.asyncio
@@ -208,7 +219,9 @@ async def test_deregister_404_unknown_agent(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="unknown-test", alias="agent", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="unknown-test", alias="agent", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -227,8 +240,12 @@ async def test_deregister_cross_project_forbidden(aweb_db_infra, monkeypatch):
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
 
-    seed_a = await _seed_ephemeral_agent(aweb_db, project_slug="proj-a", alias="alice", master_key=master_key)
-    seed_b = await _seed_ephemeral_agent(aweb_db, project_slug="proj-b", alias="bob", master_key=master_key)
+    seed_a = await _seed_ephemeral_agent(
+        aweb_db, project_slug="proj-a", alias="alice", master_key=master_key
+    )
+    seed_b = await _seed_ephemeral_agent(
+        aweb_db, project_slug="proj-b", alias="bob", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -238,7 +255,9 @@ async def test_deregister_cross_project_forbidden(aweb_db_infra, monkeypatch):
                 f"/v1/agents/{seed_b['agent_id']}",
                 headers=_auth(seed_a["api_key"]),
             )
-            assert resp.status_code == 404  # Should look like not found (don't leak cross-project info)
+            assert (
+                resp.status_code == 404
+            )  # Should look like not found (don't leak cross-project info)
 
 
 @pytest.mark.asyncio
@@ -247,7 +266,9 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="reuse-test", alias="alice", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="reuse-test", alias="alice", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -291,7 +312,9 @@ async def test_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(aweb_db, project_slug="double-dereg", alias="agent", master_key=master_key)
+    seed = await _seed_ephemeral_agent(
+        aweb_db, project_slug="double-dereg", alias="agent", master_key=master_key
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):

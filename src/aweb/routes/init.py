@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -26,6 +26,10 @@ class InitRequest(BaseModel):
     alias: Optional[str] = Field(default=None, max_length=64)
     human_name: str = Field(default="", max_length=64)
     agent_type: str = Field(default="agent", max_length=32)
+    did: Optional[str] = Field(default=None, max_length=256)
+    public_key: Optional[str] = Field(default=None, max_length=128)
+    custody: Optional[Literal["self", "custodial"]] = None
+    lifetime: Literal["persistent", "ephemeral"] = "persistent"
 
     @field_validator("project_slug")
     @classmethod
@@ -60,6 +64,9 @@ class InitResponse(BaseModel):
     alias: str
     api_key: str
     created: bool
+    did: Optional[str] = None
+    custody: Optional[str] = None
+    lifetime: str = "persistent"
 
 
 @router.post("", response_model=InitResponse)
@@ -77,9 +84,15 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
             alias=payload.alias,
             human_name=payload.human_name or "",
             agent_type=payload.agent_type,
+            did=payload.did,
+            public_key=payload.public_key,
+            custody=payload.custody,
+            lifetime=payload.lifetime,
         )
     except AliasExhaustedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     if result.created:
         await fire_mutation_hook(
@@ -100,4 +113,7 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
         alias=result.alias,
         api_key=result.api_key,
         created=result.created,
+        did=result.did,
+        custody=result.custody,
+        lifetime=result.lifetime,
     )

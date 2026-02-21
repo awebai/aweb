@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -53,6 +53,7 @@ async def deliver_message(
     to_did: str | None = None,
     signature: str | None = None,
     signing_key_id: str | None = None,
+    created_at: datetime | None = None,
 ) -> tuple[UUID, datetime]:
     project_uuid = _parse_uuid(project_id, field_name="project_id")
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id")
@@ -69,13 +70,16 @@ async def deliver_message(
     if recipient is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    if created_at is None:
+        created_at = datetime.now(timezone.utc)
+
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
             (project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
-             from_did, to_did, signature, signing_key_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING message_id, created_at
         """,
         project_uuid,
@@ -90,6 +94,7 @@ async def deliver_message(
         to_did,
         signature,
         signing_key_id,
+        created_at,
     )
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create message")

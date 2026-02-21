@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
@@ -29,10 +30,10 @@ class SendMessageRequest(BaseModel):
     body: str
     priority: MessagePriority = "normal"
     thread_id: Optional[str] = None
-    from_did: Optional[str] = None
-    to_did: Optional[str] = None
-    signature: Optional[str] = None
-    signing_key_id: Optional[str] = None
+    from_did: Optional[str] = Field(default=None, max_length=256)
+    to_did: Optional[str] = Field(default=None, max_length=256)
+    signature: Optional[str] = Field(default=None, max_length=512)
+    signing_key_id: Optional[str] = Field(default=None, max_length=256)
 
     @field_validator("to_agent_id")
     @classmethod
@@ -134,6 +135,42 @@ async def send_message(
     if to_agent_id is None:
         raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
 
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        aweb_db = db.get_manager("aweb")
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        recip_row = await aweb_db.fetch_one(
+            "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
+            UUID(to_agent_id),
+        )
+        to_address = f"{project_slug}/{recip_row['alias']}" if recip_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{sender['alias']}",
+                "from_did": "",
+                "to": to_address,
+                "to_did": payload.to_did or "",
+                "type": "mail",
+                "subject": payload.subject,
+                "body": payload.body,
+                "timestamp": created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     message_id, created_at = await deliver_message(
         db,
         project_id=project_id,
@@ -144,10 +181,11 @@ async def send_message(
         body=payload.body,
         priority=payload.priority,
         thread_id=payload.thread_id,
-        from_did=payload.from_did,
+        from_did=msg_from_did,
         to_did=payload.to_did,
-        signature=payload.signature,
-        signing_key_id=payload.signing_key_id,
+        signature=msg_signature,
+        signing_key_id=msg_signing_key_id,
+        created_at=created_at,
     )
 
     # Sending a message to an agent implicitly acknowledges their rotation

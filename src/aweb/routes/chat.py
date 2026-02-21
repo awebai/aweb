@@ -20,6 +20,7 @@ from aweb.chat_waiting import (
     register_waiting,
     unregister_waiting,
 )
+from aweb.custody import sign_on_behalf
 from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
 
@@ -182,10 +183,10 @@ class CreateSessionRequest(BaseModel):
     to_aliases: list[str] = Field(..., min_length=1)
     message: str
     leaving: bool = False
-    from_did: str | None = None
-    to_did: str | None = None
-    signature: str | None = None
-    signing_key_id: str | None = None
+    from_did: str | None = Field(default=None, max_length=256)
+    to_did: str | None = Field(default=None, max_length=256)
+    signature: str | None = Field(default=None, max_length=512)
+    signing_key_id: str | None = Field(default=None, max_length=256)
 
     @field_validator("to_aliases")
     @classmethod
@@ -241,12 +242,43 @@ async def create_or_send(
     session_id = await _ensure_session(db, project_id=project_id, agent_rows=agent_rows)
 
     aweb_db = db.get_manager("aweb")
+
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    msg_created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{sender['alias']}",
+                "from_did": "",
+                "to": ",".join(f"{project_slug}/{a}" for a in sorted(payload.to_aliases)),
+                "to_did": payload.to_did or "",
+                "type": "chat",
+                "subject": "",
+                "body": payload.message,
+                "timestamp": msg_created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_agent_id, from_alias, body, sender_leaving,
-             from_did, to_did, signature, signing_key_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING message_id, created_at
         """,
         session_id,
@@ -254,10 +286,11 @@ async def create_or_send(
         sender["alias"],
         payload.message,
         bool(payload.leaving),
-        payload.from_did,
+        msg_from_did,
         payload.to_did,
-        payload.signature,
-        payload.signing_key_id,
+        msg_signature,
+        msg_signing_key_id,
+        msg_created_at,
     )
 
     # Advance sender's read receipt — sending implies having read up to this point.
@@ -629,7 +662,8 @@ async def _sse_events(
             recent = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on
+                       sender_leaving, hang_on,
+                       from_did, to_did, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -656,6 +690,10 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": r["created_at"].isoformat(),
+                    "from_did": r["from_did"],
+                    "to_did": r["to_did"],
+                    "signature": r["signature"],
+                    "signing_key_id": r["signing_key_id"],
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
         else:
@@ -675,7 +713,8 @@ async def _sse_events(
             new_msgs = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on
+                       sender_leaving, hang_on,
+                       from_did, to_did, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -701,6 +740,10 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": r["created_at"].isoformat(),
+                    "from_did": r["from_did"],
+                    "to_did": r["to_did"],
+                    "signature": r["signature"],
+                    "signing_key_id": r["signing_key_id"],
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
 
@@ -807,10 +850,10 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
-    from_did: str | None = None
-    to_did: str | None = None
-    signature: str | None = None
-    signing_key_id: str | None = None
+    from_did: str | None = Field(default=None, max_length=256)
+    to_did: str | None = Field(default=None, max_length=256)
+    signature: str | None = Field(default=None, max_length=512)
+    signing_key_id: str | None = Field(default=None, max_length=256)
 
 
 class SendMessageResponse(BaseModel):
@@ -870,12 +913,42 @@ async def send_message(
 
     extends_wait_seconds = HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0
 
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    msg_created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{canonical_alias}",
+                "from_did": "",
+                "to": "",
+                "to_did": payload.to_did or "",
+                "type": "chat",
+                "subject": "",
+                "body": payload.body,
+                "timestamp": msg_created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
-             from_did, to_did, signature, signing_key_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING message_id, created_at
         """,
         session_uuid,
@@ -884,10 +957,11 @@ async def send_message(
         payload.body,
         False,  # sender_leaving only set via create_session with leaving=true
         bool(payload.hang_on),
-        payload.from_did,
+        msg_from_did,
         payload.to_did,
-        payload.signature,
-        payload.signing_key_id,
+        msg_signature,
+        msg_signing_key_id,
+        msg_created_at,
     )
 
     # Advance sender's read receipt — sending implies having read up to this point.
