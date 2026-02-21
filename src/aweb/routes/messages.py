@@ -28,10 +28,10 @@ class SendMessageRequest(BaseModel):
     body: str
     priority: MessagePriority = "normal"
     thread_id: Optional[str] = None
-    from_did: Optional[str] = None
-    to_did: Optional[str] = None
-    signature: Optional[str] = None
-    signing_key_id: Optional[str] = None
+    from_did: Optional[str] = Field(default=None, max_length=256)
+    to_did: Optional[str] = Field(default=None, max_length=256)
+    signature: Optional[str] = Field(default=None, max_length=512)
+    signing_key_id: Optional[str] = Field(default=None, max_length=256)
 
     @field_validator("to_agent_id")
     @classmethod

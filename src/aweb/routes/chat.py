@@ -182,10 +182,10 @@ class CreateSessionRequest(BaseModel):
     to_aliases: list[str] = Field(..., min_length=1)
     message: str
     leaving: bool = False
-    from_did: str | None = None
-    to_did: str | None = None
-    signature: str | None = None
-    signing_key_id: str | None = None
+    from_did: str | None = Field(default=None, max_length=256)
+    to_did: str | None = Field(default=None, max_length=256)
+    signature: str | None = Field(default=None, max_length=512)
+    signing_key_id: str | None = Field(default=None, max_length=256)
 
     @field_validator("to_aliases")
     @classmethod
@@ -629,7 +629,8 @@ async def _sse_events(
             recent = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on
+                       sender_leaving, hang_on,
+                       from_did, to_did, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -656,6 +657,10 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": r["created_at"].isoformat(),
+                    "from_did": r["from_did"],
+                    "to_did": r["to_did"],
+                    "signature": r["signature"],
+                    "signing_key_id": r["signing_key_id"],
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
         else:
@@ -675,7 +680,8 @@ async def _sse_events(
             new_msgs = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on
+                       sender_leaving, hang_on,
+                       from_did, to_did, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -701,6 +707,10 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": r["created_at"].isoformat(),
+                    "from_did": r["from_did"],
+                    "to_did": r["to_did"],
+                    "signature": r["signature"],
+                    "signing_key_id": r["signing_key_id"],
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
 
@@ -807,10 +817,10 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
-    from_did: str | None = None
-    to_did: str | None = None
-    signature: str | None = None
-    signing_key_id: str | None = None
+    from_did: str | None = Field(default=None, max_length=256)
+    to_did: str | None = Field(default=None, max_length=256)
+    signature: str | None = Field(default=None, max_length=512)
+    signing_key_id: str | None = Field(default=None, max_length=256)
 
 
 class SendMessageResponse(BaseModel):

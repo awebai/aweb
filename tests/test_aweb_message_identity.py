@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -213,4 +215,65 @@ async def test_chat_without_signature_fields(aweb_db_infra):
             msgs = resp.json()["messages"]
             assert len(msgs) == 1
             assert msgs[0]["from_did"] is None
+            assert msgs[0]["to_did"] is None
             assert msgs[0]["signature"] is None
+            assert msgs[0]["signing_key_id"] is None
+
+
+async def _collect_sse_text(
+    *, client: AsyncClient, url: str, params: dict[str, str], headers: dict[str, str]
+) -> str:
+    resp = await client.get(url, params=params, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_sse_stream_includes_identity_fields(aweb_db_infra):
+    """SSE stream replay and live messages should include identity fields."""
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    _, _, _, key1, key2 = await _seed_project_and_agents(aweb_db)
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Send a signed message to create session
+            resp = await client.post(
+                "/v1/chat/sessions",
+                headers=_auth(key1),
+                json={
+                    "to_aliases": ["bob"],
+                    "message": "sse signed",
+                    "from_did": "did:key:zAliceDid",
+                    "to_did": "did:key:zBobDid",
+                    "signature": "ssesig",
+                    "signing_key_id": "did:key:zAliceDid",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            session_id = resp.json()["session_id"]
+
+            # Collect SSE replay (use 'after' in the past to get replay)
+            past = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+            deadline = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+            sse_text = await _collect_sse_text(
+                client=client,
+                url=f"/v1/chat/sessions/{session_id}/stream",
+                params={"deadline": deadline, "after": past},
+                headers=_auth(key2),
+            )
+
+            # Parse SSE events — find message events
+            events = []
+            for line in sse_text.split("\n"):
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: ") :]))
+
+            assert len(events) >= 1
+            msg_event = events[0]
+            assert msg_event["from_did"] == "did:key:zAliceDid"
+            assert msg_event["to_did"] == "did:key:zBobDid"
+            assert msg_event["signature"] == "ssesig"
+            assert msg_event["signing_key_id"] == "did:key:zAliceDid"
