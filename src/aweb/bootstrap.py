@@ -159,7 +159,12 @@ async def bootstrap_identity(
     if custody == "self":
         if not did or not public_key:
             raise ValueError("Self-custodial agents require both did and public_key")
-        pub_bytes = bytes.fromhex(public_key)
+        try:
+            pub_bytes = bytes.fromhex(public_key)
+        except ValueError:
+            raise ValueError("public_key must be a 64-character hex-encoded Ed25519 public key")
+        if len(pub_bytes) != 32:
+            raise ValueError("public_key must be a 32-byte (64 hex char) Ed25519 public key")
         expected_did = did_from_public_key(pub_bytes)
         if expected_did != did:
             raise ValueError("DID does not match public_key")
@@ -172,6 +177,11 @@ async def bootstrap_identity(
         master_key = get_custody_key()
         if master_key is not None:
             signing_key_enc = encrypt_signing_key(seed, master_key)
+        else:
+            logger.warning(
+                "Custodial agent created without AWEB_CUSTODY_KEY — "
+                "private key discarded, server-side signing unavailable"
+            )
 
     async with aweb_db.transaction() as tx:
         project = await _resolve_project(

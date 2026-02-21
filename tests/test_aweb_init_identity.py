@@ -333,3 +333,72 @@ async def test_invalid_lifetime_value_rejected(aweb_db_infra):
                 },
             )
             assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_self_custodial_malformed_public_key_rejected(aweb_db_infra):
+    """Self-custodial with non-hex public_key → 422 with clear error."""
+    aweb_db_infra: DatabaseInfra
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/init-bad-hex",
+                    "alias": "bad-hex",
+                    "custody": "self",
+                    "did": "did:key:zFake",
+                    "public_key": "not-valid-hex!!!",
+                },
+            )
+            assert resp.status_code == 422, resp.text
+            assert "hex" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_self_custodial_wrong_length_public_key_rejected(aweb_db_infra):
+    """Self-custodial with wrong-length hex public_key → 422."""
+    aweb_db_infra: DatabaseInfra
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/init-short-pk",
+                    "alias": "short-pk",
+                    "custody": "self",
+                    "did": "did:key:zFake",
+                    "public_key": "abcd1234",  # 4 bytes, not 32
+                },
+            )
+            assert resp.status_code == 422, resp.text
+            assert "32-byte" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_agent_log_entry_for_legacy_agent(aweb_db_infra):
+    """Legacy agent (no DID) still gets a 'create' log entry with new_did=None."""
+    aweb_db_infra: DatabaseInfra
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/init-log-legacy",
+                    "alias": "log-legacy",
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+
+            aweb_db = aweb_db_infra.get_manager("aweb")
+            logs = await aweb_db.fetch_all(
+                "SELECT operation, new_did FROM {{tables.agent_log}} WHERE agent_id = $1",
+                uuid.UUID(data["agent_id"]),
+            )
+            assert len(logs) == 1
+            assert logs[0]["operation"] == "create"
+            assert logs[0]["new_did"] is None

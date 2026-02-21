@@ -92,6 +92,10 @@ class AgentView(BaseModel):
     status: str | None = None
     last_seen: str | None = None
     online: bool = False
+    did: str | None = None
+    custody: str | None = None
+    lifetime: str = "persistent"
+    identity_status: str = "active"
 
 
 class ListAgentsResponse(BaseModel):
@@ -113,7 +117,8 @@ async def list_agents(
     type_filter = "" if include_internal else "AND agent_type != 'human'"
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT agent_id, alias, human_name, agent_type, access_mode
+        SELECT agent_id, alias, human_name, agent_type, access_mode,
+               did, custody, lifetime, status
         FROM {{{{tables.agents}}}}
         WHERE project_id = $1 AND deleted_at IS NULL
           {type_filter}
@@ -140,6 +145,10 @@ async def list_agents(
                 status=p["status"] if p else None,
                 last_seen=p["last_seen"] if p else None,
                 online=p is not None,
+                did=r.get("did"),
+                custody=r.get("custody"),
+                lifetime=r.get("lifetime", "persistent"),
+                identity_status=r.get("status", "active"),
             )
         )
 

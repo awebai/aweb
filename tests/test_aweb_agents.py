@@ -286,3 +286,50 @@ async def test_list_agents_include_internal_shows_all(aweb_db_infra):
             aliases = {a["alias"] for a in agents}
             assert "alice" in aliases
             assert "cowork-internal" in aliases
+
+
+@pytest.mark.asyncio
+async def test_list_agents_includes_identity_fields(aweb_db_infra):
+    """Agent listing includes did, custody, lifetime, identity_status fields."""
+    from aweb.did import did_from_public_key, generate_keypair
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Create a self-custodial agent
+            _, pub = generate_keypair()
+            did = did_from_public_key(pub)
+            data = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/agents-identity",
+                    "alias": "id-agent",
+                    "custody": "self",
+                    "did": did,
+                    "public_key": pub.hex(),
+                },
+            )
+            assert data.status_code == 200, data.text
+            d = data.json()
+            api_key = d["api_key"]
+
+            # Also create a legacy agent
+            await _init_project(c, "test/agents-identity", "legacy-agent")
+
+            resp = await c.get("/v1/agents", headers={"Authorization": f"Bearer {api_key}"})
+            assert resp.status_code == 200
+            agents = {a["alias"]: a for a in resp.json()["agents"]}
+
+            # Self-custodial agent has identity fields
+            id_agent = agents["id-agent"]
+            assert id_agent["did"] == did
+            assert id_agent["custody"] == "self"
+            assert id_agent["lifetime"] == "persistent"
+            assert id_agent["identity_status"] == "active"
+
+            # Legacy agent has defaults
+            legacy = agents["legacy-agent"]
+            assert legacy["did"] is None
+            assert legacy["custody"] is None
+            assert legacy["lifetime"] == "persistent"
+            assert legacy["identity_status"] == "active"
