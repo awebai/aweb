@@ -768,7 +768,6 @@ async def retire_agent(
     )
 
 
-
 class DeregisterAgentResponse(BaseModel):
     agent_id: str
     status: str

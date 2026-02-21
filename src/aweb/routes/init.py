@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.auth import validate_agent_alias, validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, bootstrap_identity
 from aweb.deps import get_db
+from aweb.hooks import fire_mutation_hook
 
 router = APIRouter(prefix="/v1/init", tags=["aweb-init"])
 
@@ -92,6 +93,17 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+    if result.created:
+        await fire_mutation_hook(
+            request,
+            "agent.created",
+            {
+                "agent_id": result.agent_id,
+                "project_id": result.project_id,
+                "alias": result.alias,
+            },
+        )
 
     return InitResponse(
         created_at=_now_iso(),
