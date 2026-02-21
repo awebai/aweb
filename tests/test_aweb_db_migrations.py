@@ -108,3 +108,104 @@ async def test_aweb_migrations_apply(test_db_with_schema):
             "test-project",
             "Hosted Project Duplicate",
         )
+
+    # --- Migration 013: agent identity columns ---
+    agent_cols = await test_db_with_schema.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        """,
+        test_db_with_schema.schema,
+        "agents",
+    )
+    agent_col_names = {c["column_name"] for c in agent_cols}
+    for col in (
+        "did",
+        "public_key",
+        "custody",
+        "signing_key_enc",
+        "lifetime",
+        "status",
+        "successor_agent_id",
+    ):
+        assert col in agent_col_names, f"agents table missing column: {col}"
+
+    # Verify defaults: agent created above should have lifetime='persistent', status='active'
+    agent_with_identity = await test_db_with_schema.fetch_one(
+        "SELECT lifetime, status, did, custody FROM {{tables.agents}} WHERE agent_id = $1",
+        agent["agent_id"],
+    )
+    assert agent_with_identity["lifetime"] == "persistent"
+    assert agent_with_identity["status"] == "active"
+    assert agent_with_identity["did"] is None
+    assert agent_with_identity["custody"] is None
+
+    # --- Migration 014: message identity columns ---
+    msg_cols = await test_db_with_schema.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        """,
+        test_db_with_schema.schema,
+        "messages",
+    )
+    msg_col_names = {c["column_name"] for c in msg_cols}
+    for col in ("from_did", "to_did", "signature", "signing_key_id"):
+        assert col in msg_col_names, f"messages table missing column: {col}"
+
+    # --- Migration 015: chat_message identity columns ---
+    chat_cols = await test_db_with_schema.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        """,
+        test_db_with_schema.schema,
+        "chat_messages",
+    )
+    chat_col_names = {c["column_name"] for c in chat_cols}
+    for col in ("from_did", "to_did", "signature", "signing_key_id"):
+        assert col in chat_col_names, f"chat_messages table missing column: {col}"
+
+    # --- Migration 016: agent_log table ---
+    log_cols = await test_db_with_schema.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        """,
+        test_db_with_schema.schema,
+        "agent_log",
+    )
+    log_col_names = {c["column_name"] for c in log_cols}
+    for col in (
+        "log_id",
+        "agent_id",
+        "project_id",
+        "operation",
+        "old_did",
+        "new_did",
+        "signed_by",
+        "entry_signature",
+        "metadata",
+        "created_at",
+    ):
+        assert col in log_col_names, f"agent_log table missing column: {col}"
+
+    # Verify agent_log works with an insert
+    await test_db_with_schema.execute(
+        "INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, new_did) VALUES ($1, $2, $3, $4)",
+        agent["agent_id"],
+        project["project_id"],
+        "create",
+        "did:key:zTest",
+    )
+    log_entry = await test_db_with_schema.fetch_one(
+        "SELECT operation, new_did FROM {{tables.agent_log}} WHERE agent_id = $1",
+        agent["agent_id"],
+    )
+    assert log_entry is not None
+    assert log_entry["operation"] == "create"
+    assert log_entry["new_did"] == "did:key:zTest"
