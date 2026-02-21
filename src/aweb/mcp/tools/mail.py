@@ -72,7 +72,8 @@ async def check_inbox(db_infra, *, unread_only: bool = True) -> str:
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT message_id, from_agent_id, from_alias, subject, body, priority, thread_id, read_at, created_at
+        SELECT message_id, from_agent_id, from_alias, subject, body, priority, thread_id, read_at, created_at,
+               from_did, to_did, signature, signing_key_id
         FROM {{tables.messages}}
         WHERE project_id = $1
           AND to_agent_id = $2
@@ -87,17 +88,24 @@ async def check_inbox(db_infra, *, unread_only: bool = True) -> str:
 
     messages = []
     for r in rows:
-        messages.append(
-            {
-                "message_id": str(r["message_id"]),
-                "from_alias": r["from_alias"],
-                "subject": r["subject"],
-                "body": r["body"],
-                "priority": r["priority"],
-                "read": r["read_at"] is not None,
-                "created_at": r["created_at"].isoformat(),
-            }
-        )
+        msg: dict = {
+            "message_id": str(r["message_id"]),
+            "from_alias": r["from_alias"],
+            "subject": r["subject"],
+            "body": r["body"],
+            "priority": r["priority"],
+            "read": r["read_at"] is not None,
+            "created_at": r["created_at"].isoformat(),
+        }
+        if r["from_did"]:
+            msg["from_did"] = r["from_did"]
+        if r["to_did"]:
+            msg["to_did"] = r["to_did"]
+        if r["signature"]:
+            msg["signature"] = r["signature"]
+        if r["signing_key_id"]:
+            msg["signing_key_id"] = r["signing_key_id"]
+        messages.append(msg)
 
     return json.dumps({"messages": messages})
 
