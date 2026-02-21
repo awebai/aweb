@@ -1,5 +1,6 @@
 """Tests for aweb.signing — canonical JSON payload, Ed25519 signing and verification."""
 
+import base58 as b58
 import pytest
 
 from aweb.did import did_from_public_key, generate_keypair
@@ -35,7 +36,6 @@ class TestCanonicalPayload:
         """Non-ASCII characters must be literal UTF-8, not \\uXXXX escaped."""
         fields = {"body": "caf\u00e9"}
         payload = canonical_payload(fields)
-        # Should contain the literal UTF-8 bytes for 'é', not '\\u00e9'
         assert "café".encode("utf-8") in payload
         assert b"\\u00e9" not in payload
 
@@ -86,10 +86,29 @@ class TestSignMessage:
         assert isinstance(sig, str)
         assert "=" not in sig
 
+    def test_uses_standard_base64(self, keypair):
+        """Verify we use standard base64 (RFC 4648 §4), not URL-safe."""
+        private_key, _, _ = keypair
+        sig = sign_message(private_key, b"test payload")
+        # Standard base64 uses +/ while URL-safe uses -_
+        # We can't guarantee + or / appear in every signature, but we can
+        # verify the output is valid standard base64
+        import base64
+
+        padded = sig + "=" * (-len(sig) % 4)
+        base64.b64decode(padded, validate=True)  # should not raise
+
     def test_signature_is_nonempty(self, keypair):
         private_key, _, _ = keypair
         sig = sign_message(private_key, b"test")
         assert len(sig) > 0
+
+    def test_deterministic(self, keypair):
+        """Ed25519 signing is deterministic — same key+payload = same signature."""
+        private_key, _, _ = keypair
+        sig1 = sign_message(private_key, b"same payload")
+        sig2 = sign_message(private_key, b"same payload")
+        assert sig1 == sig2
 
 
 class TestVerifySignature:
@@ -126,13 +145,20 @@ class TestVerifySignature:
         result = verify_signature(did, b"test", None)
         assert result == VerifyResult.UNVERIFIED
 
-    def test_invalid_did_format_unverified(self):
+    def test_non_did_key_prefix_unverified(self):
+        """A DID with wrong method (not did:key:z) is UNVERIFIED — fields present but unusable."""
         result = verify_signature("did:web:example.com", b"test", "somesig")
         assert result == VerifyResult.UNVERIFIED
 
+    def test_malformed_did_key_failed(self):
+        """A did:key:z with bad structure (wrong multicodec, bad base58) is FAILED."""
+        bad_prefix = b"\xec\x01" + b"\x00" * 32
+        bad_did = "did:key:z" + b58.b58encode(bad_prefix).decode("ascii")
+        result = verify_signature(bad_did, b"test", "somesig")
+        assert result == VerifyResult.FAILED
+
     def test_wrong_key_fails(self):
-        priv1, _, _ = generate_keypair(), generate_keypair(), None
-        priv1, pub1 = generate_keypair()
+        priv1, _ = generate_keypair()
         _, pub2 = generate_keypair()
         did2 = did_from_public_key(pub2)
         sig = sign_message(priv1, b"test")

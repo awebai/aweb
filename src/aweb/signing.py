@@ -45,7 +45,7 @@ def sign_message(private_key: bytes, payload: bytes) -> str:
     signing_key = SigningKey(private_key)
     signed = signing_key.sign(payload)
     # signed.signature is the 64-byte Ed25519 signature
-    return base64.urlsafe_b64encode(signed.signature).rstrip(b"=").decode("ascii")
+    return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
 
 
 def verify_signature(did: str | None, payload: bytes, signature_b64: str | None) -> VerifyResult:
@@ -58,15 +58,18 @@ def verify_signature(did: str | None, payload: bytes, signature_b64: str | None)
     if not did or not signature_b64:
         return VerifyResult.UNVERIFIED
 
+    if not did.startswith("did:key:z"):
+        return VerifyResult.UNVERIFIED
+
     try:
         public_key = public_key_from_did(did)
     except Exception:
-        return VerifyResult.UNVERIFIED
+        return VerifyResult.FAILED
 
     try:
         # Restore base64 padding
         padded = signature_b64 + "=" * (-len(signature_b64) % 4)
-        sig_bytes = base64.urlsafe_b64decode(padded)
+        sig_bytes = base64.b64decode(padded, validate=True)
     except Exception:
         return VerifyResult.FAILED
 
