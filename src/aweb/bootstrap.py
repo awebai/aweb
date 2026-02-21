@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from dataclasses import dataclass
 from uuid import UUID
@@ -8,6 +9,10 @@ import asyncpg.exceptions
 
 from aweb.alias_allocator import AliasExhaustedError, candidate_name_prefixes, used_name_prefixes
 from aweb.auth import hash_api_key, validate_agent_alias, validate_project_slug
+from aweb.custody import encrypt_signing_key, get_custody_key
+from aweb.did import did_from_public_key, generate_keypair
+
+logger = logging.getLogger(__name__)
 
 
 def generate_api_key() -> tuple[str, str, str]:
@@ -27,6 +32,9 @@ class BootstrapIdentityResult:
     alias: str
     api_key: str
     created: bool
+    did: str | None = None
+    custody: str | None = None
+    lifetime: str = "persistent"
 
 
 @dataclass(frozen=True)
@@ -131,6 +139,10 @@ async def bootstrap_identity(
     alias: str | None,
     human_name: str = "",
     agent_type: str = "agent",
+    did: str | None = None,
+    public_key: str | None = None,
+    custody: str | None = None,
+    lifetime: str = "persistent",
 ) -> BootstrapIdentityResult:
     aweb_db = db.get_manager("aweb")
 
@@ -138,6 +150,28 @@ async def bootstrap_identity(
     alias = validate_agent_alias(alias.strip()) if alias is not None and alias.strip() else None
     human_name = (human_name or "").strip()
     agent_type = (agent_type or "agent").strip() or "agent"
+
+    # Prepare identity columns.
+    agent_did: str | None = None
+    agent_public_key: str | None = None
+    signing_key_enc: bytes | None = None
+
+    if custody == "self":
+        if not did or not public_key:
+            raise ValueError("Self-custodial agents require both did and public_key")
+        pub_bytes = bytes.fromhex(public_key)
+        expected_did = did_from_public_key(pub_bytes)
+        if expected_did != did:
+            raise ValueError("DID does not match public_key")
+        agent_did = did
+        agent_public_key = public_key
+    elif custody == "custodial":
+        seed, pub = generate_keypair()
+        agent_did = did_from_public_key(pub)
+        agent_public_key = pub.hex()
+        master_key = get_custody_key()
+        if master_key is not None:
+            signing_key_enc = encrypt_signing_key(seed, master_key)
 
     async with aweb_db.transaction() as tx:
         project = await _resolve_project(
@@ -157,7 +191,7 @@ async def bootstrap_identity(
         if alias is not None and alias.strip():
             agent = await tx.fetch_one(
                 """
-                SELECT agent_id, alias
+                SELECT agent_id, alias, did, custody, lifetime
                 FROM {{tables.agents}}
                 WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
                 """,
@@ -167,17 +201,28 @@ async def bootstrap_identity(
             if agent:
                 created = False
                 agent_id = str(agent["agent_id"])
+                # On re-init, return existing identity fields.
+                agent_did = agent["did"]
+                custody = agent["custody"]
+                lifetime = agent["lifetime"]
             else:
                 agent = await tx.fetch_one(
                     """
-                    INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO {{tables.agents}}
+                        (project_id, alias, human_name, agent_type,
+                         did, public_key, custody, signing_key_enc, lifetime)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     RETURNING agent_id, alias
                     """,
                     UUID(resolved_project_id),
                     alias,
                     human_name,
                     agent_type,
+                    agent_did,
+                    agent_public_key,
+                    custody,
+                    signing_key_enc,
+                    lifetime,
                 )
                 created = True
                 agent_id = str(agent["agent_id"])
@@ -201,14 +246,21 @@ async def bootstrap_identity(
                 try:
                     agent = await tx.fetch_one(
                         """
-                        INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type)
-                        VALUES ($1, $2, $3, $4)
+                        INSERT INTO {{tables.agents}}
+                            (project_id, alias, human_name, agent_type,
+                             did, public_key, custody, signing_key_enc, lifetime)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                         RETURNING agent_id, alias
                         """,
                         UUID(resolved_project_id),
                         prefix,
                         human_name,
                         agent_type,
+                        agent_did,
+                        agent_public_key,
+                        custody,
+                        signing_key_enc,
+                        lifetime,
                     )
                 except asyncpg.exceptions.UniqueViolationError:
                     continue
@@ -233,6 +285,20 @@ async def bootstrap_identity(
             key_hash,
         )
 
+        # Write agent_log 'create' entry for new agents.
+        if created:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.agent_log}}
+                    (agent_id, project_id, operation, new_did)
+                VALUES ($1, $2, $3, $4)
+                """,
+                UUID(agent_id),
+                UUID(resolved_project_id),
+                "create",
+                agent_did,
+            )
+
     return BootstrapIdentityResult(
         project_id=resolved_project_id,
         project_slug=actual_project_slug,
@@ -241,4 +307,7 @@ async def bootstrap_identity(
         alias=alias or "",
         api_key=api_key,
         created=created,
+        did=agent_did,
+        custody=custody,
+        lifetime=lifetime,
     )
