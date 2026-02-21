@@ -13,6 +13,7 @@ from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.db import DatabaseInfra
 from aweb.did import did_from_public_key, generate_keypair
+from aweb.signing import VerifyResult, canonical_payload, verify_signature
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -79,8 +80,15 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
             True,
         )
 
+    # Read back the project slug for address reconstruction in tests.
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        project_id,
+    )
+
     return {
         "project_id": project_id,
+        "project_slug": proj_row["slug"],
         "cust_id": str(cust_id),
         "plain_id": str(plain_id),
         "key_cust": key_cust,
@@ -268,3 +276,97 @@ async def test_caller_provided_signature_not_overwritten(aweb_db_infra, monkeypa
             assert msgs[0]["from_did"] == "did:key:zCallerProvided"
             assert msgs[0]["signature"] == "caller-sig"
             assert msgs[0]["signing_key_id"] == "did:key:zCallerKey"
+
+
+@pytest.mark.asyncio
+async def test_chat_send_message_custodial_signing(aweb_db_infra, monkeypatch):
+    """Custodial agent sends follow-up chat message → server signs automatically."""
+    aweb_db_infra: DatabaseInfra
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed_data = await _seed_custodial_project(aweb_db, master_key)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Create session first
+            resp = await client.post(
+                "/v1/chat/sessions",
+                headers=_auth(seed_data["key_cust"]),
+                json={"to_aliases": ["plain-bob"], "message": "start"},
+            )
+            assert resp.status_code == 200, resp.text
+            session_id = resp.json()["session_id"]
+
+            # Send follow-up message in existing session
+            resp = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=_auth(seed_data["key_cust"]),
+                json={"body": "follow-up message"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Check history — both messages should be signed
+            resp = await client.get(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=_auth(seed_data["key_plain"]),
+            )
+            assert resp.status_code == 200
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 2
+            for msg in msgs:
+                assert msg["from_did"] == seed_data["did"]
+                assert msg["signature"] is not None
+                assert msg["signing_key_id"] == seed_data["did"]
+
+
+@pytest.mark.asyncio
+async def test_custodial_signature_verifies_end_to_end(aweb_db_infra, monkeypatch):
+    """Signature produced by server-side custodial signing verifies against the canonical payload."""
+    aweb_db_infra: DatabaseInfra
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed_data = await _seed_custodial_project(aweb_db, master_key)
+    slug = seed_data["project_slug"]
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/v1/messages",
+                headers=_auth(seed_data["key_cust"]),
+                json={
+                    "to_alias": "plain-bob",
+                    "subject": "verify-me",
+                    "body": "end-to-end verification",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            resp = await client.get("/v1/messages/inbox", headers=_auth(seed_data["key_plain"]))
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 1
+            msg = msgs[0]
+
+            # Reconstruct the canonical payload that the server should have signed.
+            payload = canonical_payload(
+                {
+                    "from": f"{slug}/custodial-alice",
+                    "from_did": seed_data["did"],
+                    "to": f"{slug}/plain-bob",
+                    "to_did": "",
+                    "type": "mail",
+                    "subject": "verify-me",
+                    "body": "end-to-end verification",
+                    "timestamp": msg["created_at"],
+                }
+            )
+
+            result = verify_signature(msg["from_did"], payload, msg["signature"])
+            assert result == VerifyResult.VERIFIED

@@ -126,6 +126,42 @@ async def send_message(
     if to_agent_id is None:
         raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
 
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        aweb_db = db.get_manager("aweb")
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        recip_row = await aweb_db.fetch_one(
+            "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
+            UUID(to_agent_id),
+        )
+        to_address = f"{project_slug}/{recip_row['alias']}" if recip_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{sender['alias']}",
+                "from_did": "",
+                "to": to_address,
+                "to_did": payload.to_did or "",
+                "type": "mail",
+                "subject": payload.subject,
+                "body": payload.body,
+                "timestamp": created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     message_id, created_at = await deliver_message(
         db,
         project_id=project_id,
@@ -136,43 +172,12 @@ async def send_message(
         body=payload.body,
         priority=payload.priority,
         thread_id=payload.thread_id,
-        from_did=payload.from_did,
+        from_did=msg_from_did,
         to_did=payload.to_did,
-        signature=payload.signature,
-        signing_key_id=payload.signing_key_id,
+        signature=msg_signature,
+        signing_key_id=msg_signing_key_id,
+        created_at=created_at,
     )
-
-    # Server-side custodial signing: if caller didn't provide a signature,
-    # try to sign on behalf of the sender.
-    if payload.signature is None:
-        sign_result = await sign_on_behalf(
-            actor_id,
-            {
-                "from": sender["alias"],
-                "from_did": payload.from_did or "",
-                "to": to_agent_id,
-                "to_did": payload.to_did or "",
-                "type": "mail",
-                "subject": payload.subject,
-                "body": payload.body,
-                "timestamp": created_at.isoformat(),
-            },
-            db,
-        )
-        if sign_result is not None:
-            from_did, sig, signing_key_id = sign_result
-            aweb_db = db.get_manager("aweb")
-            await aweb_db.execute(
-                """
-                UPDATE {{tables.messages}}
-                SET from_did = $1, signature = $2, signing_key_id = $3
-                WHERE message_id = $4
-                """,
-                from_did,
-                sig,
-                signing_key_id,
-                message_id,
-            )
 
     await fire_mutation_hook(
         request,

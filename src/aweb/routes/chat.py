@@ -242,12 +242,43 @@ async def create_or_send(
     session_id = await _ensure_session(db, project_id=project_id, agent_rows=agent_rows)
 
     aweb_db = db.get_manager("aweb")
+
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    msg_created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{sender['alias']}",
+                "from_did": "",
+                "to": ",".join(f"{project_slug}/{a}" for a in sorted(payload.to_aliases)),
+                "to_did": payload.to_did or "",
+                "type": "chat",
+                "subject": "",
+                "body": payload.message,
+                "timestamp": msg_created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_agent_id, from_alias, body, sender_leaving,
-             from_did, to_did, signature, signing_key_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING message_id, created_at
         """,
         session_id,
@@ -255,41 +286,12 @@ async def create_or_send(
         sender["alias"],
         payload.message,
         bool(payload.leaving),
-        payload.from_did,
+        msg_from_did,
         payload.to_did,
-        payload.signature,
-        payload.signing_key_id,
+        msg_signature,
+        msg_signing_key_id,
+        msg_created_at,
     )
-
-    # Server-side custodial signing for chat session creation.
-    if payload.signature is None:
-        sign_result = await sign_on_behalf(
-            actor_id,
-            {
-                "from": sender["alias"],
-                "from_did": payload.from_did or "",
-                "to": ",".join(a for a in payload.to_aliases),
-                "to_did": payload.to_did or "",
-                "type": "chat",
-                "subject": "",
-                "body": payload.message,
-                "timestamp": msg_row["created_at"].isoformat(),
-            },
-            db,
-        )
-        if sign_result is not None:
-            from_did, sig, signing_key_id = sign_result
-            await aweb_db.execute(
-                """
-                UPDATE {{tables.chat_messages}}
-                SET from_did = $1, signature = $2, signing_key_id = $3
-                WHERE message_id = $4
-                """,
-                from_did,
-                sig,
-                signing_key_id,
-                msg_row["message_id"],
-            )
 
     # Advance sender's read receipt — sending implies having read up to this point.
     await aweb_db.execute(
@@ -911,12 +913,42 @@ async def send_message(
 
     extends_wait_seconds = HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0
 
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = payload.from_did
+    msg_signature = payload.signature
+    msg_signing_key_id = payload.signing_key_id
+    msg_created_at = datetime.now(timezone.utc)
+
+    if payload.signature is None:
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            actor_id,
+            {
+                "from": f"{project_slug}/{canonical_alias}",
+                "from_did": "",
+                "to": "",
+                "to_did": payload.to_did or "",
+                "type": "chat",
+                "subject": "",
+                "body": payload.body,
+                "timestamp": msg_created_at.isoformat(),
+            },
+            db,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
-             from_did, to_did, signature, signing_key_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING message_id, created_at
         """,
         session_uuid,
@@ -925,41 +957,12 @@ async def send_message(
         payload.body,
         False,  # sender_leaving only set via create_session with leaving=true
         bool(payload.hang_on),
-        payload.from_did,
+        msg_from_did,
         payload.to_did,
-        payload.signature,
-        payload.signing_key_id,
+        msg_signature,
+        msg_signing_key_id,
+        msg_created_at,
     )
-
-    # Server-side custodial signing for chat messages.
-    if payload.signature is None:
-        sign_result = await sign_on_behalf(
-            actor_id,
-            {
-                "from": canonical_alias,
-                "from_did": payload.from_did or "",
-                "to": "",
-                "to_did": payload.to_did or "",
-                "type": "chat",
-                "subject": "",
-                "body": payload.body,
-                "timestamp": msg_row["created_at"].isoformat(),
-            },
-            db,
-        )
-        if sign_result is not None:
-            from_did, sig, signing_key_id = sign_result
-            await aweb_db.execute(
-                """
-                UPDATE {{tables.chat_messages}}
-                SET from_did = $1, signature = $2, signing_key_id = $3
-                WHERE message_id = $4
-                """,
-                from_did,
-                sig,
-                signing_key_id,
-                msg_row["message_id"],
-            )
 
     # Advance sender's read receipt — sending implies having read up to this point.
     await aweb_db.execute(

@@ -90,11 +90,19 @@ async def sign_on_behalf(agent_id: str, message_fields: dict, db) -> tuple[str, 
     if row["custody"] != "custodial":
         return None
 
-    private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
-    payload = canonical_payload(message_fields)
-    sig = sign_message(private_key, payload)
+    try:
+        private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
+    except Exception:
+        logger.error("Failed to decrypt signing key for agent %s", agent_id)
+        return None
+
     from_did = row["did"] or ""
-    return from_did, sig, from_did
+    signing_key_id = from_did
+    # Inject agent's actual DID so the signed payload matches the stored value.
+    signed_fields = {**message_fields, "from_did": from_did}
+    payload = canonical_payload(signed_fields)
+    sig = sign_message(private_key, payload)
+    return from_did, sig, signing_key_id
 
 
 async def destroy_signing_key(agent_id: str, db) -> None:
