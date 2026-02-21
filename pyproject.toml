@@ -29,6 +29,8 @@ dependencies = [
   "email-validator>=2.3.0",
   "pgdbm>=0.4.0",
   "mcp>=1.26.0",
+  "pynacl>=1.6.2",
+  "base58>=2.1.1",
 ]
 
 [project.urls]
