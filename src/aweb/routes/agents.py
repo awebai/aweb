@@ -424,6 +424,7 @@ async def rotate_key(
     import base64 as _base64
     import json as _json
 
+    from nacl.exceptions import BadSignatureError
     from nacl.signing import VerifyKey
 
     project_id = await get_project_from_auth(request, db)
@@ -456,29 +457,37 @@ async def rotate_key(
     old_did = row["did"]
     old_public_key_hex = row["public_key"]
 
-    if old_public_key_hex:
-        try:
-            old_public_key = bytes.fromhex(old_public_key_hex)
-            canonical = _json.dumps(
-                {
-                    "new_did": payload.new_did,
-                    "old_did": old_did,
-                    "operation": "rotate",
-                    "timestamp": payload.timestamp,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-
-            padded = payload.rotation_proof + "=" * (-len(payload.rotation_proof) % 4)
-            sig_bytes = _base64.b64decode(padded, validate=True)
-
-            verify_key = VerifyKey(old_public_key)
-            verify_key.verify(canonical, sig_bytes)
-        except Exception:
-            raise HTTPException(status_code=403, detail="Invalid rotation proof")
-    else:
+    if not old_public_key_hex:
         raise HTTPException(status_code=403, detail="Agent has no public key to verify proof against")
+
+    try:
+        old_public_key = bytes.fromhex(old_public_key_hex)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Corrupt public key in database")
+
+    canonical = _json.dumps(
+        {
+            "new_did": payload.new_did,
+            "old_did": old_did,
+            "timestamp": payload.timestamp,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    try:
+        padded = payload.rotation_proof + "=" * (-len(payload.rotation_proof) % 4)
+        sig_bytes = _base64.b64decode(padded, validate=True)
+    except Exception:
+        raise HTTPException(status_code=403, detail="Malformed rotation proof encoding")
+
+    try:
+        verify_key = VerifyKey(old_public_key)
+        verify_key.verify(canonical, sig_bytes)
+    except BadSignatureError:
+        raise HTTPException(status_code=403, detail="Invalid rotation proof")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Rotation proof verification error")
 
     # Update agent record
     graduating = row["custody"] == "custodial" and payload.custody == "self"

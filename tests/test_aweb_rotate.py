@@ -25,7 +25,7 @@ def _auth(api_key: str) -> dict[str, str]:
 def _make_rotation_proof(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
     """Sign the canonical rotation payload with the old key."""
     payload = json.dumps(
-        {"new_did": new_did, "old_did": old_did, "operation": "rotate", "timestamp": timestamp},
+        {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -348,6 +348,71 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     )
     assert row["signing_key_enc"] is None
     assert row["custody"] == "self"
+
+
+@pytest.mark.asyncio
+async def test_rotate_rejects_wrong_key_proof(aweb_db_infra):
+    """Proof signed by a different key (not the agent's current key) must be rejected."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_persistent_self_custodial(aweb_db, slug="wrong-key")
+
+    new_private, new_public = generate_keypair()
+    new_did = did_from_public_key(new_public)
+    timestamp = "2026-02-21T12:00:00Z"
+
+    # Sign with a completely unrelated key
+    unrelated_private, _ = generate_keypair()
+    proof = _make_rotation_proof(unrelated_private, seed["did"], new_did, timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                f"/v1/agents/{seed['agent_id']}/rotate",
+                headers=_auth(seed["api_key"]),
+                json={
+                    "new_did": new_did,
+                    "new_public_key": new_public.hex(),
+                    "custody": "self",
+                    "rotation_proof": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_rotate_deleted_agent(aweb_db_infra):
+    """Rotating a soft-deleted agent should return 404."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_persistent_self_custodial(aweb_db, slug="deleted-rotate")
+
+    # Soft-delete the agent
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1",
+        uuid.UUID(seed["agent_id"]),
+    )
+
+    new_private, new_public = generate_keypair()
+    new_did = did_from_public_key(new_public)
+    timestamp = "2026-02-21T12:00:00Z"
+    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                f"/v1/agents/{seed['agent_id']}/rotate",
+                headers=_auth(seed["api_key"]),
+                json={
+                    "new_did": new_did,
+                    "new_public_key": new_public.hex(),
+                    "custody": "self",
+                    "rotation_proof": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
