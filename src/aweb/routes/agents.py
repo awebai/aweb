@@ -667,7 +667,7 @@ async def retire_agent(
         )
     successor = await aweb_db.fetch_one(
         """
-        SELECT agent_id FROM {{tables.agents}}
+        SELECT agent_id, did, alias FROM {{tables.agents}}
         WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
         """,
         successor_uuid,
@@ -676,12 +676,25 @@ async def retire_agent(
     if successor is None:
         raise HTTPException(status_code=404, detail="Successor agent not found in this project")
 
-    # Verify or generate retirement proof
+    # Resolve protocol-level identifiers for the canonical proof
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        UUID(project_id),
+    )
+    successor_did = successor["did"] or ""
+    successor_address = (
+        f"{proj_row['slug']}/{successor['alias']}" if proj_row else ""
+    )
+
+    # Build canonical retirement proof with protocol-level fields.
+    # The API accepts successor_agent_id, but the proof uses
+    # successor_did + successor_address for cross-server verifiability.
     timestamp = payload.timestamp or ""
     canonical = _json.dumps(
         {
             "operation": "retire",
-            "successor_agent_id": payload.successor_agent_id,
+            "successor_address": successor_address,
+            "successor_did": successor_did,
             "timestamp": timestamp,
         },
         sort_keys=True,
@@ -749,7 +762,11 @@ async def retire_agent(
     )
 
     # Append retire entry to agent_log
-    metadata = _json.dumps({"successor_agent_id": payload.successor_agent_id})
+    metadata = _json.dumps({
+        "successor_agent_id": payload.successor_agent_id,
+        "successor_did": successor_did,
+        "successor_address": successor_address,
+    })
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agent_log}}

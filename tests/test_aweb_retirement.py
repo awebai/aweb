@@ -23,12 +23,15 @@ def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _sign_retirement_proof(private_key: bytes, successor_agent_id: str, timestamp: str) -> str:
-    """Build and sign the canonical retirement proof."""
+def _sign_retirement_proof(
+    private_key: bytes, successor_did: str, successor_address: str, timestamp: str
+) -> str:
+    """Build and sign the canonical retirement proof with protocol-level fields."""
     canonical = json.dumps(
         {
             "operation": "retire",
-            "successor_agent_id": successor_agent_id,
+            "successor_address": successor_address,
+            "successor_did": successor_did,
             "timestamp": timestamp,
         },
         sort_keys=True,
@@ -106,6 +109,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
 
     return {
         "project_id": project_id,
+        "slug": slug,
         "agent_id": str(agent_id),
         "successor_id": str(successor_id),
         "api_key": key,
@@ -113,6 +117,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "pub": pub,
         "did": did,
         "succ_did": succ_did,
+        "succ_address": f"{slug}/successor-agent",
     }
 
 
@@ -124,7 +129,7 @@ async def test_retire_self_custodial_agent(aweb_db_infra):
     data = await _seed_project_with_agents(aweb_db, custody="self")
 
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _sign_retirement_proof(data["seed"], data["successor_id"], timestamp)
+    proof = _sign_retirement_proof(data["seed"], data["succ_did"], data["succ_address"], timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -161,7 +166,7 @@ async def test_retire_agent_creates_log_entry(aweb_db_infra):
     data = await _seed_project_with_agents(aweb_db, custody="self")
 
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _sign_retirement_proof(data["seed"], data["successor_id"], timestamp)
+    proof = _sign_retirement_proof(data["seed"], data["succ_did"], data["succ_address"], timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -309,7 +314,8 @@ async def test_retire_rejects_unknown_successor(aweb_db_infra):
 
     fake_successor = str(uuid.uuid4())
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _sign_retirement_proof(data["seed"], fake_successor, timestamp)
+    # Proof content doesn't matter — rejected before verification
+    proof = _sign_retirement_proof(data["seed"], "did:key:zFake", "fake/successor", timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -336,8 +342,8 @@ async def test_retire_rejects_self_succession(aweb_db_infra):
     data = await _seed_project_with_agents(aweb_db, custody="self")
 
     timestamp = "2026-02-21T12:00:00Z"
-    # Sign a proof with self as successor
-    proof = _sign_retirement_proof(data["seed"], data["agent_id"], timestamp)
+    # Proof content doesn't matter — rejected before verification
+    proof = _sign_retirement_proof(data["seed"], data["did"], "self/self", timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -364,7 +370,7 @@ async def test_retire_log_includes_signed_by(aweb_db_infra):
     data = await _seed_project_with_agents(aweb_db, custody="self")
 
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _sign_retirement_proof(data["seed"], data["successor_id"], timestamp)
+    proof = _sign_retirement_proof(data["seed"], data["succ_did"], data["succ_address"], timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -392,6 +398,48 @@ async def test_retire_log_includes_signed_by(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_retire_proof_uses_protocol_level_fields(aweb_db_infra):
+    """Canonical retirement proof uses successor_did + successor_address (not agent_id).
+
+    The API request accepts successor_agent_id, but the proof payload uses
+    protocol-level identifiers that are verifiable outside this server.
+    """
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    data = await _seed_project_with_agents(aweb_db, custody="self")
+
+    timestamp = "2026-02-21T12:00:00Z"
+    proof = _sign_retirement_proof(data["seed"], data["succ_did"], data["succ_address"], timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                f"/v1/agents/{data['agent_id']}/retire",
+                headers=_auth(data["api_key"]),
+                json={
+                    "successor_agent_id": data["successor_id"],
+                    "retirement_proof": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["status"] == "retired"
+
+    # Verify log metadata uses protocol-level fields
+    log = await aweb_db.fetch_one(
+        "SELECT metadata FROM {{tables.agent_log}} WHERE agent_id = $1 AND operation = $2",
+        uuid.UUID(data["agent_id"]),
+        "retire",
+    )
+    metadata = json.loads(log["metadata"]) if isinstance(log["metadata"], str) else log["metadata"]
+    assert metadata["successor_did"] == data["succ_did"]
+    assert metadata["successor_address"] == data["succ_address"]
+
+
+@pytest.mark.asyncio
 async def test_retire_already_retired_agent(aweb_db_infra):
     """Cannot retire an agent that is already retired."""
     aweb_db_infra: DatabaseInfra
@@ -405,7 +453,7 @@ async def test_retire_already_retired_agent(aweb_db_infra):
     )
 
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _sign_retirement_proof(data["seed"], data["successor_id"], timestamp)
+    proof = _sign_retirement_proof(data["seed"], data["succ_did"], data["succ_address"], timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
