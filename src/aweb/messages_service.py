@@ -10,6 +10,11 @@ from fastapi import HTTPException
 MessagePriority = Literal["low", "normal", "high", "urgent"]
 
 
+def utc_iso(dt: datetime) -> str:
+    """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _parse_uuid(v: str, *, field_name: str) -> UUID:
     v = str(v).strip()
     if not v:

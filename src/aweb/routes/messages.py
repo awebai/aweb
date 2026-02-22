@@ -13,15 +13,10 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, valid
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
-from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
+from aweb.messages_service import MessagePriority, deliver_message, get_agent_row, utc_iso as _utc_iso
 from aweb.rotation_announcements import acknowledge_rotation, get_pending_announcements
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
-
-
-def _utc_iso(dt: datetime) -> str:
-    """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class SendMessageRequest(BaseModel):

@@ -33,14 +33,9 @@ from aweb.chat_waiting import (
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
+from aweb.messages_service import utc_iso as _utc_iso
 
 logger = logging.getLogger(__name__)
-
-
-def _utc_iso(dt: datetime) -> str:
-    """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
