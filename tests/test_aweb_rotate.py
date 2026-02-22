@@ -420,6 +420,38 @@ async def test_rotate_deleted_agent(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
+    """new_public_key must encode to new_did. A mismatch should be rejected."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_persistent_self_custodial(aweb_db, slug="did-mismatch")
+
+    new_private, new_public = generate_keypair()
+    new_did = did_from_public_key(new_public)
+    timestamp = "2026-02-21T12:00:00Z"
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
+
+    # Use a different public key that doesn't match new_did
+    _, wrong_public = generate_keypair()
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                f"/v1/agents/{seed['agent_id']}/rotate",
+                headers=_auth(seed["api_key"]),
+                json={
+                    "new_did": new_did,
+                    "new_public_key": wrong_public.hex(),
+                    "custody": "self",
+                    "rotation_signature": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 400
+            assert "does not match" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_rotate_404_unknown_agent(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     seed = await _seed_persistent_self_custodial(aweb_db, slug="unknown-rotate")

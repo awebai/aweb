@@ -370,3 +370,40 @@ async def test_custodial_signature_verifies_end_to_end(aweb_db_infra, monkeypatc
 
             result = verify_signature(msg["from_did"], payload, msg["signature"])
             assert result == VerifyResult.VERIFIED
+
+
+@pytest.mark.asyncio
+async def test_signing_timestamp_uses_second_precision(aweb_db_infra, monkeypatch):
+    """Per spec, signing timestamps must be ISO 8601, UTC, second precision (no microseconds)."""
+    import re
+
+    aweb_db_infra: DatabaseInfra
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed_data = await _seed_custodial_project(aweb_db, master_key)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/v1/messages",
+                headers=_auth(seed_data["key_cust"]),
+                json={
+                    "to_alias": "plain-bob",
+                    "subject": "timestamp-test",
+                    "body": "check precision",
+                },
+            )
+            assert resp.status_code == 200
+
+            resp = await client.get("/v1/messages/inbox", headers=_auth(seed_data["key_plain"]))
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 1
+            ts = msgs[0]["created_at"]
+            # Must be second precision with Z suffix: YYYY-MM-DDTHH:MM:SSZ
+            assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", ts), (
+                f"Timestamp must be second precision with Z suffix, got: {ts}"
+            )

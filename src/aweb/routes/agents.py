@@ -500,6 +500,19 @@ async def rotate_key(
     except Exception:
         raise HTTPException(status_code=403, detail="Rotation proof verification error")
 
+    # Verify new_public_key encodes to new_did
+    from aweb.did import did_from_public_key
+
+    try:
+        new_pub_bytes = bytes.fromhex(payload.new_public_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="new_public_key must be hex-encoded")
+    if len(new_pub_bytes) != 32:
+        raise HTTPException(status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)")
+    expected_did = did_from_public_key(new_pub_bytes)
+    if expected_did != payload.new_did:
+        raise HTTPException(status_code=400, detail="DID does not match new_public_key")
+
     # Update agent record
     graduating = row["custody"] == "custodial" and payload.custody == "self"
 

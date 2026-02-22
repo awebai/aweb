@@ -17,8 +17,9 @@ from aweb.rotation_announcements import acknowledge_rotation, get_pending_announ
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _utc_iso(dt: datetime) -> str:
+    """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class SendMessageRequest(BaseModel):
@@ -164,7 +165,7 @@ async def send_message(
                 "type": "mail",
                 "subject": payload.subject,
                 "body": payload.body,
-                "timestamp": created_at.isoformat(),
+                "timestamp": _utc_iso(created_at),
             },
             db,
         )
@@ -208,7 +209,7 @@ async def send_message(
     return SendMessageResponse(
         message_id=str(message_id),
         status="delivered",
-        delivered_at=created_at.isoformat(),
+        delivered_at=_utc_iso(created_at),
     )
 
 
@@ -264,8 +265,8 @@ async def inbox(
                 body=r["body"],
                 priority=r["priority"],
                 thread_id=str(r["thread_id"]) if r["thread_id"] is not None else None,
-                read_at=r["read_at"].isoformat() if r["read_at"] is not None else None,
-                created_at=r["created_at"].isoformat(),
+                read_at=_utc_iso(r["read_at"]) if r["read_at"] is not None else None,
+                created_at=_utc_iso(r["created_at"]),
                 from_did=r["from_did"],
                 to_did=r["to_did"],
                 signature=r["signature"],
@@ -332,7 +333,8 @@ async def acknowledge(
         message_uuid,
     )
     acknowledged_at = (
-        updated["read_at"].isoformat() if updated and updated["read_at"] else _now_iso()
+        _utc_iso(updated["read_at"]) if updated and updated["read_at"]
+        else _utc_iso(datetime.now(timezone.utc))
     )
 
     await fire_mutation_hook(

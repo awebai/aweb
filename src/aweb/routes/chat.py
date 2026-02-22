@@ -26,6 +26,11 @@ from aweb.hooks import fire_mutation_hook
 
 logger = logging.getLogger(__name__)
 
+
+def _utc_iso(dt: datetime) -> str:
+    """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
 HANG_ON_EXTENSION_SECONDS = 300
@@ -266,7 +271,7 @@ async def create_or_send(
                 "type": "chat",
                 "subject": "",
                 "body": payload.message,
-                "timestamp": msg_created_at.isoformat(),
+                "timestamp": _utc_iso(msg_created_at),
             },
             db,
         )
@@ -431,7 +436,7 @@ async def pending(
                 "last_message": r["last_message"] or "",
                 "last_from": r["last_from"] or "",
                 "unread_count": int(r["unread_count"] or 0),
-                "last_activity": r["last_activity"].isoformat() if r["last_activity"] else "",
+                "last_activity": _utc_iso(r["last_activity"]) if r["last_activity"] else "",
                 "sender_waiting": len(waiting) > 0,
                 "time_remaining_seconds": 0,
             }
@@ -520,7 +525,7 @@ async def history(
                 "message_id": str(r["message_id"]),
                 "from_agent": r["from_alias"],
                 "body": r["body"],
-                "timestamp": r["created_at"].isoformat(),
+                "timestamp": _utc_iso(r["created_at"]),
                 "sender_leaving": bool(r["sender_leaving"]),
                 "from_did": r["from_did"],
                 "to_did": r["to_did"],
@@ -689,7 +694,7 @@ async def _sse_events(
                     "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                    "timestamp": r["created_at"].isoformat(),
+                    "timestamp": _utc_iso(r["created_at"]),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -739,7 +744,7 @@ async def _sse_events(
                     "sender_waiting": sender_waiting,
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                    "timestamp": r["created_at"].isoformat(),
+                    "timestamp": _utc_iso(r["created_at"]),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -774,7 +779,7 @@ async def _sse_events(
                         str(r["last_read_message_id"]) if r["last_read_message_id"] else ""
                     ),
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
-                    "timestamp": r["last_read_at"].isoformat(),
+                    "timestamp": _utc_iso(r["last_read_at"]),
                 }
                 yield f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"
 
@@ -936,7 +941,7 @@ async def send_message(
                 "type": "chat",
                 "subject": "",
                 "body": payload.body,
-                "timestamp": msg_created_at.isoformat(),
+                "timestamp": _utc_iso(msg_created_at),
             },
             db,
         )
@@ -1055,7 +1060,7 @@ async def list_sessions(
             SessionListItem(
                 session_id=str(row["session_id"]),
                 participants=list(row["participants"] or []),
-                created_at=row["created_at"].isoformat(),
+                created_at=_utc_iso(row["created_at"]),
                 sender_waiting=len(waiting) > 0,
             )
         )
