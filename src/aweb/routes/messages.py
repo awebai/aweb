@@ -139,8 +139,8 @@ async def send_message(
         raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
 
     # Check if recipient is retired
-    aweb_db_check = db.get_manager("aweb")
-    recip_status = await aweb_db_check.fetch_one(
+    aweb_db = db.get_manager("aweb")
+    recip_status = await aweb_db.fetch_one(
         """
         SELECT status, successor_agent_id
         FROM {{tables.agents}}
@@ -151,10 +151,11 @@ async def send_message(
     )
     if recip_status and recip_status["status"] == "retired":
         successor_alias = None
-        if recip_status["successor_agent_id"]:
-            succ = await aweb_db_check.fetch_one(
-                "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1",
-                recip_status["successor_agent_id"],
+        succ_id = recip_status["successor_agent_id"]
+        if succ_id:
+            succ = await aweb_db.fetch_one(
+                "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
+                succ_id,
             )
             if succ:
                 successor_alias = succ["alias"]
@@ -163,7 +164,7 @@ async def send_message(
             content={
                 "detail": "Agent is retired",
                 "successor_alias": successor_alias,
-                "successor_agent_id": str(recip_status["successor_agent_id"]),
+                "successor_agent_id": str(succ_id) if succ_id is not None else None,
             },
         )
 

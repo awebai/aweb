@@ -198,3 +198,13 @@ async def test_revoke_rejects_non_holder(aweb_db_infra):
             assert resp.status_code == 200
             keys = [r["resource_key"] for r in resp.json()["reservations"]]
             assert resource_key in keys
+
+            # Agent-2 should hold no reservations (nothing accidentally created)
+            resp = await client.get("/v1/reservations", headers=headers_2)
+            assert resp.status_code == 200
+            agent_2_keys = [
+                r["resource_key"]
+                for r in resp.json()["reservations"]
+                if r["holder_agent_id"] == seeded["agent_2_id"]
+            ]
+            assert agent_2_keys == []

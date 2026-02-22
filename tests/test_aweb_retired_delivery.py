@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
 
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
-from nacl.signing import SigningKey
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
@@ -21,28 +18,15 @@ def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _sign_retirement_proof(private_key: bytes, successor_agent_id: str, timestamp: str) -> str:
-    canonical = json.dumps(
-        {"operation": "retire", "successor_agent_id": successor_agent_id, "timestamp": timestamp},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    signing_key = SigningKey(private_key)
-    signed = signing_key.sign(canonical)
-    return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
-
-
-async def _seed_with_retired_agent(aweb_db):
+async def _seed_with_retired_agent(aweb_db, *, with_successor: bool = True):
     """Create a project with a retired agent and an active successor."""
     project_id = uuid.uuid4()
     retired_id = uuid.uuid4()
-    successor_id = uuid.uuid4()
+    successor_id = uuid.uuid4() if with_successor else None
     sender_id = uuid.uuid4()
 
     seed, pub = generate_keypair()
     did = did_from_public_key(pub)
-    succ_seed, succ_pub = generate_keypair()
-    succ_did = did_from_public_key(succ_pub)
 
     slug = f"retired-{uuid.uuid4().hex[:8]}"
     await aweb_db.execute(
@@ -52,23 +36,27 @@ async def _seed_with_retired_agent(aweb_db):
         "Retired Delivery Test",
     )
 
-    # Successor agent (must exist before retired agent due to FK on successor_agent_id)
-    await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        successor_id,
-        project_id,
-        "successor-agent",
-        "Successor Agent",
-        "agent",
-        succ_did,
-        encode_public_key(succ_pub),
-        "self",
-        "persistent",
-    )
+    if with_successor:
+        succ_seed, succ_pub = generate_keypair()
+        succ_did = did_from_public_key(succ_pub)
 
-    # Retired agent (status='retired', points to successor)
+        # Successor agent (must exist before retired agent due to FK on successor_agent_id)
+        await aweb_db.execute(
+            "INSERT INTO {{tables.agents}} "
+            "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            successor_id,
+            project_id,
+            "successor-agent",
+            "Successor Agent",
+            "agent",
+            succ_did,
+            encode_public_key(succ_pub),
+            "self",
+            "persistent",
+        )
+
+    # Retired agent (status='retired', points to successor if provided)
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
         "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, status, successor_agent_id) "
@@ -111,10 +99,10 @@ async def _seed_with_retired_agent(aweb_db):
     return {
         "project_id": project_id,
         "retired_id": str(retired_id),
-        "successor_id": str(successor_id),
+        "successor_id": str(successor_id) if successor_id else None,
         "sender_id": str(sender_id),
         "sender_key": sender_key,
-        "successor_alias": "successor-agent",
+        "successor_alias": "successor-agent" if with_successor else None,
     }
 
 
@@ -137,10 +125,38 @@ async def test_send_mail_to_retired_agent_returns_notice(aweb_db_infra):
                     "body": "are you there?",
                 },
             )
-            # Should indicate retirement, not silently deliver
             assert (
                 resp.status_code == 410
             ), f"Expected 410 Gone, got {resp.status_code}: {resp.text}"
             body = resp.json()
             assert "retired" in body.get("detail", "").lower()
             assert body.get("successor_alias") == "successor-agent"
+            assert body.get("successor_agent_id") == data["successor_id"]
+
+
+@pytest.mark.asyncio
+async def test_send_mail_to_retired_agent_without_successor(aweb_db_infra):
+    """Retired agent with no successor returns 410 with null successor fields."""
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    data = await _seed_with_retired_agent(aweb_db, with_successor=False)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/v1/messages",
+                headers=_auth(data["sender_key"]),
+                json={
+                    "to_alias": "retired-agent",
+                    "subject": "hello",
+                    "body": "are you there?",
+                },
+            )
+            assert (
+                resp.status_code == 410
+            ), f"Expected 410 Gone, got {resp.status_code}: {resp.text}"
+            body = resp.json()
+            assert "retired" in body.get("detail", "").lower()
+            assert body.get("successor_alias") is None
+            assert body.get("successor_agent_id") is None
