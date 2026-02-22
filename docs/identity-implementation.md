@@ -317,9 +317,17 @@ Add to response per agent:
 
 `POST /v1/messages` and `POST /v1/chat/sessions/{id}/messages` accept new optional fields in the request body:
 - `from_did`, `to_did`, `signature`, `signing_key_id`
+- `message_id`, `timestamp` (required when `signature` is provided by the caller)
 
 Server behavior:
-- Store these fields verbatim.
+- Store identity fields (`from_did`, `to_did`, `signature`, `signing_key_id`) verbatim.
+- When the caller provides a `signature`, the caller must also provide:
+  - `message_id` (UUID) — used as the row PK (replay/idempotency protection)
+  - `timestamp` (RFC3339, UTC, second precision) — stored as `created_at`
+  - `from_did` (required so recipients can verify offline)
+- Server rejects signed messages with missing `message_id`/`timestamp`/`from_did` (422).
+- Server rejects signed messages with timestamps outside ±5 minutes of server time (422).
+- Duplicate `message_id` returns 409.
 - Never modify, strip, or re-sign.
 - Optionally verify signature on ingest (log warning if invalid, but still deliver — per §4.6 of parent doc). This is a server-side quality check, not a gate.
 - Return these fields in inbox, chat history, and SSE stream responses.
