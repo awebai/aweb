@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from fastapi import HTTPException
+from aweb.service_errors import BadRequestError, ConflictError, NotFoundError, ValidationError
 
 CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 
@@ -17,13 +17,13 @@ async def add_contact(
 ) -> dict:
     """Add a contact to the project. Returns the created contact dict.
 
-    Raises HTTPException on validation failure or conflict.
+    Raises ServiceError subclasses on validation failure or conflict.
     """
     aweb_db = db.get_manager("aweb")
 
     addr = contact_address.strip()
     if not addr or not CONTACT_ADDRESS_PATTERN.match(addr):
-        raise HTTPException(status_code=422, detail="Invalid contact_address format")
+        raise ValidationError("Invalid contact_address format")
 
     # Reject self-references.
     proj = await aweb_db.fetch_one(
@@ -31,11 +31,11 @@ async def add_contact(
         UUID(project_id),
     )
     if proj is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
 
     slug = proj["slug"]
     if addr == slug or addr.startswith(slug + "/"):
-        raise HTTPException(status_code=400, detail="Cannot add self as contact")
+        raise BadRequestError("Cannot add self as contact")
 
     row = await aweb_db.fetch_one(
         """
@@ -49,7 +49,7 @@ async def add_contact(
         label,
     )
     if row is None:
-        raise HTTPException(status_code=409, detail="Contact already exists")
+        raise ConflictError("Contact already exists")
 
     return {
         "contact_id": str(row["contact_id"]),
@@ -87,12 +87,12 @@ async def list_contacts(db, *, project_id: str) -> list[dict]:
 async def remove_contact(db, *, project_id: str, contact_id: str) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
-    Raises HTTPException on invalid contact_id format.
+    Raises ValidationError on invalid contact_id format.
     """
     try:
         contact_uuid = UUID(contact_id.strip())
     except Exception:
-        raise HTTPException(status_code=422, detail="Invalid contact_id format")
+        raise ValidationError("Invalid contact_id format")
 
     aweb_db = db.get_manager("aweb")
     await aweb_db.execute(

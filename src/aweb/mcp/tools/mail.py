@@ -11,6 +11,7 @@ from uuid import UUID
 from aweb.custody import sign_on_behalf
 from aweb.mcp.auth import get_auth
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
+from aweb.service_errors import ServiceError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
@@ -79,22 +80,25 @@ async def send_mail(
     if sign_result is not None:
         msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    message_id, created_at = await deliver_message(
-        db_infra,
-        project_id=auth.project_id,
-        from_agent_id=auth.agent_id,
-        from_alias=sender["alias"],
-        to_agent_id=to_agent_id,
-        subject=subject,
-        body=body,
-        priority=cast(MessagePriority, priority),
-        thread_id=None,
-        from_did=msg_from_did,
-        signature=msg_signature,
-        signing_key_id=msg_signing_key_id,
-        created_at=created_at,
-        message_id=pre_message_id,
-    )
+    try:
+        message_id, created_at = await deliver_message(
+            db_infra,
+            project_id=auth.project_id,
+            from_agent_id=auth.agent_id,
+            from_alias=sender["alias"],
+            to_agent_id=to_agent_id,
+            subject=subject,
+            body=body,
+            priority=cast(MessagePriority, priority),
+            thread_id=None,
+            from_did=msg_from_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=created_at,
+            message_id=pre_message_id,
+        )
+    except ServiceError as exc:
+        return json.dumps({"error": exc.detail})
 
     return json.dumps(
         {

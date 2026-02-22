@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException
+from aweb.service_errors import ConflictError, NotFoundError
 
 RESERVATION_MIN_TTL_SECONDS = 60
 RESERVATION_MAX_TTL_SECONDS = 3600
@@ -61,11 +61,11 @@ async def acquire_reservation(
 ) -> dict[str, Any]:
     """Acquire a reservation. Returns dict with status="acquired" or status="conflict".
 
-    Raises HTTPException(404) if the agent is not found.
+    Raises NotFoundError if the agent is not found.
     """
     agent = await get_agent(db, project_id=project_id, agent_id=agent_id)
     if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise NotFoundError("Agent not found")
 
     ttl = clamp_ttl(int(ttl_seconds))
     now = datetime.now(timezone.utc)
@@ -139,7 +139,7 @@ async def release_reservation(
 ) -> dict[str, Any]:
     """Release a reservation. Returns dict with status="released".
 
-    Raises HTTPException(409) if the reservation is held by another agent.
+    Raises ConflictError if the reservation is held by another agent.
     Missing/expired reservations are treated as idempotent success.
     Does NOT validate that agent_id exists — caller is responsible.
     """
@@ -160,7 +160,7 @@ async def release_reservation(
             # Treat missing/expired as idempotent success.
             return {"status": "released", "resource_key": resource_key, "deleted": False}
         if str(existing["holder_agent_id"]) != agent_id:
-            raise HTTPException(status_code=409, detail="Reservation held by another agent")
+            raise ConflictError("Reservation held by another agent")
 
         await tx.execute(
             """

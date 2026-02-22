@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 
-from fastapi import HTTPException
-
 from aweb.mcp.auth import get_auth
+from aweb.service_errors import ServiceError
 from aweb.reservations_service import (
     acquire_reservation,
     list_reservations,
@@ -42,7 +41,7 @@ async def lock_acquire(
             ttl_seconds=ttl_seconds,
             metadata=meta_dict,
         )
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
     if result["status"] == "conflict":
@@ -80,7 +79,7 @@ async def lock_release(db_infra, *, resource_key: str) -> str:
             agent_id=auth.agent_id,
             resource_key=resource_key.strip(),
         )
-    except HTTPException as exc:
+    except ServiceError as exc:
         if exc.status_code == 409:
             return json.dumps({"error": "Lock held by another agent"})
         return json.dumps({"error": exc.detail})
@@ -92,11 +91,14 @@ async def lock_list(db_infra, *, prefix: str = "") -> str:
     """List active locks in the project."""
     auth = get_auth()
 
-    reservations = await list_reservations(
-        db_infra,
-        project_id=auth.project_id,
-        prefix=prefix or None,
-    )
+    try:
+        reservations = await list_reservations(
+            db_infra,
+            project_id=auth.project_id,
+            prefix=prefix or None,
+        )
+    except ServiceError as exc:
+        return json.dumps({"error": exc.detail})
 
     return json.dumps(
         {

@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from fastapi import HTTPException
-
 from aweb.contacts_service import add_contact, list_contacts, remove_contact
+from aweb.service_errors import ServiceError
 from aweb.mcp.auth import get_auth
 
 
@@ -16,7 +15,7 @@ async def contacts_list(db_infra) -> str:
     auth = get_auth()
     try:
         contacts = await list_contacts(db_infra, project_id=auth.project_id)
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"contacts": contacts})
 
@@ -31,7 +30,7 @@ async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> st
             contact_address=contact_address,
             label=label or None,
         )
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
     result["status"] = "added"
@@ -43,7 +42,12 @@ async def contacts_remove(db_infra, *, contact_id: str) -> str:
     auth = get_auth()
     try:
         await remove_contact(db_infra, project_id=auth.project_id, contact_id=contact_id)
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
-    return json.dumps({"contact_id": str(UUID(contact_id.strip())), "status": "removed"})
+    # remove_contact already validated the UUID; normalize for the response.
+    try:
+        normalized_id = str(UUID(contact_id.strip()))
+    except Exception:
+        normalized_id = contact_id.strip()
+    return json.dumps({"contact_id": normalized_id, "status": "removed"})

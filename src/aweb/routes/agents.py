@@ -665,6 +665,8 @@ async def retire_agent(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
         UUID(project_id),
     )
+    if proj_row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
     if not successor["did"]:
         raise HTTPException(
             status_code=422,

@@ -7,14 +7,14 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException
+from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError
 
 logger = logging.getLogger(__name__)
 
 HANG_ON_EXTENSION_SECONDS = 300
 
 
-def participant_hash(agent_ids: list[str]) -> str:
+def _participant_hash(agent_ids: list[str]) -> str:
     normalized = sorted({str(UUID(a)) for a in agent_ids})
     return hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
 
@@ -59,10 +59,10 @@ async def ensure_session(
 ) -> UUID:
     """Create or find a chat session for a set of participants.
 
-    Raises HTTPException(500) on failure (matching messages_service pattern).
+    Raises ServiceError on failure.
     """
     aweb_db = db.get_manager("aweb")
-    p_hash = participant_hash([str(r["agent_id"]) for r in agent_rows])
+    p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
@@ -94,10 +94,7 @@ async def ensure_session(
                     project_id,
                     p_hash,
                 )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to create or retrieve chat session",
-                )
+                raise ServiceError("Failed to create or retrieve chat session")
             session_id = existing["session_id"]
 
         for agent in agent_rows:
@@ -268,8 +265,7 @@ async def get_message_history(
 ) -> list[dict[str, Any]]:
     """Get messages for a chat session.
 
-    Raises HTTPException(404) if the session is not found.
-    Raises HTTPException(403) if the agent is not a participant.
+    Raises ForbiddenError if the agent is not a participant.
     """
     aweb_db = db.get_manager("aweb")
     agent_uuid = UUID(agent_id)
@@ -284,7 +280,7 @@ async def get_message_history(
         agent_uuid,
     )
     if not is_participant:
-        raise HTTPException(status_code=403, detail="Not a participant in this session")
+        raise ForbiddenError("Not a participant in this session")
 
     rr = await aweb_db.fetch_one(
         """
@@ -340,8 +336,8 @@ async def mark_messages_read(
 ) -> dict[str, Any]:
     """Mark messages as read up to a given message.
 
-    Raises HTTPException(403) if the agent is not a participant.
-    Raises HTTPException(404) if the message is not found.
+    Raises ForbiddenError if the agent is not a participant.
+    Raises NotFoundError if the message is not found.
     """
     aweb_db = db.get_manager("aweb")
     agent_uuid = UUID(agent_id)
@@ -357,7 +353,7 @@ async def mark_messages_read(
         agent_uuid,
     )
     if not is_participant:
-        raise HTTPException(status_code=403, detail="Not a participant in this session")
+        raise ForbiddenError("Not a participant in this session")
 
     msg = await aweb_db.fetch_one(
         """
@@ -369,7 +365,7 @@ async def mark_messages_read(
         up_to_uuid,
     )
     if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message not found")
 
     up_to_time = msg["created_at"]
     read_time = datetime.now(timezone.utc)

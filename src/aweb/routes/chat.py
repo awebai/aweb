@@ -580,7 +580,7 @@ async def stream(
         agent_uuid,
     )
     if not is_participant:
-        raise HTTPException(status_code=403, detail="Not authorized for this session")
+        raise HTTPException(status_code=403, detail="Not a participant in this session")
 
     deadline_dt = _parse_deadline(deadline)
 
@@ -667,7 +667,7 @@ async def send_message(
     )
     if not participant:
         raise HTTPException(
-            status_code=403, detail="Not authorized to send messages to this session"
+            status_code=403, detail="Not a participant in this session"
         )
     canonical_alias = participant["alias"]
 

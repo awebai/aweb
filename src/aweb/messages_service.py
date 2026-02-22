@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import HTTPException
+from aweb.service_errors import NotFoundError, ServiceError, ValidationError
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
 
@@ -18,11 +18,11 @@ def utc_iso(dt: datetime) -> str:
 def _parse_uuid(v: str, *, field_name: str) -> UUID:
     v = str(v).strip()
     if not v:
-        raise HTTPException(status_code=422, detail=f"Missing {field_name}")
+        raise ValidationError(f"Missing {field_name}")
     try:
         return UUID(v)
     except Exception:
-        raise HTTPException(status_code=422, detail=f"Invalid {field_name} format")
+        raise ValidationError(f"Invalid {field_name} format")
 
 
 async def get_agent_row(db, *, project_id: str, agent_id: str) -> dict | None:
@@ -69,13 +69,13 @@ async def deliver_message(
 
     sender = await get_agent_row(db, project_id=str(project_uuid), agent_id=str(from_uuid))
     if sender is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise NotFoundError("Agent not found")
     if sender["alias"] != from_alias:
-        raise HTTPException(status_code=422, detail="from_alias does not match canonical alias")
+        raise ValidationError("from_alias does not match canonical alias")
 
     recipient = await get_agent_row(db, project_id=str(project_uuid), agent_id=str(to_uuid))
     if recipient is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise NotFoundError("Agent not found")
 
     if created_at is None:
         created_at = datetime.now(timezone.utc)
@@ -107,6 +107,6 @@ async def deliver_message(
         created_at,
     )
     if not row:
-        raise HTTPException(status_code=500, detail="Failed to create message")
+        raise ServiceError("Failed to create message")
 
     return UUID(str(row["message_id"])), row["created_at"]

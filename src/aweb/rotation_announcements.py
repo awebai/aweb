@@ -68,6 +68,8 @@ async def acknowledge_rotation(aweb_db, *, from_agent_id: UUID, to_agent_id: UUI
     Only acks one announcement at a time to preserve TOFU chain order:
     the peer must see A→B before B→C.
     """
+    # The 24-hour filter mirrors get_pending_announcements: announcements
+    # older than 24h are no longer delivered, so acking them is a no-op.
     await aweb_db.execute(
         """
         INSERT INTO {{tables.rotation_peer_acks}}

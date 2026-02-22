@@ -25,8 +25,7 @@ from aweb.chat_waiting import (
 )
 from aweb.custody import sign_on_behalf
 from aweb.mcp.auth import get_auth
-
-from fastapi import HTTPException
+from aweb.service_errors import ServiceError
 
 MAX_TOTAL_WAIT_SECONDS = 600  # Absolute cap even with hang_on extensions
 
@@ -147,7 +146,7 @@ async def chat_send(
                 project_id=auth.project_id,
                 agent_rows=[dict(sender), dict(target)],
             )
-        except HTTPException:
+        except ServiceError:
             return json.dumps({"error": "Failed to create chat session"})
 
         # Server-side custodial signing.
@@ -342,7 +341,7 @@ async def chat_history(
             unread_only=unread_only,
             limit=min(limit, 200),
         )
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
     return json.dumps(
@@ -383,7 +382,7 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
             agent_id=auth.agent_id,
             up_to_message_id=up_to_message_id.strip(),
         )
-    except HTTPException as exc:
+    except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
     return json.dumps(

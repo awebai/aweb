@@ -1319,9 +1319,9 @@ async def test_ensure_session_is_atomic(aweb_db_infra):
         )
 
     # No orphaned session should exist for this participant hash.
-    from aweb.chat_service import participant_hash
+    from aweb.chat_service import _participant_hash
 
-    p_hash = participant_hash([str(r["agent_id"]) for r in agent_rows])
+    p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
     row = await aweb_db.fetch_one(
         """

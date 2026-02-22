@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from aweb.auth import validate_auth_config
@@ -85,6 +86,15 @@ def create_app(
     @app.get("/health", tags=["internal"])
     async def health(_: Request) -> dict:
         return {"status": "ok", "mode": "library" if db_infra is not None else "standalone"}
+
+    # Convert domain service exceptions to HTTP responses so routes
+    # don't need try/except around every service call.
+    # (Deferred import avoids circular dependency with route modules.)
+    from aweb.service_errors import ServiceError
+
+    @app.exception_handler(ServiceError)
+    async def _service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     include_aweb_routers(app)
     return app
