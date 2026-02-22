@@ -110,6 +110,7 @@ class InboxMessage(BaseModel):
     message_id: str
     from_agent_id: str
     from_alias: str
+    from_address: str
     subject: str
     body: str
     priority: MessagePriority
@@ -118,6 +119,7 @@ class InboxMessage(BaseModel):
     created_at: str
     from_did: Optional[str] = None
     to_did: Optional[str] = None
+    to_address: str
     signature: Optional[str] = None
     signing_key_id: Optional[str] = None
     rotation_announcement: Optional[RotationAnnouncement] = None
@@ -329,6 +331,13 @@ async def inbox(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(actor_id)
     )
 
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        UUID(project_id),
+    )
+    project_slug = proj_row["slug"] if proj_row else ""
+    inbox_owner_address = f"{project_slug}/{owner['alias']}" if project_slug else owner["alias"]
+
     messages = []
     for r in rows:
         ann_data = announcements.get(str(r["from_agent_id"]))
@@ -338,6 +347,7 @@ async def inbox(
                 message_id=str(r["message_id"]),
                 from_agent_id=str(r["from_agent_id"]),
                 from_alias=r["from_alias"],
+                from_address=f"{project_slug}/{r['from_alias']}" if project_slug else r["from_alias"],
                 subject=r["subject"],
                 body=r["body"],
                 priority=r["priority"],
@@ -346,6 +356,7 @@ async def inbox(
                 created_at=_utc_iso(r["created_at"]),
                 from_did=r["from_did"],
                 to_did=r["to_did"],
+                to_address=inbox_owner_address,
                 signature=r["signature"],
                 signing_key_id=r["signing_key_id"],
                 rotation_announcement=ann,

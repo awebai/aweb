@@ -68,6 +68,18 @@ def _parse_signed_timestamp(value: str) -> datetime:
     return dt
 
 
+def _agent_address(project_slug: str, alias: str) -> str:
+    if project_slug:
+        return f"{project_slug}/{alias}"
+    return alias
+
+
+def _chat_to_address(project_slug: str, participant_aliases: list[str], from_alias: str) -> str:
+    return ",".join(
+        _agent_address(project_slug, alias) for alias in participant_aliases if alias != from_alias
+    )
+
+
 async def _targets_left(db, *, session_id: UUID, target_agent_ids: list[str]) -> list[str]:
     if not target_agent_ids:
         return []
@@ -361,6 +373,22 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        UUID(project_id),
+    )
+    project_slug = proj_row["slug"] if proj_row else ""
+    participant_rows = await aweb_db.fetch_all(
+        """
+        SELECT alias
+        FROM {{tables.chat_session_participants}}
+        WHERE session_id = $1
+        ORDER BY alias ASC
+        """,
+        session_uuid,
+    )
+    participant_aliases = [r["alias"] for r in participant_rows]
+
     messages = await get_message_history(
         db,
         session_id=session_uuid,
@@ -374,9 +402,11 @@ async def history(
             {
                 "message_id": m["message_id"],
                 "from_agent": m["from_alias"],
+                "from_address": _agent_address(project_slug, m["from_alias"]),
                 "body": m["body"],
                 "timestamp": _utc_iso(m["created_at"]),
                 "sender_leaving": m["sender_leaving"],
+                "to_address": _chat_to_address(project_slug, participant_aliases, m["from_alias"]),
                 "from_did": m["from_did"],
                 "to_did": m["to_did"],
                 "signature": m["signature"],
@@ -446,6 +476,27 @@ async def _sse_events(
     last_refresh = time.monotonic()
 
     try:
+        proj_row = await aweb_db.fetch_one(
+            """
+            SELECT p.slug
+            FROM {{tables.chat_sessions}} s
+            JOIN {{tables.projects}} p ON s.project_id = p.project_id
+            WHERE s.session_id = $1
+            """,
+            session_id,
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        participant_rows = await aweb_db.fetch_all(
+            """
+            SELECT alias
+            FROM {{tables.chat_session_participants}}
+            WHERE session_id = $1
+            ORDER BY alias ASC
+            """,
+            session_id,
+        )
+        participant_aliases = [r["alias"] for r in participant_rows]
+
         # Emit an immediate keepalive so ASGI transports that wait for first body chunk
         # can start streaming without blocking on initial DB work.
         yield ": keepalive\n\n"
@@ -478,12 +529,14 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
+                    "from_address": _agent_address(project_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
+                    "to_address": _chat_to_address(project_slug, participant_aliases, r["from_alias"]),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -528,12 +581,14 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
+                    "from_address": _agent_address(project_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": sender_waiting,
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
+                    "to_address": _chat_to_address(project_slug, participant_aliases, r["from_alias"]),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -741,13 +796,24 @@ async def send_message(
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
+        participant_rows = await aweb_db.fetch_all(
+            """
+            SELECT alias
+            FROM {{tables.chat_session_participants}}
+            WHERE session_id = $1
+            ORDER BY alias ASC
+            """,
+            session_uuid,
+        )
+        participant_aliases = [r["alias"] for r in participant_rows]
+        to_address = _chat_to_address(project_slug, participant_aliases, canonical_alias)
         sign_result = await sign_on_behalf(
             actor_id,
             {
                 "from": f"{project_slug}/{canonical_alias}",
                 "from_did": "",
                 "message_id": str(pre_message_id),
-                "to": "",
+                "to": to_address,
                 "to_did": payload.to_did or "",
                 "type": "chat",
                 "subject": "",
