@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -54,7 +54,7 @@ async def _seed_project_with_agents(
         f"Human {ephemeral_alias}",
         "agent",
         eph_did,
-        eph_public.hex(),
+        encode_public_key(eph_public),
         "custodial",
         eph_enc,
         "ephemeral",
@@ -88,7 +88,7 @@ async def _seed_project_with_agents(
         f"Human {peer_alias}",
         "agent",
         peer_did,
-        peer_public.hex(),
+        encode_public_key(peer_public),
         "self",
         "persistent",
         "active",

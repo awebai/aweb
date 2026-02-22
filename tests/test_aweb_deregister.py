@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -46,7 +46,7 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "ephemeral",
@@ -98,7 +98,7 @@ async def _seed_persistent_agent_with_key(aweb_db, *, project_slug: str):
         "Persistent Agent",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -251,7 +251,7 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
         "New Alice",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         "ephemeral",
     )

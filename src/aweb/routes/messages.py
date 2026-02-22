@@ -191,9 +191,7 @@ async def send_message(
 
     # Sending a message to an agent implicitly acknowledges their rotation
     aweb_db = db.get_manager("aweb")
-    await acknowledge_rotation(
-        aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id)
-    )
+    await acknowledge_rotation(aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id))
 
     await fire_mutation_hook(
         request,
@@ -333,7 +331,8 @@ async def acknowledge(
         message_uuid,
     )
     acknowledged_at = (
-        _utc_iso(updated["read_at"]) if updated and updated["read_at"]
+        _utc_iso(updated["read_at"])
+        if updated and updated["read_at"]
         else _utc_iso(datetime.now(timezone.utc))
     )
 

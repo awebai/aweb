@@ -16,7 +16,7 @@ from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
 from aweb.db import DatabaseInfra
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -402,7 +402,7 @@ async def _seed_for_rotate(aweb_db_infra):
         "Rotator",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -453,7 +453,7 @@ async def test_agent_key_rotated_hook(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public_key.hex(),
+                    "new_public_key": encode_public_key(new_public_key),
                     "custody": "self",
                     "timestamp": timestamp,
                     "rotation_signature": proof,
@@ -500,7 +500,7 @@ async def _seed_for_deregister(aweb_db_infra):
         "Ephemeral A",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "ephemeral",
@@ -584,7 +584,7 @@ async def _seed_for_retire(aweb_db_infra):
         "Retiree",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "persistent",

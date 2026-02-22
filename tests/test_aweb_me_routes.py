@@ -19,7 +19,7 @@ from nacl.signing import SigningKey
 from aweb.api import create_app
 from aweb.auth import hash_api_key, validate_agent_alias
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -52,7 +52,7 @@ async def _seed_persistent_self_custodial(aweb_db, *, slug: str = "me-proj", ali
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -106,7 +106,7 @@ async def _seed_ephemeral_custodial(aweb_db, *, slug: str, alias: str, master_ke
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "ephemeral",
@@ -183,7 +183,7 @@ async def test_me_rotate(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -237,7 +237,7 @@ async def test_me_retire(aweb_db_infra):
         "Successor",
         "agent",
         s_did,
-        s_pub.hex(),
+        encode_public_key(s_pub),
         "self",
         "persistent",
         "active",

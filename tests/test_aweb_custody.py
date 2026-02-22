@@ -7,7 +7,7 @@ import secrets
 import pytest
 import pytest_asyncio
 
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 from aweb.signing import VerifyResult, canonical_payload, verify_signature
 
 # --- encrypt / decrypt ---
@@ -143,7 +143,7 @@ class TestSignOnBehalf:
             "Custodial Agent",
             "agent",
             did,
-            public_key.hex(),
+            encode_public_key(public_key),
             "custodial",
             encrypted_key,
             "persistent",
@@ -249,7 +249,7 @@ class TestSignOnBehalf:
             "Self Agent",
             "agent",
             did,
-            public_key.hex(),
+            encode_public_key(public_key),
             "self",
             "persistent",
         )
@@ -299,7 +299,7 @@ class TestDestroySigningKey:
             "Destroy Agent",
             "agent",
             did,
-            public_key.hex(),
+            encode_public_key(public_key),
             "custodial",
             encrypted_key,
             "persistent",

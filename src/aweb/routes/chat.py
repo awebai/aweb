@@ -31,6 +31,7 @@ def _utc_iso(dt: datetime) -> str:
     """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
 HANG_ON_EXTENSION_SECONDS = 300

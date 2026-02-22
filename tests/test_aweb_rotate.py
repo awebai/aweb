@@ -15,7 +15,7 @@ from nacl.signing import SigningKey
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -64,7 +64,7 @@ async def _seed_persistent_self_custodial(
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -118,7 +118,7 @@ async def _seed_persistent_custodial(aweb_db, *, slug: str, alias: str, master_k
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "persistent",
@@ -165,7 +165,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -184,7 +184,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
         uuid.UUID(seed["agent_id"]),
     )
     assert row["did"] == new_did
-    assert row["public_key"] == new_public.hex()
+    assert row["public_key"] == encode_public_key(new_public)
     assert row["custody"] == "self"
 
 
@@ -206,7 +206,7 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -253,7 +253,7 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
         "Temp",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         "ephemeral",
         "active",
@@ -303,7 +303,7 @@ async def test_rotate_rejects_bad_proof(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": "invalid-proof",
                     "timestamp": "2026-02-21T12:00:00Z",
@@ -338,7 +338,7 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -378,7 +378,7 @@ async def test_rotate_rejects_wrong_key_proof(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -412,7 +412,7 @@ async def test_rotate_deleted_agent(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -443,7 +443,7 @@ async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": wrong_public.hex(),
+                    "new_public_key": encode_public_key(wrong_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,

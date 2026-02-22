@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -42,7 +42,7 @@ async def _seed_agent_with_log(aweb_db, *, slug: str = "log-proj", alias: str = 
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
     )
@@ -144,7 +144,7 @@ async def test_agent_log_empty_for_no_entries(aweb_db_infra):
         "No Log",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
     )

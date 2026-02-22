@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.custody import decrypt_signing_key
 from aweb.db import DatabaseInfra
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
 
 
 @pytest.mark.asyncio
@@ -43,7 +43,7 @@ async def test_self_custodial_init(aweb_db_infra):
     aweb_db_infra: DatabaseInfra
     seed, pub = generate_keypair()
     did = did_from_public_key(pub)
-    pub_hex = pub.hex()
+    pub_b64 = encode_public_key(pub)
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -55,7 +55,7 @@ async def test_self_custodial_init(aweb_db_infra):
                     "alias": "self-agent",
                     "custody": "self",
                     "did": did,
-                    "public_key": pub_hex,
+                    "public_key": pub_b64,
                 },
             )
             assert resp.status_code == 200, resp.text
@@ -72,7 +72,7 @@ async def test_self_custodial_init(aweb_db_infra):
                 uuid.UUID(data["agent_id"]),
             )
             assert row["did"] == did
-            assert row["public_key"] == pub_hex
+            assert row["public_key"] == pub_b64
             assert row["custody"] == "self"
             assert row["signing_key_enc"] is None  # self-custodial — no server-side key
             assert row["lifetime"] == "persistent"
@@ -85,7 +85,7 @@ async def test_self_custodial_mismatched_did_rejected(aweb_db_infra):
     _, pub = generate_keypair()
     _, other_pub = generate_keypair()
     wrong_did = did_from_public_key(other_pub)
-    pub_hex = pub.hex()
+    pub_b64 = encode_public_key(pub)
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -97,7 +97,7 @@ async def test_self_custodial_mismatched_did_rejected(aweb_db_infra):
                     "alias": "mismatch-agent",
                     "custody": "self",
                     "did": wrong_did,
-                    "public_key": pub_hex,
+                    "public_key": pub_b64,
                 },
             )
             assert resp.status_code == 422, resp.text
@@ -161,7 +161,7 @@ async def test_custodial_init(aweb_db_infra, monkeypatch):
             assert len(seed) == 32
 
             # Verify the DID matches the stored public key
-            pub_bytes = bytes.fromhex(row["public_key"])
+            pub_bytes = decode_public_key(row["public_key"])
             assert did_from_public_key(pub_bytes) == row["did"]
 
 
@@ -244,7 +244,7 @@ async def test_idempotent_reinit_returns_same_agent(aweb_db_infra):
                     "alias": "idemp-agent",
                     "custody": "self",
                     "did": did,
-                    "public_key": pub.hex(),
+                    "public_key": encode_public_key(pub),
                 },
             )
             assert resp1.status_code == 200
@@ -283,7 +283,7 @@ async def test_agent_log_entry_created(aweb_db_infra):
                     "alias": "log-agent",
                     "custody": "self",
                     "did": did,
-                    "public_key": pub.hex(),
+                    "public_key": encode_public_key(pub),
                 },
             )
             assert resp.status_code == 200
@@ -337,7 +337,7 @@ async def test_invalid_lifetime_value_rejected(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_self_custodial_malformed_public_key_rejected(aweb_db_infra):
-    """Self-custodial with non-hex public_key → 422 with clear error."""
+    """Self-custodial with invalid public_key → 422 with clear error."""
     aweb_db_infra: DatabaseInfra
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -345,15 +345,15 @@ async def test_self_custodial_malformed_public_key_rejected(aweb_db_infra):
             resp = await c.post(
                 "/v1/init",
                 json={
-                    "project_slug": "test/init-bad-hex",
-                    "alias": "bad-hex",
+                    "project_slug": "test/init-bad-pk",
+                    "alias": "bad-pk",
                     "custody": "self",
                     "did": "did:key:zFake",
-                    "public_key": "not-valid-hex!!!",
+                    "public_key": "not-valid-base64!!!",
                 },
             )
             assert resp.status_code == 422, resp.text
-            assert "hex" in resp.json()["detail"].lower()
+            assert "base64url" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
 from aweb.db import DatabaseInfra
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -72,7 +72,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "Retiring Agent",
         "agent",
         did,
-        pub.hex(),
+        encode_public_key(pub),
         custody,
         signing_key_enc,
         "persistent",
@@ -88,7 +88,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "Successor Agent",
         "agent",
         succ_did,
-        succ_pub.hex(),
+        encode_public_key(succ_pub),
         "self",
         "persistent",
     )
@@ -249,7 +249,7 @@ async def test_retire_rejects_ephemeral_agent(aweb_db_infra):
         "Ephemeral Agent",
         "agent",
         did,
-        pub.hex(),
+        encode_public_key(pub),
         "self",
         "ephemeral",
     )

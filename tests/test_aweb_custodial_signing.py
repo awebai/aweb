@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.db import DatabaseInfra
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 from aweb.signing import VerifyResult, canonical_payload, verify_signature
 
 
@@ -50,7 +50,7 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
         "Custodial Alice",
         "agent",
         did,
-        pub.hex(),
+        encode_public_key(pub),
         "custodial",
         signing_key_enc,
         "persistent",
@@ -404,6 +404,6 @@ async def test_signing_timestamp_uses_second_precision(aweb_db_infra, monkeypatc
             assert len(msgs) == 1
             ts = msgs[0]["created_at"]
             # Must be second precision with Z suffix: YYYY-MM-DDTHH:MM:SSZ
-            assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", ts), (
-                f"Timestamp must be second precision with Z suffix, got: {ts}"
-            )
+            assert re.match(
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", ts
+            ), f"Timestamp must be second precision with Z suffix, got: {ts}"

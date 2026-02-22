@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
+from aweb.did import decode_public_key, did_from_public_key
 from aweb.hooks import fire_mutation_hook
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
@@ -453,16 +454,16 @@ async def rotate_key(
 
     # Verify rotation proof: signed by old key
     old_did = row["did"]
-    old_public_key_hex = row["public_key"]
+    old_public_key_encoded = row["public_key"]
 
-    if not old_public_key_hex:
+    if not old_public_key_encoded:
         raise HTTPException(
             status_code=403, detail="Agent has no public key to verify proof against"
         )
 
     try:
-        old_public_key = bytes.fromhex(old_public_key_hex)
-    except ValueError:
+        old_public_key = decode_public_key(old_public_key_encoded)
+    except Exception:
         raise HTTPException(status_code=500, detail="Corrupt public key in database")
 
     canonical = _json.dumps(
@@ -490,15 +491,11 @@ async def rotate_key(
         raise HTTPException(status_code=403, detail="Rotation proof verification error")
 
     # Verify new_public_key encodes to new_did
-    from aweb.did import did_from_public_key
-
     try:
-        new_pub_bytes = bytes.fromhex(payload.new_public_key)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="new_public_key must be hex-encoded")
-    if len(new_pub_bytes) != 32:
+        new_pub_bytes = decode_public_key(payload.new_public_key)
+    except Exception:
         raise HTTPException(
-            status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)"
+            status_code=400, detail="new_public_key must be a base64url-encoded 32-byte Ed25519 key"
         )
     expected_did = did_from_public_key(new_pub_bytes)
     if expected_did != payload.new_did:
@@ -696,15 +693,15 @@ async def retire_agent(
                 status_code=422, detail="retirement_proof is required for self-custodial agents"
             )
 
-        old_public_key_hex = row["public_key"]
-        if not old_public_key_hex:
+        old_public_key_encoded = row["public_key"]
+        if not old_public_key_encoded:
             raise HTTPException(
                 status_code=403, detail="Agent has no public key to verify proof against"
             )
 
         try:
-            old_public_key = bytes.fromhex(old_public_key_hex)
-        except ValueError:
+            old_public_key = decode_public_key(old_public_key_encoded)
+        except Exception:
             raise HTTPException(status_code=500, detail="Corrupt public key in database")
 
         try:

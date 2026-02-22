@@ -59,9 +59,7 @@ async def get_pending_announcements(
     }
 
 
-async def acknowledge_rotation(
-    aweb_db, *, from_agent_id: UUID, to_agent_id: UUID
-) -> None:
+async def acknowledge_rotation(aweb_db, *, from_agent_id: UUID, to_agent_id: UUID) -> None:
     """Mark all rotation announcements from to_agent_id as acknowledged
     by from_agent_id.
 

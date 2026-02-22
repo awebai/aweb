@@ -10,7 +10,7 @@ import asyncpg.exceptions
 from aweb.alias_allocator import AliasExhaustedError, candidate_name_prefixes, used_name_prefixes
 from aweb.auth import hash_api_key, validate_agent_alias, validate_project_slug
 from aweb.custody import encrypt_signing_key, get_custody_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +160,9 @@ async def bootstrap_identity(
         if not did or not public_key:
             raise ValueError("Self-custodial agents require both did and public_key")
         try:
-            pub_bytes = bytes.fromhex(public_key)
-        except ValueError:
-            raise ValueError("public_key must be a 64-character hex-encoded Ed25519 public key")
-        if len(pub_bytes) != 32:
-            raise ValueError("public_key must be a 32-byte (64 hex char) Ed25519 public key")
+            pub_bytes = decode_public_key(public_key)
+        except Exception:
+            raise ValueError("public_key must be a base64url-encoded 32-byte Ed25519 public key")
         expected_did = did_from_public_key(pub_bytes)
         if expected_did != did:
             raise ValueError("DID does not match public_key")
@@ -173,7 +171,7 @@ async def bootstrap_identity(
     elif custody == "custodial":
         seed, pub = generate_keypair()
         agent_did = did_from_public_key(pub)
-        agent_public_key = pub.hex()
+        agent_public_key = encode_public_key(pub)
         master_key = get_custody_key()
         if master_key is not None:
             signing_key_enc = encrypt_signing_key(seed, master_key)

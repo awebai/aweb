@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -42,7 +42,7 @@ async def _seed_project_with_identity(aweb_db, *, slug: str, alias: str, custody
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         custody,
         "persistent",
     )
@@ -64,7 +64,7 @@ async def _seed_project_with_identity(aweb_db, *, slug: str, alias: str, custody
         "slug": slug,
         "alias": alias,
         "did": did,
-        "public_key": public_key.hex(),
+        "public_key": encode_public_key(public_key),
         "custody": custody,
         "api_key": api_key,
     }
@@ -216,7 +216,7 @@ async def test_resolve_custodial_ephemeral_agent(aweb_db_infra, monkeypatch):
         "Alice",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         "ephemeral",
     )

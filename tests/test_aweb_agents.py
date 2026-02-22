@@ -255,7 +255,7 @@ async def test_list_agents_include_internal_shows_all(aweb_db_infra):
 @pytest.mark.asyncio
 async def test_list_agents_includes_identity_fields(aweb_db_infra):
     """Agent listing includes did, custody, lifetime, identity_status fields."""
-    from aweb.did import did_from_public_key, generate_keypair
+    from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -270,7 +270,7 @@ async def test_list_agents_includes_identity_fields(aweb_db_infra):
                     "alias": "id-agent",
                     "custody": "self",
                     "did": did,
-                    "public_key": pub.hex(),
+                    "public_key": encode_public_key(pub),
                 },
             )
             assert data.status_code == 200, data.text

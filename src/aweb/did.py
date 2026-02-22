@@ -6,6 +6,8 @@ multicodec 0xed01 prefix + base58btc encoding + "did:key:z" prefix.
 
 from __future__ import annotations
 
+import base64
+
 import base58 as b58
 from nacl.signing import SigningKey
 
@@ -62,3 +64,24 @@ def validate_did(did: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def encode_public_key(public_key: bytes) -> str:
+    """Encode a 32-byte Ed25519 public key as URL-safe base64, no padding."""
+    if len(public_key) != _ED25519_KEY_LEN:
+        raise ValueError(
+            f"Ed25519 public key must be {_ED25519_KEY_LEN} bytes, got {len(public_key)}"
+        )
+    return base64.urlsafe_b64encode(public_key).rstrip(b"=").decode("ascii")
+
+
+def decode_public_key(encoded: str) -> bytes:
+    """Decode a URL-safe base64 no-padding string to a 32-byte Ed25519 public key."""
+    padded = encoded + "=" * (-len(encoded) % 4)
+    try:
+        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+    except Exception:
+        raise ValueError("public_key must be valid base64url-encoded")
+    if len(raw) != _ED25519_KEY_LEN:
+        raise ValueError(f"Decoded key must be {_ED25519_KEY_LEN} bytes, got {len(raw)}")
+    return raw

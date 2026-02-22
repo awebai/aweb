@@ -13,7 +13,7 @@ from nacl.signing import SigningKey
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -62,7 +62,7 @@ async def _seed_two_agents(aweb_db, *, slug: str = "ann-proj"):
             f"Human {alias}",
             "agent",
             did,
-            public_key.hex(),
+            encode_public_key(public_key),
             "self",
             "persistent",
             "active",
@@ -112,7 +112,7 @@ async def test_rotation_stores_announcement(aweb_db_infra):
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -155,7 +155,7 @@ async def test_inbox_includes_rotation_announcement(aweb_db_infra):
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -215,7 +215,7 @@ async def test_announcement_stops_after_peer_responds(aweb_db_infra):
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -287,7 +287,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
             f"Human {alias}",
             "agent",
             did,
-            public_key.hex(),
+            encode_public_key(public_key),
             "self",
             "persistent",
             "active",
@@ -329,7 +329,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -425,7 +425,7 @@ async def test_announcement_expires_after_24h(aweb_db_infra):
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public_key.hex(),
+                    "new_public_key": encode_public_key(new_public_key),
                     "custody": "self",
                     "timestamp": timestamp,
                     "rotation_signature": proof,
