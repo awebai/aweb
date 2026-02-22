@@ -400,7 +400,7 @@ class RotateKeyRequest(BaseModel):
     new_did: str
     new_public_key: str
     custody: str
-    rotation_proof: str
+    rotation_signature: str
     timestamp: str
 
     @field_validator("custody")
@@ -487,7 +487,7 @@ async def rotate_key(
     ).encode("utf-8")
 
     try:
-        padded = payload.rotation_proof + "=" * (-len(payload.rotation_proof) % 4)
+        padded = payload.rotation_signature + "=" * (-len(payload.rotation_signature) % 4)
         sig_bytes = _base64.b64decode(padded, validate=True)
     except Exception:
         raise HTTPException(status_code=403, detail="Malformed rotation proof encoding")
@@ -546,7 +546,7 @@ async def rotate_key(
         old_did,
         payload.new_did,
         payload.timestamp,
-        payload.rotation_proof,
+        payload.rotation_signature,
     )
 
     await fire_mutation_hook(

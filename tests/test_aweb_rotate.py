@@ -22,7 +22,7 @@ def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _make_rotation_proof(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
     """Sign the canonical rotation payload with the old key."""
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
@@ -153,7 +153,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -165,7 +165,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -194,7 +194,7 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -206,7 +206,7 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -277,7 +277,7 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
                     "new_did": "did:key:zFake",
                     "new_public_key": "aa" * 32,
                     "custody": "self",
-                    "rotation_proof": "fake",
+                    "rotation_signature": "fake",
                     "timestamp": "2026-02-21T12:00:00Z",
                 },
             )
@@ -303,7 +303,7 @@ async def test_rotate_rejects_bad_proof(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": "invalid-proof",
+                    "rotation_signature": "invalid-proof",
                     "timestamp": "2026-02-21T12:00:00Z",
                 },
             )
@@ -325,8 +325,8 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     timestamp = "2026-02-21T12:00:00Z"
 
     # For custodial agents, the server signs the proof on behalf
-    # The rotation_proof is signed by the old key (server holds it)
-    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+    # The rotation_signature is signed by the old key (server holds it)
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -338,7 +338,7 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -366,7 +366,7 @@ async def test_rotate_rejects_wrong_key_proof(aweb_db_infra):
 
     # Sign with a completely unrelated key
     unrelated_private, _ = generate_keypair()
-    proof = _make_rotation_proof(unrelated_private, seed["did"], new_did, timestamp)
+    proof = _make_rotation_signature(unrelated_private, seed["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -378,7 +378,7 @@ async def test_rotate_rejects_wrong_key_proof(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -400,7 +400,7 @@ async def test_rotate_deleted_agent(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -412,7 +412,7 @@ async def test_rotate_deleted_agent(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -434,7 +434,7 @@ async def test_rotate_404_unknown_agent(aweb_db_infra):
                     "new_did": "did:key:zFake",
                     "new_public_key": "aa" * 32,
                     "custody": "self",
-                    "rotation_proof": "fake",
+                    "rotation_signature": "fake",
                     "timestamp": "2026-02-21T12:00:00Z",
                 },
             )

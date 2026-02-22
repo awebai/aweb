@@ -3,7 +3,7 @@
 Per clawdid/sot.md §5.4: after key rotation, the first message sent with the
 new key includes a rotation_announcement so receivers can auto-accept the new
 DID without triggering IDENTITY_MISMATCH. The announcement is attached per-peer
-until that peer responds with any message to the rotated agent.
+until the peer responds OR 24 hours elapse, whichever comes first.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ async def get_pending_announcements(
             ra.old_key_signature
         FROM {{tables.rotation_announcements}} ra
         WHERE ra.agent_id = ANY($1::uuid[])
+          AND ra.created_at > NOW() - INTERVAL '24 hours'
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.rotation_peer_acks}} rpa
               WHERE rpa.announcement_id = ra.announcement_id
