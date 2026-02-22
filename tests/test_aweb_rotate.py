@@ -471,3 +471,144 @@ async def test_rotate_404_unknown_agent(aweb_db_infra):
                 },
             )
             assert resp.status_code == 404
+
+
+async def _add_agent_to_project(aweb_db, *, project_id, alias):
+    """Add a second agent to an existing project. Returns seed dict."""
+    private_key, public_key = generate_keypair()
+    did = did_from_public_key(public_key)
+    agent_id = uuid.uuid4()
+
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, project_id, alias, human_name, agent_type,
+             did, public_key, custody, lifetime, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        """,
+        agent_id,
+        uuid.UUID(project_id),
+        alias,
+        f"Human {alias}",
+        "agent",
+        did,
+        public_key.hex(),
+        "self",
+        "persistent",
+        "active",
+    )
+
+    api_key = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) "
+        "VALUES ($1, $2, $3, $4, $5)",
+        uuid.UUID(project_id),
+        agent_id,
+        api_key[:12],
+        hash_api_key(api_key),
+        True,
+    )
+
+    return {
+        "agent_id": str(agent_id),
+        "private_key": private_key,
+        "public_key": public_key,
+        "did": did,
+        "api_key": api_key,
+    }
+
+
+@pytest.mark.asyncio
+async def test_chained_rotation_delivers_earliest_announcement(aweb_db_infra):
+    """When an agent rotates A→B→C, peer should see A→B first, then B→C after ack."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    alice = await _seed_persistent_self_custodial(aweb_db, slug="chain-rot", alias="alice")
+    bob = await _add_agent_to_project(aweb_db, project_id=alice["project_id"], alias="bob")
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Rotation 1: A → B
+            key_b_priv, key_b_pub = generate_keypair()
+            did_b = did_from_public_key(key_b_pub)
+            ts1 = "2026-02-21T12:00:00Z"
+            proof1 = _make_rotation_signature(alice["private_key"], alice["did"], did_b, ts1)
+            resp = await c.put(
+                f"/v1/agents/{alice['agent_id']}/rotate",
+                headers=_auth(alice["api_key"]),
+                json={
+                    "new_did": did_b,
+                    "new_public_key": key_b_pub.hex(),
+                    "custody": "self",
+                    "rotation_signature": proof1,
+                    "timestamp": ts1,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Rotation 2: B → C
+            key_c_priv, key_c_pub = generate_keypair()
+            did_c = did_from_public_key(key_c_pub)
+            ts2 = "2026-02-21T13:00:00Z"
+            proof2 = _make_rotation_signature(key_b_priv, did_b, did_c, ts2)
+            resp = await c.put(
+                f"/v1/agents/{alice['agent_id']}/rotate",
+                headers=_auth(alice["api_key"]),
+                json={
+                    "new_did": did_c,
+                    "new_public_key": key_c_pub.hex(),
+                    "custody": "self",
+                    "rotation_signature": proof2,
+                    "timestamp": ts2,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Alice sends a message to Bob so Bob has something in inbox
+            # with rotation announcements attached
+            resp = await c.post(
+                "/v1/messages",
+                headers=_auth(alice["api_key"]),
+                json={"to_alias": "bob", "subject": "hi", "body": "hello"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Bob checks inbox — should see EARLIEST rotation (A→B), not latest (B→C)
+            resp = await c.get("/v1/messages/inbox", headers=_auth(bob["api_key"]))
+            assert resp.status_code == 200
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 1
+            ann = msgs[0]["rotation_announcement"]
+            assert ann is not None, "Expected rotation announcement"
+            assert ann["old_did"] == alice["did"], (
+                f"Should be earliest rotation (A→B), got old_did={ann['old_did']}"
+            )
+            assert ann["new_did"] == did_b
+
+            # Bob acks by replying to Alice
+            resp = await c.post(
+                "/v1/messages",
+                headers=_auth(bob["api_key"]),
+                json={"to_alias": "alice", "subject": "re", "body": "got it"},
+            )
+            assert resp.status_code == 200
+
+            # Alice sends another message
+            resp = await c.post(
+                "/v1/messages",
+                headers=_auth(alice["api_key"]),
+                json={"to_alias": "bob", "subject": "hi2", "body": "again"},
+            )
+            assert resp.status_code == 200
+
+            # Bob checks inbox again — should see NEXT rotation (B→C)
+            resp = await c.get("/v1/messages/inbox", headers=_auth(bob["api_key"]))
+            assert resp.status_code == 200
+            msgs = resp.json()["messages"]
+            # Find the newest message (has the announcement)
+            newest = [m for m in msgs if m["subject"] == "hi2"]
+            assert len(newest) == 1
+            ann2 = newest[0]["rotation_announcement"]
+            assert ann2 is not None, "Expected second rotation announcement (B→C)"
+            assert ann2["old_did"] == did_b
+            assert ann2["new_did"] == did_c

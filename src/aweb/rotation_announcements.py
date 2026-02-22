@@ -22,8 +22,8 @@ async def get_pending_announcements(
     if not sender_ids:
         return {}
 
-    # Find the latest rotation announcement per sender that the recipient
-    # has NOT yet acknowledged.
+    # Find the earliest unacknowledged rotation announcement per sender.
+    # Delivers oldest first so TOFU chain is preserved: A→B before B→C.
     rows = await aweb_db.fetch_all(
         """
         SELECT DISTINCT ON (ra.agent_id)
@@ -42,7 +42,7 @@ async def get_pending_announcements(
                 AND rpa.peer_agent_id = $2
                 AND rpa.acknowledged_at IS NOT NULL
           )
-        ORDER BY ra.agent_id, ra.created_at DESC
+        ORDER BY ra.agent_id, ra.created_at ASC
         """,
         sender_ids,
         recipient_id,
@@ -62,13 +62,13 @@ async def get_pending_announcements(
 async def acknowledge_rotation(
     aweb_db, *, from_agent_id: UUID, to_agent_id: UUID
 ) -> None:
-    """Mark all rotation announcements from to_agent_id as acknowledged
-    by from_agent_id.
+    """Mark the earliest unacknowledged rotation announcement from
+    to_agent_id as acknowledged by from_agent_id.
 
     Called when from_agent_id sends a message TO to_agent_id — meaning
     from_agent_id has implicitly acknowledged to_agent_id's rotation.
-    Inserts acknowledgment rows if they don't exist yet (the peer may
-    never have fetched their inbox).
+    Only acks one announcement at a time to preserve TOFU chain order:
+    the peer must see A→B before B→C.
     """
     await aweb_db.execute(
         """
@@ -77,6 +77,15 @@ async def acknowledge_rotation(
         SELECT ra.announcement_id, $2, NOW()
         FROM {{tables.rotation_announcements}} ra
         WHERE ra.agent_id = $1
+          AND ra.created_at > NOW() - INTERVAL '24 hours'
+          AND NOT EXISTS (
+              SELECT 1 FROM {{tables.rotation_peer_acks}} rpa
+              WHERE rpa.announcement_id = ra.announcement_id
+                AND rpa.peer_agent_id = $2
+                AND rpa.acknowledged_at IS NOT NULL
+          )
+        ORDER BY ra.created_at ASC
+        LIMIT 1
         ON CONFLICT (announcement_id, peer_agent_id)
         DO UPDATE SET acknowledged_at = COALESCE(
             {{tables.rotation_peer_acks}}.acknowledged_at, NOW()
