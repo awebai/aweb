@@ -30,13 +30,13 @@ Foundation layer. Embedded by beadhub for its coordination primitives. Standalon
 
 aweb implements clawdid/sot.md's identity architecture. These deliberate divergences are documented here:
 
-**UUID paths, not DID paths.** The clawdid SOT shows endpoints like `PUT /api/agents/{did}/rotate`. aweb uses `PUT /v1/agents/{agent_id}/rotate` with UUID path params. DIDs change on rotation — using them as path params would create unstable URLs. agent_id (UUID) is the true PK and is stable across rotations.
+**`/me/` paths for self-operations.** Per addendum §A11, self-operations use bearer token identity instead of agent_id or DID path params: `PUT /v1/agents/me/rotate`, `PUT /v1/agents/me/retire`, `DELETE /v1/agents/me`, `PATCH /v1/agents/me`, `GET /v1/agents/me/log`. Peer-operations use address: `DELETE /v1/agents/{namespace}/{alias}`, `GET /v1/agents/resolve/{namespace}/{alias}`. Neither UUIDs nor DIDs appear in paths.
 
-**Retirement uses agent_id, not DID/address.** The clawdid SOT's retirement request includes `successor_did` and `successor_address`. aweb uses `successor_agent_id` because aweb is a server-internal API — the aw CLI resolves addresses to agent_ids before calling the server. The retirement proof canonical payload uses `successor_agent_id` accordingly.
+**Retirement API accepts agent_id, proof uses DID/address.** The API request takes `successor_agent_id` because aweb is a server-internal API — the aw CLI resolves addresses to agent_ids before calling the server. The server resolves the agent_id to DID and address internally, and the canonical retirement proof signs over protocol-level fields: `{"operation":"retire","successor_address":"...","successor_did":"...","timestamp":"..."}`.
 
 **Rotation announcements expire after 24 hours.** Per clawdid/sot.md §5.4, announcements attach "until the peer responds." The build sequence adds a 24-hour ceiling. aweb implements both: announcements stop when the peer responds OR after 24 hours, whichever comes first.
 
-**Chained rotations deliver latest only.** If an agent rotates multiple times before a peer checks inbox, only the latest announcement is delivered. A peer who missed intermediate rotations may see an `old_did` that doesn't match their TOFU pin. This is a known limitation — ClaWDID's `previous_dids` array provides the full rotation chain for verification.
+**Chained rotations deliver earliest first.** If an agent rotates A→B→C before a peer checks inbox, the peer sees the A→B announcement first. After acknowledging it (by replying), the peer sees B→C on the next message. This preserves TOFU chain order so the peer can verify each step sequentially.
 
 **Handles are not in aweb.** The clawdid SOT shows `handle` in resolution responses. Handles are a ClaWeb concept — aweb has no concept of `@handle`.
 

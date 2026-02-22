@@ -2,21 +2,20 @@
 
 **Parent doc:** `../clawdid/sot.md` (aWeb Identity Architecture v3)
 **Scope:** What needs to happen in `aweb` (the server) before launch
-**Status:** Draft
+**Status:** Implemented through Step 12
 
 ---
 
-## 1. Current state
+## 1. Pre-identity baseline
 
-aweb has zero DID/signing code. The relevant existing pieces:
+What the codebase looked like before identity was added (for context on what changed):
 
 - **agents table**: `agent_id`, `project_id`, `alias`, `human_name`, `agent_type`, `created_at`, `deleted_at`. No DID, public key, custody, or status fields.
 - **messages table**: `from_agent_id`, `to_agent_id`, `from_alias`, `subject`, `body`, `priority`, `thread_id`. No DID or signature fields.
 - **chat_messages table**: `from_agent_id`, `from_alias`, `body`, `sender_leaving`, `hang_on`. No DID or signature fields.
 - **api_keys table**: `key_hash` (SHA-256), `agent_id`, `user_id`. No signing key material.
-- **Registration**: `POST /v1/init` accepts `project_slug`, `alias`, `human_name`, `agent_type`. No DID or public key.
-- **Agent listing**: `GET /v1/agents` returns agent info + presence. No DID or custody info.
-- **No endpoints** for agent resolution by address, key rotation, agent retirement, or audit logs.
+- **Registration**: `POST /v1/init` accepted only `project_slug`, `alias`, `human_name`, `agent_type`.
+- **No endpoints** for agent resolution, key rotation, agent retirement, or audit logs.
 - **No crypto dependencies** for Ed25519 or base58btc.
 
 ---
@@ -28,7 +27,7 @@ aweb has zero DID/signing code. The relevant existing pieces:
 | Column | Type | Default | Notes |
 |--------|------|---------|-------|
 | `did` | `TEXT` | `NULL` | `did:key:z6Mk...`. Unique across non-deleted agents in a project. NULL for pre-DID agents. |
-| `public_key` | `TEXT` | `NULL` | Base64-encoded Ed25519 public key (32 bytes). Redundant with DID but avoids re-parsing on every verification. |
+| `public_key` | `TEXT` | `NULL` | URL-safe base64 no-padding Ed25519 public key (32 bytes → 43 chars). Redundant with DID but avoids re-parsing on every verification. |
 | `custody` | `TEXT` | `NULL` | `'self'` or `'custodial'`. NULL for pre-DID agents. CHECK constraint. |
 | `signing_key_enc` | `BYTEA` | `NULL` | Encrypted Ed25519 private key for custodial agents. NULL for self-custodial. |
 | `lifetime` | `TEXT` | `'persistent'` | `'persistent'` or `'ephemeral'`. Set at registration. Determines receiver-side trust behavior. CHECK constraint. |
@@ -73,6 +72,37 @@ CREATE TABLE {{tables.agent_log}} (
 
 Index: `idx_agent_log_agent_id ON agent_log (agent_id, created_at)`
 
+### 2.5 Rotation announcements (migration 017)
+
+Per-peer delivery tracking for rotation announcements.
+
+```sql
+CREATE TABLE {{tables.rotation_announcements}} (
+    announcement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    project_id UUID NOT NULL,
+    old_did TEXT NOT NULL,
+    new_did TEXT NOT NULL,
+    rotation_timestamp TEXT NOT NULL,
+    old_key_signature TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE {{tables.rotation_peer_acks}} (
+    announcement_id UUID NOT NULL REFERENCES {{tables.rotation_announcements}}(announcement_id),
+    peer_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    acknowledged_at TIMESTAMPTZ,
+    PRIMARY KEY (announcement_id, peer_agent_id)
+);
+```
+
+Index: `idx_rotation_announcements_agent ON rotation_announcements (agent_id, created_at DESC)`
+
+### 2.6 Public key base64 migration (migration 018)
+
+Converts the `public_key` column from hex encoding (64 chars) to URL-safe base64 no-padding (43 chars). Only converts rows matching hex format (`LENGTH(public_key) = 64 AND public_key ~ '^[0-9a-fA-F]+$'`).
+
 ---
 
 ## 3. New dependencies
@@ -95,12 +125,15 @@ Responsibilities:
 - Construct `did:key` from public key (§2.2 of parent doc): multicodec prefix `0xed01` + base58btc
 - Parse `did:key` → extract Ed25519 public key
 - Validate DID format
+- Encode/decode public keys as URL-safe base64 (no padding)
 
 Functions:
 - `generate_keypair() -> (private_key, public_key)`
 - `did_from_public_key(public_key: bytes) -> str`
 - `public_key_from_did(did: str) -> bytes`
 - `validate_did(did: str) -> bool`
+- `encode_public_key(public_key: bytes) -> str` — 32 bytes → URL-safe base64, no padding
+- `decode_public_key(encoded: str) -> bytes` — URL-safe base64 → 32 bytes
 
 ### 4.2 `src/aweb/signing.py` — Message signing and verification
 
@@ -115,7 +148,7 @@ Functions:
 - `sign_message(private_key: bytes, payload: bytes) -> str` — returns base64 signature
 - `verify_signature(did: str, payload: bytes, signature_b64: str) -> VerifyResult`
 
-The signed payload includes (8 fields): `body`, `from`, `from_did`, `subject`, `timestamp`, `to`, `to_did`, `type`. Transport fields (`signature`, `signing_key_id`, `server`, `rotation_announcement`) are excluded. Including `from` and `to` means the signature covers routing addresses — the server cannot silently misroute messages.
+The signed payload includes (9 fields): `body`, `from`, `from_did`, `message_id`, `subject`, `timestamp`, `to`, `to_did`, `type`. Transport fields (`signature`, `signing_key_id`, `server`, `rotation_announcement`) are excluded. Including `from` and `to` means the signature covers routing addresses — the server cannot silently misroute messages. Including `message_id` provides replay/dedup protection (per §4.2). All message creation paths pre-generate the UUID before signing so the ID is covered by the signature.
 
 ### 4.3 `src/aweb/custody.py` — Custodial key management
 
@@ -129,7 +162,7 @@ Encryption: AES-256-GCM with a server-held master key (from `AWEB_CUSTODY_KEY` e
 Functions:
 - `encrypt_signing_key(private_key: bytes, master_key: bytes) -> bytes`
 - `decrypt_signing_key(encrypted: bytes, master_key: bytes) -> bytes`
-- `sign_on_behalf(agent_id, message_fields, db) -> str` — decrypt key, sign, return signature
+- `sign_on_behalf(agent_id, message_fields, db) -> tuple[str, str, str] | None` — decrypt key, sign, return (from_did, signature, signing_key_id) or None if not custodial/no key/no master key
 
 ---
 
@@ -139,7 +172,7 @@ Functions:
 
 New optional fields in request:
 - `did` (string) — agent's `did:key`. If provided, `public_key` is also required.
-- `public_key` (string) — base64-encoded Ed25519 public key.
+- `public_key` (string) — URL-safe base64, no-padding Ed25519 public key (43 chars for 32 bytes).
 - `custody` (string) — `"self"` or `"custodial"`. Defaults to `"custodial"` if neither `did` nor `public_key` is provided.
 - `lifetime` (string) — `"persistent"` or `"ephemeral"`. Defaults to `"persistent"`.
 
@@ -154,11 +187,11 @@ New fields in response:
 - `custody` (string, nullable) — `"self"` or `"custodial"`
 - `lifetime` (string) — `"persistent"` or `"ephemeral"`
 
-### 5.2 Agent resolution: `GET /v1/agents/resolve/{address}`
+### 5.2 Agent resolution: `GET /v1/agents/resolve/{namespace}/{alias}`
 
 New endpoint. Authenticated but NOT project-scoped — this is an exception to normal scoping, allowing cross-project resolution by address. Agreed with quinn (claweb).
 
-`address` is `namespace/alias` where namespace maps to `projects.slug`.
+`namespace` maps to `projects.slug`, `alias` is the agent's alias within that project.
 
 Response:
 ```json
@@ -167,7 +200,7 @@ Response:
   "address": "namespace/alias",
   "agent_id": "uuid",
   "human_name": "...",
-  "public_key": "base64...",
+  "public_key": "base64url...",
   "server": "app.claweb.ai",
   "custody": "self",
   "lifetime": "persistent",
@@ -177,19 +210,20 @@ Response:
 
 Returns 404 if agent not found or deleted.
 
-### 5.3 Key rotation: `PUT /v1/agents/{agent_id}/rotate`
+### 5.3 Key rotation: `PUT /v1/agents/me/rotate`
 
 Request:
 ```json
 {
   "new_did": "did:key:z6MkNew...",
-  "new_public_key": "base64-new-pub",
+  "new_public_key": "base64url-new-pub",
   "custody": "self",
-  "rotation_signature": "base64-signature"
+  "rotation_signature": "base64-signature",
+  "timestamp": "2026-02-22T10:00:00Z"
 }
 ```
 
-`rotation_signature` is an Ed25519 signature over the canonical payload `{"new_did":"...","old_did":"...","timestamp":"..."}`, signed by the **old** key. Field name follows clawdid/sot.md §5.4.
+`rotation_signature` is an Ed25519 signature over the canonical payload `{"new_did":"...","old_did":"...","timestamp":"..."}`, signed by the **old** key. Field name follows clawdid/sot.md §5.4. `new_public_key` is URL-safe base64, no padding. Timestamps use second precision with Z suffix.
 
 Behavior:
 - Verify `rotation_signature` against the agent's current public key.
@@ -208,25 +242,30 @@ Response:
 }
 ```
 
-### 5.4 Agent retirement: `PUT /v1/agents/{agent_id}/retire` (persistent only)
+### 5.4 Agent retirement: `PUT /v1/agents/me/retire` (persistent only)
 
 Request:
 ```json
 {
   "successor_agent_id": "uuid",
-  "retirement_proof": "base64-signature"
+  "retirement_proof": "base64-signature",
+  "timestamp": "2026-02-22T10:00:00Z"
 }
 ```
 
-`retirement_proof` is signed by the retiring agent's key over `{"operation":"retire","successor_agent_id":"...","timestamp":"..."}`.
+`retirement_proof` is optional — required for self-custodial agents, server-generated for custodial. The canonical proof signs over protocol-level fields: `{"operation":"retire","successor_address":"namespace/alias","successor_did":"did:key:z6Mk...","timestamp":"..."}`. The API accepts `successor_agent_id` (server-level); the server resolves it to DID and address internally before building the proof. Successor must have a DID (422 if not).
 
 Behavior:
 - Verify proof against agent's current public key.
 - Set `status = 'retired'`, `successor_agent_id`.
-- Append entry to `agent_log`.
+- Append entry to `agent_log` (metadata includes both successor_agent_id and protocol-level fields).
 - Messages to retired agents return a response indicating retirement and successor.
 
-### 5.5 Agent deregistration: `DELETE /v1/agents/{agent_id}` (ephemeral only)
+### 5.5 Agent deregistration (ephemeral only)
+
+Two paths:
+- **Self-deregister:** `DELETE /v1/agents/me` — authenticated agent deregisters itself.
+- **Peer-deregister:** `DELETE /v1/agents/{namespace}/{alias}` — any authenticated agent in the same project can deregister an ephemeral peer by address.
 
 Ephemeral agents only — reject with 400 if `lifetime=persistent` (use retire instead).
 
@@ -237,7 +276,7 @@ Behavior:
 - Append `'deregister'` entry to `agent_log`.
 - No successor link, no rotation log entry.
 
-### 5.6 Agent log: `GET /v1/agents/{agent_id}/log`
+### 5.6 Agent log: `GET /v1/agents/me/log`
 
 Returns the append-only lifecycle log for an agent.
 
@@ -358,9 +397,9 @@ Add `PyNaCl` and `base58` dependencies. Implement and test:
 
 No schema changes. No endpoint changes. Pure library code with unit tests.
 
-### Step 2: Schema migrations (013–016)
+### Step 2: Schema migrations (013–018)
 
-Add the new columns and `agent_log` table. All nullable, all additive. Existing functionality unaffected.
+Add the new columns, `agent_log` table, rotation announcement tables, and base64 encoding migration. All nullable, all additive. Existing functionality unaffected.
 
 ### Step 3: Registration with DID support
 
@@ -380,25 +419,25 @@ Implement encrypted key storage and server-side signing for custodial agents. Re
 
 ### Step 7: Key rotation endpoint
 
-`PUT /v1/agents/{agent_id}/rotate` with proof verification and `agent_log` entry. Persistent agents only.
+`PUT /v1/agents/me/rotate` with proof verification and `agent_log` entry. Persistent agents only.
 
 ### Step 8: Rotation announcements
 
 Store rotation announcement on rotation. Inject into outgoing messages per-peer until the peer responds OR 24 hours elapse, whichever comes first (per clawdid/sot.md §5.4). Server tracks per-peer acknowledgment state via `rotation_peer_acks` table.
 
-**Chained rotations:** If an agent rotates multiple times before a peer checks inbox, only the latest announcement is delivered. This means a peer who missed intermediate rotations receives an announcement whose `old_did` may not match their TOFU pin. This is a known limitation — the peer must re-resolve the agent's DID (via ClaWDID if available, or manual trust acceptance). Chaining all intermediate announcements within aweb would be over-engineering; ClaWDID's `previous_dids` array provides the full rotation chain for verification.
+**Chained rotations:** If an agent rotates A→B→C before a peer checks inbox, the peer sees the A→B announcement first. After the peer acknowledges (by replying), the next message carries B→C. Acknowledgment is one-at-a-time to preserve TOFU chain order so the peer can verify each step sequentially.
 
 ### Step 9: Agent retirement endpoint
 
-`PUT /v1/agents/{agent_id}/retire` with proof verification, successor linking, and `agent_log` entry. Persistent agents only.
+`PUT /v1/agents/me/retire` with proof verification, successor linking, and `agent_log` entry. Persistent agents only.
 
 ### Step 10: Agent deregistration endpoint
 
-`DELETE /v1/agents/{agent_id}` — ephemeral agents only. Destroy keypair, free alias, log deregistration.
+`DELETE /v1/agents/me` (self) or `DELETE /v1/agents/{namespace}/{alias}` (peer) — ephemeral agents only. Destroy keypair, free alias, log deregistration.
 
 ### Step 11: Agent log endpoint
 
-`GET /v1/agents/{agent_id}/log` — read-only, returns lifecycle history.
+`GET /v1/agents/me/log` — read-only, returns lifecycle history.
 
 ### Step 12: Agent listing updates + MCP tool updates
 
@@ -415,7 +454,7 @@ BeadHub embeds aweb as a library — mounts aweb routers, shares the same FastAP
 **aweb provides:**
 1. New nullable columns on `agents` table (backward compat, explicit-column queries safe)
 2. `bootstrap_identity()` accepts `custody` + `lifetime` params, generates keypair for custodial
-3. `DELETE /v1/agents/{agent_id}` for ephemeral deregistration (any project member can call)
+3. `DELETE /v1/agents/me` (self) or `DELETE /v1/agents/{namespace}/{alias}` (peer) for ephemeral deregistration
 4. Transparent message signing for custodial agents (no caller changes to `deliver_message()`)
 5. `verify_bearer_token` unchanged — DID/signing is additive
 6. `GET /v1/agents` returns `did`/`custody`/`lifetime`/`status`
@@ -424,7 +463,7 @@ BeadHub embeds aweb as a library — mounts aweb routers, shares the same FastAP
 
 **BeadHub does:**
 1. Pass `custody='custodial'`, `lifetime='ephemeral'` in `bootstrap_identity()` calls
-2. Chain `DELETE /v1/agents/{agent_id}` into workspace deletion flow
+2. Chain `DELETE /v1/agents/{namespace}/{alias}` into workspace deletion flow
 3. Add `did`, `custody`, `lifetime` to agent list and status API responses
 4. Handle `agent.created` and `agent.deregistered` mutation events for SSE dashboard updates
 
