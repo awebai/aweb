@@ -82,14 +82,10 @@ async def acknowledge_rotation(
               SELECT 1 FROM {{tables.rotation_peer_acks}} rpa
               WHERE rpa.announcement_id = ra.announcement_id
                 AND rpa.peer_agent_id = $2
-                AND rpa.acknowledged_at IS NOT NULL
           )
         ORDER BY ra.created_at ASC
         LIMIT 1
-        ON CONFLICT (announcement_id, peer_agent_id)
-        DO UPDATE SET acknowledged_at = COALESCE(
-            {{tables.rotation_peer_acks}}.acknowledged_at, NOW()
-        )
+        ON CONFLICT (announcement_id, peer_agent_id) DO NOTHING
         """,
         to_agent_id,
         from_agent_id,

@@ -530,6 +530,8 @@ async def _seed_for_retire(aweb_db_infra):
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
     encrypted_key = encrypt_signing_key(private_key, master_key)
+    _, succ_pub = generate_keypair()
+    succ_did = did_from_public_key(succ_pub)
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
     successor_id = uuid.uuid4()
@@ -551,10 +553,12 @@ async def _seed_for_retire(aweb_db_infra):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (agent_id, project_id, alias, human_name, agent_type,
+             did, public_key, lifetime, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
-        successor_id, project_id, "successor", "Successor", "agent", "persistent", "active",
+        successor_id, project_id, "successor", "Successor", "agent",
+        succ_did, succ_pub.hex(), "persistent", "active",
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"

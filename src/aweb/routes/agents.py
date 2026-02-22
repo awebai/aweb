@@ -681,10 +681,13 @@ async def retire_agent(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
         UUID(project_id),
     )
-    successor_did = successor["did"] or ""
-    successor_address = (
-        f"{proj_row['slug']}/{successor['alias']}" if proj_row else ""
-    )
+    if not successor["did"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Successor agent has no DID — cannot build verifiable retirement proof",
+        )
+    successor_did = successor["did"]
+    successor_address = f"{proj_row['slug']}/{successor['alias']}"
 
     # Build canonical retirement proof with protocol-level fields.
     # The API accepts successor_agent_id, but the proof uses
