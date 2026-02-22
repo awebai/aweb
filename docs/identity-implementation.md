@@ -228,8 +228,10 @@ Request:
 Behavior:
 - Verify `rotation_signature` against the agent's current public key.
 - For custodial agents: server signs the proof on behalf of the agent (since it holds the old key).
-- Update agent record: new DID, new public key, new custody mode.
-- If graduating from custodial to self: destroy encrypted private key.
+- If `custody="self"`: caller provides `new_did` + `new_public_key` (server normalizes key encoding).
+- If `custody="custodial"`: caller omits `new_did` + `new_public_key`; server generates a new keypair and returns the new values.
+- Update agent record: new DID, new public key, custody mode.
+- If graduating from custodial to self: destroy encrypted private key. If staying custodial: rotate encrypted private key in sync.
 - Append entry to `agent_log`.
 
 Response:
@@ -238,6 +240,7 @@ Response:
   "status": "rotated",
   "old_did": "did:key:z6MkOld...",
   "new_did": "did:key:z6MkNew...",
+  "new_public_key": "base64url-new-pub",
   "custody": "self"
 }
 ```
@@ -326,7 +329,6 @@ Server behavior:
   - `timestamp` (RFC3339, UTC, second precision) — stored as `created_at`
   - `from_did` (required so recipients can verify offline)
 - Server rejects signed messages with missing `message_id`/`timestamp`/`from_did` (422).
-- Server rejects signed messages with timestamps outside ±5 minutes of server time (422).
 - Duplicate `message_id` returns 409.
 - Never modify, strip, or re-sign.
 - Optionally verify signature on ingest (log warning if invalid, but still deliver — per §4.6 of parent doc). This is a server-side quality check, not a gate.

@@ -65,7 +65,7 @@ async def test_mail_with_signature_fields(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     _, _, _, key1, key2 = await _seed_project_and_agents(aweb_db)
     message_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = "2026-02-21T12:00:00Z"
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -135,8 +135,7 @@ async def test_chat_with_signature_fields(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     _, _, _, key1, key2 = await _seed_project_and_agents(aweb_db)
     first_message_id = str(uuid.uuid4())
-    base = datetime.now(timezone.utc).replace(microsecond=0)
-    first_timestamp = base.strftime("%Y-%m-%dT%H:%M:%SZ")
+    first_timestamp = "2026-02-21T12:00:00Z"
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -176,7 +175,7 @@ async def test_chat_with_signature_fields(aweb_db_infra):
 
             # Send another message in existing session with signature
             reply_message_id = str(uuid.uuid4())
-            reply_timestamp = (base + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            reply_timestamp = "2026-02-21T12:00:01Z"
             resp = await client.post(
                 f"/v1/chat/sessions/{session_id}/messages",
                 headers=_auth(key2),
@@ -255,7 +254,9 @@ async def test_chat_sse_stream_includes_identity_fields(aweb_db_infra):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Send a signed message to create session
             message_id = str(uuid.uuid4())
-            timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+            timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
             resp = await client.post(
                 "/v1/chat/sessions",
                 headers=_auth(key1),

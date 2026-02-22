@@ -33,11 +33,6 @@ def _parse_signed_timestamp(value: str) -> datetime:
     dt = dt.astimezone(timezone.utc)
     if dt.microsecond != 0:
         raise HTTPException(status_code=422, detail="timestamp must be second precision")
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    if abs((dt - now).total_seconds()) > 300:
-        raise HTTPException(
-            status_code=422, detail="timestamp must be within ±5 minutes of server time"
-        )
     return dt
 
 

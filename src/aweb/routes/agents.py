@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
-from aweb.did import decode_public_key, did_from_public_key, encode_public_key
+from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
 from aweb.hooks import fire_mutation_hook
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
@@ -391,24 +392,28 @@ async def agent_log(
 class RotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    new_did: str
-    new_public_key: str
-    custody: str
+    new_did: str | None = None
+    new_public_key: str | None = None
+    custody: Literal["self", "custodial"]
     rotation_signature: str | None = None
     timestamp: str
 
-    @field_validator("custody")
-    @classmethod
-    def _validate_custody(cls, v: str) -> str:
-        if v != "self":
-            raise ValueError("custody must be 'self'")
-        return v
+    @model_validator(mode="after")
+    def _validate_key_fields(self) -> "RotateKeyRequest":
+        if self.custody == "self":
+            if not self.new_did or not self.new_public_key:
+                raise ValueError("new_did and new_public_key are required when custody='self'")
+        else:
+            if self.new_did is not None or self.new_public_key is not None:
+                raise ValueError("new_did/new_public_key must be omitted when custody='custodial'")
+        return self
 
 
 class RotateKeyResponse(BaseModel):
     status: str
     old_did: str | None
     new_did: str
+    new_public_key: str
     custody: str
 
 
@@ -429,7 +434,7 @@ async def rotate_key(
     from nacl.exceptions import BadSignatureError
     from nacl.signing import VerifyKey
 
-    from aweb.custody import decrypt_signing_key, get_custody_key
+    from aweb.custody import decrypt_signing_key, encrypt_signing_key, get_custody_key
     from aweb.signing import sign_message
 
     project_id = await get_project_from_auth(request, db)
@@ -455,6 +460,21 @@ async def rotate_key(
             detail="Cannot rotate key for an ephemeral agent. Deregister and create a new agent instead.",
         )
 
+    current_custody = row["custody"]
+    if current_custody not in ("self", "custodial"):
+        raise HTTPException(status_code=403, detail="Agent custody is not configured for rotation")
+
+    if current_custody == "self" and payload.custody != "self":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change a self-custodial agent back to custodial via rotate",
+        )
+    if current_custody != "custodial" and payload.custody == "custodial":
+        raise HTTPException(
+            status_code=400,
+            detail="Only custodial agents can request custody='custodial' rotations",
+        )
+
     # Verify rotation proof: signed by old key
     old_did = row["did"]
     old_public_key_encoded = row["public_key"]
@@ -472,18 +492,50 @@ async def rotate_key(
     except Exception:
         raise HTTPException(status_code=500, detail="Corrupt public key in database")
 
+    new_did: str
+    new_public_key_encoded: str
+    new_signing_key_enc: bytes | None = None
+
+    if payload.custody == "custodial":
+        master_key = get_custody_key()
+        if master_key is None:
+            raise HTTPException(status_code=500, detail="Custody key not configured")
+        seed, pub = generate_keypair()
+        new_did = did_from_public_key(pub)
+        new_public_key_encoded = encode_public_key(pub)
+        try:
+            new_signing_key_enc = encrypt_signing_key(seed, master_key)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to encrypt new signing key")
+    else:
+        # custody='self' — caller provides new DID/public key (accept std base64 or base64url)
+        new_did = payload.new_did or ""
+        new_public_key = payload.new_public_key or ""
+        try:
+            new_pub_bytes = decode_public_key(new_public_key)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="new_public_key must be a base64-encoded 32-byte Ed25519 key (url-safe or standard)",
+            )
+        expected_did = did_from_public_key(new_pub_bytes)
+        if expected_did != new_did:
+            raise HTTPException(status_code=400, detail="DID does not match new_public_key")
+        new_public_key_encoded = encode_public_key(new_pub_bytes)
+
     canonical = _json.dumps(
         {
-            "new_did": payload.new_did,
+            "new_did": new_did,
             "old_did": old_did,
             "timestamp": payload.timestamp,
         },
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=False,
     ).encode("utf-8")
 
     rotation_signature = payload.rotation_signature
-    if rotation_signature is None and row["custody"] == "custodial":
+    if rotation_signature is None and current_custody == "custodial":
         master_key = get_custody_key()
         if master_key is None:
             raise HTTPException(status_code=500, detail="Custody key not configured")
@@ -512,36 +564,41 @@ async def rotate_key(
     except Exception:
         raise HTTPException(status_code=403, detail="Rotation proof verification error")
 
-    # Verify new_public_key encodes to new_did
-    try:
-        new_pub_bytes = decode_public_key(payload.new_public_key)
-    except Exception:
-        raise HTTPException(
-            status_code=400, detail="new_public_key must be a base64url-encoded 32-byte Ed25519 key"
-        )
-    expected_did = did_from_public_key(new_pub_bytes)
-    if expected_did != payload.new_did:
-        raise HTTPException(status_code=400, detail="DID does not match new_public_key")
-    new_public_key_encoded = encode_public_key(new_pub_bytes)
-
     # Update agent record
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.agents}}
-        SET did = $1,
-            public_key = $2,
-            custody = 'self',
-            signing_key_enc = NULL
-        WHERE agent_id = $3 AND project_id = $4
-        """,
-        payload.new_did,
-        new_public_key_encoded,
-        agent_uuid,
-        UUID(project_id),
-    )
+    if payload.custody == "custodial":
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.agents}}
+            SET did = $1,
+                public_key = $2,
+                custody = 'custodial',
+                signing_key_enc = $3
+            WHERE agent_id = $4 AND project_id = $5
+            """,
+            new_did,
+            new_public_key_encoded,
+            new_signing_key_enc,
+            agent_uuid,
+            UUID(project_id),
+        )
+    else:
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.agents}}
+            SET did = $1,
+                public_key = $2,
+                custody = 'self',
+                signing_key_enc = NULL
+            WHERE agent_id = $3 AND project_id = $4
+            """,
+            new_did,
+            new_public_key_encoded,
+            agent_uuid,
+            UUID(project_id),
+        )
 
     # Append rotation log entry
-    metadata = _json.dumps({"timestamp": payload.timestamp})
+    metadata = _json.dumps({"timestamp": payload.timestamp, "new_custody": payload.custody})
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agent_log}}
@@ -552,7 +609,7 @@ async def rotate_key(
         UUID(project_id),
         "rotate",
         old_did,
-        payload.new_did,
+        new_did,
         old_did,
         rotation_signature,
         metadata,
@@ -568,7 +625,7 @@ async def rotate_key(
         agent_uuid,
         UUID(project_id),
         old_did,
-        payload.new_did,
+        new_did,
         payload.timestamp,
         rotation_signature,
     )
@@ -580,7 +637,7 @@ async def rotate_key(
             "agent_id": str(agent_uuid),
             "project_id": project_id,
             "old_did": old_did,
-            "new_did": payload.new_did,
+            "new_did": new_did,
             "custody": payload.custody,
         },
     )
@@ -588,7 +645,8 @@ async def rotate_key(
     return RotateKeyResponse(
         status="rotated",
         old_did=old_did,
-        new_did=payload.new_did,
+        new_did=new_did,
+        new_public_key=new_public_key_encoded,
         custody=payload.custody,
     )
 
@@ -711,6 +769,7 @@ async def retire_agent(
         },
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=False,
     ).encode("utf-8")
 
     entry_signature: str | None = None

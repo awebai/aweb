@@ -176,6 +176,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
             assert body["status"] == "rotated"
             assert body["old_did"] == seed["did"]
             assert body["new_did"] == new_did
+            assert body["new_public_key"] == encode_public_key(new_public)
             assert body["custody"] == "self"
 
     # Verify DB was updated
@@ -214,6 +215,7 @@ async def test_rotate_accepts_std_base64_public_key_normalizes_storage(aweb_db_i
                 },
             )
             assert resp.status_code == 200, resp.text
+            assert resp.json()["new_public_key"] == encode_public_key(new_public)
 
     row = await aweb_db.fetch_one(
         "SELECT did, public_key FROM {{tables.agents}} WHERE agent_id = $1",
@@ -262,6 +264,7 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
     if isinstance(meta, str):
         meta = json.loads(meta)
     assert meta["timestamp"] == timestamp
+    assert meta["new_custody"] == "self"
 
 
 @pytest.mark.asyncio
@@ -381,7 +384,9 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
                 },
             )
             assert resp.status_code == 200
-            assert resp.json()["custody"] == "self"
+            body = resp.json()
+            assert body["custody"] == "self"
+            assert body["new_public_key"] == encode_public_key(new_public)
 
     # Verify encrypted key was destroyed
     row = await aweb_db.fetch_one(
@@ -390,6 +395,69 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     )
     assert row["signing_key_enc"] is None
     assert row["custody"] == "self"
+
+
+@pytest.mark.asyncio
+async def test_rotate_custodial_to_custodial_server_generates_new_key(aweb_db_infra, monkeypatch):
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_persistent_custodial(
+        aweb_db, slug="cust-to-cust", alias="cust", master_key=master_key
+    )
+
+    before = await aweb_db.fetch_one(
+        "SELECT did, public_key, custody, signing_key_enc FROM {{tables.agents}} WHERE agent_id = $1",
+        uuid.UUID(seed["agent_id"]),
+    )
+    assert before["custody"] == "custodial"
+    assert before["signing_key_enc"] is not None
+
+    timestamp = "2026-02-21T12:00:00Z"
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                "/v1/agents/me/rotate",
+                headers=_auth(seed["api_key"]),
+                json={
+                    "custody": "custodial",
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["status"] == "rotated"
+            assert body["old_did"] == seed["did"]
+            assert body["custody"] == "custodial"
+            assert body["new_did"] != seed["did"]
+
+            pub_bytes = base64.urlsafe_b64decode(
+                body["new_public_key"] + "=" * (-len(body["new_public_key"]) % 4)
+            )
+            assert did_from_public_key(pub_bytes) == body["new_did"]
+
+    after = await aweb_db.fetch_one(
+        "SELECT did, public_key, custody, signing_key_enc FROM {{tables.agents}} WHERE agent_id = $1",
+        uuid.UUID(seed["agent_id"]),
+    )
+    assert after["did"] == body["new_did"]
+    assert after["public_key"] == body["new_public_key"]
+    assert after["custody"] == "custodial"
+    assert after["signing_key_enc"] is not None
+    assert bytes(after["signing_key_enc"]) != bytes(before["signing_key_enc"])
+
+    log = await aweb_db.fetch_one(
+        "SELECT entry_signature, metadata FROM {{tables.agent_log}} WHERE agent_id = $1 AND operation = $2",
+        uuid.UUID(seed["agent_id"]),
+        "rotate",
+    )
+    assert log["entry_signature"] is not None
+    meta = log["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    assert meta["timestamp"] == timestamp
+    assert meta["new_custody"] == "custodial"
 
 
 @pytest.mark.asyncio
