@@ -323,6 +323,9 @@ async def test_agent_created_hook(aweb_db_infra):
     assert ctx["agent_id"] == data["agent_id"]
     assert ctx["project_id"] == data["project_id"]
     assert ctx["alias"] == "newagent"
+    assert "did" in ctx
+    assert "custody" in ctx
+    assert ctx["lifetime"] == "persistent"
 
 
 @pytest.mark.asyncio

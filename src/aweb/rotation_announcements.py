@@ -47,27 +47,15 @@ async def get_pending_announcements(
         recipient_id,
     )
 
-    result = {}
-    for r in rows:
-        result[str(r["agent_id"])] = {
+    return {
+        str(r["agent_id"]): {
             "old_did": r["old_did"],
             "new_did": r["new_did"],
             "timestamp": r["rotation_timestamp"],
             "old_key_signature": r["old_key_signature"],
         }
-
-        # Record that this peer was notified (upsert to avoid duplicates)
-        await aweb_db.execute(
-            """
-            INSERT INTO {{tables.rotation_peer_acks}} (announcement_id, peer_agent_id)
-            VALUES ($1, $2)
-            ON CONFLICT (announcement_id, peer_agent_id) DO NOTHING
-            """,
-            r["announcement_id"],
-            recipient_id,
-        )
-
-    return result
+        for r in rows
+    }
 
 
 async def acknowledge_rotation(
@@ -81,25 +69,18 @@ async def acknowledge_rotation(
     Inserts acknowledgment rows if they don't exist yet (the peer may
     never have fetched their inbox).
     """
-    # Find all announcements from to_agent_id
-    rows = await aweb_db.fetch_all(
+    await aweb_db.execute(
         """
-        SELECT announcement_id FROM {{tables.rotation_announcements}}
-        WHERE agent_id = $1
+        INSERT INTO {{tables.rotation_peer_acks}}
+            (announcement_id, peer_agent_id, acknowledged_at)
+        SELECT ra.announcement_id, $2, NOW()
+        FROM {{tables.rotation_announcements}} ra
+        WHERE ra.agent_id = $1
+        ON CONFLICT (announcement_id, peer_agent_id)
+        DO UPDATE SET acknowledged_at = COALESCE(
+            {{tables.rotation_peer_acks}}.acknowledged_at, NOW()
+        )
         """,
         to_agent_id,
+        from_agent_id,
     )
-    for r in rows:
-        await aweb_db.execute(
-            """
-            INSERT INTO {{tables.rotation_peer_acks}}
-                (announcement_id, peer_agent_id, acknowledged_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (announcement_id, peer_agent_id)
-            DO UPDATE SET acknowledged_at = COALESCE(
-                {{tables.rotation_peer_acks}}.acknowledged_at, NOW()
-            )
-            """,
-            r["announcement_id"],
-            from_agent_id,
-        )

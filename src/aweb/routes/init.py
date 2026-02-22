@@ -102,6 +102,9 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
                 "agent_id": result.agent_id,
                 "project_id": result.project_id,
                 "alias": result.alias,
+                "did": result.did or "",
+                "custody": result.custody or "",
+                "lifetime": result.lifetime,
             },
         )
 
