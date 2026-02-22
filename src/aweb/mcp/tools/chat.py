@@ -30,43 +30,44 @@ async def _ensure_session(aweb_db, *, project_id: str, agent_rows: list[dict]) -
     """Create or find a chat session for a set of participants."""
     p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
-    row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
-        VALUES ($1, $2)
-        ON CONFLICT (project_id, participant_hash) DO NOTHING
-        RETURNING session_id
-        """,
-        UUID(project_id),
-        p_hash,
-    )
-    if row and row.get("session_id"):
-        session_id = row["session_id"]
-    else:
-        existing = await aweb_db.fetch_one(
+    async with aweb_db.transaction() as tx:
+        row = await tx.fetch_one(
             """
-            SELECT session_id
-            FROM {{tables.chat_sessions}}
-            WHERE project_id = $1 AND participant_hash = $2
+            INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
+            VALUES ($1, $2)
+            ON CONFLICT (project_id, participant_hash) DO NOTHING
+            RETURNING session_id
             """,
             UUID(project_id),
             p_hash,
         )
-        if existing is None:
-            return None
-        session_id = existing["session_id"]
+        if row and row.get("session_id"):
+            session_id = row["session_id"]
+        else:
+            existing = await tx.fetch_one(
+                """
+                SELECT session_id
+                FROM {{tables.chat_sessions}}
+                WHERE project_id = $1 AND participant_hash = $2
+                """,
+                UUID(project_id),
+                p_hash,
+            )
+            if existing is None:
+                return None
+            session_id = existing["session_id"]
 
-    for agent in agent_rows:
-        await aweb_db.execute(
-            """
-            INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
-            """,
-            session_id,
-            UUID(str(agent["agent_id"])),
-            agent["alias"],
-        )
+        for agent in agent_rows:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
+                """,
+                session_id,
+                UUID(str(agent["agent_id"])),
+                agent["alias"],
+            )
 
     return UUID(str(session_id))
 

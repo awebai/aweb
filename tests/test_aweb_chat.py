@@ -1294,3 +1294,42 @@ async def test_mark_read_rejects_backward_cursor(aweb_db_infra):
             assert (
                 str(rr["last_read_message_id"]) == msg2_id
             ), f"Read cursor moved backward: expected {msg2_id}, got {rr['last_read_message_id']}"
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_is_atomic(aweb_db_infra):
+    """If a participant INSERT fails, the session INSERT must also roll back."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seeded = await _seed_basic_project(aweb_db_infra)
+
+    from aweb.routes.chat import _ensure_session
+
+    fake_agent_id = uuid.uuid4()  # Does not exist in agents table
+
+    agent_rows = [
+        {"agent_id": seeded["agent_1_id"], "alias": "agent-1"},
+        {"agent_id": str(fake_agent_id), "alias": "ghost"},
+    ]
+
+    with pytest.raises(Exception):
+        await _ensure_session(
+            aweb_db_infra,
+            project_id=seeded["project_id"],
+            agent_rows=agent_rows,
+        )
+
+    # No orphaned session should exist for this participant hash.
+    import hashlib
+
+    normalized = sorted({str(uuid.UUID(str(r["agent_id"]))) for r in agent_rows})
+    p_hash = hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT 1 FROM {{tables.chat_sessions}}
+        WHERE project_id = $1 AND participant_hash = $2
+        """,
+        uuid.UUID(seeded["project_id"]),
+        p_hash,
+    )
+    assert row is None, "Orphaned session left after participant INSERT failure"
