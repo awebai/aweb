@@ -778,7 +778,12 @@ class DeregisterAgentResponse(BaseModel):
 async def _deregister_agent(
     request: Request, aweb_db, *, agent_uuid: UUID, project_id: str
 ) -> DeregisterAgentResponse:
-    """Shared deregistration logic for self and peer endpoints."""
+    """Shared deregistration logic for self and peer endpoints.
+
+    Precondition: caller has verified that the authenticated principal is
+    authorized to act on agents in ``project_id``.  This function performs
+    no authorization check.
+    """
     row = await aweb_db.fetch_one(
         """
         SELECT agent_id, did, lifetime, signing_key_enc
@@ -856,6 +861,8 @@ async def deregister_agent(
     )
 
 
+# Catch-all: must be registered LAST — static DELETE routes (/me) above
+# take precedence only because of registration order.
 @router.delete("/{address:path}", response_model=DeregisterAgentResponse)
 async def peer_deregister_agent(
     request: Request,
@@ -873,6 +880,8 @@ async def peer_deregister_agent(
         raise HTTPException(status_code=404, detail="Invalid address format")
     namespace = address[:sep]
     alias = address[sep + 1 :]
+    if not alias:
+        raise HTTPException(status_code=404, detail="Invalid address format")
 
     caller_project_id = await get_project_from_auth(request, db)
     aweb_db = db.get_manager("aweb")

@@ -290,6 +290,29 @@ async def test_peer_deregister_404_unknown_namespace(aweb_db_infra, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_peer_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
+    """Deregistering the same agent twice via peer endpoint returns 404."""
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_project_with_agents(
+        aweb_db, project_slug="peer-dereg/double", master_key=master_key
+    )
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            url = f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}"
+            headers = _auth(seed["peer"]["api_key"])
+
+            resp1 = await c.delete(url, headers=headers)
+            assert resp1.status_code == 200
+
+            resp2 = await c.delete(url, headers=headers)
+            assert resp2.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_peer_deregister_requires_auth(aweb_db_infra):
     """Peer deregistration without auth returns 401."""
     app = create_app(db_infra=aweb_db_infra)
