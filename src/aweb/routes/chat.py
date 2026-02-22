@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -15,6 +14,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.chat_service import (
+    HANG_ON_EXTENSION_SECONDS,
+    ensure_session,
+    get_agent_by_alias,
+    get_agent_by_id,
+    get_message_history,
+    get_pending_conversations,
+    mark_messages_read,
+    send_in_session,
+)
 from aweb.chat_waiting import (
     get_waiting_agents,
     is_agent_waiting,
@@ -34,8 +43,6 @@ def _utc_iso(dt: datetime) -> str:
 
 
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
-
-HANG_ON_EXTENSION_SECONDS = 300
 
 
 def _parse_uuid(value: str, *, field: str) -> str:
@@ -57,103 +64,6 @@ def _parse_timestamp(value: str, label: str = "timestamp") -> datetime:
 
 def _parse_deadline(value: str) -> datetime:
     return _parse_timestamp(value, "deadline")
-
-
-def _participant_hash(agent_ids: list[str]) -> str:
-    normalized = sorted({str(UUID(a)) for a in agent_ids})
-    return hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
-
-
-async def _get_agent_by_id(db, *, project_id: str, agent_id: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, alias
-        FROM {{tables.agents}}
-        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
-        """,
-        UUID(agent_id),
-        UUID(project_id),
-    )
-    if not row:
-        return None
-    return dict(row)
-
-
-async def _get_agent_by_alias(db, *, project_id: str, alias: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, project_id, alias, deleted_at
-        FROM {{tables.agents}}
-        WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
-        """,
-        UUID(project_id),
-        alias,
-    )
-    if not row:
-        return None
-    return dict(row)
-
-
-async def _ensure_session(
-    db,
-    *,
-    project_id: str,
-    agent_rows: list[dict[str, Any]],
-) -> UUID:
-    aweb_db = db.get_manager("aweb")
-    p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
-
-    async with aweb_db.transaction() as tx:
-        row = await tx.fetch_one(
-            """
-            INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
-            VALUES ($1, $2)
-            ON CONFLICT (project_id, participant_hash) DO NOTHING
-            RETURNING session_id
-            """,
-            UUID(project_id),
-            p_hash,
-        )
-        if row and row.get("session_id"):
-            session_id = row["session_id"]
-        else:
-            existing = await tx.fetch_one(
-                """
-                SELECT session_id
-                FROM {{tables.chat_sessions}}
-                WHERE project_id = $1 AND participant_hash = $2
-                """,
-                UUID(project_id),
-                p_hash,
-            )
-            if existing is None:
-                logger.error(
-                    "Chat session not found after INSERT ON CONFLICT DO NOTHING. "
-                    "project_id=%s participant_hash=%s",
-                    project_id,
-                    p_hash,
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to create or retrieve chat session",
-                )
-            session_id = existing["session_id"]
-
-        for agent in agent_rows:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
-                """,
-                session_id,
-                UUID(str(agent["agent_id"])),
-                agent["alias"],
-            )
-
-    return UUID(str(session_id))
 
 
 async def _targets_left(db, *, session_id: UUID, target_agent_ids: list[str]) -> list[str]:
@@ -226,7 +136,7 @@ async def create_or_send(
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
 
-    sender = await _get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
+    sender = await get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
     if sender is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -238,7 +148,7 @@ async def create_or_send(
 
     targets: list[dict[str, Any]] = []
     for alias in to_aliases:
-        agent = await _get_agent_by_alias(db, project_id=project_id, alias=alias)
+        agent = await get_agent_by_alias(db, project_id=project_id, alias=alias)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         targets.append(agent)
@@ -247,7 +157,7 @@ async def create_or_send(
     target_ids = sorted({str(t["agent_id"]) for t in targets})
     agent_rows = [sender] + [t for t in targets if str(t["agent_id"]) not in {sender["agent_id"]}]
 
-    session_id = await _ensure_session(db, project_id=project_id, agent_rows=agent_rows)
+    session_id = await ensure_session(db, project_id=project_id, agent_rows=agent_rows)
 
     aweb_db = db.get_manager("aweb")
 
@@ -283,43 +193,18 @@ async def create_or_send(
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    msg_row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving,
-             from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING message_id, created_at
-        """,
-        pre_message_id,
-        session_id,
-        UUID(actor_id),
-        sender["alias"],
-        payload.message,
-        bool(payload.leaving),
-        msg_from_did,
-        payload.to_did,
-        msg_signature,
-        msg_signing_key_id,
-        msg_created_at,
-    )
-
-    # Advance sender's read receipt — sending implies having read up to this point.
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
-           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
-        """,
-        session_id,
-        UUID(actor_id),
-        msg_row["message_id"],
-        msg_row["created_at"],
+    msg_row = await send_in_session(
+        db,
+        session_id=session_id,
+        agent_id=actor_id,
+        body=payload.message,
+        leaving=payload.leaving,
+        from_did=msg_from_did,
+        to_did=payload.to_did,
+        signature=msg_signature,
+        signing_key_id=msg_signing_key_id,
+        created_at=msg_created_at,
+        message_id=pre_message_id,
     )
 
     participants_rows = await aweb_db.fetch_all(
@@ -377,52 +262,14 @@ async def pending(
 ) -> PendingResponse:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
-    owner = await _get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
+    owner = await get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
     if owner is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT
-            s.session_id,
-            array_agg(p2.alias ORDER BY p2.alias) AS participants,
-            array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids,
-            lm.body AS last_message,
-            lm.from_alias AS last_from,
-            lm.created_at AS last_activity,
-            COALESCE(unread.cnt, 0) AS unread_count
-        FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_session_participants}} p
-          ON p.session_id = s.session_id AND p.agent_id = $2
-        JOIN {{tables.chat_session_participants}} p2
-          ON p2.session_id = s.session_id
-        LEFT JOIN LATERAL (
-            SELECT body, from_alias, created_at
-            FROM {{tables.chat_messages}}
-            WHERE session_id = s.session_id
-            ORDER BY created_at DESC
-            LIMIT 1
-        ) lm ON TRUE
-        LEFT JOIN {{tables.chat_read_receipts}} rr
-          ON rr.session_id = s.session_id AND rr.agent_id = $2
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*)::int AS cnt
-            FROM {{tables.chat_messages}} m
-            WHERE m.session_id = s.session_id
-              AND m.from_agent_id <> $2
-              AND m.created_at > COALESCE(rr.last_read_at, 'epoch'::timestamptz)
-        ) unread ON TRUE
-        WHERE s.project_id = $1
-        GROUP BY s.session_id, lm.body, lm.from_alias, lm.created_at, unread.cnt
-        HAVING COALESCE(unread.cnt, 0) > 0
-        ORDER BY lm.created_at DESC
-        """,
-        UUID(project_id),
-        UUID(actor_id),
-    )
+    conversations = await get_pending_conversations(db, project_id=project_id, agent_id=actor_id)
 
     # Unread mail count (best-effort; used only as informational field).
+    aweb_db = db.get_manager("aweb")
     mail_unread = await aweb_db.fetch_value(
         """
         SELECT COUNT(*)::int
@@ -434,16 +281,16 @@ async def pending(
     )
 
     pending_items = []
-    for r in rows:
-        other_ids = [pid for pid in (r["participant_ids"] or []) if pid != actor_id]
-        waiting = await get_waiting_agents(redis, str(r["session_id"]), other_ids)
+    for r in conversations:
+        other_ids = [pid for pid in r["participant_ids"] if pid != actor_id]
+        waiting = await get_waiting_agents(redis, r["session_id"], other_ids)
         pending_items.append(
             {
-                "session_id": str(r["session_id"]),
-                "participants": list(r["participants"] or []),
-                "last_message": r["last_message"] or "",
-                "last_from": r["last_from"] or "",
-                "unread_count": int(r["unread_count"] or 0),
+                "session_id": r["session_id"],
+                "participants": r["participants"],
+                "last_message": r["last_message"],
+                "last_from": r["last_from"],
+                "unread_count": r["unread_count"],
                 "last_activity": _utc_iso(r["last_activity"]) if r["last_activity"] else "",
                 "sender_waiting": len(waiting) > 0,
                 "time_remaining_seconds": 0,
@@ -475,7 +322,6 @@ async def history(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
-    agent_uuid = UUID(actor_id)
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
@@ -486,61 +332,28 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    is_participant = await aweb_db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.chat_session_participants}}
-        WHERE session_id = $1 AND agent_id = $2
-        """,
-        session_uuid,
-        agent_uuid,
+    messages = await get_message_history(
+        db,
+        session_id=session_uuid,
+        agent_id=actor_id,
+        unread_only=unread_only,
+        limit=limit,
     )
-    if not is_participant:
-        raise HTTPException(status_code=403, detail="Not authorized for this session")
-
-    rr = await aweb_db.fetch_one(
-        """
-        SELECT last_read_at
-        FROM {{tables.chat_read_receipts}}
-        WHERE session_id = $1 AND agent_id = $2
-        """,
-        session_uuid,
-        agent_uuid,
-    )
-    last_read_at = rr["last_read_at"] if rr else None
-
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT message_id, from_alias, body, created_at, sender_leaving,
-               from_did, to_did, signature, signing_key_id
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-          AND ($2::bool IS FALSE OR (created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz) AND from_agent_id <> $4))
-        ORDER BY created_at DESC
-        LIMIT $5
-        """,
-        session_uuid,
-        bool(unread_only),
-        last_read_at,
-        agent_uuid,
-        int(limit),
-    )
-    rows = list(reversed(rows))
 
     return HistoryResponse(
         messages=[
             {
-                "message_id": str(r["message_id"]),
-                "from_agent": r["from_alias"],
-                "body": r["body"],
-                "timestamp": _utc_iso(r["created_at"]),
-                "sender_leaving": bool(r["sender_leaving"]),
-                "from_did": r["from_did"],
-                "to_did": r["to_did"],
-                "signature": r["signature"],
-                "signing_key_id": r["signing_key_id"],
+                "message_id": m["message_id"],
+                "from_agent": m["from_alias"],
+                "body": m["body"],
+                "timestamp": _utc_iso(m["created_at"]),
+                "sender_leaving": m["sender_leaving"],
+                "from_did": m["from_did"],
+                "to_did": m["to_did"],
+                "signature": m["signature"],
+                "signing_key_id": m["signing_key_id"],
             }
-            for r in rows
+            for m in messages
         ]
     )
 
@@ -565,10 +378,8 @@ async def mark_read(
 ) -> dict[str, Any]:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     session_uuid = UUID(session_id.strip())
-    up_to_uuid = UUID(payload.up_to_message_id)
 
     actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
-    agent_uuid = UUID(actor_id)
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
@@ -579,84 +390,14 @@ async def mark_read(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    is_participant = await aweb_db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.chat_session_participants}}
-        WHERE session_id = $1 AND agent_id = $2
-        """,
-        session_uuid,
-        agent_uuid,
-    )
-    if not is_participant:
-        raise HTTPException(status_code=403, detail="Not authorized for this session")
-
-    msg = await aweb_db.fetch_one(
-        """
-        SELECT created_at
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1 AND message_id = $2
-        """,
-        session_uuid,
-        up_to_uuid,
-    )
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
-    up_to_time = msg["created_at"]
-    read_time = datetime.now(timezone.utc)
-
-    old = await aweb_db.fetch_one(
-        """
-        SELECT last_read_at
-        FROM {{tables.chat_read_receipts}}
-        WHERE session_id = $1 AND agent_id = $2
-        """,
-        session_uuid,
-        agent_uuid,
-    )
-    old_last = old["last_read_at"] if old else None
-
-    marked = await aweb_db.fetch_value(
-        """
-        SELECT COUNT(*)::int
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-          AND from_agent_id <> $2
-          AND created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
-          AND created_at <= $4
-        """,
-        session_uuid,
-        agent_uuid,
-        old_last,
-        up_to_time,
+    result = await mark_messages_read(
+        db,
+        session_id=session_uuid,
+        agent_id=actor_id,
+        up_to_message_id=payload.up_to_message_id,
     )
 
-    # Guard: only advance cursor if the target message is newer than the
-    # currently stored one.  Uses a subquery on message timestamps rather than
-    # last_read_at (which is wall-clock time) so that the comparison is always
-    # between message creation times.
-    upserted = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_read_receipts}} (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE $5 > COALESCE(
-            (SELECT created_at FROM {{tables.chat_messages}}
-             WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
-            'epoch'::timestamptz
-        )
-        RETURNING 1
-        """,
-        session_uuid,
-        agent_uuid,
-        up_to_uuid,
-        read_time,
-        up_to_time,
-    )
-
-    return {"success": True, "messages_marked": int(marked or 0) if upserted else 0}
+    return {"success": True, "messages_marked": result["messages_marked"]}
 
 
 async def _sse_events(
@@ -969,44 +710,18 @@ async def send_message(
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    msg_row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
-             from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        RETURNING message_id, created_at
-        """,
-        pre_message_id,
-        session_uuid,
-        agent_uuid,
-        canonical_alias,
-        payload.body,
-        False,  # sender_leaving only set via create_session with leaving=true
-        bool(payload.hang_on),
-        msg_from_did,
-        payload.to_did,
-        msg_signature,
-        msg_signing_key_id,
-        msg_created_at,
-    )
-
-    # Advance sender's read receipt — sending implies having read up to this point.
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
-           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
-        """,
-        session_uuid,
-        agent_uuid,
-        msg_row["message_id"],
-        msg_row["created_at"],
+    msg_row = await send_in_session(
+        db,
+        session_id=session_uuid,
+        agent_id=actor_id,
+        body=payload.body,
+        hang_on=payload.hang_on,
+        from_did=msg_from_did,
+        to_did=payload.to_did,
+        signature=msg_signature,
+        signing_key_id=msg_signing_key_id,
+        created_at=msg_created_at,
+        message_id=pre_message_id,
     )
 
     await fire_mutation_hook(

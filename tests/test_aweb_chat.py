@@ -1302,7 +1302,7 @@ async def test_ensure_session_is_atomic(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     seeded = await _seed_basic_project(aweb_db_infra)
 
-    from aweb.routes.chat import _ensure_session
+    from aweb.chat_service import ensure_session as _ensure_session
 
     fake_agent_id = uuid.uuid4()  # Does not exist in agents table
 
@@ -1319,10 +1319,9 @@ async def test_ensure_session_is_atomic(aweb_db_infra):
         )
 
     # No orphaned session should exist for this participant hash.
-    import hashlib
+    from aweb.chat_service import participant_hash
 
-    normalized = sorted({str(uuid.UUID(str(r["agent_id"]))) for r in agent_rows})
-    p_hash = hashlib.sha256((",".join(normalized)).encode("utf-8")).hexdigest()
+    p_hash = participant_hash([str(r["agent_id"]) for r in agent_rows])
 
     row = await aweb_db.fetch_one(
         """
