@@ -335,17 +335,23 @@ def validate_project_slug(project_slug: str) -> str:
     return project_slug
 
 
+RESERVED_ALIASES = frozenset({"me"})
+
+
 def validate_agent_alias(alias: str) -> str:
     """Validate an agent alias and return the normalized alias.
 
     '/' is reserved for network addresses in the form "org/alias" and is not
-    allowed within a plain agent alias.
+    allowed within a plain agent alias. 'me' is reserved for the /v1/agents/me/*
+    self-operation API pattern.
     """
     value = (alias or "").strip()
     if not value:
         raise ValueError("alias must not be empty")
     if len(value) > AGENT_ALIAS_MAX_LENGTH:
         raise ValueError("alias too long")
+    if value.lower() in RESERVED_ALIASES:
+        raise ValueError(f"'{value}' is a reserved alias")
     if "/" in value:
         raise ValueError("Invalid alias format")
     if not AGENT_ALIAS_PATTERN.match(value):

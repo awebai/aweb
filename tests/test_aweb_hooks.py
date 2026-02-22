@@ -362,7 +362,9 @@ async def test_agent_created_hook_not_fired_on_reconnect(aweb_db_infra):
     assert len(created_events) == 0
 
 
-def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(
+    old_private_key: bytes, old_did: str, new_did: str, timestamp: str
+) -> str:
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
         sort_keys=True,
@@ -383,7 +385,9 @@ async def _seed_for_rotate(aweb_db_infra):
 
     await aweb_db.execute(
         "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_id, "hook-rotate", "Hook Rotate",
+        project_id,
+        "hook-rotate",
+        "Hook Rotate",
     )
     await aweb_db.execute(
         """
@@ -392,15 +396,27 @@ async def _seed_for_rotate(aweb_db_infra):
              did, public_key, custody, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """,
-        agent_id, project_id, "rotator", "Rotator", "agent",
-        did, public_key.hex(), "self", "persistent", "active",
+        agent_id,
+        project_id,
+        "rotator",
+        "Rotator",
+        "agent",
+        did,
+        public_key.hex(),
+        "self",
+        "persistent",
+        "active",
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
         "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) "
         "VALUES ($1, $2, $3, $4, $5)",
-        project_id, agent_id, api_key[:12], hash_api_key(api_key), True,
+        project_id,
+        agent_id,
+        api_key[:12],
+        hash_api_key(api_key),
+        True,
     )
 
     return {
@@ -415,7 +431,7 @@ async def _seed_for_rotate(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_agent_key_rotated_hook(aweb_db_infra):
-    """agent.key_rotated fires on PUT /v1/agents/{id}/rotate."""
+    """agent.key_rotated fires on PUT /v1/agents/me/rotate."""
     seed = await _seed_for_rotate(aweb_db_infra)
     events: list[tuple[str, dict]] = []
 
@@ -433,7 +449,7 @@ async def test_agent_key_rotated_hook(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
@@ -467,7 +483,9 @@ async def _seed_for_deregister(aweb_db_infra):
 
     await aweb_db.execute(
         "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_id, "hook-dereg", "Hook Dereg",
+        project_id,
+        "hook-dereg",
+        "Hook Dereg",
     )
     await aweb_db.execute(
         """
@@ -476,15 +494,28 @@ async def _seed_for_deregister(aweb_db_infra):
              did, public_key, custody, signing_key_enc, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
-        agent_id, project_id, "ephemeral-a", "Ephemeral A", "agent",
-        did, public_key.hex(), "custodial", encrypted_key, "ephemeral", "active",
+        agent_id,
+        project_id,
+        "ephemeral-a",
+        "Ephemeral A",
+        "agent",
+        did,
+        public_key.hex(),
+        "custodial",
+        encrypted_key,
+        "ephemeral",
+        "active",
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
         "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) "
         "VALUES ($1, $2, $3, $4, $5)",
-        project_id, agent_id, api_key[:12], hash_api_key(api_key), True,
+        project_id,
+        agent_id,
+        api_key[:12],
+        hash_api_key(api_key),
+        True,
     )
 
     return {
@@ -497,7 +528,7 @@ async def _seed_for_deregister(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_agent_deregistered_hook(aweb_db_infra):
-    """agent.deregistered fires on DELETE /v1/agents/{id}."""
+    """agent.deregistered fires on DELETE /v1/agents/me."""
     seed = await _seed_for_deregister(aweb_db_infra)
     events: list[tuple[str, dict]] = []
 
@@ -510,7 +541,7 @@ async def test_agent_deregistered_hook(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200, resp.text
@@ -536,7 +567,9 @@ async def _seed_for_retire(aweb_db_infra):
 
     await aweb_db.execute(
         "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_id, "hook-retire", "Hook Retire",
+        project_id,
+        "hook-retire",
+        "Hook Retire",
     )
     await aweb_db.execute(
         """
@@ -545,8 +578,17 @@ async def _seed_for_retire(aweb_db_infra):
              did, public_key, custody, signing_key_enc, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
-        agent_id, project_id, "retiree", "Retiree", "agent",
-        did, public_key.hex(), "custodial", encrypted_key, "persistent", "active",
+        agent_id,
+        project_id,
+        "retiree",
+        "Retiree",
+        "agent",
+        did,
+        public_key.hex(),
+        "custodial",
+        encrypted_key,
+        "persistent",
+        "active",
     )
     await aweb_db.execute(
         """
@@ -554,14 +596,24 @@ async def _seed_for_retire(aweb_db_infra):
             (agent_id, project_id, alias, human_name, agent_type, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
-        successor_id, project_id, "successor", "Successor", "agent", "persistent", "active",
+        successor_id,
+        project_id,
+        "successor",
+        "Successor",
+        "agent",
+        "persistent",
+        "active",
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
         "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) "
         "VALUES ($1, $2, $3, $4, $5)",
-        project_id, agent_id, api_key[:12], hash_api_key(api_key), True,
+        project_id,
+        agent_id,
+        api_key[:12],
+        hash_api_key(api_key),
+        True,
     )
 
     return {
@@ -576,7 +628,7 @@ async def _seed_for_retire(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_agent_retired_hook(aweb_db_infra, monkeypatch):
-    """agent.retired fires on PUT /v1/agents/{id}/retire."""
+    """agent.retired fires on PUT /v1/agents/me/retire."""
     seed = await _seed_for_retire(aweb_db_infra)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", seed["master_key"].hex())
     events: list[tuple[str, dict]] = []
@@ -590,7 +642,7 @@ async def test_agent_retired_hook(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(seed["api_key"]),
                 json={"successor_agent_id": seed["successor_id"]},
             )

@@ -215,17 +215,14 @@ class PatchAgentResponse(BaseModel):
     access_mode: str
 
 
-@router.patch("/{agent_id}", response_model=PatchAgentResponse)
+@router.patch("/me", response_model=PatchAgentResponse)
 async def patch_agent(
-    request: Request, agent_id: str, payload: PatchAgentRequest, db=Depends(get_db)
+    request: Request, payload: PatchAgentRequest, db=Depends(get_db)
 ) -> PatchAgentResponse:
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -332,24 +329,20 @@ class AgentLogResponse(BaseModel):
     log: list[AgentLogEntry]
 
 
-@router.get("/{agent_id}/log", response_model=AgentLogResponse)
+@router.get("/me/log", response_model=AgentLogResponse)
 async def agent_log(
     request: Request,
-    agent_id: str,
     db=Depends(get_db),
 ) -> AgentLogResponse:
-    """Return the lifecycle audit log for an agent.
+    """Return the lifecycle audit log for the authenticated agent.
 
     Append-only log of create, rotate, retire, deregister, custody_change events.
-    Ordered by created_at ASC. Authenticated, project-scoped.
+    Ordered by created_at ASC.
     """
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     agent = await aweb_db.fetch_one(
         """
@@ -418,14 +411,13 @@ class RotateKeyResponse(BaseModel):
     custody: str
 
 
-@router.put("/{agent_id}/rotate", response_model=RotateKeyResponse)
+@router.put("/me/rotate", response_model=RotateKeyResponse)
 async def rotate_key(
     request: Request,
-    agent_id: str,
     payload: RotateKeyRequest,
     db=Depends(get_db),
 ) -> RotateKeyResponse:
-    """Rotate an agent's signing key.
+    """Rotate the authenticated agent's signing key.
 
     Persistent agents only. Verifies the rotation proof (signed by old key).
     If graduating custodial->self, destroys the encrypted private key.
@@ -437,12 +429,9 @@ async def rotate_key(
     from nacl.signing import VerifyKey
 
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -467,7 +456,9 @@ async def rotate_key(
     old_public_key_hex = row["public_key"]
 
     if not old_public_key_hex:
-        raise HTTPException(status_code=403, detail="Agent has no public key to verify proof against")
+        raise HTTPException(
+            status_code=403, detail="Agent has no public key to verify proof against"
+        )
 
     try:
         old_public_key = bytes.fromhex(old_public_key_hex)
@@ -506,7 +497,9 @@ async def rotate_key(
     except ValueError:
         raise HTTPException(status_code=400, detail="new_public_key must be hex-encoded")
     if len(new_pub_bytes) != 32:
-        raise HTTPException(status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)")
+        raise HTTPException(
+            status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)"
+        )
     expected_did = did_from_public_key(new_pub_bytes)
     if expected_did != payload.new_did:
         raise HTTPException(status_code=400, detail="DID does not match new_public_key")
@@ -602,14 +595,13 @@ class RetireAgentResponse(BaseModel):
     successor_agent_id: str
 
 
-@router.put("/{agent_id}/retire", response_model=RetireAgentResponse)
+@router.put("/me/retire", response_model=RetireAgentResponse)
 async def retire_agent(
     request: Request,
-    agent_id: str,
     payload: RetireAgentRequest,
     db=Depends(get_db),
 ) -> RetireAgentResponse:
-    """Retire a persistent agent with a designated successor.
+    """Retire the authenticated agent with a designated successor.
 
     For self-custodial agents: requires a retirement_proof (Ed25519 sig by the
     agent's current key over the canonical retirement payload).
@@ -626,12 +618,9 @@ async def retire_agent(
     from aweb.signing import sign_message
 
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -786,28 +775,23 @@ class DeregisterAgentResponse(BaseModel):
     status: str
 
 
-@router.delete("/{agent_id}", response_model=DeregisterAgentResponse)
+@router.delete("/me", response_model=DeregisterAgentResponse)
 async def deregister_agent(
     request: Request,
-    agent_id: str,
     db=Depends(get_db),
 ) -> DeregisterAgentResponse:
-    """Deregister an ephemeral agent.
+    """Self-deregister the authenticated ephemeral agent.
 
     Destroys the signing key, sets status to 'deregistered', soft-deletes
     (sets deleted_at so the alias can be reused). Rejects persistent agents
     with 400 — use the retire endpoint instead.
 
-    Auth: any authenticated agent in the same project can call this
-    (peer-callable for stale workspace cleanup).
+    For peer deregistration, use DELETE /v1/agents/{namespace}/{alias}.
     """
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """

@@ -20,7 +20,9 @@ def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(
+    old_private_key: bytes, old_did: str, new_did: str, timestamp: str
+) -> str:
     """Sign the canonical rotation payload with the old key."""
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
@@ -75,15 +77,17 @@ async def _seed_two_agents(aweb_db, *, slug: str = "ann-proj"):
             hash_api_key(api_key),
             True,
         )
-        agents.append({
-            "project_id": str(project_id),
-            "agent_id": str(agent_id),
-            "private_key": private_key,
-            "public_key": public_key,
-            "did": did,
-            "api_key": api_key,
-            "alias": alias,
-        })
+        agents.append(
+            {
+                "project_id": str(project_id),
+                "agent_id": str(agent_id),
+                "private_key": private_key,
+                "public_key": public_key,
+                "did": did,
+                "api_key": api_key,
+                "alias": alias,
+            }
+        )
 
     return agents
 
@@ -104,7 +108,7 @@ async def test_rotation_stores_announcement(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
@@ -147,7 +151,7 @@ async def test_inbox_includes_rotation_announcement(aweb_db_infra):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Rotate
             resp = await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
@@ -207,7 +211,7 @@ async def test_announcement_stops_after_peer_responds(aweb_db_infra):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Rotate Alice's key
             await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
@@ -277,19 +281,37 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
                  did, public_key, custody, lifetime, status)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
-            agent_id, project_id, alias, f"Human {alias}", "agent",
-            did, public_key.hex(), "self", "persistent", "active",
+            agent_id,
+            project_id,
+            alias,
+            f"Human {alias}",
+            "agent",
+            did,
+            public_key.hex(),
+            "self",
+            "persistent",
+            "active",
         )
         api_key = f"aw_sk_{uuid.uuid4().hex}"
         await aweb_db.execute(
             "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) "
             "VALUES ($1, $2, $3, $4, $5)",
-            project_id, agent_id, api_key[:12], hash_api_key(api_key), True,
+            project_id,
+            agent_id,
+            api_key[:12],
+            hash_api_key(api_key),
+            True,
         )
-        agents.append({
-            "agent_id": str(agent_id), "private_key": private_key,
-            "public_key": public_key, "did": did, "api_key": api_key, "alias": alias,
-        })
+        agents.append(
+            {
+                "agent_id": str(agent_id),
+                "private_key": private_key,
+                "public_key": public_key,
+                "did": did,
+                "api_key": api_key,
+                "alias": alias,
+            }
+        )
 
     alice, bob, carol = agents
 
@@ -303,7 +325,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Rotate Alice's key
             await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,
@@ -399,7 +421,7 @@ async def test_announcement_expires_after_24h(aweb_db_infra):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Alice rotates
             resp = await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": new_did,

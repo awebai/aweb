@@ -1,4 +1,4 @@
-"""Tests for GET /v1/agents/{agent_id}/log — lifecycle audit trail (aweb-fj2.16)."""
+"""Tests for GET /v1/agents/me/log — lifecycle audit trail (aweb-fj2.16)."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ async def test_agent_log_returns_entries(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                f"/v1/agents/{seed['agent_id']}/log",
+                "/v1/agents/me/log",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200, resp.text
@@ -163,71 +163,11 @@ async def test_agent_log_empty_for_no_entries(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                f"/v1/agents/{agent_id}/log",
+                "/v1/agents/me/log",
                 headers=_auth(api_key),
             )
             assert resp.status_code == 200
             assert resp.json()["log"] == []
-
-
-@pytest.mark.asyncio
-async def test_agent_log_404_unknown_agent(aweb_db_infra):
-    aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_agent_with_log(aweb_db, slug="unknown-log")
-
-    app = create_app(db_infra=aweb_db_infra)
-    async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                f"/v1/agents/{uuid.uuid4()}/log",
-                headers=_auth(seed["api_key"]),
-            )
-            assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_agent_log_cross_project_forbidden(aweb_db_infra):
-    """An agent in project A cannot read logs for an agent in project B."""
-    aweb_db = aweb_db_infra.get_manager("aweb")
-    seed_a = await _seed_agent_with_log(aweb_db, slug="log-proj-a", alias="alice")
-
-    # Create a separate project B with its own agent
-    _, pub_b = generate_keypair()
-    did_b = did_from_public_key(pub_b)
-    proj_b_id = uuid.uuid4()
-    agent_b_id = uuid.uuid4()
-    await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        proj_b_id,
-        "log-proj-b",
-        "Project B",
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        """,
-        agent_b_id,
-        proj_b_id,
-        "bob",
-        "Bob",
-        "agent",
-        did_b,
-        pub_b.hex(),
-        "self",
-        "persistent",
-    )
-
-    app = create_app(db_infra=aweb_db_infra)
-    async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            # Agent A tries to read agent B's log
-            resp = await c.get(
-                f"/v1/agents/{agent_b_id}/log",
-                headers=_auth(seed_a["api_key"]),
-            )
-            assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -239,7 +179,7 @@ async def test_agent_log_includes_all_fields(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                f"/v1/agents/{seed['agent_id']}/log",
+                "/v1/agents/me/log",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200
@@ -260,5 +200,5 @@ async def test_agent_log_requires_auth(aweb_db_infra):
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(f"/v1/agents/{uuid.uuid4()}/log")
+            resp = await c.get("/v1/agents/me/log")
             assert resp.status_code in (401, 403)
