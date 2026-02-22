@@ -3,8 +3,7 @@
 import pytest
 
 from aweb.auth import AGENT_ALIAS_PATTERN, PROJECT_SLUG_PATTERN
-from aweb.mcp.tools.contacts import CONTACT_ADDRESS_PATTERN as MCP_CONTACT_PATTERN
-from aweb.routes.contacts import CONTACT_ADDRESS_PATTERN as ROUTE_CONTACT_PATTERN
+from aweb.contacts_service import CONTACT_ADDRESS_PATTERN
 
 
 class TestProjectSlugPattern:
@@ -73,7 +72,7 @@ class TestAgentAliasPattern:
 
 
 class TestContactAddressPattern:
-    """Both copies of CONTACT_ADDRESS_PATTERN must behave identically."""
+    """CONTACT_ADDRESS_PATTERN must allow alphanumeric, slashes, underscores, dots, hyphens."""
 
     @pytest.mark.parametrize(
         "addr",
@@ -86,8 +85,7 @@ class TestContactAddressPattern:
         ],
     )
     def test_valid_addresses(self, addr):
-        assert ROUTE_CONTACT_PATTERN.match(addr), f"{addr!r} should be valid (route)"
-        assert MCP_CONTACT_PATTERN.match(addr), f"{addr!r} should be valid (mcp)"
+        assert CONTACT_ADDRESS_PATTERN.match(addr), f"{addr!r} should be valid"
 
     @pytest.mark.parametrize(
         "addr",
@@ -99,5 +97,4 @@ class TestContactAddressPattern:
         ],
     )
     def test_invalid_addresses(self, addr):
-        assert not ROUTE_CONTACT_PATTERN.match(addr), f"{addr!r} should be rejected (route)"
-        assert not MCP_CONTACT_PATTERN.match(addr), f"{addr!r} should be rejected (mcp)"
+        assert not CONTACT_ADDRESS_PATTERN.match(addr), f"{addr!r} should be rejected"
