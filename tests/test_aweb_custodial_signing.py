@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -250,6 +251,8 @@ async def test_caller_provided_signature_not_overwritten(aweb_db_infra, monkeypa
 
     aweb_db = aweb_db_infra.get_manager("aweb")
     seed_data = await _seed_custodial_project(aweb_db, master_key)
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -262,6 +265,8 @@ async def test_caller_provided_signature_not_overwritten(aweb_db_infra, monkeypa
                     "to_alias": "plain-bob",
                     "subject": "pre-signed",
                     "body": "already signed",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
                     "from_did": "did:key:zCallerProvided",
                     "signature": "caller-sig",
                     "signing_key_id": "did:key:zCallerKey",

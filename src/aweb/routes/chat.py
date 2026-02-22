@@ -61,6 +61,18 @@ def _parse_deadline(value: str) -> datetime:
     return _parse_timestamp(value, "deadline")
 
 
+def _parse_signed_timestamp(value: str) -> datetime:
+    dt = _parse_timestamp(value, "timestamp")
+    if dt.microsecond != 0:
+        raise HTTPException(status_code=422, detail="timestamp must be second precision")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    if abs((dt - now).total_seconds()) > 300:
+        raise HTTPException(
+            status_code=422, detail="timestamp must be within ±5 minutes of server time"
+        )
+    return dt
+
+
 async def _targets_left(db, *, session_id: UUID, target_agent_ids: list[str]) -> list[str]:
     if not target_agent_ids:
         return []
@@ -96,6 +108,8 @@ class CreateSessionRequest(BaseModel):
     to_aliases: list[str] = Field(..., min_length=1)
     message: str
     leaving: bool = False
+    message_id: str | None = None
+    timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
     to_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
@@ -113,6 +127,13 @@ class CreateSessionRequest(BaseModel):
         if not cleaned:
             raise ValueError("to_aliases must not be empty")
         return cleaned
+
+    @field_validator("message_id")
+    @classmethod
+    def _validate_message_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _parse_uuid(v, field="message_id")
 
 
 class CreateSessionResponse(BaseModel):
@@ -164,6 +185,17 @@ async def create_or_send(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
+    if payload.signature is not None:
+        if payload.from_did is None or not payload.from_did.strip():
+            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+        if payload.message_id is None or payload.timestamp is None:
+            raise HTTPException(
+                status_code=422,
+                detail="message_id and timestamp are required when signature is provided",
+            )
+        msg_created_at = _parse_signed_timestamp(payload.timestamp)
+        pre_message_id = uuid_mod.UUID(payload.message_id)
+
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
@@ -188,19 +220,26 @@ async def create_or_send(
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    msg_row = await send_in_session(
-        db,
-        session_id=session_id,
-        agent_id=actor_id,
-        body=payload.message,
-        leaving=payload.leaving,
-        from_did=msg_from_did,
-        to_did=payload.to_did,
-        signature=msg_signature,
-        signing_key_id=msg_signing_key_id,
-        created_at=msg_created_at,
-        message_id=pre_message_id,
-    )
+    try:
+        msg_row = await send_in_session(
+            db,
+            session_id=session_id,
+            agent_id=actor_id,
+            body=payload.message,
+            leaving=payload.leaving,
+            from_did=msg_from_did,
+            to_did=payload.to_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
+        )
+    except Exception as e:
+        import asyncpg.exceptions
+
+        if isinstance(e, asyncpg.exceptions.UniqueViolationError):
+            raise HTTPException(status_code=409, detail="message_id already exists")
+        raise
 
     participants_rows = await aweb_db.fetch_all(
         """
@@ -610,10 +649,19 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
+    message_id: str | None = None
+    timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
     to_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signing_key_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("message_id")
+    @classmethod
+    def _validate_message_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _parse_uuid(v, field="message_id")
 
 
 class SendMessageResponse(BaseModel):
@@ -681,6 +729,17 @@ async def send_message(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
+    if payload.signature is not None:
+        if payload.from_did is None or not payload.from_did.strip():
+            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+        if payload.message_id is None or payload.timestamp is None:
+            raise HTTPException(
+                status_code=422,
+                detail="message_id and timestamp are required when signature is provided",
+            )
+        msg_created_at = _parse_signed_timestamp(payload.timestamp)
+        pre_message_id = uuid_mod.UUID(payload.message_id)
+
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
@@ -705,19 +764,26 @@ async def send_message(
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    msg_row = await send_in_session(
-        db,
-        session_id=session_uuid,
-        agent_id=actor_id,
-        body=payload.body,
-        hang_on=payload.hang_on,
-        from_did=msg_from_did,
-        to_did=payload.to_did,
-        signature=msg_signature,
-        signing_key_id=msg_signing_key_id,
-        created_at=msg_created_at,
-        message_id=pre_message_id,
-    )
+    try:
+        msg_row = await send_in_session(
+            db,
+            session_id=session_uuid,
+            agent_id=actor_id,
+            body=payload.body,
+            hang_on=payload.hang_on,
+            from_did=msg_from_did,
+            to_did=payload.to_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
+        )
+    except Exception as e:
+        import asyncpg.exceptions
+
+        if isinstance(e, asyncpg.exceptions.UniqueViolationError):
+            raise HTTPException(status_code=409, detail="message_id already exists")
+        raise
 
     await fire_mutation_hook(
         request,

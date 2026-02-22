@@ -150,6 +150,25 @@ async def bootstrap_identity(
     alias = validate_agent_alias(alias.strip()) if alias is not None and alias.strip() else None
     human_name = (human_name or "").strip()
     agent_type = (agent_type or "agent").strip() or "agent"
+    did = did.strip() if did is not None and did.strip() else None
+    public_key = public_key.strip() if public_key is not None and public_key.strip() else None
+    custody = custody.strip() if custody is not None and custody.strip() else None
+    lifetime = (lifetime or "persistent").strip() or "persistent"
+
+    if lifetime not in ("persistent", "ephemeral"):
+        raise ValueError("lifetime must be 'persistent' or 'ephemeral'")
+
+    # Default custody per identity SOT:
+    # - If DID material is provided, treat as self-custodial.
+    # - Otherwise default to custodial (server generates DID/public_key).
+    if custody is None:
+        custody = "self" if (did is not None or public_key is not None) else "custodial"
+
+    if custody not in ("self", "custodial"):
+        raise ValueError("custody must be 'self' or 'custodial'")
+
+    if lifetime == "ephemeral" and custody != "custodial":
+        raise ValueError("Ephemeral agents must be custodial")
 
     # Prepare identity columns.
     agent_did: str | None = None
@@ -157,18 +176,23 @@ async def bootstrap_identity(
     signing_key_enc: bytes | None = None
 
     if custody == "self":
-        if not did or not public_key:
+        if did is None or public_key is None:
             raise ValueError("Self-custodial agents require both did and public_key")
         try:
             pub_bytes = decode_public_key(public_key)
         except Exception:
-            raise ValueError("public_key must be a base64url-encoded 32-byte Ed25519 public key")
+            raise ValueError(
+                "public_key must be a base64-encoded 32-byte Ed25519 public key (url-safe or standard)"
+            )
         expected_did = did_from_public_key(pub_bytes)
         if expected_did != did:
             raise ValueError("DID does not match public_key")
         agent_did = did
-        agent_public_key = public_key
+        # Normalize storage to canonical base64url encoding.
+        agent_public_key = encode_public_key(pub_bytes)
     elif custody == "custodial":
+        if did is not None or public_key is not None:
+            raise ValueError("Custodial agents must not provide did/public_key")
         seed, pub = generate_keypair()
         agent_did = did_from_public_key(pub)
         agent_public_key = encode_public_key(pub)

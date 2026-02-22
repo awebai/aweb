@@ -59,23 +59,38 @@ class AwebClient:
         self,
         *,
         authorization: str,
-        from_agent_id: str,
-        from_alias: str,
-        to_agent_id: str,
+        to_agent_id: str | None = None,
+        to_alias: str | None = None,
         subject: str = "",
         body: str,
         priority: str = "normal",
         thread_id: str | None = None,
+        message_id: str | None = None,
+        timestamp: str | None = None,
+        from_did: str | None = None,
+        to_did: str | None = None,
+        signature: str | None = None,
+        signing_key_id: str | None = None,
+        # Backward-compat: ignored (server infers sender from bearer token)
+        from_agent_id: str | None = None,
+        from_alias: str | None = None,
     ) -> dict:
         payload: dict = {
-            "from_agent_id": from_agent_id,
-            "from_alias": from_alias,
             "to_agent_id": to_agent_id,
+            "to_alias": to_alias,
             "subject": subject,
             "body": body,
             "priority": priority,
             "thread_id": thread_id,
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "from_did": from_did,
+            "to_did": to_did,
+            "signature": signature,
+            "signing_key_id": signing_key_id,
         }
+        if to_agent_id is None and to_alias is None:
+            raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
         payload = {k: v for k, v in payload.items() if v is not None}
         return await self._request_json(
             "POST",

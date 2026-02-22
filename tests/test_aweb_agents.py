@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
@@ -263,7 +265,7 @@ async def test_list_agents_includes_identity_fields(aweb_db_infra):
             # Create a self-custodial agent
             _, pub = generate_keypair()
             did = did_from_public_key(pub)
-            data = await c.post(
+            resp = await c.post(
                 "/v1/init",
                 json={
                     "project_slug": "test/agents-identity",
@@ -273,12 +275,27 @@ async def test_list_agents_includes_identity_fields(aweb_db_infra):
                     "public_key": encode_public_key(pub),
                 },
             )
-            assert data.status_code == 200, data.text
-            d = data.json()
+            assert resp.status_code == 200, resp.text
+            d = resp.json()
             api_key = d["api_key"]
+            project_id = d["project_id"]
 
-            # Also create a legacy agent
-            await _init_project(c, "test/agents-identity", "legacy-agent")
+            # Also create a legacy (pre-identity) agent row with NULL did/custody
+            aweb_db = aweb_db_infra.get_manager("aweb")
+            await aweb_db.execute(
+                """
+                INSERT INTO {{tables.agents}}
+                    (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, status)
+                VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7)
+                """,
+                uuid.uuid4(),
+                uuid.UUID(project_id),
+                "legacy-agent",
+                "Legacy Agent",
+                "agent",
+                "persistent",
+                "active",
+            )
 
             resp = await c.get("/v1/agents", headers={"Authorization": f"Bearer {api_key}"})
             assert resp.status_code == 200

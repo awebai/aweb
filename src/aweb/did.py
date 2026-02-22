@@ -76,12 +76,19 @@ def encode_public_key(public_key: bytes) -> str:
 
 
 def decode_public_key(encoded: str) -> bytes:
-    """Decode a URL-safe base64 no-padding string to a 32-byte Ed25519 public key."""
+    """Decode a base64 no-padding string to a 32-byte Ed25519 public key.
+
+    Canonical encoding is URL-safe base64 without padding, but for interop we
+    accept both URL-safe (-_) and standard (+/) alphabets.
+    """
     padded = encoded + "=" * (-len(encoded) % 4)
     try:
         raw = base64.b64decode(padded, altchars=b"-_", validate=True)
     except Exception:
-        raise ValueError("public_key must be valid base64url-encoded")
+        try:
+            raw = base64.b64decode(padded, validate=True)
+        except Exception:
+            raise ValueError("public_key must be valid base64 (url-safe or standard) no-padding")
     if len(raw) != _ED25519_KEY_LEN:
         raise ValueError(f"Decoded key must be {_ED25519_KEY_LEN} bytes, got {len(raw)}")
     return raw

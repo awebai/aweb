@@ -189,6 +189,41 @@ async def test_rotate_self_custodial(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_rotate_accepts_std_base64_public_key_normalizes_storage(aweb_db_infra):
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_persistent_self_custodial(aweb_db, slug="rotate-std-b64")
+
+    _, new_public = generate_keypair()
+    new_did = did_from_public_key(new_public)
+    timestamp = "2026-02-21T12:00:00Z"
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
+    new_public_std = base64.b64encode(new_public).rstrip(b"=").decode("ascii")
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                "/v1/agents/me/rotate",
+                headers=_auth(seed["api_key"]),
+                json={
+                    "new_did": new_did,
+                    "new_public_key": new_public_std,
+                    "custody": "self",
+                    "rotation_signature": proof,
+                    "timestamp": timestamp,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+    row = await aweb_db.fetch_one(
+        "SELECT did, public_key FROM {{tables.agents}} WHERE agent_id = $1",
+        uuid.UUID(seed["agent_id"]),
+    )
+    assert row["did"] == new_did
+    assert row["public_key"] == encode_public_key(new_public)
+
+
+@pytest.mark.asyncio
 async def test_rotate_creates_log_entry(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     seed = await _seed_persistent_self_custodial(aweb_db, slug="rotate-log")
@@ -214,13 +249,19 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
             )
 
     log = await aweb_db.fetch_one(
-        "SELECT operation, old_did, new_did, signed_by FROM {{tables.agent_log}} WHERE agent_id = $1",
+        "SELECT operation, old_did, new_did, signed_by, entry_signature, metadata "
+        "FROM {{tables.agent_log}} WHERE agent_id = $1",
         uuid.UUID(seed["agent_id"]),
     )
     assert log["operation"] == "rotate"
     assert log["old_did"] == seed["did"]
     assert log["new_did"] == new_did
     assert log["signed_by"] == seed["did"]
+    assert log["entry_signature"] == proof
+    meta = log["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    assert meta["timestamp"] == timestamp
 
 
 @pytest.mark.asyncio
@@ -326,10 +367,6 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
 
-    # For custodial agents, the server signs the proof on behalf
-    # The rotation_signature is signed by the old key (server holds it)
-    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
-
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -340,7 +377,6 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
                     "new_did": new_did,
                     "new_public_key": encode_public_key(new_public),
                     "custody": "self",
-                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )

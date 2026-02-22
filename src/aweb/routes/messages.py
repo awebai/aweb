@@ -19,6 +19,28 @@ from aweb.rotation_announcements import acknowledge_rotation, get_pending_announ
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
 
+def _parse_signed_timestamp(value: str) -> datetime:
+    """Parse an RFC3339 timestamp for signed payloads (UTC, second precision)."""
+    value = (value or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="timestamp must not be empty")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid timestamp format")
+    if dt.tzinfo is None:
+        raise HTTPException(status_code=422, detail="timestamp must be timezone-aware")
+    dt = dt.astimezone(timezone.utc)
+    if dt.microsecond != 0:
+        raise HTTPException(status_code=422, detail="timestamp must be second precision")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    if abs((dt - now).total_seconds()) > 300:
+        raise HTTPException(
+            status_code=422, detail="timestamp must be within ±5 minutes of server time"
+        )
+    return dt
+
+
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -28,6 +50,8 @@ class SendMessageRequest(BaseModel):
     body: str
     priority: MessagePriority = "normal"
     thread_id: Optional[str] = None
+    message_id: Optional[str] = None
+    timestamp: Optional[str] = None
     from_did: Optional[str] = Field(default=None, max_length=256)
     to_did: Optional[str] = Field(default=None, max_length=256)
     signature: Optional[str] = Field(default=None, max_length=512)
@@ -62,6 +86,16 @@ class SendMessageRequest(BaseModel):
             return str(UUID(str(v).strip()))
         except Exception:
             raise ValueError("Invalid thread_id format")
+
+    @field_validator("message_id")
+    @classmethod
+    def _validate_message_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        try:
+            return str(UUID(str(v).strip()))
+        except Exception:
+            raise ValueError("Invalid message_id format")
 
 
 class SendMessageResponse(BaseModel):
@@ -171,6 +205,17 @@ async def send_message(
     created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
+    if payload.signature is not None:
+        if payload.from_did is None or not payload.from_did.strip():
+            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+        if payload.message_id is None or payload.timestamp is None:
+            raise HTTPException(
+                status_code=422,
+                detail="message_id and timestamp are required when signature is provided",
+            )
+        created_at = _parse_signed_timestamp(payload.timestamp)
+        pre_message_id = uuid_mod.UUID(payload.message_id)
+
     if payload.signature is None:
         aweb_db = db.get_manager("aweb")
         proj_row = await aweb_db.fetch_one(
@@ -201,23 +246,32 @@ async def send_message(
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id = sign_result
 
-    message_id, created_at = await deliver_message(
-        db,
-        project_id=project_id,
-        from_agent_id=actor_id,
-        from_alias=sender["alias"],
-        to_agent_id=to_agent_id,
-        subject=payload.subject,
-        body=payload.body,
-        priority=payload.priority,
-        thread_id=payload.thread_id,
-        from_did=msg_from_did,
-        to_did=payload.to_did,
-        signature=msg_signature,
-        signing_key_id=msg_signing_key_id,
-        created_at=created_at,
-        message_id=pre_message_id,
-    )
+    try:
+        message_id, created_at = await deliver_message(
+            db,
+            project_id=project_id,
+            from_agent_id=actor_id,
+            from_alias=sender["alias"],
+            to_agent_id=to_agent_id,
+            subject=payload.subject,
+            body=payload.body,
+            priority=payload.priority,
+            thread_id=payload.thread_id,
+            from_did=msg_from_did,
+            to_did=payload.to_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=created_at,
+            message_id=pre_message_id,
+        )
+    except Exception as e:
+        # message_id is client-controllable for self-custodial signing, so surface
+        # idempotency/replay conflicts as 409.
+        import asyncpg.exceptions
+
+        if isinstance(e, asyncpg.exceptions.UniqueViolationError):
+            raise HTTPException(status_code=409, detail="message_id already exists")
+        raise
 
     # Sending a message to an agent implicitly acknowledges their rotation
     aweb_db = db.get_manager("aweb")

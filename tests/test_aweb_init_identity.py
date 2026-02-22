@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+import base64
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -17,7 +18,7 @@ from aweb.did import decode_public_key, did_from_public_key, encode_public_key, 
 
 @pytest.mark.asyncio
 async def test_legacy_init_no_did_fields(aweb_db_infra):
-    """Legacy init (no DID fields) works exactly as before — no identity columns set."""
+    """Init without DID fields defaults to custodial DID issuance (backward compatible)."""
     aweb_db_infra: DatabaseInfra
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -31,8 +32,9 @@ async def test_legacy_init_no_did_fields(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             data = resp.json()
-            assert data["did"] is None
-            assert data["custody"] is None
+            assert data["did"] is not None
+            assert data["did"].startswith("did:key:z")
+            assert data["custody"] == "custodial"
             assert data["lifetime"] == "persistent"
             assert data["created"] is True
 
@@ -76,6 +78,39 @@ async def test_self_custodial_init(aweb_db_infra):
             assert row["custody"] == "self"
             assert row["signing_key_enc"] is None  # self-custodial — no server-side key
             assert row["lifetime"] == "persistent"
+
+
+@pytest.mark.asyncio
+async def test_self_custodial_init_accepts_std_base64_public_key_normalizes_storage(aweb_db_infra):
+    """Self-custodial init accepts standard base64 and stores canonical base64url."""
+    aweb_db_infra: DatabaseInfra
+    _, pub = generate_keypair()
+    did = did_from_public_key(pub)
+    pub_std_b64 = base64.b64encode(pub).rstrip(b"=").decode("ascii")
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/init-self-std-b64",
+                    "alias": "self-agent",
+                    "custody": "self",
+                    "did": did,
+                    "public_key": pub_std_b64,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+
+            aweb_db = aweb_db_infra.get_manager("aweb")
+            row = await aweb_db.fetch_one(
+                "SELECT did, public_key FROM {{tables.agents}} WHERE agent_id = $1",
+                uuid.UUID(data["agent_id"]),
+            )
+            assert row["did"] == did
+            assert row["public_key"] == encode_public_key(pub)
 
 
 @pytest.mark.asyncio
@@ -219,12 +254,30 @@ async def test_ephemeral_custodial_init(aweb_db_infra, monkeypatch):
             data = resp.json()
             assert data["lifetime"] == "ephemeral"
 
-            aweb_db = aweb_db_infra.get_manager("aweb")
-            row = await aweb_db.fetch_one(
-                "SELECT lifetime FROM {{tables.agents}} WHERE agent_id = $1",
-                uuid.UUID(data["agent_id"]),
+
+@pytest.mark.asyncio
+async def test_ephemeral_self_custody_rejected(aweb_db_infra):
+    """Ephemeral agents must be custodial (server-generated keys)."""
+    aweb_db_infra: DatabaseInfra
+    seed, pub = generate_keypair()
+    did = did_from_public_key(pub)
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/init-ephemeral-self",
+                    "alias": "eph-self",
+                    "custody": "self",
+                    "did": did,
+                    "public_key": encode_public_key(pub),
+                    "lifetime": "ephemeral",
+                },
             )
-            assert row["lifetime"] == "ephemeral"
+            assert resp.status_code == 422, resp.text
+            assert "ephemeral" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -353,7 +406,7 @@ async def test_self_custodial_malformed_public_key_rejected(aweb_db_infra):
                 },
             )
             assert resp.status_code == 422, resp.text
-            assert "base64url" in resp.json()["detail"].lower()
+            assert "base64" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -379,7 +432,7 @@ async def test_self_custodial_wrong_length_public_key_rejected(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_agent_log_entry_for_legacy_agent(aweb_db_infra):
-    """Legacy agent (no DID) still gets a 'create' log entry with new_did=None."""
+    """Init without DID fields writes a 'create' log entry with new_did set."""
     aweb_db_infra: DatabaseInfra
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
@@ -401,4 +454,4 @@ async def test_agent_log_entry_for_legacy_agent(aweb_db_infra):
             )
             assert len(logs) == 1
             assert logs[0]["operation"] == "create"
-            assert logs[0]["new_did"] is None
+            assert logs[0]["new_did"] is not None

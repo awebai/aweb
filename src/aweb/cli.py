@@ -106,8 +106,11 @@ def seed(
             agent_2_id = await ensure_agent(agent_2_alias)
 
             await db.execute(
-                "INSERT INTO {{tables.api_keys}} (project_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO {{tables.api_keys}} "
+                "(project_id, agent_id, key_prefix, key_hash, is_active) "
+                "VALUES ($1, $2, $3, $4, $5)",
                 project_id,
+                agent_1_id,
                 api_key[:12],
                 hash_api_key(api_key),
                 True,
@@ -134,8 +137,11 @@ def seed(
                     "agent",
                 )
                 await db.execute(
-                    "INSERT INTO {{tables.api_keys}} (project_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO {{tables.api_keys}} "
+                    "(project_id, agent_id, key_prefix, key_hash, is_active) "
+                    "VALUES ($1, $2, $3, $4, $5)",
                     other_project_id,
+                    other_agent_id,
                     other_api_key[:12],
                     hash_api_key(other_api_key),
                     True,

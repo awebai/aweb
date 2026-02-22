@@ -64,6 +64,8 @@ async def test_mail_with_signature_fields(aweb_db_infra):
     aweb_db_infra: DatabaseInfra
     aweb_db = aweb_db_infra.get_manager("aweb")
     _, _, _, key1, key2 = await _seed_project_and_agents(aweb_db)
+    message_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -77,6 +79,8 @@ async def test_mail_with_signature_fields(aweb_db_infra):
                     "to_alias": "bob",
                     "subject": "signed msg",
                     "body": "hello",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
                     "from_did": "did:key:zSenderDid",
                     "to_did": "did:key:zRecipientDid",
                     "signature": "base64sig",
@@ -130,6 +134,9 @@ async def test_chat_with_signature_fields(aweb_db_infra):
     aweb_db_infra: DatabaseInfra
     aweb_db = aweb_db_infra.get_manager("aweb")
     _, _, _, key1, key2 = await _seed_project_and_agents(aweb_db)
+    first_message_id = str(uuid.uuid4())
+    base = datetime.now(timezone.utc).replace(microsecond=0)
+    first_timestamp = base.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -142,6 +149,8 @@ async def test_chat_with_signature_fields(aweb_db_infra):
                 json={
                     "to_aliases": ["bob"],
                     "message": "signed chat",
+                    "message_id": first_message_id,
+                    "timestamp": first_timestamp,
                     "from_did": "did:key:zAliceDid",
                     "to_did": "did:key:zBobDid",
                     "signature": "chatsig",
@@ -150,6 +159,7 @@ async def test_chat_with_signature_fields(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             session_id = resp.json()["session_id"]
+            assert resp.json()["message_id"] == first_message_id
 
             # Check history returns the fields
             resp = await client.get(
@@ -165,11 +175,15 @@ async def test_chat_with_signature_fields(aweb_db_infra):
             assert msgs[0]["signing_key_id"] == "did:key:zAliceDid"
 
             # Send another message in existing session with signature
+            reply_message_id = str(uuid.uuid4())
+            reply_timestamp = (base + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
             resp = await client.post(
                 f"/v1/chat/sessions/{session_id}/messages",
                 headers=_auth(key2),
                 json={
                     "body": "reply",
+                    "message_id": reply_message_id,
+                    "timestamp": reply_timestamp,
                     "from_did": "did:key:zBobDid",
                     "to_did": "did:key:zAliceDid",
                     "signature": "replysig",
@@ -240,12 +254,16 @@ async def test_chat_sse_stream_includes_identity_fields(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Send a signed message to create session
+            message_id = str(uuid.uuid4())
+            timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
             resp = await client.post(
                 "/v1/chat/sessions",
                 headers=_auth(key1),
                 json={
                     "to_aliases": ["bob"],
                     "message": "sse signed",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
                     "from_did": "did:key:zAliceDid",
                     "to_did": "did:key:zBobDid",
                     "signature": "ssesig",
