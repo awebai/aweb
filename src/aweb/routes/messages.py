@@ -13,7 +13,12 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, valid
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
-from aweb.messages_service import MessagePriority, deliver_message, get_agent_row, utc_iso as _utc_iso
+from aweb.messages_service import (
+    MessagePriority,
+    deliver_message,
+    get_agent_row,
+)
+from aweb.messages_service import utc_iso as _utc_iso
 from aweb.rotation_announcements import acknowledge_rotation, get_pending_announcements
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
@@ -204,7 +209,9 @@ async def send_message(
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
-            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+            raise HTTPException(
+                status_code=422, detail="from_did is required when signature is provided"
+            )
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
                 status_code=422,
@@ -347,7 +354,9 @@ async def inbox(
                 message_id=str(r["message_id"]),
                 from_agent_id=str(r["from_agent_id"]),
                 from_alias=r["from_alias"],
-                from_address=f"{project_slug}/{r['from_alias']}" if project_slug else r["from_alias"],
+                from_address=(
+                    f"{project_slug}/{r['from_alias']}" if project_slug else r["from_alias"]
+                ),
                 subject=r["subject"],
                 body=r["body"],
                 priority=r["priority"],

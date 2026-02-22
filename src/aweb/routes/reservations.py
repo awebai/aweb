@@ -252,6 +252,4 @@ async def list_reservations_route(
 ) -> ListResponse:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     reservations = await list_reservations(db, project_id=project_id, prefix=prefix)
-    return ListResponse(
-        reservations=[ReservationView(**r) for r in reservations]
-    )
+    return ListResponse(reservations=[ReservationView(**r) for r in reservations])

@@ -194,7 +194,9 @@ async def create_or_send(
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
-            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+            raise HTTPException(
+                status_code=422, detail="from_did is required when signature is provided"
+            )
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
                 status_code=422,
@@ -536,7 +538,9 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
-                    "to_address": _chat_to_address(project_slug, participant_aliases, r["from_alias"]),
+                    "to_address": _chat_to_address(
+                        project_slug, participant_aliases, r["from_alias"]
+                    ),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -588,7 +592,9 @@ async def _sse_events(
                     "hang_on": is_hang_on,
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
-                    "to_address": _chat_to_address(project_slug, participant_aliases, r["from_alias"]),
+                    "to_address": _chat_to_address(
+                        project_slug, participant_aliases, r["from_alias"]
+                    ),
                     "from_did": r["from_did"],
                     "to_did": r["to_did"],
                     "signature": r["signature"],
@@ -764,9 +770,7 @@ async def send_message(
         agent_uuid,
     )
     if not participant:
-        raise HTTPException(
-            status_code=403, detail="Not a participant in this session"
-        )
+        raise HTTPException(status_code=403, detail="Not a participant in this session")
     canonical_alias = participant["alias"]
 
     extends_wait_seconds = HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0
@@ -781,7 +785,9 @@ async def send_message(
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
-            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+            raise HTTPException(
+                status_code=422, detail="from_did is required when signature is provided"
+            )
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
                 status_code=422,

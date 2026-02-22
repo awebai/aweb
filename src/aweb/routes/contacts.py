@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_project_from_auth
-from aweb.contacts_service import CONTACT_ADDRESS_PATTERN, add_contact, list_contacts, remove_contact
+from aweb.contacts_service import (
+    CONTACT_ADDRESS_PATTERN,
+    add_contact,
+    list_contacts,
+    remove_contact,
+)
 from aweb.deps import get_db
 
 router = APIRouter(prefix="/v1/contacts", tags=["aweb-contacts"])
@@ -56,9 +61,7 @@ async def create_contact(
 async def list_contacts_route(request: Request, db=Depends(get_db)) -> ListContactsResponse:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     contacts = await list_contacts(db, project_id=project_id)
-    return ListContactsResponse(
-        contacts=[ContactView(**c) for c in contacts]
-    )
+    return ListContactsResponse(contacts=[ContactView(**c) for c in contacts])
 
 
 @router.delete("/{contact_id}")

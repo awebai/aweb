@@ -557,7 +557,6 @@ async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
             assert "does not match" in resp.json()["detail"].lower()
 
 
-
 async def _add_agent_to_project(aweb_db, *, project_id, alias):
     """Add a second agent to an existing project. Returns seed dict."""
     private_key, public_key = generate_keypair()
@@ -665,9 +664,9 @@ async def test_chained_rotation_delivers_earliest_announcement(aweb_db_infra):
             assert len(msgs) == 1
             ann = msgs[0]["rotation_announcement"]
             assert ann is not None, "Expected rotation announcement"
-            assert ann["old_did"] == alice["did"], (
-                f"Should be earliest rotation (A→B), got old_did={ann['old_did']}"
-            )
+            assert (
+                ann["old_did"] == alice["did"]
+            ), f"Should be earliest rotation (A→B), got old_did={ann['old_did']}"
             assert ann["new_did"] == did_b
 
             # Bob acks by replying to Alice

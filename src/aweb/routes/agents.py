@@ -833,11 +833,13 @@ async def retire_agent(
     )
 
     # Append retire entry to agent_log
-    metadata = _json.dumps({
-        "successor_agent_id": payload.successor_agent_id,
-        "successor_did": successor_did,
-        "successor_address": successor_address,
-    })
+    metadata = _json.dumps(
+        {
+            "successor_agent_id": payload.successor_agent_id,
+            "successor_did": successor_did,
+            "successor_address": successor_address,
+        }
+    )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agent_log}}

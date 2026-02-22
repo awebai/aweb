@@ -599,8 +599,15 @@ async def _seed_for_retire(aweb_db_infra):
              did, public_key, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
-        successor_id, project_id, "successor", "Successor", "agent",
-        succ_did, encode_public_key(succ_pub), "persistent", "active",
+        successor_id,
+        project_id,
+        "successor",
+        "Successor",
+        "agent",
+        succ_did,
+        encode_public_key(succ_pub),
+        "persistent",
+        "active",
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"

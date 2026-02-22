@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import secrets
 import uuid
-import base64
 
 import pytest
 from asgi_lifespan import LifespanManager

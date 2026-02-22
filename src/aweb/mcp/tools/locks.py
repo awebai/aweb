@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 
 from aweb.mcp.auth import get_auth
-from aweb.service_errors import ServiceError
 from aweb.reservations_service import (
     acquire_reservation,
     list_reservations,
     release_reservation,
 )
+from aweb.service_errors import ServiceError
 
 
 async def lock_acquire(

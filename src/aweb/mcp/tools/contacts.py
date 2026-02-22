@@ -6,8 +6,8 @@ import json
 from uuid import UUID
 
 from aweb.contacts_service import add_contact, list_contacts, remove_contact
-from aweb.service_errors import ServiceError
 from aweb.mcp.auth import get_auth
+from aweb.service_errors import ServiceError
 
 
 async def contacts_list(db_infra) -> str:

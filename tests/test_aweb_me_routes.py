@@ -200,7 +200,10 @@ async def test_me_rotate(aweb_db_infra):
 
 
 def _sign_retirement_proof(
-    private_key: bytes, successor_did: str, successor_address: str, timestamp: str,
+    private_key: bytes,
+    successor_did: str,
+    successor_address: str,
+    timestamp: str,
 ) -> str:
     canonical = json.dumps(
         {
@@ -248,7 +251,10 @@ async def test_me_retire(aweb_db_infra):
 
     timestamp = "2026-02-22T12:00:00Z"
     proof = _sign_retirement_proof(
-        seed["private_key"], s_did, "me-retire/successor", timestamp,
+        seed["private_key"],
+        s_did,
+        "me-retire/successor",
+        timestamp,
     )
 
     app = create_app(db_infra=aweb_db_infra)

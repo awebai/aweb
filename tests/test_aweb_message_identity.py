@@ -254,8 +254,8 @@ async def test_chat_sse_stream_includes_identity_fields(aweb_db_infra):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Send a signed message to create session
             message_id = str(uuid.uuid4())
-            timestamp = datetime.now(timezone.utc).replace(microsecond=0).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
+            timestamp = (
+                datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
             )
             resp = await client.post(
                 "/v1/chat/sessions",
