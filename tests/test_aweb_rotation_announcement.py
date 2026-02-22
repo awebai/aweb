@@ -20,7 +20,7 @@ def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _make_rotation_proof(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
     """Sign the canonical rotation payload with the old key."""
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
@@ -98,7 +98,7 @@ async def test_rotation_stores_announcement(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(alice["private_key"], alice["did"], new_did, timestamp)
+    proof = _make_rotation_signature(alice["private_key"], alice["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -110,7 +110,7 @@ async def test_rotation_stores_announcement(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -140,7 +140,7 @@ async def test_inbox_includes_rotation_announcement(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(alice["private_key"], alice["did"], new_did, timestamp)
+    proof = _make_rotation_signature(alice["private_key"], alice["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -153,7 +153,7 @@ async def test_inbox_includes_rotation_announcement(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -200,7 +200,7 @@ async def test_announcement_stops_after_peer_responds(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(alice["private_key"], alice["did"], new_did, timestamp)
+    proof = _make_rotation_signature(alice["private_key"], alice["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -213,7 +213,7 @@ async def test_announcement_stops_after_peer_responds(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -296,7 +296,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
     new_private, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(alice["private_key"], alice["did"], new_did, timestamp)
+    proof = _make_rotation_signature(alice["private_key"], alice["did"], new_did, timestamp)
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
@@ -309,7 +309,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
                     "new_did": new_did,
                     "new_public_key": new_public.hex(),
                     "custody": "self",
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                     "timestamp": timestamp,
                 },
             )
@@ -376,6 +376,59 @@ async def test_no_announcement_without_rotation(aweb_db_infra):
                 json={"to_alias": "bob", "subject": "hi", "body": "no rotation"},
             )
 
+            resp = await c.get("/v1/messages/inbox", headers=_auth(bob["api_key"]))
+            messages = resp.json()["messages"]
+            assert len(messages) == 1
+            assert messages[0].get("rotation_announcement") is None
+
+
+@pytest.mark.asyncio
+async def test_announcement_expires_after_24h(aweb_db_infra):
+    """Announcements older than 24 hours should not be attached."""
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    agents = await _seed_two_agents(aweb_db, slug="ann-expiry")
+    alice, bob = agents[0], agents[1]
+
+    new_private_key, new_public_key = generate_keypair()
+    new_did = did_from_public_key(new_public_key)
+    timestamp = "2026-02-20T12:00:00Z"
+    proof = _make_rotation_signature(alice["private_key"], alice["did"], new_did, timestamp)
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Alice rotates
+            resp = await c.put(
+                f"/v1/agents/{alice['agent_id']}/rotate",
+                headers=_auth(alice["api_key"]),
+                json={
+                    "new_did": new_did,
+                    "new_public_key": new_public_key.hex(),
+                    "custody": "self",
+                    "timestamp": timestamp,
+                    "rotation_signature": proof,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Backdate the announcement to 25 hours ago
+            await aweb_db.execute(
+                """
+                UPDATE {{tables.rotation_announcements}}
+                SET created_at = NOW() - INTERVAL '25 hours'
+                WHERE agent_id = $1
+                """,
+                uuid.UUID(alice["agent_id"]),
+            )
+
+            # Alice sends a message to Bob
+            await c.post(
+                "/v1/messages",
+                headers=_auth(alice["api_key"]),
+                json={"to_alias": "bob", "subject": "late", "body": "expired announcement"},
+            )
+
+            # Bob's inbox should NOT have the announcement (expired)
             resp = await c.get("/v1/messages/inbox", headers=_auth(bob["api_key"]))
             messages = resp.json()["messages"]
             assert len(messages) == 1

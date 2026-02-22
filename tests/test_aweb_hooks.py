@@ -362,7 +362,7 @@ async def test_agent_created_hook_not_fired_on_reconnect(aweb_db_infra):
     assert len(created_events) == 0
 
 
-def _make_rotation_proof(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
         sort_keys=True,
@@ -428,7 +428,7 @@ async def test_agent_key_rotated_hook(aweb_db_infra):
     new_private_key, new_public_key = generate_keypair()
     new_did = did_from_public_key(new_public_key)
     timestamp = "2026-02-21T12:00:00Z"
-    proof = _make_rotation_proof(seed["private_key"], seed["did"], new_did, timestamp)
+    proof = _make_rotation_signature(seed["private_key"], seed["did"], new_did, timestamp)
 
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -440,7 +440,7 @@ async def test_agent_key_rotated_hook(aweb_db_infra):
                     "new_public_key": new_public_key.hex(),
                     "custody": "self",
                     "timestamp": timestamp,
-                    "rotation_proof": proof,
+                    "rotation_signature": proof,
                 },
             )
             assert resp.status_code == 200, resp.text

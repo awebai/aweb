@@ -400,7 +400,7 @@ class RotateKeyRequest(BaseModel):
     new_did: str
     new_public_key: str
     custody: str
-    rotation_proof: str
+    rotation_signature: str
     timestamp: str
 
     @field_validator("custody")
@@ -485,7 +485,7 @@ async def rotate_key(
     ).encode("utf-8")
 
     try:
-        padded = payload.rotation_proof + "=" * (-len(payload.rotation_proof) % 4)
+        padded = payload.rotation_signature + "=" * (-len(payload.rotation_signature) % 4)
         sig_bytes = _base64.b64decode(padded, validate=True)
     except Exception:
         raise HTTPException(status_code=403, detail="Malformed rotation proof encoding")
@@ -497,6 +497,19 @@ async def rotate_key(
         raise HTTPException(status_code=403, detail="Invalid rotation proof")
     except Exception:
         raise HTTPException(status_code=403, detail="Rotation proof verification error")
+
+    # Verify new_public_key encodes to new_did
+    from aweb.did import did_from_public_key
+
+    try:
+        new_pub_bytes = bytes.fromhex(payload.new_public_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="new_public_key must be hex-encoded")
+    if len(new_pub_bytes) != 32:
+        raise HTTPException(status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)")
+    expected_did = did_from_public_key(new_pub_bytes)
+    if expected_did != payload.new_did:
+        raise HTTPException(status_code=400, detail="DID does not match new_public_key")
 
     # Update agent record
     graduating = row["custody"] == "custodial" and payload.custody == "self"
@@ -544,7 +557,7 @@ async def rotate_key(
         old_did,
         payload.new_did,
         payload.timestamp,
-        payload.rotation_proof,
+        payload.rotation_signature,
     )
 
     await fire_mutation_hook(
