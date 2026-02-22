@@ -1222,3 +1222,75 @@ async def test_aweb_chat_rejects_to_aliases_with_slash(aweb_db_infra):
             )
             assert r.status_code == 422, r.text
             assert "Invalid alias format" in r.text
+
+
+@pytest.mark.asyncio
+async def test_mark_read_rejects_backward_cursor(aweb_db_infra):
+    """POST /v1/chat/sessions/{id}/read must not move the read cursor backward."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+
+            # Agent-1 creates session and sends first message
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2"], "message": "msg-1"},
+            )
+            assert r.status_code == 200, r.text
+            session_id = r.json()["session_id"]
+
+            # Agent-1 sends second message
+            r = await client.post(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_1,
+                json={"body": "msg-2"},
+            )
+            assert r.status_code == 200, r.text
+
+            # Agent-2 reads history to get both message IDs
+            r = await client.get(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers=headers_2,
+            )
+            assert r.status_code == 200
+            msgs = r.json()["messages"]
+            assert len(msgs) == 2
+            msg1_id = msgs[0]["message_id"]
+            msg2_id = msgs[1]["message_id"]
+
+            # Agent-2 marks read up to msg-2 (the latest)
+            r = await client.post(
+                f"/v1/chat/sessions/{session_id}/read",
+                headers=headers_2,
+                json={"up_to_message_id": msg2_id},
+            )
+            assert r.status_code == 200
+
+            # Agent-2 tries to mark read up to msg-1 (backward — older)
+            r = await client.post(
+                f"/v1/chat/sessions/{session_id}/read",
+                headers=headers_2,
+                json={"up_to_message_id": msg1_id},
+            )
+            assert r.status_code == 200
+            assert r.json()["messages_marked"] == 0
+
+            # Verify the read cursor still points to msg-2 (not moved backward)
+            rr = await aweb_db.fetch_one(
+                """
+                SELECT last_read_message_id
+                FROM {{tables.chat_read_receipts}}
+                WHERE session_id = $1 AND agent_id = $2
+                """,
+                uuid.UUID(session_id),
+                uuid.UUID(seeded["agent_2_id"]),
+            )
+            assert (
+                str(rr["last_read_message_id"]) == msg2_id
+            ), f"Read cursor moved backward: expected {msg2_id}, got {rr['last_read_message_id']}"

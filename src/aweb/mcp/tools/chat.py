@@ -135,6 +135,8 @@ async def _send_in_session(
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_id,
         agent_uuid,
@@ -628,24 +630,35 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
         up_to_time,
     )
 
-    await aweb_db.execute(
+    # Guard: only advance cursor if the target message is newer than the
+    # currently stored one.  Uses a subquery on message timestamps rather than
+    # last_read_at (which is wall-clock time) so that the comparison is always
+    # between message creation times.
+    upserted = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_read_receipts}} (session_id, agent_id, last_read_message_id, last_read_at)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE $5 > COALESCE(
+            (SELECT created_at FROM {{tables.chat_messages}}
+             WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
+            'epoch'::timestamptz
+        )
+        RETURNING 1
         """,
         session_uuid,
         agent_uuid,
         up_to_uuid,
         read_time,
+        up_to_time,
     )
 
     return json.dumps(
         {
             "session_id": str(session_uuid),
-            "messages_marked": int(marked or 0),
+            "messages_marked": int(marked or 0) if upserted else 0,
             "status": "read",
         }
     )
