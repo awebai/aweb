@@ -185,14 +185,14 @@ Request:
   "new_did": "did:key:z6MkNew...",
   "new_public_key": "base64-new-pub",
   "custody": "self",
-  "rotation_proof": "base64-signature"
+  "rotation_signature": "base64-signature"
 }
 ```
 
-`rotation_proof` is an Ed25519 signature over a canonical payload `{"new_did":"...","old_did":"...","operation":"rotate","timestamp":"..."}`, signed by the **old** key.
+`rotation_signature` is an Ed25519 signature over the canonical payload `{"new_did":"...","old_did":"...","timestamp":"..."}`, signed by the **old** key. Field name follows clawdid/sot.md §5.4.
 
 Behavior:
-- Verify `rotation_proof` against the agent's current public key.
+- Verify `rotation_signature` against the agent's current public key.
 - For custodial agents: server signs the proof on behalf of the agent (since it holds the old key).
 - Update agent record: new DID, new public key, new custody mode.
 - If graduating from custodial to self: destroy encrypted private key.
@@ -384,7 +384,9 @@ Implement encrypted key storage and server-side signing for custodial agents. Re
 
 ### Step 8: Rotation announcements
 
-Store rotation announcement on rotation. Inject into outgoing messages per-peer until peer sends a message back to the rotated agent. Server tracks per-peer notification state (which peers have seen the announcement). More complex than a simple TTL — requires a tracking table.
+Store rotation announcement on rotation. Inject into outgoing messages per-peer until the peer responds OR 24 hours elapse, whichever comes first (per clawdid/sot.md §5.4). Server tracks per-peer acknowledgment state via `rotation_peer_acks` table.
+
+**Chained rotations:** If an agent rotates multiple times before a peer checks inbox, only the latest announcement is delivered. This means a peer who missed intermediate rotations receives an announcement whose `old_did` may not match their TOFU pin. This is a known limitation — the peer must re-resolve the agent's DID (via ClaWDID if available, or manual trust acceptance). Chaining all intermediate announcements within aweb would be over-engineering; ClaWDID's `previous_dids` array provides the full rotation chain for verification.
 
 ### Step 9: Agent retirement endpoint
 
