@@ -359,6 +359,7 @@ async def test_custodial_signature_verifies_end_to_end(aweb_db_infra, monkeypatc
                 {
                     "from": f"{slug}/custodial-alice",
                     "from_did": seed_data["did"],
+                    "message_id": msg["message_id"],
                     "to": f"{slug}/plain-bob",
                     "to_did": "",
                     "type": "mail",

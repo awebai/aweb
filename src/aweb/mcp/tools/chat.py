@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -83,6 +84,7 @@ async def _send_in_session(
     signature: str | None = None,
     signing_key_id: str | None = None,
     created_at: datetime | None = None,
+    message_id: UUID | None = None,
 ) -> dict | None:
     """Send a message in an existing session. Returns message row or None."""
     agent_uuid = UUID(agent_id)
@@ -100,15 +102,17 @@ async def _send_in_session(
         return None
 
     effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
+    effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
 
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
+        effective_message_id,
         session_id,
         agent_uuid,
         participant["alias"],
@@ -280,6 +284,7 @@ async def chat_send(
         msg_signature = None
         msg_signing_key_id = None
         msg_created_at = datetime.now(timezone.utc)
+        pre_message_id = uuid_mod.uuid4()
 
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
@@ -291,6 +296,7 @@ async def chat_send(
             {
                 "from": f"{project_slug}/{sender['alias']}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": f"{project_slug}/{to_alias}",
                 "to_did": "",
                 "type": "chat",
@@ -314,6 +320,7 @@ async def chat_send(
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=msg_created_at,
+            message_id=pre_message_id,
         )
         if msg is None:
             return json.dumps({"error": "Failed to send message"})
@@ -344,6 +351,7 @@ async def chat_send(
         msg_signature = None
         msg_signing_key_id = None
         msg_created_at = datetime.now(timezone.utc)
+        pre_message_id = uuid_mod.uuid4()
 
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
@@ -355,6 +363,7 @@ async def chat_send(
             {
                 "from": f"{project_slug}/{sender_alias}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": "",
                 "to_did": "",
                 "type": "chat",
@@ -378,6 +387,7 @@ async def chat_send(
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=msg_created_at,
+            message_id=pre_message_id,
         )
         if msg is None:
             return json.dumps({"error": "Not a participant in this session"})

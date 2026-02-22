@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -142,6 +143,7 @@ async def send_message(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         aweb_db = db.get_manager("aweb")
@@ -160,6 +162,7 @@ async def send_message(
             {
                 "from": f"{project_slug}/{sender['alias']}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": to_address,
                 "to_did": payload.to_did or "",
                 "type": "mail",
@@ -187,6 +190,7 @@ async def send_message(
         signature=msg_signature,
         signing_key_id=msg_signing_key_id,
         created_at=created_at,
+        message_id=pre_message_id,
     )
 
     # Sending a message to an agent implicitly acknowledges their rotation

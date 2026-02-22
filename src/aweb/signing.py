@@ -15,9 +15,9 @@ from nacl.signing import SigningKey, VerifyKey
 
 from aweb.did import public_key_from_did
 
-# The 8 fields included in the signed payload. Transport fields are excluded.
+# The 9 fields included in the signed payload. Transport fields are excluded.
 SIGNED_FIELDS = frozenset(
-    {"body", "from", "from_did", "subject", "timestamp", "to", "to_did", "type"}
+    {"body", "from", "from_did", "message_id", "subject", "timestamp", "to", "to_did", "type"}
 )
 
 

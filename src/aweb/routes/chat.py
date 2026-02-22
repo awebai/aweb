@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID
@@ -255,6 +256,7 @@ async def create_or_send(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
@@ -267,6 +269,7 @@ async def create_or_send(
             {
                 "from": f"{project_slug}/{sender['alias']}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": ",".join(f"{project_slug}/{a}" for a in sorted(payload.to_aliases)),
                 "to_did": payload.to_did or "",
                 "type": "chat",
@@ -282,11 +285,12 @@ async def create_or_send(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving,
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING message_id, created_at
         """,
+        pre_message_id,
         session_id,
         UUID(actor_id),
         sender["alias"],
@@ -925,6 +929,7 @@ async def send_message(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
@@ -937,6 +942,7 @@ async def send_message(
             {
                 "from": f"{project_slug}/{canonical_alias}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": "",
                 "to_did": payload.to_did or "",
                 "type": "chat",
@@ -952,11 +958,12 @@ async def send_message(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
+        pre_message_id,
         session_uuid,
         agent_uuid,
         canonical_alias,

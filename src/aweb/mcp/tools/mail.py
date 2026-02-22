@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
@@ -52,6 +53,7 @@ async def send_mail(
     msg_signature = None
     msg_signing_key_id = None
     created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     proj_row = await aweb_db.fetch_one(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
@@ -64,6 +66,7 @@ async def send_mail(
         {
             "from": f"{project_slug}/{sender['alias']}",
             "from_did": "",
+            "message_id": str(pre_message_id),
             "to": f"{project_slug}/{to_alias}",
             "to_did": "",
             "type": "mail",
@@ -90,6 +93,7 @@ async def send_mail(
         signature=msg_signature,
         signing_key_id=msg_signing_key_id,
         created_at=created_at,
+        message_id=pre_message_id,
     )
 
     return json.dumps(
