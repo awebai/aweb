@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from aweb.chat_waiting import (
     register_waiting,
     unregister_waiting,
 )
+from aweb.custody import sign_on_behalf
 from aweb.mcp.auth import get_auth
 
 HANG_ON_EXTENSION_SECONDS = 300
@@ -28,43 +30,44 @@ async def _ensure_session(aweb_db, *, project_id: str, agent_rows: list[dict]) -
     """Create or find a chat session for a set of participants."""
     p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
-    row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
-        VALUES ($1, $2)
-        ON CONFLICT (project_id, participant_hash) DO NOTHING
-        RETURNING session_id
-        """,
-        UUID(project_id),
-        p_hash,
-    )
-    if row and row.get("session_id"):
-        session_id = row["session_id"]
-    else:
-        existing = await aweb_db.fetch_one(
+    async with aweb_db.transaction() as tx:
+        row = await tx.fetch_one(
             """
-            SELECT session_id
-            FROM {{tables.chat_sessions}}
-            WHERE project_id = $1 AND participant_hash = $2
+            INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
+            VALUES ($1, $2)
+            ON CONFLICT (project_id, participant_hash) DO NOTHING
+            RETURNING session_id
             """,
             UUID(project_id),
             p_hash,
         )
-        if existing is None:
-            return None
-        session_id = existing["session_id"]
+        if row and row.get("session_id"):
+            session_id = row["session_id"]
+        else:
+            existing = await tx.fetch_one(
+                """
+                SELECT session_id
+                FROM {{tables.chat_sessions}}
+                WHERE project_id = $1 AND participant_hash = $2
+                """,
+                UUID(project_id),
+                p_hash,
+            )
+            if existing is None:
+                return None
+            session_id = existing["session_id"]
 
-    for agent in agent_rows:
-        await aweb_db.execute(
-            """
-            INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
-            """,
-            session_id,
-            UUID(str(agent["agent_id"])),
-            agent["alias"],
-        )
+        for agent in agent_rows:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
+                """,
+                session_id,
+                UUID(str(agent["agent_id"])),
+                agent["alias"],
+            )
 
     return UUID(str(session_id))
 
@@ -77,6 +80,12 @@ async def _send_in_session(
     body: str,
     leaving: bool = False,
     hang_on: bool = False,
+    from_did: str | None = None,
+    to_did: str | None = None,
+    signature: str | None = None,
+    signing_key_id: str | None = None,
+    created_at: datetime | None = None,
+    message_id: UUID | None = None,
 ) -> dict | None:
     """Send a message in an existing session. Returns message row or None."""
     agent_uuid = UUID(agent_id)
@@ -93,19 +102,29 @@ async def _send_in_session(
     if not participant:
         return None
 
+    effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
+    effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
+
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
+             from_did, to_did, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
+        effective_message_id,
         session_id,
         agent_uuid,
         participant["alias"],
         body,
         bool(leaving),
         bool(hang_on),
+        from_did,
+        to_did,
+        signature,
+        signing_key_id,
+        effective_created_at,
     )
 
     # Advance sender's read receipt.
@@ -117,6 +136,8 @@ async def _send_in_session(
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_id,
         agent_uuid,
@@ -261,6 +282,36 @@ async def chat_send(
         if sid is None:
             return json.dumps({"error": "Failed to create chat session"})
 
+        # Server-side custodial signing.
+        msg_from_did = None
+        msg_signature = None
+        msg_signing_key_id = None
+        msg_created_at = datetime.now(timezone.utc)
+        pre_message_id = uuid_mod.uuid4()
+
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(auth.project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            auth.agent_id,
+            {
+                "from": f"{project_slug}/{sender['alias']}",
+                "from_did": "",
+                "message_id": str(pre_message_id),
+                "to": f"{project_slug}/{to_alias}",
+                "to_did": "",
+                "type": "chat",
+                "subject": "",
+                "body": message,
+                "timestamp": msg_created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            db_infra,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
         msg = await _send_in_session(
             aweb_db,
             session_id=sid,
@@ -268,6 +319,11 @@ async def chat_send(
             body=message,
             leaving=leaving,
             hang_on=hang_on,
+            from_did=msg_from_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
         )
         if msg is None:
             return json.dumps({"error": "Failed to send message"})
@@ -287,6 +343,42 @@ async def chat_send(
         if not sess:
             return json.dumps({"error": "Session not found"})
 
+        # Server-side custodial signing.
+        sender_row = await aweb_db.fetch_one(
+            "SELECT alias FROM {{tables.chat_session_participants}} WHERE session_id = $1 AND agent_id = $2",
+            sid,
+            UUID(auth.agent_id),
+        )
+        sender_alias = sender_row["alias"] if sender_row else ""
+        msg_from_did = None
+        msg_signature = None
+        msg_signing_key_id = None
+        msg_created_at = datetime.now(timezone.utc)
+        pre_message_id = uuid_mod.uuid4()
+
+        proj_row = await aweb_db.fetch_one(
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            UUID(auth.project_id),
+        )
+        project_slug = proj_row["slug"] if proj_row else ""
+        sign_result = await sign_on_behalf(
+            auth.agent_id,
+            {
+                "from": f"{project_slug}/{sender_alias}",
+                "from_did": "",
+                "message_id": str(pre_message_id),
+                "to": "",
+                "to_did": "",
+                "type": "chat",
+                "subject": "",
+                "body": message,
+                "timestamp": msg_created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            db_infra,
+        )
+        if sign_result is not None:
+            msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
         msg = await _send_in_session(
             aweb_db,
             session_id=sid,
@@ -294,6 +386,11 @@ async def chat_send(
             body=message,
             leaving=leaving,
             hang_on=hang_on,
+            from_did=msg_from_did,
+            signature=msg_signature,
+            signing_key_id=msg_signing_key_id,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
         )
         if msg is None:
             return json.dumps({"error": "Not a participant in this session"})
@@ -534,24 +631,35 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
         up_to_time,
     )
 
-    await aweb_db.execute(
+    # Guard: only advance cursor if the target message is newer than the
+    # currently stored one.  Uses a subquery on message timestamps rather than
+    # last_read_at (which is wall-clock time) so that the comparison is always
+    # between message creation times.
+    upserted = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_read_receipts}} (session_id, agent_id, last_read_message_id, last_read_at)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE $5 > COALESCE(
+            (SELECT created_at FROM {{tables.chat_messages}}
+             WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
+            'epoch'::timestamptz
+        )
+        RETURNING 1
         """,
         session_uuid,
         agent_uuid,
         up_to_uuid,
         read_time,
+        up_to_time,
     )
 
     return json.dumps(
         {
             "session_id": str(session_uuid),
-            "messages_marked": int(marked or 0),
+            "messages_marked": int(marked or 0) if upserted else 0,
             "status": "read",
         }
     )

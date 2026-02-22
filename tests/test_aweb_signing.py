@@ -48,6 +48,7 @@ class TestCanonicalPayload:
             "body": "hello",
             "from": "alice",
             "from_did": "did:key:z...",
+            "message_id": "550e8400-e29b-41d4-a716-446655440000",
             "subject": "test",
             "timestamp": "2026-01-01T00:00:00Z",
             "to": "bob",
@@ -71,11 +72,21 @@ class TestCanonicalPayload:
 
 
 class TestSignedFields:
-    def test_contains_exactly_eight_fields(self):
-        assert len(SIGNED_FIELDS) == 8
+    def test_contains_exactly_nine_fields(self):
+        assert len(SIGNED_FIELDS) == 9
 
     def test_expected_fields(self):
-        expected = {"body", "from", "from_did", "subject", "timestamp", "to", "to_did", "type"}
+        expected = {
+            "body",
+            "from",
+            "from_did",
+            "message_id",
+            "subject",
+            "timestamp",
+            "to",
+            "to_did",
+            "type",
+        }
         assert SIGNED_FIELDS == expected
 
 

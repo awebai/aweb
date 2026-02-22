@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_project_slug
 from aweb.deps import get_db, get_redis
+from aweb.did import decode_public_key, did_from_public_key
 from aweb.hooks import fire_mutation_hook
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
@@ -215,17 +216,14 @@ class PatchAgentResponse(BaseModel):
     access_mode: str
 
 
-@router.patch("/{agent_id}", response_model=PatchAgentResponse)
+@router.patch("/me", response_model=PatchAgentResponse)
 async def patch_agent(
-    request: Request, agent_id: str, payload: PatchAgentRequest, db=Depends(get_db)
+    request: Request, payload: PatchAgentRequest, db=Depends(get_db)
 ) -> PatchAgentResponse:
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -332,24 +330,20 @@ class AgentLogResponse(BaseModel):
     log: list[AgentLogEntry]
 
 
-@router.get("/{agent_id}/log", response_model=AgentLogResponse)
+@router.get("/me/log", response_model=AgentLogResponse)
 async def agent_log(
     request: Request,
-    agent_id: str,
     db=Depends(get_db),
 ) -> AgentLogResponse:
-    """Return the lifecycle audit log for an agent.
+    """Return the lifecycle audit log for the authenticated agent.
 
     Append-only log of create, rotate, retire, deregister, custody_change events.
-    Ordered by created_at ASC. Authenticated, project-scoped.
+    Ordered by created_at ASC.
     """
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     agent = await aweb_db.fetch_one(
         """
@@ -418,14 +412,13 @@ class RotateKeyResponse(BaseModel):
     custody: str
 
 
-@router.put("/{agent_id}/rotate", response_model=RotateKeyResponse)
+@router.put("/me/rotate", response_model=RotateKeyResponse)
 async def rotate_key(
     request: Request,
-    agent_id: str,
     payload: RotateKeyRequest,
     db=Depends(get_db),
 ) -> RotateKeyResponse:
-    """Rotate an agent's signing key.
+    """Rotate the authenticated agent's signing key.
 
     Persistent agents only. Verifies the rotation proof (signed by old key).
     If graduating custodial->self, destroys the encrypted private key.
@@ -437,12 +430,9 @@ async def rotate_key(
     from nacl.signing import VerifyKey
 
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -464,16 +454,16 @@ async def rotate_key(
 
     # Verify rotation proof: signed by old key
     old_did = row["did"]
-    old_public_key_hex = row["public_key"]
+    old_public_key_encoded = row["public_key"]
 
-    if not old_public_key_hex:
+    if not old_public_key_encoded:
         raise HTTPException(
             status_code=403, detail="Agent has no public key to verify proof against"
         )
 
     try:
-        old_public_key = bytes.fromhex(old_public_key_hex)
-    except ValueError:
+        old_public_key = decode_public_key(old_public_key_encoded)
+    except Exception:
         raise HTTPException(status_code=500, detail="Corrupt public key in database")
 
     canonical = _json.dumps(
@@ -501,14 +491,12 @@ async def rotate_key(
         raise HTTPException(status_code=403, detail="Rotation proof verification error")
 
     # Verify new_public_key encodes to new_did
-    from aweb.did import did_from_public_key
-
     try:
-        new_pub_bytes = bytes.fromhex(payload.new_public_key)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="new_public_key must be hex-encoded")
-    if len(new_pub_bytes) != 32:
-        raise HTTPException(status_code=400, detail="new_public_key must be 32 bytes (64 hex chars)")
+        new_pub_bytes = decode_public_key(payload.new_public_key)
+    except Exception:
+        raise HTTPException(
+            status_code=400, detail="new_public_key must be a base64url-encoded 32-byte Ed25519 key"
+        )
     expected_did = did_from_public_key(new_pub_bytes)
     if expected_did != payload.new_did:
         raise HTTPException(status_code=400, detail="DID does not match new_public_key")
@@ -604,14 +592,13 @@ class RetireAgentResponse(BaseModel):
     successor_agent_id: str
 
 
-@router.put("/{agent_id}/retire", response_model=RetireAgentResponse)
+@router.put("/me/retire", response_model=RetireAgentResponse)
 async def retire_agent(
     request: Request,
-    agent_id: str,
     payload: RetireAgentRequest,
     db=Depends(get_db),
 ) -> RetireAgentResponse:
-    """Retire a persistent agent with a designated successor.
+    """Retire the authenticated agent with a designated successor.
 
     For self-custodial agents: requires a retirement_proof (Ed25519 sig by the
     agent's current key over the canonical retirement payload).
@@ -628,12 +615,9 @@ async def retire_agent(
     from aweb.signing import sign_message
 
     project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
+    agent_uuid = UUID(agent_id)
 
     row = await aweb_db.fetch_one(
         """
@@ -725,15 +709,15 @@ async def retire_agent(
                 status_code=422, detail="retirement_proof is required for self-custodial agents"
             )
 
-        old_public_key_hex = row["public_key"]
-        if not old_public_key_hex:
+        old_public_key_encoded = row["public_key"]
+        if not old_public_key_encoded:
             raise HTTPException(
                 status_code=403, detail="Agent has no public key to verify proof against"
             )
 
         try:
-            old_public_key = bytes.fromhex(old_public_key_hex)
-        except ValueError:
+            old_public_key = decode_public_key(old_public_key_encoded)
+        except Exception:
             raise HTTPException(status_code=500, detail="Corrupt public key in database")
 
         try:
@@ -808,29 +792,15 @@ class DeregisterAgentResponse(BaseModel):
     status: str
 
 
-@router.delete("/{agent_id}", response_model=DeregisterAgentResponse)
-async def deregister_agent(
-    request: Request,
-    agent_id: str,
-    db=Depends(get_db),
+async def _deregister_agent(
+    request: Request, aweb_db, *, agent_uuid: UUID, project_id: str
 ) -> DeregisterAgentResponse:
-    """Deregister an ephemeral agent.
+    """Shared deregistration logic for self and peer endpoints.
 
-    Destroys the signing key, sets status to 'deregistered', soft-deletes
-    (sets deleted_at so the alias can be reused). Rejects persistent agents
-    with 400 — use the retire endpoint instead.
-
-    Auth: any authenticated agent in the same project can call this
-    (peer-callable for stale workspace cleanup).
+    Precondition: caller has verified that the authenticated principal is
+    authorized to act on agents in ``project_id``.  This function performs
+    no authorization check.
     """
-    project_id = await get_project_from_auth(request, db)
-    aweb_db = db.get_manager("aweb")
-
-    try:
-        agent_uuid = UUID(agent_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid agent_id format")
-
     row = await aweb_db.fetch_one(
         """
         SELECT agent_id, did, lifetime, signing_key_enc
@@ -885,3 +855,85 @@ async def deregister_agent(
     )
 
     return DeregisterAgentResponse(agent_id=str(agent_uuid), status="deregistered")
+
+
+@router.delete("/me", response_model=DeregisterAgentResponse)
+async def deregister_agent(
+    request: Request,
+    db=Depends(get_db),
+) -> DeregisterAgentResponse:
+    """Self-deregister the authenticated ephemeral agent.
+
+    Destroys the signing key, sets status to 'deregistered', soft-deletes
+    (sets deleted_at so the alias can be reused). Rejects persistent agents
+    with 400 — use the retire endpoint instead.
+
+    For peer deregistration, use DELETE /v1/agents/{namespace}/{alias}.
+    """
+    project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+    return await _deregister_agent(
+        request, aweb_db, agent_uuid=UUID(agent_id), project_id=project_id
+    )
+
+
+# Catch-all: must be registered LAST — static DELETE routes (/me) above
+# take precedence only because of registration order.
+@router.delete("/{address:path}", response_model=DeregisterAgentResponse)
+async def peer_deregister_agent(
+    request: Request,
+    address: str,
+    db=Depends(get_db),
+) -> DeregisterAgentResponse:
+    """Deregister an ephemeral agent by address (namespace/alias).
+
+    Caller must be authenticated and belong to the same project as the target.
+    Ephemeral-only: persistent agents return 400.
+    """
+    # Split address into namespace (project slug) and alias on the last '/'
+    sep = address.rfind("/")
+    if sep <= 0:
+        raise HTTPException(status_code=404, detail="Invalid address format")
+    namespace = address[:sep]
+    alias = address[sep + 1 :]
+    if not alias:
+        raise HTTPException(status_code=404, detail="Invalid address format")
+
+    caller_project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    # Resolve namespace → project
+    project_row = await aweb_db.fetch_one(
+        """
+        SELECT project_id FROM {{tables.projects}}
+        WHERE slug = $1 AND deleted_at IS NULL
+        """,
+        namespace,
+    )
+    if project_row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target_project_id = str(project_row["project_id"])
+
+    # Authorization: caller must be in the same project
+    if target_project_id != caller_project_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to deregister agents in another project"
+        )
+
+    # Resolve alias → agent
+    agent_row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id FROM {{tables.agents}}
+        WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
+        """,
+        UUID(target_project_id),
+        alias,
+    )
+    if agent_row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return await _deregister_agent(
+        request, aweb_db, agent_uuid=agent_row["agent_id"], project_id=target_project_id
+    )

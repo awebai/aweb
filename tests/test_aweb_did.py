@@ -4,7 +4,9 @@ import base58 as b58
 import pytest
 
 from aweb.did import (
+    decode_public_key,
     did_from_public_key,
+    encode_public_key,
     generate_keypair,
     public_key_from_did,
     validate_did,
@@ -116,3 +118,44 @@ class TestValidateDid:
 
     def test_invalid_base58_characters(self):
         assert validate_did("did:key:z0OIl") is False
+
+
+class TestEncodeDecodePublicKey:
+    def test_roundtrip(self):
+        _, public_key = generate_keypair()
+        encoded = encode_public_key(public_key)
+        decoded = decode_public_key(encoded)
+        assert decoded == public_key
+
+    def test_known_vector_length(self):
+        """32-byte key encodes to 43 characters (base64 no-padding)."""
+        public_key = bytes.fromhex(TEST_VECTOR_PUBLIC_KEY_HEX)
+        encoded = encode_public_key(public_key)
+        assert len(encoded) == 43
+
+    def test_no_padding(self):
+        """Encoded key must not contain '=' padding."""
+        _, public_key = generate_keypair()
+        encoded = encode_public_key(public_key)
+        assert "=" not in encoded
+
+    def test_url_safe(self):
+        """Encoded key uses URL-safe base64 alphabet (no + or /)."""
+        # Generate several keys to increase chance of hitting those characters
+        for _ in range(20):
+            _, public_key = generate_keypair()
+            encoded = encode_public_key(public_key)
+            assert "+" not in encoded
+            assert "/" not in encoded
+
+    def test_decode_rejects_invalid(self):
+        with pytest.raises(Exception):
+            decode_public_key("not-valid-base64!!!")
+
+    def test_decode_rejects_wrong_length(self):
+        """Decoding a valid base64 string of wrong length should raise."""
+        import base64
+
+        short = base64.urlsafe_b64encode(b"short").rstrip(b"=").decode()
+        with pytest.raises(ValueError):
+            decode_public_key(short)

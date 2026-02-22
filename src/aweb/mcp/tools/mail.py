@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
 
+from aweb.custody import sign_on_behalf
 from aweb.mcp.auth import get_auth
 from aweb.messages_service import MessagePriority, deliver_message, get_agent_row
 
@@ -44,6 +47,38 @@ async def send_mail(
 
     to_agent_id = str(row["agent_id"])
 
+    # Server-side custodial signing: sign before INSERT so the message is
+    # never observable without its signature.
+    msg_from_did = None
+    msg_signature = None
+    msg_signing_key_id = None
+    created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
+
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        UUID(auth.project_id),
+    )
+    project_slug = proj_row["slug"] if proj_row else ""
+
+    sign_result = await sign_on_behalf(
+        auth.agent_id,
+        {
+            "from": f"{project_slug}/{sender['alias']}",
+            "from_did": "",
+            "message_id": str(pre_message_id),
+            "to": f"{project_slug}/{to_alias}",
+            "to_did": "",
+            "type": "mail",
+            "subject": subject,
+            "body": body,
+            "timestamp": created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        db_infra,
+    )
+    if sign_result is not None:
+        msg_from_did, msg_signature, msg_signing_key_id = sign_result
+
     message_id, created_at = await deliver_message(
         db_infra,
         project_id=auth.project_id,
@@ -54,6 +89,11 @@ async def send_mail(
         body=body,
         priority=cast(MessagePriority, priority),
         thread_id=None,
+        from_did=msg_from_did,
+        signature=msg_signature,
+        signing_key_id=msg_signing_key_id,
+        created_at=created_at,
+        message_id=pre_message_id,
     )
 
     return json.dumps(

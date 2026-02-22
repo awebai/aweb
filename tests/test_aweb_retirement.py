@@ -1,4 +1,4 @@
-"""Tests for PUT /v1/agents/{agent_id}/retire — retirement with successor (aweb-fj2.14)."""
+"""Tests for PUT /v1/agents/me/retire — retirement with successor (aweb-fj2.14)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
 from aweb.db import DatabaseInfra
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -75,7 +75,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "Retiring Agent",
         "agent",
         did,
-        pub.hex(),
+        encode_public_key(pub),
         custody,
         signing_key_enc,
         "persistent",
@@ -91,7 +91,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "Successor Agent",
         "agent",
         succ_did,
-        succ_pub.hex(),
+        encode_public_key(succ_pub),
         "self",
         "persistent",
     )
@@ -136,7 +136,7 @@ async def test_retire_self_custodial_agent(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -173,7 +173,7 @@ async def test_retire_agent_creates_log_entry(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -210,7 +210,7 @@ async def test_retire_custodial_agent_server_signs(aweb_db_infra, monkeypatch):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Custodial agent: no proof needed, server signs on behalf.
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -254,7 +254,7 @@ async def test_retire_rejects_ephemeral_agent(aweb_db_infra):
         "Ephemeral Agent",
         "agent",
         did,
-        pub.hex(),
+        encode_public_key(pub),
         "self",
         "ephemeral",
     )
@@ -274,7 +274,7 @@ async def test_retire_rejects_ephemeral_agent(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{agent_id}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(key),
                 json={"successor_agent_id": str(uuid.uuid4())},
             )
@@ -294,7 +294,7 @@ async def test_retire_rejects_invalid_proof(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -322,7 +322,7 @@ async def test_retire_rejects_unknown_successor(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": fake_successor,
@@ -350,7 +350,7 @@ async def test_retire_rejects_self_succession(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["agent_id"],
@@ -377,7 +377,7 @@ async def test_retire_log_includes_signed_by(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -416,7 +416,7 @@ async def test_retire_proof_uses_protocol_level_fields(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],
@@ -460,7 +460,7 @@ async def test_retire_already_retired_agent(aweb_db_infra):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                f"/v1/agents/{data['agent_id']}/retire",
+                "/v1/agents/me/retire",
                 headers=_auth(data["api_key"]),
                 json={
                     "successor_agent_id": data["successor_id"],

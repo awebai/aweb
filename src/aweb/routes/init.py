@@ -27,7 +27,9 @@ class InitRequest(BaseModel):
     human_name: str = Field(default="", max_length=64)
     agent_type: str = Field(default="agent", max_length=32)
     did: Optional[str] = Field(default=None, max_length=256)
-    public_key: Optional[str] = Field(default=None, max_length=128)
+    public_key: Optional[str] = Field(
+        default=None, max_length=64
+    )  # base64url, 43 chars for 32 bytes
     custody: Optional[Literal["self", "custodial"]] = None
     lifetime: Literal["persistent", "ephemeral"] = "persistent"
 

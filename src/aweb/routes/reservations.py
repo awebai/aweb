@@ -272,35 +272,54 @@ async def revoke(
     payload: RevokeRequest,
     db=Depends(get_db),
 ) -> dict[str, Any]:
-    """Force-release reservations in this project.
+    """Release the caller's own reservations in this project.
 
-    Intended for admin/support tooling and recovery from stale locks.
-    The operation is project-scoped via auth.
-
-    Optional prefix narrows the revoked set to resource_key LIKE '<prefix>%'.
+    Optional prefix narrows the released set to resource_key LIKE '<prefix>%'.
+    Returns 403 if the prefix matches reservations held by other agents.
     """
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    _actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    actor_uuid = UUID(actor_id)
+    project_uuid = UUID(project_id)
 
     aweb_db = db.get_manager("aweb")
     if payload.prefix:
-        rows = await aweb_db.fetch_all(
-            """
-            DELETE FROM {{tables.reservations}}
-            WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
-            RETURNING 1
-            """,
-            UUID(project_id),
-            payload.prefix,
-        )
+        async with aweb_db.transaction() as tx:
+            rows = await tx.fetch_all(
+                """
+                DELETE FROM {{tables.reservations}}
+                WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+                  AND holder_agent_id = $3
+                RETURNING 1
+                """,
+                project_uuid,
+                payload.prefix,
+                actor_uuid,
+            )
+            if not rows:
+                held_by_others = await tx.fetch_one(
+                    """
+                    SELECT 1 FROM {{tables.reservations}}
+                    WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+                    LIMIT 1
+                    """,
+                    project_uuid,
+                    payload.prefix,
+                )
+                if held_by_others:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Cannot revoke reservations held by other agents",
+                    )
     else:
         rows = await aweb_db.fetch_all(
             """
             DELETE FROM {{tables.reservations}}
-            WHERE project_id = $1
+            WHERE project_id = $1 AND holder_agent_id = $2
             RETURNING 1
             """,
-            UUID(project_id),
+            project_uuid,
+            actor_uuid,
         )
 
     return {"status": "revoked", "deleted": len(rows)}

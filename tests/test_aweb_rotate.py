@@ -1,4 +1,4 @@
-"""Tests for PUT /v1/agents/{agent_id}/rotate — key rotation endpoint (aweb-fj2.13)."""
+"""Tests for PUT /v1/agents/me/rotate — key rotation endpoint (aweb-fj2.13)."""
 
 from __future__ import annotations
 
@@ -15,14 +15,16 @@ from nacl.signing import SigningKey
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _make_rotation_signature(old_private_key: bytes, old_did: str, new_did: str, timestamp: str) -> str:
+def _make_rotation_signature(
+    old_private_key: bytes, old_did: str, new_did: str, timestamp: str
+) -> str:
     """Sign the canonical rotation payload with the old key."""
     payload = json.dumps(
         {"new_did": new_did, "old_did": old_did, "timestamp": timestamp},
@@ -62,7 +64,7 @@ async def _seed_persistent_self_custodial(
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -116,7 +118,7 @@ async def _seed_persistent_custodial(aweb_db, *, slug: str, alias: str, master_k
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "persistent",
@@ -159,11 +161,11 @@ async def test_rotate_self_custodial(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -182,7 +184,7 @@ async def test_rotate_self_custodial(aweb_db_infra):
         uuid.UUID(seed["agent_id"]),
     )
     assert row["did"] == new_did
-    assert row["public_key"] == new_public.hex()
+    assert row["public_key"] == encode_public_key(new_public)
     assert row["custody"] == "self"
 
 
@@ -200,11 +202,11 @@ async def test_rotate_creates_log_entry(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -251,7 +253,7 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
         "Temp",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         "ephemeral",
         "active",
@@ -271,7 +273,7 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{agent_id}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(api_key),
                 json={
                     "new_did": "did:key:zFake",
@@ -297,11 +299,11 @@ async def test_rotate_rejects_bad_proof(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": "invalid-proof",
                     "timestamp": "2026-02-21T12:00:00Z",
@@ -332,11 +334,11 @@ async def test_rotate_graduation_custodial_to_self(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -372,11 +374,11 @@ async def test_rotate_rejects_wrong_key_proof(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -406,11 +408,11 @@ async def test_rotate_deleted_agent(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": new_public.hex(),
+                    "new_public_key": encode_public_key(new_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -437,11 +439,11 @@ async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
-                f"/v1/agents/{seed['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(seed["api_key"]),
                 json={
                     "new_did": new_did,
-                    "new_public_key": wrong_public.hex(),
+                    "new_public_key": encode_public_key(wrong_public),
                     "custody": "self",
                     "rotation_signature": proof,
                     "timestamp": timestamp,
@@ -450,27 +452,6 @@ async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
             assert resp.status_code == 400
             assert "does not match" in resp.json()["detail"].lower()
 
-
-@pytest.mark.asyncio
-async def test_rotate_404_unknown_agent(aweb_db_infra):
-    aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_persistent_self_custodial(aweb_db, slug="unknown-rotate")
-
-    app = create_app(db_infra=aweb_db_infra)
-    async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.put(
-                f"/v1/agents/{uuid.uuid4()}/rotate",
-                headers=_auth(seed["api_key"]),
-                json={
-                    "new_did": "did:key:zFake",
-                    "new_public_key": "aa" * 32,
-                    "custody": "self",
-                    "rotation_signature": "fake",
-                    "timestamp": "2026-02-21T12:00:00Z",
-                },
-            )
-            assert resp.status_code == 404
 
 
 async def _add_agent_to_project(aweb_db, *, project_id, alias):
@@ -492,7 +473,7 @@ async def _add_agent_to_project(aweb_db, *, project_id, alias):
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -534,11 +515,11 @@ async def test_chained_rotation_delivers_earliest_announcement(aweb_db_infra):
             ts1 = "2026-02-21T12:00:00Z"
             proof1 = _make_rotation_signature(alice["private_key"], alice["did"], did_b, ts1)
             resp = await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": did_b,
-                    "new_public_key": key_b_pub.hex(),
+                    "new_public_key": encode_public_key(key_b_pub),
                     "custody": "self",
                     "rotation_signature": proof1,
                     "timestamp": ts1,
@@ -552,11 +533,11 @@ async def test_chained_rotation_delivers_earliest_announcement(aweb_db_infra):
             ts2 = "2026-02-21T13:00:00Z"
             proof2 = _make_rotation_signature(key_b_priv, did_b, did_c, ts2)
             resp = await c.put(
-                f"/v1/agents/{alice['agent_id']}/rotate",
+                "/v1/agents/me/rotate",
                 headers=_auth(alice["api_key"]),
                 json={
                     "new_did": did_c,
-                    "new_public_key": key_c_pub.hex(),
+                    "new_public_key": encode_public_key(key_c_pub),
                     "custody": "self",
                     "rotation_signature": proof2,
                     "timestamp": ts2,

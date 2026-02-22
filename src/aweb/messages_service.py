@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
@@ -54,6 +55,7 @@ async def deliver_message(
     signature: str | None = None,
     signing_key_id: str | None = None,
     created_at: datetime | None = None,
+    message_id: UUID | None = None,
 ) -> tuple[UUID, datetime]:
     project_uuid = _parse_uuid(project_id, field_name="project_id")
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id")
@@ -72,16 +74,19 @@ async def deliver_message(
 
     if created_at is None:
         created_at = datetime.now(timezone.utc)
+    if message_id is None:
+        message_id = uuid_mod.uuid4()
 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
+            (message_id, project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING message_id, created_at
         """,
+        message_id,
         project_uuid,
         from_uuid,
         to_uuid,

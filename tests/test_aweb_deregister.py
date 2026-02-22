@@ -1,4 +1,4 @@
-"""Tests for DELETE /v1/agents/{agent_id} — ephemeral agent deregistration (aweb-fj2.15)."""
+"""Tests for DELETE /v1/agents/me — ephemeral agent self-deregistration (aweb-fj2.15)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.auth import hash_api_key
 from aweb.custody import encrypt_signing_key
-from aweb.did import did_from_public_key, generate_keypair
+from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -46,7 +46,7 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
         f"Human {alias}",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         encrypted_key,
         "ephemeral",
@@ -72,12 +72,19 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
     }
 
 
-async def _seed_persistent_agent(aweb_db, *, project_id: uuid.UUID):
-    """Add a persistent agent to an existing project."""
+async def _seed_persistent_agent_with_key(aweb_db, *, project_slug: str):
+    """Create a persistent self-custodial agent with its own API key."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        project_id,
+        project_slug,
+        f"Project {project_slug}",
+    )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
@@ -91,7 +98,7 @@ async def _seed_persistent_agent(aweb_db, *, project_id: uuid.UUID):
         "Persistent Agent",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "self",
         "persistent",
         "active",
@@ -124,7 +131,7 @@ async def test_deregister_ephemeral_agent(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200, resp.text
@@ -146,7 +153,7 @@ async def test_deregister_clears_signing_key(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200
@@ -174,7 +181,7 @@ async def test_deregister_creates_log_entry(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
 
@@ -189,75 +196,24 @@ async def test_deregister_creates_log_entry(aweb_db_infra, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_deregister_rejects_persistent_agent(aweb_db_infra, monkeypatch):
+    """A persistent agent trying to self-deregister gets 400."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
-
-    # Create project + ephemeral agent for auth
-    seed = await _seed_ephemeral_agent(
-        aweb_db, project_slug="persist-test", alias="temp", master_key=master_key
-    )
-    # Add a persistent agent to the same project
-    persistent = await _seed_persistent_agent(aweb_db, project_id=uuid.UUID(seed["project_id"]))
+    persistent = await _seed_persistent_agent_with_key(aweb_db, project_slug="persist-test")
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
-                f"/v1/agents/{persistent['agent_id']}",
-                headers=_auth(seed["api_key"]),
+                "/v1/agents/me",
+                headers=_auth(persistent["api_key"]),
             )
             assert resp.status_code == 400
             assert (
                 "persistent" in resp.json()["detail"].lower()
                 or "retire" in resp.json()["detail"].lower()
             )
-
-
-@pytest.mark.asyncio
-async def test_deregister_404_unknown_agent(aweb_db_infra, monkeypatch):
-    master_key = secrets.token_bytes(32)
-    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
-    aweb_db = aweb_db_infra.get_manager("aweb")
-    seed = await _seed_ephemeral_agent(
-        aweb_db, project_slug="unknown-test", alias="agent", master_key=master_key
-    )
-
-    app = create_app(db_infra=aweb_db_infra)
-    async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.delete(
-                f"/v1/agents/{uuid.uuid4()}",
-                headers=_auth(seed["api_key"]),
-            )
-            assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_deregister_cross_project_forbidden(aweb_db_infra, monkeypatch):
-    """An agent in project A cannot deregister an agent in project B."""
-    master_key = secrets.token_bytes(32)
-    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
-    aweb_db = aweb_db_infra.get_manager("aweb")
-
-    seed_a = await _seed_ephemeral_agent(
-        aweb_db, project_slug="proj-a", alias="alice", master_key=master_key
-    )
-    seed_b = await _seed_ephemeral_agent(
-        aweb_db, project_slug="proj-b", alias="bob", master_key=master_key
-    )
-
-    app = create_app(db_infra=aweb_db_infra)
-    async with LifespanManager(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            # Agent in project A tries to deregister agent in project B
-            resp = await c.delete(
-                f"/v1/agents/{seed_b['agent_id']}",
-                headers=_auth(seed_a["api_key"]),
-            )
-            assert (
-                resp.status_code == 404
-            )  # Should look like not found (don't leak cross-project info)
 
 
 @pytest.mark.asyncio
@@ -274,7 +230,7 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp.status_code == 200
@@ -295,7 +251,7 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
         "New Alice",
         "agent",
         did,
-        public_key.hex(),
+        encode_public_key(public_key),
         "custodial",
         "ephemeral",
     )
@@ -320,13 +276,13 @@ async def test_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp1 = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp1.status_code == 200
 
             resp2 = await c.delete(
-                f"/v1/agents/{seed['agent_id']}",
+                "/v1/agents/me",
                 headers=_auth(seed["api_key"]),
             )
             assert resp2.status_code == 404
@@ -337,5 +293,5 @@ async def test_deregister_requires_auth(aweb_db_infra, monkeypatch):
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.delete(f"/v1/agents/{uuid.uuid4()}")
+            resp = await c.delete("/v1/agents/me")
             assert resp.status_code in (401, 403)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 def _utc_iso(dt: datetime) -> str:
     """Format a datetime as ISO 8601, UTC, second precision with Z suffix."""
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
@@ -103,52 +105,53 @@ async def _ensure_session(
     aweb_db = db.get_manager("aweb")
     p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
-    row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
-        VALUES ($1, $2)
-        ON CONFLICT (project_id, participant_hash) DO NOTHING
-        RETURNING session_id
-        """,
-        UUID(project_id),
-        p_hash,
-    )
-    if row and row.get("session_id"):
-        session_id = row["session_id"]
-    else:
-        existing = await aweb_db.fetch_one(
+    async with aweb_db.transaction() as tx:
+        row = await tx.fetch_one(
             """
-            SELECT session_id
-            FROM {{tables.chat_sessions}}
-            WHERE project_id = $1 AND participant_hash = $2
+            INSERT INTO {{tables.chat_sessions}} (project_id, participant_hash)
+            VALUES ($1, $2)
+            ON CONFLICT (project_id, participant_hash) DO NOTHING
+            RETURNING session_id
             """,
             UUID(project_id),
             p_hash,
         )
-        if existing is None:
-            logger.error(
-                "Chat session not found after INSERT ON CONFLICT DO NOTHING. "
-                "project_id=%s participant_hash=%s",
-                project_id,
+        if row and row.get("session_id"):
+            session_id = row["session_id"]
+        else:
+            existing = await tx.fetch_one(
+                """
+                SELECT session_id
+                FROM {{tables.chat_sessions}}
+                WHERE project_id = $1 AND participant_hash = $2
+                """,
+                UUID(project_id),
                 p_hash,
             )
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to create or retrieve chat session",
-            )
-        session_id = existing["session_id"]
+            if existing is None:
+                logger.error(
+                    "Chat session not found after INSERT ON CONFLICT DO NOTHING. "
+                    "project_id=%s participant_hash=%s",
+                    project_id,
+                    p_hash,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create or retrieve chat session",
+                )
+            session_id = existing["session_id"]
 
-    for agent in agent_rows:
-        await aweb_db.execute(
-            """
-            INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
-            """,
-            session_id,
-            UUID(str(agent["agent_id"])),
-            agent["alias"],
-        )
+        for agent in agent_rows:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.chat_session_participants}} (session_id, agent_id, alias)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
+                """,
+                session_id,
+                UUID(str(agent["agent_id"])),
+                agent["alias"],
+            )
 
     return UUID(str(session_id))
 
@@ -254,6 +257,7 @@ async def create_or_send(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
@@ -266,6 +270,7 @@ async def create_or_send(
             {
                 "from": f"{project_slug}/{sender['alias']}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": ",".join(f"{project_slug}/{a}" for a in sorted(payload.to_aliases)),
                 "to_did": payload.to_did or "",
                 "type": "chat",
@@ -281,11 +286,12 @@ async def create_or_send(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving,
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING message_id, created_at
         """,
+        pre_message_id,
         session_id,
         UUID(actor_id),
         sender["alias"],
@@ -307,6 +313,8 @@ async def create_or_send(
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_id,
         UUID(actor_id),
@@ -623,21 +631,32 @@ async def mark_read(
         up_to_time,
     )
 
-    await aweb_db.execute(
+    # Guard: only advance cursor if the target message is newer than the
+    # currently stored one.  Uses a subquery on message timestamps rather than
+    # last_read_at (which is wall-clock time) so that the comparison is always
+    # between message creation times.
+    upserted = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_read_receipts}} (session_id, agent_id, last_read_message_id, last_read_at)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE $5 > COALESCE(
+            (SELECT created_at FROM {{tables.chat_messages}}
+             WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
+            'epoch'::timestamptz
+        )
+        RETURNING 1
         """,
         session_uuid,
         agent_uuid,
         up_to_uuid,
         read_time,
+        up_to_time,
     )
 
-    return {"success": True, "messages_marked": int(marked or 0)}
+    return {"success": True, "messages_marked": int(marked or 0) if upserted else 0}
 
 
 async def _sse_events(
@@ -924,6 +943,7 @@ async def send_message(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
@@ -936,6 +956,7 @@ async def send_message(
             {
                 "from": f"{project_slug}/{canonical_alias}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": "",
                 "to_did": payload.to_did or "",
                 "type": "chat",
@@ -951,11 +972,12 @@ async def send_message(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
+            (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
              from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
+        pre_message_id,
         session_uuid,
         agent_uuid,
         canonical_alias,
@@ -978,6 +1000,8 @@ async def send_message(
         ON CONFLICT (session_id, agent_id) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
             last_read_at = EXCLUDED.last_read_at
+        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_uuid,
         agent_uuid,

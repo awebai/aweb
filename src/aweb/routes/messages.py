@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
@@ -136,12 +138,43 @@ async def send_message(
     if to_agent_id is None:
         raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
 
+    # Check if recipient is retired
+    aweb_db = db.get_manager("aweb")
+    recip_status = await aweb_db.fetch_one(
+        """
+        SELECT status, successor_agent_id
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        UUID(to_agent_id),
+        UUID(project_id),
+    )
+    if recip_status and recip_status["status"] == "retired":
+        successor_alias = None
+        succ_id = recip_status["successor_agent_id"]
+        if succ_id:
+            succ = await aweb_db.fetch_one(
+                "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
+                succ_id,
+            )
+            if succ:
+                successor_alias = succ["alias"]
+        return JSONResponse(
+            status_code=410,
+            content={
+                "detail": "Agent is retired",
+                "successor_alias": successor_alias,
+                "successor_agent_id": str(succ_id) if succ_id is not None else None,
+            },
+        )
+
     # Server-side custodial signing: sign before INSERT so the message is
     # never observable without its signature.
     msg_from_did = payload.from_did
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     created_at = datetime.now(timezone.utc)
+    pre_message_id = uuid_mod.uuid4()
 
     if payload.signature is None:
         aweb_db = db.get_manager("aweb")
@@ -160,6 +193,7 @@ async def send_message(
             {
                 "from": f"{project_slug}/{sender['alias']}",
                 "from_did": "",
+                "message_id": str(pre_message_id),
                 "to": to_address,
                 "to_did": payload.to_did or "",
                 "type": "mail",
@@ -187,13 +221,12 @@ async def send_message(
         signature=msg_signature,
         signing_key_id=msg_signing_key_id,
         created_at=created_at,
+        message_id=pre_message_id,
     )
 
     # Sending a message to an agent implicitly acknowledges their rotation
     aweb_db = db.get_manager("aweb")
-    await acknowledge_rotation(
-        aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id)
-    )
+    await acknowledge_rotation(aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id))
 
     await fire_mutation_hook(
         request,
@@ -333,7 +366,8 @@ async def acknowledge(
         message_uuid,
     )
     acknowledged_at = (
-        _utc_iso(updated["read_at"]) if updated and updated["read_at"]
+        _utc_iso(updated["read_at"])
+        if updated and updated["read_at"]
         else _utc_iso(datetime.now(timezone.utc))
     )
 

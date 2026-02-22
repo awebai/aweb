@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -712,3 +713,157 @@ async def test_mcp_lock_acquire_conflict(aweb_db_infra):
             )
             assert "error" in conflict
             assert conflict["holder_alias"] == "alice"
+
+
+# ---------------------------------------------------------------------------
+# MCP custodial signing (aweb-92r)
+# ---------------------------------------------------------------------------
+
+
+async def _setup_custodial_agents(aweb_db_infra, slug: str, monkeypatch):
+    """Create two agents: a custodial agent (alice) and a plain agent (bob).
+
+    Returns (alice, bob, master_key).
+    """
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+
+    rest_app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            resp = await rc.post(
+                "/v1/init",
+                json={
+                    "project_slug": slug,
+                    "alias": "alice",
+                    "custody": "custodial",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            alice = resp.json()
+
+            resp = await rc.post(
+                "/v1/init",
+                json={
+                    "project_slug": slug,
+                    "alias": "bob",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            bob = resp.json()
+
+    return alice, bob
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_custodial_signing(aweb_db_infra, monkeypatch):
+    """MCP send_mail from a custodial agent produces a signed message."""
+    alice, bob = await _setup_custodial_agents(aweb_db_infra, "mcp-cust-mail", monkeypatch)
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+    auth_bob = {"Authorization": f"Bearer {bob['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            send_result = await _tool_call(
+                mc,
+                "send_mail",
+                {"to_alias": "bob", "subject": "signed", "body": "custodial message"},
+                sid_a,
+                auth_alice,
+            )
+            assert send_result["status"] == "delivered"
+
+            # Bob checks inbox — message should be signed
+            _, sid_b = await _mcp_initialize(mc, headers=auth_bob)
+            inbox = await _tool_call(mc, "check_inbox", {"unread_only": True}, sid_b, auth_bob)
+            assert len(inbox["messages"]) == 1
+            msg = inbox["messages"][0]
+            assert msg["from_did"] == alice["did"]
+            assert msg["signature"] is not None
+            assert msg["signing_key_id"] == alice["did"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_custodial_signing(aweb_db_infra, monkeypatch):
+    """MCP chat_send from a custodial agent produces a signed message."""
+    alice, bob = await _setup_custodial_agents(aweb_db_infra, "mcp-cust-chat", monkeypatch)
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "custodial chat"},
+                sid_a,
+                auth_alice,
+            )
+            assert result["delivered"] is True
+            session_id = result["session_id"]
+
+            # Check via REST API that the message is signed
+    rest_app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            resp = await rc.get(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers={"Authorization": f"Bearer {bob['api_key']}"},
+            )
+            assert resp.status_code == 200
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 1
+            assert msgs[0]["from_did"] == alice["did"]
+            assert msgs[0]["signature"] is not None
+            assert msgs[0]["signing_key_id"] == alice["did"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_session_id_custodial_signing(aweb_db_infra, monkeypatch):
+    """MCP chat_send via session_id from a custodial agent produces a signed message."""
+    alice, bob = await _setup_custodial_agents(aweb_db_infra, "mcp-cust-sid", monkeypatch)
+    auth_alice = {"Authorization": f"Bearer {alice['api_key']}"}
+
+    mcp_app = create_mcp_app(db_infra=aweb_db_infra)
+    async with LifespanManager(mcp_app):
+        async with AsyncClient(transport=ASGITransport(app=mcp_app), base_url="http://test") as mc:
+            # Create session via to_alias first
+            _, sid_a = await _mcp_initialize(mc, headers=auth_alice)
+            result = await _tool_call(
+                mc,
+                "chat_send",
+                {"to_alias": "bob", "message": "first message"},
+                sid_a,
+                auth_alice,
+            )
+            assert result["delivered"] is True
+            session_id = result["session_id"]
+
+            # Send follow-up via session_id
+            result2 = await _tool_call(
+                mc,
+                "chat_send",
+                {"session_id": session_id, "message": "follow-up via session_id"},
+                sid_a,
+                auth_alice,
+            )
+            assert result2["delivered"] is True
+
+    # Check via REST API that both messages are signed
+    rest_app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(rest_app):
+        async with AsyncClient(transport=ASGITransport(app=rest_app), base_url="http://test") as rc:
+            resp = await rc.get(
+                f"/v1/chat/sessions/{session_id}/messages",
+                headers={"Authorization": f"Bearer {bob['api_key']}"},
+            )
+            assert resp.status_code == 200
+            msgs = resp.json()["messages"]
+            assert len(msgs) == 2
+            for msg in msgs:
+                assert msg["from_did"] == alice["did"]
+                assert msg["signature"] is not None
+                assert msg["signing_key_id"] == alice["did"]
