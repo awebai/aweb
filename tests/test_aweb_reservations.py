@@ -163,3 +163,38 @@ async def test_aweb_reservations_list_prefix_filter(aweb_db_infra):
             keys = [i.get("resource_key") for i in items]
             assert key_in in keys
             assert key_out not in keys
+
+
+@pytest.mark.asyncio
+async def test_revoke_rejects_non_holder(aweb_db_infra):
+    """Agent cannot revoke reservations held by another agent."""
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+            resource_key = f"revoke-test:{uuid.uuid4().hex}"
+
+            # Agent-1 acquires the reservation
+            resp = await client.post(
+                "/v1/reservations",
+                headers=headers_1,
+                json={"resource_key": resource_key, "ttl_seconds": 300},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Agent-2 tries to revoke it — should be rejected
+            resp = await client.post(
+                "/v1/reservations/revoke",
+                headers=headers_2,
+                json={"prefix": resource_key},
+            )
+            assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+
+            # Reservation should still be held by agent-1
+            resp = await client.get("/v1/reservations", headers=headers_1)
+            assert resp.status_code == 200
+            keys = [r["resource_key"] for r in resp.json()["reservations"]]
+            assert resource_key in keys

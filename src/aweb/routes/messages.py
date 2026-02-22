@@ -6,6 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
@@ -136,6 +137,35 @@ async def send_message(
 
     if to_agent_id is None:
         raise HTTPException(status_code=422, detail="Must provide to_agent_id or to_alias")
+
+    # Check if recipient is retired
+    aweb_db_check = db.get_manager("aweb")
+    recip_status = await aweb_db_check.fetch_one(
+        """
+        SELECT status, successor_agent_id
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        UUID(to_agent_id),
+        UUID(project_id),
+    )
+    if recip_status and recip_status["status"] == "retired":
+        successor_alias = None
+        if recip_status["successor_agent_id"]:
+            succ = await aweb_db_check.fetch_one(
+                "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1",
+                recip_status["successor_agent_id"],
+            )
+            if succ:
+                successor_alias = succ["alias"]
+        return JSONResponse(
+            status_code=410,
+            content={
+                "detail": "Agent is retired",
+                "successor_alias": successor_alias,
+                "successor_agent_id": str(recip_status["successor_agent_id"]),
+            },
+        )
 
     # Server-side custodial signing: sign before INSERT so the message is
     # never observable without its signature.
