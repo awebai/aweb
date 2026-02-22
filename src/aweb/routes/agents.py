@@ -775,24 +775,10 @@ class DeregisterAgentResponse(BaseModel):
     status: str
 
 
-@router.delete("/me", response_model=DeregisterAgentResponse)
-async def deregister_agent(
-    request: Request,
-    db=Depends(get_db),
+async def _deregister_agent(
+    request: Request, aweb_db, *, agent_uuid: UUID, project_id: str
 ) -> DeregisterAgentResponse:
-    """Self-deregister the authenticated ephemeral agent.
-
-    Destroys the signing key, sets status to 'deregistered', soft-deletes
-    (sets deleted_at so the alias can be reused). Rejects persistent agents
-    with 400 — use the retire endpoint instead.
-
-    For peer deregistration, use DELETE /v1/agents/{namespace}/{alias}.
-    """
-    project_id = await get_project_from_auth(request, db)
-    agent_id = await get_actor_agent_id_from_auth(request, db)
-    aweb_db = db.get_manager("aweb")
-    agent_uuid = UUID(agent_id)
-
+    """Shared deregistration logic for self and peer endpoints."""
     row = await aweb_db.fetch_one(
         """
         SELECT agent_id, did, lifetime, signing_key_enc
@@ -847,3 +833,81 @@ async def deregister_agent(
     )
 
     return DeregisterAgentResponse(agent_id=str(agent_uuid), status="deregistered")
+
+
+@router.delete("/me", response_model=DeregisterAgentResponse)
+async def deregister_agent(
+    request: Request,
+    db=Depends(get_db),
+) -> DeregisterAgentResponse:
+    """Self-deregister the authenticated ephemeral agent.
+
+    Destroys the signing key, sets status to 'deregistered', soft-deletes
+    (sets deleted_at so the alias can be reused). Rejects persistent agents
+    with 400 — use the retire endpoint instead.
+
+    For peer deregistration, use DELETE /v1/agents/{namespace}/{alias}.
+    """
+    project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+    return await _deregister_agent(
+        request, aweb_db, agent_uuid=UUID(agent_id), project_id=project_id
+    )
+
+
+@router.delete("/{address:path}", response_model=DeregisterAgentResponse)
+async def peer_deregister_agent(
+    request: Request,
+    address: str,
+    db=Depends(get_db),
+) -> DeregisterAgentResponse:
+    """Deregister an ephemeral agent by address (namespace/alias).
+
+    Caller must be authenticated and belong to the same project as the target.
+    Ephemeral-only: persistent agents return 400.
+    """
+    # Split address into namespace (project slug) and alias on the last '/'
+    sep = address.rfind("/")
+    if sep <= 0:
+        raise HTTPException(status_code=404, detail="Invalid address format")
+    namespace = address[:sep]
+    alias = address[sep + 1 :]
+
+    caller_project_id = await get_project_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    # Resolve namespace → project
+    project_row = await aweb_db.fetch_one(
+        """
+        SELECT project_id FROM {{tables.projects}}
+        WHERE slug = $1 AND deleted_at IS NULL
+        """,
+        namespace,
+    )
+    if project_row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target_project_id = str(project_row["project_id"])
+
+    # Authorization: caller must be in the same project
+    if target_project_id != caller_project_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to deregister agents in another project"
+        )
+
+    # Resolve alias → agent
+    agent_row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id FROM {{tables.agents}}
+        WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
+        """,
+        UUID(target_project_id),
+        alias,
+    )
+    if agent_row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return await _deregister_agent(
+        request, aweb_db, agent_uuid=agent_row["agent_id"], project_id=target_project_id
+    )
