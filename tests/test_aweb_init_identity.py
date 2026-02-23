@@ -14,6 +14,7 @@ from aweb.api import create_app
 from aweb.custody import decrypt_signing_key
 from aweb.db import DatabaseInfra
 from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
+from aweb.stable_id import stable_id_from_did_key
 
 
 @pytest.mark.asyncio
@@ -34,6 +35,7 @@ async def test_legacy_init_no_did_fields(aweb_db_infra):
             data = resp.json()
             assert data["did"] is not None
             assert data["did"].startswith("did:key:z")
+            assert data["stable_id"] == stable_id_from_did_key(data["did"])
             assert data["custody"] == "custodial"
             assert data["lifetime"] == "persistent"
             assert data["created"] is True
@@ -63,17 +65,19 @@ async def test_self_custodial_init(aweb_db_infra):
             assert resp.status_code == 200, resp.text
             data = resp.json()
             assert data["did"] == did
+            assert data["stable_id"] == stable_id_from_did_key(did)
             assert data["custody"] == "self"
             assert data["lifetime"] == "persistent"
 
             # Verify agent row in DB
             aweb_db = aweb_db_infra.get_manager("aweb")
             row = await aweb_db.fetch_one(
-                "SELECT did, public_key, custody, signing_key_enc, lifetime "
+                "SELECT did, stable_id, public_key, custody, signing_key_enc, lifetime "
                 "FROM {{tables.agents}} WHERE agent_id = $1",
                 uuid.UUID(data["agent_id"]),
             )
             assert row["did"] == did
+            assert row["stable_id"] == stable_id_from_did_key(did)
             assert row["public_key"] == pub_b64
             assert row["custody"] == "self"
             assert row["signing_key_enc"] is None  # self-custodial — no server-side key

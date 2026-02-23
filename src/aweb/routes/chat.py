@@ -35,6 +35,7 @@ from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import utc_iso as _utc_iso
 from aweb.routes import format_agent_address
+from aweb.stable_id import ensure_agent_stable_ids, validate_stable_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,20 @@ def _chat_to_address(project_slug: str, participant_aliases: list[str], from_ali
     )
 
 
+def _chat_to_stable_id(
+    participant_aliases: list[str], *, stable_by_alias: dict[str, str | None], from_alias: str
+) -> str | None:
+    stable_ids: list[str] = []
+    for alias in participant_aliases:
+        if alias == from_alias:
+            continue
+        stable = stable_by_alias.get(alias)
+        if not stable:
+            return None
+        stable_ids.append(stable)
+    return ",".join(stable_ids)
+
+
 async def _targets_left(db, *, session_id: UUID, target_agent_ids: list[str]) -> list[str]:
     if not target_agent_ids:
         return []
@@ -115,7 +130,9 @@ class CreateSessionRequest(BaseModel):
     message_id: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
+    from_stable_id: str | None = Field(default=None, max_length=256)
     to_did: str | None = Field(default=None, max_length=256)
+    to_stable_id: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signing_key_id: str | None = Field(default=None, max_length=256)
 
@@ -138,6 +155,16 @@ class CreateSessionRequest(BaseModel):
         if v is None:
             return None
         return _parse_uuid(v, field="message_id")
+
+    @field_validator("from_stable_id", "to_stable_id")
+    @classmethod
+    def _validate_stable_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        return validate_stable_id(v)
 
 
 class CreateSessionResponse(BaseModel):
@@ -181,11 +208,31 @@ async def create_or_send(
 
     aweb_db = db.get_manager("aweb")
 
+    stable_ids = await ensure_agent_stable_ids(
+        aweb_db, project_id=project_id, agent_ids=[actor_id, *target_ids]
+    )
+    sender_stable_id = stable_ids.get(actor_id)
+    stable_by_alias = {r["alias"]: stable_ids.get(str(r["agent_id"])) for r in agent_rows}
+
+    expected_to_stable_id: str | None = None
+    if to_aliases:
+        stable_targets: list[str] = []
+        for alias in sorted(to_aliases):
+            stable = stable_by_alias.get(alias)
+            if not stable:
+                stable_targets = []
+                break
+            stable_targets.append(stable)
+        if stable_targets:
+            expected_to_stable_id = ",".join(stable_targets)
+
     # Server-side custodial signing: sign before INSERT so the message is
     # never observable without its signature.
     msg_from_did = payload.from_did
+    msg_from_stable_id = payload.from_stable_id
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
+    msg_to_stable_id = payload.to_stable_id
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
@@ -202,25 +249,38 @@ async def create_or_send(
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
+    if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
+        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+    if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
+        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id(s)")
+
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
+        msg_from_stable_id = sender_stable_id
+        msg_to_stable_id = expected_to_stable_id
+        to_address = ",".join(format_agent_address(project_slug, a) for a in sorted(payload.to_aliases))
+        message_fields: dict[str, str] = {
+            "from": f"{project_slug}/{sender['alias']}",
+            "from_did": "",
+            "message_id": str(pre_message_id),
+            "to": to_address,
+            "to_did": payload.to_did or "",
+            "type": "chat",
+            "subject": "",
+            "body": payload.message,
+            "timestamp": _utc_iso(msg_created_at),
+        }
+        if msg_from_stable_id:
+            message_fields["from_stable_id"] = msg_from_stable_id
+        if msg_to_stable_id:
+            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
-            {
-                "from": f"{project_slug}/{sender['alias']}",
-                "from_did": "",
-                "message_id": str(pre_message_id),
-                "to": ",".join(f"{project_slug}/{a}" for a in sorted(payload.to_aliases)),
-                "to_did": payload.to_did or "",
-                "type": "chat",
-                "subject": "",
-                "body": payload.message,
-                "timestamp": _utc_iso(msg_created_at),
-            },
+            message_fields,
             db,
         )
         if sign_result is not None:
@@ -234,7 +294,9 @@ async def create_or_send(
             body=payload.message,
             leaving=payload.leaving,
             from_did=msg_from_did,
+            from_stable_id=msg_from_stable_id,
             to_did=payload.to_did,
+            to_stable_id=msg_to_stable_id,
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=msg_created_at,
@@ -246,6 +308,8 @@ async def create_or_send(
         if isinstance(e, asyncpg.exceptions.UniqueViolationError):
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
+    if msg_row is None:
+        raise HTTPException(status_code=500, detail="Failed to send message")
 
     participants_rows = await aweb_db.fetch_all(
         """
@@ -407,7 +471,9 @@ async def history(
                 "sender_leaving": m["sender_leaving"],
                 "to_address": _chat_to_address(project_slug, participant_aliases, m["from_alias"]),
                 "from_did": m["from_did"],
+                "from_stable_id": m.get("from_stable_id"),
                 "to_did": m["to_did"],
+                "to_stable_id": m.get("to_stable_id"),
                 "signature": m["signature"],
                 "signing_key_id": m["signing_key_id"],
             }
@@ -507,7 +573,7 @@ async def _sse_events(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
                        sender_leaving, hang_on,
-                       from_did, to_did, signature, signing_key_id
+                       from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -539,7 +605,9 @@ async def _sse_events(
                         project_slug, participant_aliases, r["from_alias"]
                     ),
                     "from_did": r["from_did"],
+                    "from_stable_id": r.get("from_stable_id"),
                     "to_did": r["to_did"],
+                    "to_stable_id": r.get("to_stable_id"),
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                 }
@@ -562,7 +630,7 @@ async def _sse_events(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
                        sender_leaving, hang_on,
-                       from_did, to_did, signature, signing_key_id
+                       from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -593,7 +661,9 @@ async def _sse_events(
                         project_slug, participant_aliases, r["from_alias"]
                     ),
                     "from_did": r["from_did"],
+                    "from_stable_id": r.get("from_stable_id"),
                     "to_did": r["to_did"],
+                    "to_stable_id": r.get("to_stable_id"),
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                 }
@@ -678,6 +748,9 @@ async def stream(
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
 
+    # Register immediately so presence is visible even if the stream isn't consumed yet.
+    await register_waiting(redis, str(session_uuid), str(agent_uuid))
+
     return StreamingResponse(
         _sse_events(
             db=db,
@@ -705,7 +778,9 @@ class SendMessageRequest(BaseModel):
     message_id: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
+    from_stable_id: str | None = Field(default=None, max_length=256)
     to_did: str | None = Field(default=None, max_length=256)
+    to_stable_id: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signing_key_id: str | None = Field(default=None, max_length=256)
 
@@ -715,6 +790,16 @@ class SendMessageRequest(BaseModel):
         if v is None:
             return None
         return _parse_uuid(v, field="message_id")
+
+    @field_validator("from_stable_id", "to_stable_id")
+    @classmethod
+    def _validate_stable_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        return validate_stable_id(v)
 
 
 class SendMessageResponse(BaseModel):
@@ -770,13 +855,33 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a participant in this session")
     canonical_alias = participant["alias"]
 
+    participant_rows = await aweb_db.fetch_all(
+        """
+        SELECT agent_id, alias
+        FROM {{tables.chat_session_participants}}
+        WHERE session_id = $1
+        ORDER BY alias ASC
+        """,
+        session_uuid,
+    )
+    participant_aliases = [r["alias"] for r in participant_rows]
+    participant_ids = [str(r["agent_id"]) for r in participant_rows]
+    stable_ids = await ensure_agent_stable_ids(aweb_db, project_id=project_id, agent_ids=participant_ids)
+    stable_by_alias = {r["alias"]: stable_ids.get(str(r["agent_id"])) for r in participant_rows}
+    sender_stable_id = stable_ids.get(actor_id)
+    expected_to_stable_id = _chat_to_stable_id(
+        participant_aliases, stable_by_alias=stable_by_alias, from_alias=canonical_alias
+    )
+
     extends_wait_seconds = HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0
 
     # Server-side custodial signing: sign before INSERT so the message is
     # never observable without its signature.
     msg_from_did = payload.from_did
+    msg_from_stable_id = payload.from_stable_id
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
+    msg_to_stable_id = payload.to_stable_id
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
@@ -793,36 +898,38 @@ async def send_message(
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
+    if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
+        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+    if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
+        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id(s)")
+
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
-        participant_rows = await aweb_db.fetch_all(
-            """
-            SELECT alias
-            FROM {{tables.chat_session_participants}}
-            WHERE session_id = $1
-            ORDER BY alias ASC
-            """,
-            session_uuid,
-        )
-        participant_aliases = [r["alias"] for r in participant_rows]
+        msg_from_stable_id = sender_stable_id
+        msg_to_stable_id = expected_to_stable_id
         to_address = _chat_to_address(project_slug, participant_aliases, canonical_alias)
+        message_fields: dict[str, str] = {
+            "from": f"{project_slug}/{canonical_alias}",
+            "from_did": "",
+            "message_id": str(pre_message_id),
+            "to": to_address,
+            "to_did": payload.to_did or "",
+            "type": "chat",
+            "subject": "",
+            "body": payload.body,
+            "timestamp": _utc_iso(msg_created_at),
+        }
+        if msg_from_stable_id:
+            message_fields["from_stable_id"] = msg_from_stable_id
+        if msg_to_stable_id:
+            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
-            {
-                "from": f"{project_slug}/{canonical_alias}",
-                "from_did": "",
-                "message_id": str(pre_message_id),
-                "to": to_address,
-                "to_did": payload.to_did or "",
-                "type": "chat",
-                "subject": "",
-                "body": payload.body,
-                "timestamp": _utc_iso(msg_created_at),
-            },
+            message_fields,
             db,
         )
         if sign_result is not None:
@@ -836,7 +943,9 @@ async def send_message(
             body=payload.body,
             hang_on=payload.hang_on,
             from_did=msg_from_did,
+            from_stable_id=msg_from_stable_id,
             to_did=payload.to_did,
+            to_stable_id=msg_to_stable_id,
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=msg_created_at,
@@ -848,6 +957,8 @@ async def send_message(
         if isinstance(e, asyncpg.exceptions.UniqueViolationError):
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
+    if msg_row is None:
+        raise HTTPException(status_code=500, detail="Failed to send message")
 
     await fire_mutation_hook(
         request,

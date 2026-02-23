@@ -67,6 +67,7 @@ class InitResponse(BaseModel):
     api_key: str
     created: bool
     did: Optional[str] = None
+    stable_id: Optional[str] = None
     custody: Optional[str] = None
     lifetime: str = "persistent"
 
@@ -119,6 +120,7 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
         api_key=result.api_key,
         created=result.created,
         did=result.did,
+        stable_id=result.stable_id,
         custody=result.custody,
         lifetime=result.lifetime,
     )

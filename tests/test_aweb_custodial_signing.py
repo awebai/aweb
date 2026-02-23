@@ -14,6 +14,7 @@ from aweb.auth import hash_api_key
 from aweb.db import DatabaseInfra
 from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 from aweb.signing import VerifyResult, canonical_payload, verify_signature
+from aweb.stable_id import stable_id_from_did_key
 
 
 def _auth(api_key: str) -> dict[str, str]:
@@ -357,12 +358,14 @@ async def test_custodial_signature_verifies_end_to_end(aweb_db_infra, monkeypatc
             msgs = resp.json()["messages"]
             assert len(msgs) == 1
             msg = msgs[0]
+            sender_stable_id = stable_id_from_did_key(seed_data["did"])
 
             # Reconstruct the canonical payload that the server should have signed.
             payload = canonical_payload(
                 {
                     "from": f"{slug}/custodial-alice",
                     "from_did": seed_data["did"],
+                    "from_stable_id": sender_stable_id,
                     "message_id": msg["message_id"],
                     "to": f"{slug}/plain-bob",
                     "to_did": "",

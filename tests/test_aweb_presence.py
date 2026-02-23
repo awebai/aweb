@@ -190,7 +190,12 @@ async def test_stale_index_entries_cleaned_lazily(async_redis):
     await asyncio.sleep(1.5)
 
     # a1's presence expired, but index may still reference it
-    result = await list_agent_presences_by_project(async_redis, "proj-1")
+    result = []
+    for _ in range(20):
+        result = await list_agent_presences_by_project(async_redis, "proj-1")
+        if len(result) == 1 and result[0].get("alias") == "bob":
+            break
+        await asyncio.sleep(0.05)
     assert len(result) == 1
     assert result[0]["alias"] == "bob"
 

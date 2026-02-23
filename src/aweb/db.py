@@ -60,6 +60,12 @@ class DatabaseInfra:
                     )
                     await manager.apply_pending_migrations()
 
+            # Best-effort backfill for derived identity anchors.
+            # This keeps migrations SQL-only while still providing deterministic values.
+            from aweb.stable_id import backfill_missing_stable_ids
+
+            await backfill_missing_stable_ids(self._managers["aweb"])
+
             self._initialized = True
 
     async def close(self) -> None:

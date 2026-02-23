@@ -11,6 +11,7 @@ from aweb.alias_allocator import AliasExhaustedError, candidate_name_prefixes, u
 from aweb.auth import hash_api_key, validate_agent_alias, validate_project_slug
 from aweb.custody import encrypt_signing_key, get_custody_key
 from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
+from aweb.stable_id import stable_id_from_did_key
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class BootstrapIdentityResult:
     api_key: str
     created: bool
     did: str | None = None
+    stable_id: str | None = None
     custody: str | None = None
     lifetime: str = "persistent"
 
@@ -173,6 +175,7 @@ async def bootstrap_identity(
     # Prepare identity columns.
     agent_did: str | None = None
     agent_public_key: str | None = None
+    agent_stable_id: str | None = None
     signing_key_enc: bytes | None = None
 
     if custody == "self":
@@ -205,6 +208,9 @@ async def bootstrap_identity(
                 "private key discarded, server-side signing unavailable"
             )
 
+    if agent_did is not None:
+        agent_stable_id = stable_id_from_did_key(agent_did)
+
     async with aweb_db.transaction() as tx:
         project = await _resolve_project(
             tx,
@@ -223,7 +229,7 @@ async def bootstrap_identity(
         if alias is not None and alias.strip():
             agent = await tx.fetch_one(
                 """
-                SELECT agent_id, alias, did, custody, lifetime
+                SELECT agent_id, alias, did, stable_id, custody, lifetime
                 FROM {{tables.agents}}
                 WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
                 """,
@@ -235,6 +241,7 @@ async def bootstrap_identity(
                 agent_id = str(agent["agent_id"])
                 # On re-init, return existing identity fields.
                 agent_did = agent["did"]
+                agent_stable_id = agent.get("stable_id")
                 custody = agent["custody"]
                 lifetime = agent["lifetime"]
             else:
@@ -242,8 +249,8 @@ async def bootstrap_identity(
                     """
                     INSERT INTO {{tables.agents}}
                         (project_id, alias, human_name, agent_type,
-                         did, public_key, custody, signing_key_enc, lifetime)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                         did, public_key, stable_id, custody, signing_key_enc, lifetime)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING agent_id, alias
                     """,
                     UUID(resolved_project_id),
@@ -252,6 +259,7 @@ async def bootstrap_identity(
                     agent_type,
                     agent_did,
                     agent_public_key,
+                    agent_stable_id,
                     custody,
                     signing_key_enc,
                     lifetime,
@@ -280,8 +288,8 @@ async def bootstrap_identity(
                         """
                         INSERT INTO {{tables.agents}}
                             (project_id, alias, human_name, agent_type,
-                             did, public_key, custody, signing_key_enc, lifetime)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                             did, public_key, stable_id, custody, signing_key_enc, lifetime)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                         RETURNING agent_id, alias
                         """,
                         UUID(resolved_project_id),
@@ -290,6 +298,7 @@ async def bootstrap_identity(
                         agent_type,
                         agent_did,
                         agent_public_key,
+                        agent_stable_id,
                         custody,
                         signing_key_enc,
                         lifetime,
@@ -340,6 +349,7 @@ async def bootstrap_identity(
         api_key=api_key,
         created=created,
         did=agent_did,
+        stable_id=agent_stable_id,
         custody=custody,
         lifetime=lifetime,
     )

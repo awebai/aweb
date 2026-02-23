@@ -56,7 +56,9 @@ async def deliver_message(
     priority: MessagePriority,
     thread_id: str | None,
     from_did: str | None = None,
+    from_stable_id: str | None = None,
     to_did: str | None = None,
+    to_stable_id: str | None = None,
     signature: str | None = None,
     signing_key_id: str | None = None,
     created_at: datetime | None = None,
@@ -87,8 +89,8 @@ async def deliver_message(
         """
         INSERT INTO {{tables.messages}}
             (message_id, project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
-             from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -101,7 +103,9 @@ async def deliver_message(
         priority,
         thread_uuid,
         from_did,
+        from_stable_id,
         to_did,
+        to_stable_id,
         signature,
         signing_key_id,
         created_at,
