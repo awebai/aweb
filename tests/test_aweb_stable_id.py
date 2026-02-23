@@ -27,4 +27,3 @@ def test_validate_stable_id_roundtrip():
 def test_validate_stable_id_rejects_bad_values(value: str):
     with pytest.raises(ValueError):
         validate_stable_id(value)
-

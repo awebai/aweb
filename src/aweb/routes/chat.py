@@ -250,9 +250,13 @@ async def create_or_send(
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
     if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
-        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+        raise HTTPException(
+            status_code=403, detail="from_stable_id does not match sender stable_id"
+        )
     if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
-        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id(s)")
+        raise HTTPException(
+            status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
+        )
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
@@ -262,7 +266,9 @@ async def create_or_send(
         project_slug = proj_row["slug"] if proj_row else ""
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = expected_to_stable_id
-        to_address = ",".join(format_agent_address(project_slug, a) for a in sorted(payload.to_aliases))
+        to_address = ",".join(
+            format_agent_address(project_slug, a) for a in sorted(payload.to_aliases)
+        )
         message_fields: dict[str, str] = {
             "from": f"{project_slug}/{sender['alias']}",
             "from_did": "",
@@ -866,7 +872,9 @@ async def send_message(
     )
     participant_aliases = [r["alias"] for r in participant_rows]
     participant_ids = [str(r["agent_id"]) for r in participant_rows]
-    stable_ids = await ensure_agent_stable_ids(aweb_db, project_id=project_id, agent_ids=participant_ids)
+    stable_ids = await ensure_agent_stable_ids(
+        aweb_db, project_id=project_id, agent_ids=participant_ids
+    )
     stable_by_alias = {r["alias"]: stable_ids.get(str(r["agent_id"])) for r in participant_rows}
     sender_stable_id = stable_ids.get(actor_id)
     expected_to_stable_id = _chat_to_stable_id(
@@ -899,9 +907,13 @@ async def send_message(
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
     if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
-        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+        raise HTTPException(
+            status_code=403, detail="from_stable_id does not match sender stable_id"
+        )
     if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
-        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id(s)")
+        raise HTTPException(
+            status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
+        )
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(

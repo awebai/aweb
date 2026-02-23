@@ -245,9 +245,13 @@ async def send_message(
     recipient_stable_id = stable_ids.get(to_agent_id)
 
     if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
-        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+        raise HTTPException(
+            status_code=403, detail="from_stable_id does not match sender stable_id"
+        )
     if payload.to_stable_id is not None and payload.to_stable_id != recipient_stable_id:
-        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id")
+        raise HTTPException(
+            status_code=403, detail="to_stable_id does not match recipient stable_id"
+        )
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(

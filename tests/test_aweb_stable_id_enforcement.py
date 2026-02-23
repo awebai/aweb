@@ -149,4 +149,3 @@ async def test_mail_rejects_mismatched_to_stable_id(aweb_db_infra):
                 },
             )
             assert resp.status_code == 403, resp.text
-

@@ -41,7 +41,9 @@ def validate_stable_id(value: str) -> str:
     return value
 
 
-async def ensure_agent_stable_ids(aweb_db, *, project_id: str, agent_ids: list[str]) -> dict[str, str]:
+async def ensure_agent_stable_ids(
+    aweb_db, *, project_id: str, agent_ids: list[str]
+) -> dict[str, str]:
     """Ensure agents have stable_id populated when possible.
 
     This is an idempotent best-effort backfill:
