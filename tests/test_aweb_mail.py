@@ -143,3 +143,79 @@ async def test_aweb_mail_rejects_to_alias_with_slash(aweb_db_infra):
             )
             assert send.status_code == 422, send.text
             assert "Invalid alias format" in send.text
+
+
+@pytest.mark.asyncio
+async def test_inbox_from_address_no_double_prefix_for_network_messages(aweb_db_infra):
+    """Network messages store from_alias as 'org/alias'; inbox must not double-prefix."""
+    aweb_db_infra: DatabaseInfra
+    aweb_db = aweb_db_infra.get_manager("aweb")
+
+    project_id = uuid.uuid4()
+    sender_id = uuid.uuid4()
+    receiver_id = uuid.uuid4()
+
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        project_id,
+        "target-project",
+        "Target Project",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        sender_id,
+        project_id,
+        "placeholder",
+        "Placeholder Sender",
+        "agent",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        receiver_id,
+        project_id,
+        "local-receiver",
+        "Local Receiver",
+        "agent",
+    )
+
+    api_key = f"aw_sk_{uuid.uuid4().hex}"
+    await aweb_db.execute(
+        "INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active) VALUES ($1, $2, $3, $4, $5)",
+        project_id,
+        receiver_id,
+        api_key[:12],
+        hash_api_key(api_key),
+        True,
+    )
+
+    # Insert a message with network-style from_alias (org/alias, as claweb stores it)
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        project_id,
+        sender_id,
+        receiver_id,
+        "sender-org/researcher",  # full network address
+        "Test",
+        "Body",
+        "normal",
+    )
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            inbox = await client.get(
+                "/v1/messages/inbox",
+                headers=_auth_headers(api_key),
+                params={"unread_only": False, "limit": 200},
+            )
+            assert inbox.status_code == 200, inbox.text
+            messages = inbox.json()["messages"]
+            assert len(messages) == 1
+            msg = messages[0]
+            assert msg["from_alias"] == "sender-org/researcher"
+            # from_address must be the network address as-is, NOT double-prefixed
+            assert msg["from_address"] == "sender-org/researcher"

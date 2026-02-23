@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.routes import format_agent_address
 from aweb.chat_service import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -68,15 +69,11 @@ def _parse_signed_timestamp(value: str) -> datetime:
     return dt
 
 
-def _agent_address(project_slug: str, alias: str) -> str:
-    if project_slug:
-        return f"{project_slug}/{alias}"
-    return alias
-
-
 def _chat_to_address(project_slug: str, participant_aliases: list[str], from_alias: str) -> str:
     return ",".join(
-        _agent_address(project_slug, alias) for alias in participant_aliases if alias != from_alias
+        format_agent_address(project_slug, alias)
+        for alias in participant_aliases
+        if alias != from_alias
     )
 
 
@@ -404,7 +401,7 @@ async def history(
             {
                 "message_id": m["message_id"],
                 "from_agent": m["from_alias"],
-                "from_address": _agent_address(project_slug, m["from_alias"]),
+                "from_address": format_agent_address(project_slug, m["from_alias"]),
                 "body": m["body"],
                 "timestamp": _utc_iso(m["created_at"]),
                 "sender_leaving": m["sender_leaving"],
@@ -531,7 +528,7 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
-                    "from_address": _agent_address(project_slug, r["from_alias"]),
+                    "from_address": format_agent_address(project_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
@@ -585,7 +582,7 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
-                    "from_address": _agent_address(project_slug, r["from_alias"]),
+                    "from_address": format_agent_address(project_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": sender_waiting,

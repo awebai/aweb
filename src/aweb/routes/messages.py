@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.routes import format_agent_address
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
@@ -343,7 +344,7 @@ async def inbox(
         UUID(project_id),
     )
     project_slug = proj_row["slug"] if proj_row else ""
-    inbox_owner_address = f"{project_slug}/{owner['alias']}" if project_slug else owner["alias"]
+    inbox_owner_address = format_agent_address(project_slug, owner["alias"])
 
     messages = []
     for r in rows:
@@ -354,9 +355,7 @@ async def inbox(
                 message_id=str(r["message_id"]),
                 from_agent_id=str(r["from_agent_id"]),
                 from_alias=r["from_alias"],
-                from_address=(
-                    f"{project_slug}/{r['from_alias']}" if project_slug else r["from_alias"]
-                ),
+                from_address=format_agent_address(project_slug, r["from_alias"]),
                 subject=r["subject"],
                 body=r["body"],
                 priority=r["priority"],
