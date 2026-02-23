@@ -64,7 +64,7 @@ class TestCanonicalPayload:
         import json
 
         parsed = json.loads(payload)
-        assert set(parsed.keys()) == SIGNED_FIELDS
+        assert set(parsed.keys()).issubset(SIGNED_FIELDS)
         assert "signature" not in parsed
         assert "signing_key_id" not in parsed
         assert "server" not in parsed
@@ -72,19 +72,21 @@ class TestCanonicalPayload:
 
 
 class TestSignedFields:
-    def test_contains_exactly_nine_fields(self):
-        assert len(SIGNED_FIELDS) == 9
+    def test_contains_exactly_eleven_fields(self):
+        assert len(SIGNED_FIELDS) == 11
 
     def test_expected_fields(self):
         expected = {
             "body",
             "from",
             "from_did",
+            "from_stable_id",
             "message_id",
             "subject",
             "timestamp",
             "to",
             "to_did",
+            "to_stable_id",
             "type",
         }
         assert SIGNED_FIELDS == expected

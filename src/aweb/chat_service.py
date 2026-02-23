@@ -121,7 +121,9 @@ async def send_in_session(
     leaving: bool = False,
     hang_on: bool = False,
     from_did: str | None = None,
+    from_stable_id: str | None = None,
     to_did: str | None = None,
+    to_stable_id: str | None = None,
     signature: str | None = None,
     signing_key_id: str | None = None,
     created_at: datetime | None = None,
@@ -153,8 +155,8 @@ async def send_in_session(
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
-             from_did, to_did, signature, signing_key_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -165,7 +167,9 @@ async def send_in_session(
         bool(leaving),
         bool(hang_on),
         from_did,
+        from_stable_id,
         to_did,
+        to_stable_id,
         signature,
         signing_key_id,
         effective_created_at,
@@ -296,7 +300,7 @@ async def get_message_history(
     rows = await aweb_db.fetch_all(
         """
         SELECT message_id, from_alias, body, created_at, sender_leaving,
-               from_did, to_did, signature, signing_key_id
+               from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id
         FROM {{tables.chat_messages}}
         WHERE session_id = $1
           AND ($2::bool IS FALSE OR (created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz) AND from_agent_id <> $4))
@@ -319,7 +323,9 @@ async def get_message_history(
             "created_at": r["created_at"],
             "sender_leaving": bool(r["sender_leaving"]),
             "from_did": r.get("from_did"),
+            "from_stable_id": r.get("from_stable_id"),
             "to_did": r.get("to_did"),
+            "to_stable_id": r.get("to_stable_id"),
             "signature": r.get("signature"),
             "signing_key_id": r.get("signing_key_id"),
         }

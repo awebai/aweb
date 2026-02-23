@@ -256,6 +256,7 @@ async def patch_agent(
 
 class ResolveAgentResponse(BaseModel):
     did: str | None
+    stable_id: str | None
     address: str
     agent_id: str
     human_name: str | None
@@ -284,7 +285,7 @@ async def resolve_agent(
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT a.agent_id, a.alias, a.human_name, a.did, a.public_key,
+        SELECT a.agent_id, a.alias, a.human_name, a.did, a.stable_id, a.public_key,
                a.custody, a.lifetime, a.status, p.slug
         FROM {{tables.agents}} a
         JOIN {{tables.projects}} p ON a.project_id = p.project_id
@@ -303,6 +304,7 @@ async def resolve_agent(
 
     return ResolveAgentResponse(
         did=row["did"],
+        stable_id=row.get("stable_id"),
         address=f"{namespace}/{alias}",
         agent_id=str(row["agent_id"]),
         human_name=row.get("human_name"),

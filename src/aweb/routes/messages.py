@@ -21,6 +21,7 @@ from aweb.messages_service import (
 from aweb.messages_service import utc_iso as _utc_iso
 from aweb.rotation_announcements import acknowledge_rotation, get_pending_announcements
 from aweb.routes import format_agent_address
+from aweb.stable_id import ensure_agent_stable_ids, validate_stable_id
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
@@ -54,7 +55,9 @@ class SendMessageRequest(BaseModel):
     message_id: Optional[str] = None
     timestamp: Optional[str] = None
     from_did: Optional[str] = Field(default=None, max_length=256)
+    from_stable_id: Optional[str] = Field(default=None, max_length=256)
     to_did: Optional[str] = Field(default=None, max_length=256)
+    to_stable_id: Optional[str] = Field(default=None, max_length=256)
     signature: Optional[str] = Field(default=None, max_length=512)
     signing_key_id: Optional[str] = Field(default=None, max_length=256)
 
@@ -98,6 +101,16 @@ class SendMessageRequest(BaseModel):
         except Exception:
             raise ValueError("Invalid message_id format")
 
+    @field_validator("from_stable_id", "to_stable_id")
+    @classmethod
+    def _validate_stable_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        return validate_stable_id(v)
+
 
 class SendMessageResponse(BaseModel):
     message_id: str
@@ -124,7 +137,9 @@ class InboxMessage(BaseModel):
     read_at: Optional[str]
     created_at: str
     from_did: Optional[str] = None
+    from_stable_id: Optional[str] = None
     to_did: Optional[str] = None
+    to_stable_id: Optional[str] = None
     to_address: str
     signature: Optional[str] = None
     signing_key_id: Optional[str] = None
@@ -203,6 +218,7 @@ async def send_message(
     # Server-side custodial signing: sign before INSERT so the message is
     # never observable without its signature.
     msg_from_did = payload.from_did
+    msg_from_stable_id = payload.from_stable_id
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     created_at = datetime.now(timezone.utc)
@@ -221,8 +237,18 @@ async def send_message(
         created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
+    stable_ids = await ensure_agent_stable_ids(
+        aweb_db, project_id=project_id, agent_ids=[actor_id, to_agent_id]
+    )
+    sender_stable_id = stable_ids.get(actor_id)
+    recipient_stable_id = stable_ids.get(to_agent_id)
+
+    if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
+        raise HTTPException(status_code=403, detail="from_stable_id does not match sender stable_id")
+    if payload.to_stable_id is not None and payload.to_stable_id != recipient_stable_id:
+        raise HTTPException(status_code=403, detail="to_stable_id does not match recipient stable_id")
+
     if payload.signature is None:
-        aweb_db = db.get_manager("aweb")
         proj_row = await aweb_db.fetch_one(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
             UUID(project_id),
@@ -233,19 +259,26 @@ async def send_message(
             UUID(to_agent_id),
         )
         to_address = f"{project_slug}/{recip_row['alias']}" if recip_row else ""
+        msg_from_stable_id = sender_stable_id
+        msg_to_stable_id = recipient_stable_id
+        message_fields: dict[str, str] = {
+            "from": f"{project_slug}/{sender['alias']}",
+            "from_did": "",
+            "message_id": str(pre_message_id),
+            "to": to_address,
+            "to_did": payload.to_did or "",
+            "type": "mail",
+            "subject": payload.subject,
+            "body": payload.body,
+            "timestamp": _utc_iso(created_at),
+        }
+        if msg_from_stable_id:
+            message_fields["from_stable_id"] = msg_from_stable_id
+        if msg_to_stable_id:
+            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
-            {
-                "from": f"{project_slug}/{sender['alias']}",
-                "from_did": "",
-                "message_id": str(pre_message_id),
-                "to": to_address,
-                "to_did": payload.to_did or "",
-                "type": "mail",
-                "subject": payload.subject,
-                "body": payload.body,
-                "timestamp": _utc_iso(created_at),
-            },
+            message_fields,
             db,
         )
         if sign_result is not None:
@@ -263,7 +296,9 @@ async def send_message(
             priority=payload.priority,
             thread_id=payload.thread_id,
             from_did=msg_from_did,
+            from_stable_id=msg_from_stable_id,
             to_did=payload.to_did,
+            to_stable_id=payload.to_stable_id if payload.signature is not None else recipient_stable_id,
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=created_at,
@@ -319,7 +354,7 @@ async def inbox(
     rows = await aweb_db.fetch_all(
         """
         SELECT message_id, from_agent_id, from_alias, subject, body, priority, thread_id, read_at, created_at,
-               from_did, to_did, signature, signing_key_id
+               from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id
         FROM {{tables.messages}}
         WHERE project_id = $1
           AND to_agent_id = $2
@@ -363,7 +398,9 @@ async def inbox(
                 read_at=_utc_iso(r["read_at"]) if r["read_at"] is not None else None,
                 created_at=_utc_iso(r["created_at"]),
                 from_did=r["from_did"],
+                from_stable_id=r.get("from_stable_id"),
                 to_did=r["to_did"],
+                to_stable_id=r.get("to_stable_id"),
                 to_address=inbox_owner_address,
                 signature=r["signature"],
                 signing_key_id=r["signing_key_id"],

@@ -122,6 +122,7 @@ async def test_aweb_migrations_apply(test_db_with_schema):
     agent_col_names = {c["column_name"] for c in agent_cols}
     for col in (
         "did",
+        "stable_id",
         "public_key",
         "custody",
         "signing_key_enc",
@@ -152,7 +153,14 @@ async def test_aweb_migrations_apply(test_db_with_schema):
         "messages",
     )
     msg_col_names = {c["column_name"] for c in msg_cols}
-    for col in ("from_did", "to_did", "signature", "signing_key_id"):
+    for col in (
+        "from_did",
+        "from_stable_id",
+        "to_did",
+        "to_stable_id",
+        "signature",
+        "signing_key_id",
+    ):
         assert col in msg_col_names, f"messages table missing column: {col}"
 
     # --- Migration 015: chat_message identity columns ---
@@ -166,7 +174,14 @@ async def test_aweb_migrations_apply(test_db_with_schema):
         "chat_messages",
     )
     chat_col_names = {c["column_name"] for c in chat_cols}
-    for col in ("from_did", "to_did", "signature", "signing_key_id"):
+    for col in (
+        "from_did",
+        "from_stable_id",
+        "to_did",
+        "to_stable_id",
+        "signature",
+        "signing_key_id",
+    ):
         assert col in chat_col_names, f"chat_messages table missing column: {col}"
 
     # --- Migration 016: agent_log table ---

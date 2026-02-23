@@ -21,6 +21,17 @@ def _deadline(seconds: int = 5) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
 
+async def _wait_for_sse_waiting(
+    redis, *, session_id: str, agent_id: str, timeout_seconds: float = 2.0
+) -> None:
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    while datetime.now(timezone.utc) < deadline:
+        score = await redis.zscore(f"chat:waiting:{session_id}", agent_id)
+        if score is not None:
+            return
+        await asyncio.sleep(0.05)
+
+
 async def _seed_basic_project(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
@@ -841,7 +852,11 @@ async def test_pending_sender_waiting_true(aweb_db_infra, async_redis):
                     headers=headers_1,
                 )
             )
-            await asyncio.sleep(0.3)
+            await _wait_for_sse_waiting(
+                async_redis,
+                session_id=session_id,
+                agent_id=seeded["agent_1_id"],
+            )
 
             # Agent-2 checks pending.
             pending = await client.get("/v1/chat/pending", headers=headers_2)
@@ -923,7 +938,11 @@ async def test_create_or_send_targets_connected(aweb_db_infra, async_redis):
                     headers=headers_2,
                 )
             )
-            await asyncio.sleep(0.3)
+            await _wait_for_sse_waiting(
+                async_redis,
+                session_id=session_id,
+                agent_id=seeded["agent_2_id"],
+            )
 
             # Agent-1 sends again — should see agent-2 as connected.
             r2 = await client.post(
@@ -990,7 +1009,11 @@ async def test_list_sessions_sender_waiting(aweb_db_infra, async_redis):
                     headers=headers_1,
                 )
             )
-            await asyncio.sleep(0.3)
+            await _wait_for_sse_waiting(
+                async_redis,
+                session_id=session_id,
+                agent_id=seeded["agent_1_id"],
+            )
 
             # Agent-2 lists sessions — should see sender_waiting=true.
             r2 = await client.get("/v1/chat/sessions", headers=headers_2)
