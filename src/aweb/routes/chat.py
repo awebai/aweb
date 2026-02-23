@@ -14,7 +14,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
-from aweb.routes import format_agent_address
 from aweb.chat_service import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -35,6 +34,7 @@ from aweb.custody import sign_on_behalf
 from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
 from aweb.messages_service import utc_iso as _utc_iso
+from aweb.routes import format_agent_address
 
 logger = logging.getLogger(__name__)
 

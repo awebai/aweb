@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
-from aweb.routes import format_agent_address
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
@@ -21,6 +20,7 @@ from aweb.messages_service import (
 )
 from aweb.messages_service import utc_iso as _utc_iso
 from aweb.rotation_announcements import acknowledge_rotation, get_pending_announcements
+from aweb.routes import format_agent_address
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
