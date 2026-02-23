@@ -219,6 +219,7 @@ async def send_message(
     # never observable without its signature.
     msg_from_did = payload.from_did
     msg_from_stable_id = payload.from_stable_id
+    msg_to_stable_id = payload.to_stable_id
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     created_at = datetime.now(timezone.utc)
@@ -298,7 +299,7 @@ async def send_message(
             from_did=msg_from_did,
             from_stable_id=msg_from_stable_id,
             to_did=payload.to_did,
-            to_stable_id=payload.to_stable_id if payload.signature is not None else recipient_stable_id,
+            to_stable_id=msg_to_stable_id,
             signature=msg_signature,
             signing_key_id=msg_signing_key_id,
             created_at=created_at,
