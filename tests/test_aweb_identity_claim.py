@@ -9,6 +9,7 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
+from aweb.bootstrap import bootstrap_identity
 from aweb.db import DatabaseInfra
 from aweb.did import did_from_public_key, encode_public_key, generate_keypair
 from aweb.stable_id import stable_id_from_did_key
@@ -316,3 +317,50 @@ async def test_claim_identity_requires_auth(aweb_db_infra):
                 },
             )
             assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_self_custody_unclaimed_then_claim(aweb_db_infra):
+    """bootstrap_identity(custody='self', did=None) creates an unclaimed agent.
+    PUT /me/identity then binds the identity successfully."""
+    aweb_db_infra: DatabaseInfra
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        # Create unclaimed self-custodial agent via bootstrap
+        result = await bootstrap_identity(
+            aweb_db_infra,
+            project_slug="test/unclaimed-bootstrap",
+            alias=None,
+            custody="self",
+            lifetime="persistent",
+        )
+        assert result.created is True
+        assert result.did is None
+        assert result.stable_id is None
+        assert result.custody == "self"
+        assert result.lifetime == "persistent"
+
+        # Claim identity
+        _, pub = generate_keypair()
+        did = did_from_public_key(pub)
+        pub_b64 = encode_public_key(pub)
+        expected_stable_id = stable_id_from_did_key(did)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.put(
+                "/v1/agents/me/identity",
+                json={
+                    "did": did,
+                    "public_key": pub_b64,
+                    "custody": "self",
+                    "lifetime": "persistent",
+                },
+                headers={"Authorization": f"Bearer {result.api_key}"},
+            )
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["did"] == did
+            assert data["stable_id"] == expected_stable_id
+            assert data["custody"] == "self"

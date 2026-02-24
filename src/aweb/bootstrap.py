@@ -179,20 +179,25 @@ async def bootstrap_identity(
     signing_key_enc: bytes | None = None
 
     if custody == "self":
-        if did is None or public_key is None:
+        if did is None and public_key is None:
+            # Unclaimed self-custodial agent — identity will be bound later
+            # via PUT /v1/agents/me/identity.
+            pass
+        elif did is None or public_key is None:
             raise ValueError("Self-custodial agents require both did and public_key")
-        try:
-            pub_bytes = decode_public_key(public_key)
-        except Exception:
-            raise ValueError(
-                "public_key must be a base64-encoded 32-byte Ed25519 public key (url-safe or standard)"
-            )
-        expected_did = did_from_public_key(pub_bytes)
-        if expected_did != did:
-            raise ValueError("DID does not match public_key")
-        agent_did = did
-        # Normalize storage to canonical base64url encoding.
-        agent_public_key = encode_public_key(pub_bytes)
+        else:
+            try:
+                pub_bytes = decode_public_key(public_key)
+            except Exception:
+                raise ValueError(
+                    "public_key must be a base64-encoded 32-byte Ed25519 public key (url-safe or standard)"
+                )
+            expected_did = did_from_public_key(pub_bytes)
+            if expected_did != did:
+                raise ValueError("DID does not match public_key")
+            agent_did = did
+            # Normalize storage to canonical base64url encoding.
+            agent_public_key = encode_public_key(pub_bytes)
     elif custody == "custodial":
         if did is not None or public_key is not None:
             raise ValueError("Custodial agents must not provide did/public_key")
