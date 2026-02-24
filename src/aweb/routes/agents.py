@@ -17,6 +17,7 @@ from aweb.presence import (
     list_agent_presences_by_ids,
     update_agent_presence,
 )
+from aweb.stable_id import stable_id_from_did_key
 
 router = APIRouter(prefix="/v1/agents", tags=["aweb-agents"])
 
@@ -388,6 +389,161 @@ async def agent_log(
             )
             for r in rows
         ],
+    )
+
+
+class ClaimIdentityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    did: str = Field(..., max_length=256)
+    public_key: str = Field(..., max_length=64)
+    custody: Literal["self"]
+    lifetime: Literal["persistent"]
+
+
+class ClaimIdentityResponse(BaseModel):
+    agent_id: str
+    alias: str
+    did: str
+    public_key: str
+    stable_id: str | None = None
+    custody: str
+    lifetime: str
+
+
+@router.put("/me/identity", response_model=ClaimIdentityResponse)
+async def claim_identity(
+    request: Request,
+    payload: ClaimIdentityRequest,
+    db=Depends(get_db),
+) -> ClaimIdentityResponse:
+    """Bind a did:key + public_key to an unclaimed agent (one-time identity claim).
+
+    For dashboard-first onboarding: the agent record exists but has no keypair.
+    The client generates a keypair locally and calls this endpoint to bind it.
+    """
+    project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+    agent_uuid = UUID(agent_id)
+
+    # Validate DID format and DID/public_key consistency
+    try:
+        pub_bytes = decode_public_key(payload.public_key)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="public_key must be a base64-encoded 32-byte Ed25519 key",
+        )
+    expected_did = did_from_public_key(pub_bytes)
+    if expected_did != payload.did:
+        raise HTTPException(
+            status_code=400,
+            detail="DID does not match public_key",
+        )
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, alias, did, public_key, stable_id, custody, lifetime
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    existing_did = row["did"]
+    if existing_did is not None:
+        # Idempotent: same DID → 200, different DID → 409
+        if existing_did == payload.did:
+            existing_stable_id = row["stable_id"]
+            if not existing_stable_id:
+                existing_stable_id = stable_id_from_did_key(existing_did)
+            return ClaimIdentityResponse(
+                agent_id=str(agent_uuid),
+                alias=row["alias"],
+                did=row["did"],
+                public_key=row["public_key"],
+                stable_id=existing_stable_id,
+                custody=row["custody"] or "self",
+                lifetime=row["lifetime"] or "persistent",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="Identity already claimed with a different DID",
+        )
+
+    # Compute stable_id from the initial DID
+    new_stable_id = stable_id_from_did_key(payload.did)
+    canonical_public_key = encode_public_key(pub_bytes)
+
+    # Atomic: only update if did IS NULL (guards against concurrent claims)
+    updated = await aweb_db.fetch_one(
+        """
+        UPDATE {{tables.agents}}
+        SET did = $1, public_key = $2, stable_id = $3,
+            custody = $4, lifetime = $5
+        WHERE agent_id = $6 AND project_id = $7 AND did IS NULL
+        RETURNING agent_id
+        """,
+        payload.did,
+        canonical_public_key,
+        new_stable_id,
+        payload.custody,
+        payload.lifetime,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    if updated is None:
+        # Lost the race: another request claimed identity first. Re-check.
+        current = await aweb_db.fetch_one(
+            """
+            SELECT did FROM {{tables.agents}}
+            WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+            """,
+            agent_uuid,
+            UUID(project_id),
+        )
+        if current and current["did"] == payload.did:
+            # Same DID won the race — idempotent success
+            return ClaimIdentityResponse(
+                agent_id=str(agent_uuid),
+                alias=row["alias"],
+                did=payload.did,
+                public_key=canonical_public_key,
+                stable_id=new_stable_id,
+                custody=payload.custody,
+                lifetime=payload.lifetime,
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="Identity already claimed with a different DID",
+        )
+
+    # Append agent_log entry anchoring the initial DID for stable_id derivation
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_log}}
+            (agent_id, project_id, operation, new_did)
+        VALUES ($1, $2, $3, $4)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        "claim_identity",
+        payload.did,
+    )
+
+    return ClaimIdentityResponse(
+        agent_id=str(agent_uuid),
+        alias=row["alias"],
+        did=payload.did,
+        public_key=canonical_public_key,
+        stable_id=new_stable_id,
+        custody=payload.custody,
+        lifetime=payload.lifetime,
     )
 
 

@@ -67,7 +67,7 @@ async def ensure_agent_stable_ids(
         LEFT JOIN LATERAL (
             SELECT new_did
             FROM {{tables.agent_log}}
-            WHERE agent_id = a.agent_id AND operation = 'create'
+            WHERE agent_id = a.agent_id AND operation IN ('create', 'claim_identity')
             ORDER BY created_at ASC
             LIMIT 1
         ) l ON TRUE
@@ -130,7 +130,7 @@ async def backfill_missing_stable_ids(aweb_db, *, batch_size: int = 500) -> int:
             LEFT JOIN LATERAL (
                 SELECT new_did
                 FROM {{tables.agent_log}}
-                WHERE agent_id = a.agent_id AND operation = 'create'
+                WHERE agent_id = a.agent_id AND operation IN ('create', 'claim_identity')
                 ORDER BY created_at ASC
                 LIMIT 1
             ) l ON TRUE
