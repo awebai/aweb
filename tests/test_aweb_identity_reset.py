@@ -11,7 +11,6 @@ from httpx import ASGITransport, AsyncClient
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
 from aweb.did import did_from_public_key, encode_public_key, generate_keypair
-from aweb.stable_id import stable_id_from_did_key
 
 
 async def _create_and_claim(client: AsyncClient, aweb_db, alias: str = "reset-agent"):

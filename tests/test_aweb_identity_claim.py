@@ -346,9 +346,7 @@ async def test_bootstrap_self_custody_unclaimed_then_claim(aweb_db_infra):
         pub_b64 = encode_public_key(pub)
         expected_stable_id = stable_id_from_did_key(did)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.put(
                 "/v1/agents/me/identity",
                 json={
