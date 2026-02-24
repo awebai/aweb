@@ -334,6 +334,16 @@ class AgentLogResponse(BaseModel):
     log: list[AgentLogEntry]
 
 
+def _parse_log_metadata(raw) -> dict | None:
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    import json as _json
+
+    return _json.loads(raw)
+
+
 @router.get("/me/log", response_model=AgentLogResponse)
 async def agent_log(
     request: Request,
@@ -384,7 +394,7 @@ async def agent_log(
                 new_did=r["new_did"],
                 signed_by=r["signed_by"],
                 entry_signature=r["entry_signature"],
-                metadata=dict(r["metadata"]) if r["metadata"] else None,
+                metadata=_parse_log_metadata(r["metadata"]),
                 created_at=r["created_at"].isoformat(),
             )
             for r in rows
@@ -544,6 +554,103 @@ async def claim_identity(
         stable_id=new_stable_id,
         custody=payload.custody,
         lifetime=payload.lifetime,
+    )
+
+
+class ResetIdentityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool
+
+
+class ResetIdentityResponse(BaseModel):
+    agent_id: str
+    alias: str
+    did: str | None = None
+    public_key: str | None = None
+    stable_id: str | None = None
+    custody: str | None = None
+    lifetime: str | None = None
+
+
+@router.post("/me/identity/reset", response_model=ResetIdentityResponse)
+async def reset_identity(
+    request: Request,
+    payload: ResetIdentityRequest,
+    db=Depends(get_db),
+) -> ResetIdentityResponse:
+    """Reset an agent's identity (clear did/public_key/stable_id).
+
+    Self-service escape hatch for when a self-custodial signing key is lost.
+    After reset, PUT /me/identity can be used to reclaim with a new keypair.
+    """
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="confirm must be true to reset identity",
+        )
+
+    project_id = await get_project_from_auth(request, db)
+    agent_id = await get_actor_agent_id_from_auth(request, db)
+    aweb_db = db.get_manager("aweb")
+    agent_uuid = UUID(agent_id)
+
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, alias, did, public_key, stable_id, custody, lifetime
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    old_did = row["did"]
+    if old_did is None:
+        # Already unclaimed — no-op
+        return ResetIdentityResponse(
+            agent_id=str(agent_uuid),
+            alias=row["alias"],
+        )
+
+    import json as _json
+
+    metadata = _json.dumps(
+        {
+            "old_public_key": row["public_key"],
+            "old_stable_id": row["stable_id"],
+        }
+    )
+
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET did = NULL, public_key = NULL, stable_id = NULL,
+            custody = NULL, signing_key_enc = NULL
+        WHERE agent_id = $1 AND project_id = $2
+        """,
+        agent_uuid,
+        UUID(project_id),
+    )
+
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agent_log}}
+            (agent_id, project_id, operation, old_did, metadata)
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+        """,
+        agent_uuid,
+        UUID(project_id),
+        "reset_identity",
+        old_did,
+        metadata,
+    )
+
+    return ResetIdentityResponse(
+        agent_id=str(agent_uuid),
+        alias=row["alias"],
     )
 
 
