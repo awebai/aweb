@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Literal
 from uuid import UUID
@@ -104,6 +105,7 @@ class AgentView(BaseModel):
 
 class ListAgentsResponse(BaseModel):
     project_id: str
+    namespace_slug: str
     agents: list[AgentView]
 
 
@@ -117,6 +119,17 @@ async def list_agents(
     """List all agents in the authenticated project with online status."""
     project_id = await get_project_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
+
+    proj_row = await aweb_db.fetch_one(
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        UUID(project_id),
+    )
+    if not proj_row:
+        logging.getLogger(__name__).error(
+            "Project row missing for authenticated project_id=%s", project_id
+        )
+        raise HTTPException(500, "Internal error")
+    namespace_slug = proj_row["slug"]
 
     type_filter = "" if include_internal else "AND agent_type != 'human'"
     rows = await aweb_db.fetch_all(
@@ -156,7 +169,7 @@ async def list_agents(
             )
         )
 
-    return ListAgentsResponse(project_id=project_id, agents=agents)
+    return ListAgentsResponse(project_id=project_id, namespace_slug=namespace_slug, agents=agents)
 
 
 class HeartbeatResponse(BaseModel):
