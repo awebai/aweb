@@ -84,6 +84,33 @@ async def list_contacts(db, *, project_id: str) -> list[dict]:
     ]
 
 
+async def get_contact_addresses(db, *, project_id: str) -> set[str]:
+    """Return all contact_address values for a project."""
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        "SELECT contact_address FROM {{tables.contacts}} WHERE project_id = $1",
+        UUID(project_id),
+    )
+    return {r["contact_address"] for r in rows}
+
+
+def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
+    """Check if an address matches any contact (exact or org-level).
+
+    Address format is ``namespace/alias`` where namespace may contain ``/``
+    (e.g. ``test/myorg/alice``).  The org-level is everything before the
+    last ``/`` (i.e. the project slug / namespace).
+    """
+    if address in contact_addresses:
+        return True
+    # Org-level match: "org/sub/alias" → check "org/sub"
+    last_slash = address.rfind("/")
+    if last_slash > 0:
+        org = address[:last_slash]
+        return org in contact_addresses
+    return False
+
+
 async def remove_contact(db, *, project_id: str, contact_id: str) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 

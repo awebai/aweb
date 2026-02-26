@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, validate_agent_alias
+from aweb.contacts_service import get_contact_addresses, is_address_in_contacts
 from aweb.custody import sign_on_behalf
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
@@ -144,6 +145,7 @@ class InboxMessage(BaseModel):
     signature: Optional[str] = None
     signing_key_id: Optional[str] = None
     rotation_announcement: Optional[RotationAnnouncement] = None
+    is_contact: bool = False
 
 
 class InboxResponse(BaseModel):
@@ -386,6 +388,8 @@ async def inbox(
     project_slug = proj_row["slug"] if proj_row else ""
     inbox_owner_address = format_agent_address(project_slug, owner["alias"])
 
+    contact_addrs = await get_contact_addresses(db, project_id=project_id)
+
     messages = []
     for r in rows:
         ann_data = announcements.get(str(r["from_agent_id"]))
@@ -410,6 +414,10 @@ async def inbox(
                 signature=r["signature"],
                 signing_key_id=r["signing_key_id"],
                 rotation_announcement=ann,
+                is_contact=is_address_in_contacts(
+                    format_agent_address(project_slug, r["from_alias"]),
+                    contact_addrs,
+                ),
             )
         )
 

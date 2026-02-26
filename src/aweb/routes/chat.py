@@ -24,6 +24,7 @@ from aweb.chat_service import (
     mark_messages_read,
     send_in_session,
 )
+from aweb.contacts_service import get_contact_addresses, is_address_in_contacts
 from aweb.chat_waiting import (
     get_waiting_agents,
     is_agent_waiting,
@@ -466,6 +467,8 @@ async def history(
         limit=limit,
     )
 
+    contact_addrs = await get_contact_addresses(db, project_id=project_id)
+
     return HistoryResponse(
         messages=[
             {
@@ -482,6 +485,10 @@ async def history(
                 "to_stable_id": m.get("to_stable_id"),
                 "signature": m["signature"],
                 "signing_key_id": m["signing_key_id"],
+                "is_contact": is_address_in_contacts(
+                    format_agent_address(project_slug, m["from_alias"]),
+                    contact_addrs,
+                ),
             }
             for m in messages
         ]
@@ -549,7 +556,7 @@ async def _sse_events(
     try:
         proj_row = await aweb_db.fetch_one(
             """
-            SELECT p.slug
+            SELECT s.project_id, p.slug
             FROM {{tables.chat_sessions}} s
             JOIN {{tables.projects}} p ON s.project_id = p.project_id
             WHERE s.session_id = $1
@@ -557,6 +564,10 @@ async def _sse_events(
             session_id,
         )
         project_slug = proj_row["slug"] if proj_row else ""
+        sse_project_id = str(proj_row["project_id"]) if proj_row else ""
+        # Fetched once per SSE session — contact changes during the stream
+        # won't be reflected until the next connection.
+        contact_addrs = await get_contact_addresses(db, project_id=sse_project_id) if sse_project_id else set()
         participant_rows = await aweb_db.fetch_all(
             """
             SELECT alias
@@ -616,6 +627,10 @@ async def _sse_events(
                     "to_stable_id": r.get("to_stable_id"),
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
+                    "is_contact": is_address_in_contacts(
+                        format_agent_address(project_slug, r["from_alias"]),
+                        contact_addrs,
+                    ),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
         else:
@@ -672,6 +687,10 @@ async def _sse_events(
                     "to_stable_id": r.get("to_stable_id"),
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
+                    "is_contact": is_address_in_contacts(
+                        format_agent_address(project_slug, r["from_alias"]),
+                        contact_addrs,
+                    ),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
 
