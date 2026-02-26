@@ -101,9 +101,7 @@ async def test_inbox_is_contact_true(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # alice sends to bob
             await _send_message(c, env["alice_key"], "bob")
 
@@ -125,9 +123,7 @@ async def test_inbox_is_contact_false(aweb_db_infra):
     # No contact added
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await _send_message(c, env["alice_key"], "bob")
 
             resp = await c.get("/v1/messages/inbox", headers=_auth(env["bob_key"]))
@@ -149,9 +145,7 @@ async def test_inbox_is_contact_org_level(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await _send_message(c, env["alice_key"], "bob")
 
             resp = await c.get("/v1/messages/inbox", headers=_auth(env["bob_key"]))
@@ -173,9 +167,7 @@ async def test_chat_history_is_contact(aweb_db_infra, async_redis):
 
     app = create_app(db_infra=aweb_db_infra, redis=async_redis)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Create a chat session (alice → bob, with initial message)
             resp = await c.post(
                 "/v1/chat/sessions",
@@ -215,9 +207,7 @@ async def test_chat_history_is_contact_false(aweb_db_infra, async_redis):
     # No contact added
     app = create_app(db_infra=aweb_db_infra, redis=async_redis)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.post(
                 "/v1/chat/sessions",
                 json={"to_aliases": ["bob"], "message": "hello from alice"},

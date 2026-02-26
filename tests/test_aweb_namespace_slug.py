@@ -33,9 +33,7 @@ async def test_introspect_returns_namespace_slug_and_address(aweb_db_infra):
     """GET /v1/auth/introspect includes namespace_slug and address."""
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             data = await _init_project(c, "test/ns-introspect", "alice")
             resp = await c.get(
                 "/v1/auth/introspect",
@@ -99,9 +97,7 @@ async def test_introspect_no_namespace_slug_for_cross_project(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             res = await c.get(
                 "/v1/auth/introspect",
                 headers={"Authorization": f"Bearer {token}"},
@@ -117,9 +113,7 @@ async def test_list_agents_returns_namespace_slug(aweb_db_infra):
     """GET /v1/agents response includes namespace_slug."""
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             data = await _init_project(c, "test/ns-agents", "bob")
             resp = await c.get(
                 "/v1/agents",
