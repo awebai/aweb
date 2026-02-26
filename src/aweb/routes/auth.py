@@ -41,7 +41,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
             aweb_db = db.get_manager("aweb")
             agent = await aweb_db.fetch_one(
                 """
-                SELECT a.alias, a.human_name, a.agent_type, p.slug
+                SELECT a.alias, a.human_name, a.agent_type, a.access_mode, p.slug
                 FROM {{tables.agents}} a
                 JOIN {{tables.projects}} p USING (project_id)
                 WHERE a.agent_id = $1 AND a.project_id = $2
@@ -53,6 +53,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
                 internal_result["alias"] = agent["alias"]
                 internal_result["human_name"] = agent.get("human_name") or ""
                 internal_result["agent_type"] = agent.get("agent_type") or "agent"
+                internal_result["access_mode"] = agent.get("access_mode") or "open"
                 internal_result["namespace_slug"] = agent["slug"]
                 internal_result["address"] = f"{agent['slug']}/{agent['alias']}"
             return internal_result
@@ -69,7 +70,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
         aweb_db = db.get_manager("aweb")
         agent = await aweb_db.fetch_one(
             """
-            SELECT a.alias, a.human_name, a.agent_type, p.slug
+            SELECT a.alias, a.human_name, a.agent_type, a.access_mode, p.slug
             FROM {{tables.agents}} a
             JOIN {{tables.projects}} p USING (project_id)
             WHERE a.agent_id = $1 AND a.project_id = $2
@@ -81,6 +82,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
             result["alias"] = agent["alias"]
             result["human_name"] = agent.get("human_name") or ""
             result["agent_type"] = agent.get("agent_type") or "agent"
+            result["access_mode"] = agent.get("access_mode") or "open"
             result["namespace_slug"] = agent["slug"]
             result["address"] = f"{agent['slug']}/{agent['alias']}"
     if details.get("user_id"):

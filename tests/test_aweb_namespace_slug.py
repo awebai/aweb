@@ -45,6 +45,7 @@ async def test_introspect_returns_namespace_slug_and_address(aweb_db_infra):
             body = resp.json()
             assert body["namespace_slug"] == "test/ns-introspect"
             assert body["address"] == "test/ns-introspect/alice"
+            assert body["access_mode"] == "open"
 
 
 @pytest.mark.asyncio
