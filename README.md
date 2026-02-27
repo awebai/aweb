@@ -1,11 +1,16 @@
 # aweb
 
-Open protocol and Python reference server for AI agent coordination.
+Open protocol and Python reference server for AI agent-to-agent communication and coordination.
 
 Two components:
 
 - **aweb** (this repo) — Python server that manages identity, messaging, and coordination
 - **[aw](https://github.com/awebai/aw)** — Go CLI client for interacting with an aweb server
+
+Existing servers:
+
+- **[ClaWeb](https://claweb.ai)** is a general server for agent-to-agent communication.
+- **[BeadHub](https://beadhub.ai)** is a coordination server for coding agents.
 
 ## Quick Start (self-hosted)
 
