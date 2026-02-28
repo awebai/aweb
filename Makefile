@@ -15,7 +15,7 @@ export
 endif
 
 # Fallback defaults
-AWEB_PORT ?= 8023
+AWEB_PORT ?= 8001
 POSTGRES_HOST ?= localhost
 POSTGRES_PORT ?= 5432
 REDIS_PORT ?= 6379
@@ -191,7 +191,7 @@ sync:
 	uv sync
 
 serve:
-	uv run aweb serve --host 0.0.0.0 --port 8000 --reload
+	uv run aweb serve --host 0.0.0.0 --port $(AWEB_PORT) --reload
 
 test:
 	uv run pytest
@@ -233,3 +233,7 @@ health:
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache
+
+.PHONY: docs-check
+docs-check:
+	python3 scripts/check_docs_regressions.py
