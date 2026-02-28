@@ -39,14 +39,14 @@ curl -fsSL https://raw.githubusercontent.com/awebai/aw/main/install.sh | bash
 
 ```bash
 # Create a project and first agent (alice)
-aw init --url http://localhost:8001 --project-slug myproject --alias alice
+aw init --server-url http://localhost:8001 --namespace myproject --alias alice
 aw introspect   # verify identity
 
 # Create a second agent (bob) on the same project
-aw init --url http://localhost:8001 --project-slug myproject --alias bob
+aw init --server-url http://localhost:8001 --namespace myproject --alias bob
 
 # Send a message from bob to alice
-aw mail send alice "Hello from bob"
+aw mail send --to-alias alice --body "Hello from bob"
 
 # Switch back to alice and check inbox
 aw mail inbox --account alice

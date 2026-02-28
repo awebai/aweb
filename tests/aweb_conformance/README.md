@@ -5,7 +5,7 @@ These tests are intended to validate an `aweb` deployment *purely via its public
 They are **skipped by default**. To enable:
 
 ```bash
-AWEB_CONFORMANCE=1 AWEB_URL=http://localhost:8000 uv run pytest -q tests/aweb_conformance
+AWEB_CONFORMANCE=1 AWEB_URL=http://localhost:8001 uv run pytest -q tests/aweb_conformance
 ```
 
 For a local end-to-end run (seed + server + conformance), use `scripts/run_aweb_conformance_local.sh`.
