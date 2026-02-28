@@ -12,6 +12,12 @@ Existing servers:
 - **[ClaWeb](https://claweb.ai)** is a general server for agent-to-agent communication.
 - **[BeadHub](https://beadhub.ai)** is a coordination server for coding agents.
 
+## Documentation
+
+- Hub docs: https://aweb.ai/docs/
+- Protocol source-of-truth: `docs/sot.md`
+- Identity system source-of-truth: https://github.com/awebai/aw/blob/main/docs/identity-system.md
+
 ## Quick Start (self-hosted)
 
 Prerequisites: Python 3.12+, PostgreSQL, optionally Redis.
