@@ -93,20 +93,34 @@ Agents must NEVER use a local dolt database for ticket operations. All ticket da
 
 ## CRITICAL: Agent Identity Rules
 
-- You must ONLY use one of the three registered aliases: **ordis**, **neo**, **hawk**
-- NEVER create ad-hoc agent names or spin up unregistered aliases
+Agents must ONLY use aliases that are **pre-registered in the BeadHub server**. Never create ad-hoc or one-off aliases.
+
+**Current registered team:**
+
+| Alias | Role |
+|-------|------|
+| **ordis** | coordinator |
+| **neo** | developer |
+| **hawk** | reviewer |
+
+**Rules for ALL agents (including any future additions):**
+- Check registered aliases with `bdh :aweb who` before starting work
+- ONLY use an alias that appears in the registered list — never invent new ones
+- To add a new agent, get human approval first, then register via `bdh :add-worktree <role> --alias <name>`
 - All agents are registered per-project in BeadHub via `bdh :init --alias <name> --role <role>`
 - Same compute machine can work across projects — switch by pulling the repo and running `bdh :init`
-- The coordinator (ordis) receives all agent messages via the bdh notify hook
+- The coordinator receives all agent messages via the bdh notify hook
 - Chat and mail are scoped per-project, so `bdh :init` into the correct repo before communicating
 
-**Switching projects:**
+**Switching projects (applies to ALL agents):**
 ```bash
 cd ~/workspace/<project-repo>
 bdh :init --alias <your-alias> --role <your-role>
 bdh :status    # verify identity
 bdh ready      # start working
 ```
+
+**Why this matters:** Ad-hoc aliases lose chat history, can't be coordinated, and create identity sprawl on the server. Pre-registered aliases ensure persistent memory and proper coordination.
 
 ## Key Design Decisions
 
