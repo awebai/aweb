@@ -37,12 +37,9 @@ const discordMentionMap = new Map<string, string>();
 
 /** Agent alias → emoji prefix */
 const AGENT_AVATARS: Record<string, string> = {
-  orchestrator: "🎯",
-  alice: "🔧",
-  bob: "📐",
-  charlie: "⚙️",
-  dave: "🎨",
-  eve: "🧪",
+  ordis: "🎯",
+  neo: "🔧",
+  hawk: "🦅",
 };
 
 /** Known agent aliases for bold @mentions */
