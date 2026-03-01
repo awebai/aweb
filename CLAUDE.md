@@ -19,18 +19,30 @@ Three-phase system built on open, self-hostable infrastructure:
 - **Redis** — ephemeral state (presence, locks, messages)
 - All three run via Docker Compose locally (Phase 1), then k3s on Raspberry Pi 5 (Phase 2+)
 
-### Agent Roles
-- **Orchestrator** (Claude Desktop) — plans features, creates Beads tickets, assigns tasks, gates plan approval
-- **Worker** (Claude Code in separate worktree/sandbox) — claims tickets, implements code, submits PRs, coordinates with orchestrator via BeadHub chat
-- **Reviewer** (Phase 3) — PR review and test validation
+### Agent Team (Fixed Aliases)
+
+The following three agents are the **permanent team** across ALL BeadHub projects. These are the ONLY aliases that may be used.
+
+| Alias | Role | Description |
+|-------|------|-------------|
+| **ordis** | coordinator | Global orchestrator (Remote Control pod). Plans, assigns, reviews, unblocks. Reachable via Discord and Claude Code Remote Control. |
+| **neo** | developer | Worker agent. Implements features, fixes bugs, submits PRs. |
+| **hawk** | reviewer | QA/review agent. Reviews PRs, checks security, test coverage, code quality. |
+
+**Rules:**
+- Agents must ONLY use these three aliases — no ad-hoc names (no worker-xyz, no task-dev, etc.)
+- Same compute can serve all projects — agents switch context by pulling the repo and running `bdh :init --alias <name> --role <role>`
+- ordis is the coordinator for every project; neo and hawk register per-project as needed
+- If a project needs more agents, get human approval first
 
 ### Coordination Flow
-1. Human gives feature spec to Orchestrator
-2. Orchestrator breaks spec into Beads tickets via `bdh` CLI
+1. Human gives feature spec to ordis (coordinator)
+2. ordis breaks spec into Beads tickets via `bdh` CLI
 3. Human approves plan
-4. Worker claims tickets, implements in a Ralph Loop (iterate: code → build → test → validate)
+4. neo claims tickets, implements in a Ralph Loop (iterate: code → build → test → validate)
 5. Blockers resolved agent-to-agent via BeadHub chat; only true escalations surface to human
-6. Worker submits PR on completion
+6. neo submits PR on completion
+7. hawk reviews the PR, approves or requests changes
 
 ### Key Tools
 - **`bdh`** — Beads CLI (git-native issue tracking)
@@ -43,12 +55,13 @@ Three-phase system built on open, self-hostable infrastructure:
 # Start BeadHub stack
 make start                          # Docker Compose: beadhub + postgres + redis
 
-# Initialize workspaces
-bdh :init                           # Register orchestrator workspace
-bdh :add-worktree worker            # Create worker workspace
+# Initialize workspaces (fixed team)
+bdh :init --alias ordis --role coordinator          # Register ordis (coordinator)
+bdh :add-worktree developer --alias neo             # Register neo (developer)
+bdh :add-worktree reviewer --alias hawk             # Register hawk (reviewer)
 ```
 
-Workers and orchestrator run as separate Claude Code instances in separate git worktrees, coordinating through BeadHub.
+ordis, neo, and hawk run as separate Claude Code instances in separate git worktrees, coordinating through BeadHub.
 
 ## Phase 2+ Infrastructure
 
@@ -56,6 +69,44 @@ Workers and orchestrator run as separate Claude Code instances in separate git w
 - **Cloudflare Tunnel + Access** — zero-trust ingress to BeadHub on Pi 5
 - **GitHub** — PR submission and code review
 - **Discord** (Phase 3) — escalation notifications and PR alerts
+
+## CRITICAL: Ticket Sync Rules — No Local Dolt
+
+Agents must NEVER use a local dolt database for ticket operations. All ticket data flows through git and the BeadHub server.
+
+**Allowed:**
+- `bdh list`, `bdh show`, `bdh ready` — reads from BeadHub server API
+- `bd create`, `bd update`, `bd close` — writes to local git-backed JSONL
+- `bd sync` — pushes JSONL to git remote, pulls updates
+
+**Forbidden:**
+- Starting or depending on a local dolt database
+- Attempting to fix dolt `table not found` errors — use `bdh` (server) instead
+- Syncing tickets from the upstream fork (`beadhub/beadhub`)
+
+**Ticket creation flow:**
+1. `bd create ...` (creates in local JSONL)
+2. `bd sync` (pushes to git remote via `beads-sync` branch)
+3. BeadHub server picks up changes from git
+
+**If `bd` commands fail**, fall back to `bdh` (server API). Never try to repair a local database.
+
+## CRITICAL: Agent Identity Rules
+
+- You must ONLY use one of the three registered aliases: **ordis**, **neo**, **hawk**
+- NEVER create ad-hoc agent names or spin up unregistered aliases
+- All agents are registered per-project in BeadHub via `bdh :init --alias <name> --role <role>`
+- Same compute machine can work across projects — switch by pulling the repo and running `bdh :init`
+- The coordinator (ordis) receives all agent messages via the bdh notify hook
+- Chat and mail are scoped per-project, so `bdh :init` into the correct repo before communicating
+
+**Switching projects:**
+```bash
+cd ~/workspace/<project-repo>
+bdh :init --alias <your-alias> --role <your-role>
+bdh :status    # verify identity
+bdh ready      # start working
+```
 
 ## Key Design Decisions
 
@@ -69,21 +120,23 @@ Workers and orchestrator run as separate Claude Code instances in separate git w
 
 ### Orchestrator Deployment (K8s)
 
-The orchestrator runs as a **Deployment** in the `beadhub` namespace on a Raspberry Pi 5 (k3s). It uses **Claude Code Remote Control** — a persistent interactive session that the human connects to from the Claude mobile app.
+ordis (the coordinator) runs as a **Deployment** in the `beadhub` namespace on a Raspberry Pi 5 (k3s). It uses **Claude Code Remote Control** — a persistent interactive session that the human connects to from the Claude mobile app.
 
 ```
-Human ↔ Claude Code Remote Control (phone app) ↔ orchestrator pod
+Human ↔ Claude Code Remote Control (phone app) ↔ ordis pod
+Human ↔ Discord → discord-bridge → ordis pod
 Agent-to-agent chatter → bdh chat → Discord (visibility only)
 ```
 
-**The orchestrator pod runs `claude remote-control`, NOT a dispatcher or `claude -p`.** The entrypoint:
+**The ordis pod runs `claude remote-control`, NOT a dispatcher or `claude -p`.** The entrypoint:
 1. Sets up git auth and copies CLAUDE.md from the mounted ConfigMap
-2. Starts `claude remote-control --dangerously-skip-permissions` — the human connects from the Claude mobile app
-3. The session persists as long as the pod is running
+2. Runs `bdh :init --alias ordis --role coordinator` for each project
+3. Starts `claude remote-control --dangerously-skip-permissions` — the human connects from the Claude mobile app
+4. The session persists as long as the pod is running
 
 **Important:** The agent image must use the native Claude Code install (`claude install`), not the npm package. The npm version fails with `node: bad option: --sdk-url` when running `claude remote-control`.
 
-Worker communication happens via `bdh :aweb chat` — the orchestrator checks for pending messages proactively. Discord shows inter-agent chatter for visibility.
+Worker communication happens via `bdh :aweb chat` — ordis checks for pending messages proactively via the notify hook. Discord shows inter-agent chatter for visibility. ordis is reachable from both Discord and Claude Code Remote Control.
 
 ### CRITICAL: Do Not Modify the Orchestrator Deployment
 
@@ -139,9 +192,9 @@ This repo is a fork of `beadhub/beadhub`, but **the `upstream` remote has been i
 ### Discord Bridge
 
 Source: `discord-bridge/src/` in this repo. Key files:
-- `discord-listener.ts` — Routes Discord messages: new threads → orchestrator (Redis), existing BeadHub threads → BeadHub API
+- `discord-listener.ts` — Routes Discord messages: new threads → ordis (Redis), existing BeadHub threads → BeadHub API
 - `orchestrator-relay.ts` — BLPOPs `orchestrator:outbox`, posts responses to Discord threads
-- `session-map.ts` — Maps Discord thread IDs ↔ Claude session UUIDs with source tracking ("beadhub" vs "orchestrator")
+- `session-map.ts` — Maps Discord thread IDs ↔ Claude session UUIDs with source tracking ("beadhub" vs "ordis")
 
 ### Agent Image
 
