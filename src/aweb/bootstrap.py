@@ -358,3 +358,54 @@ async def bootstrap_identity(
         custody=custody,
         lifetime=lifetime,
     )
+
+
+async def soft_delete_agent(
+    db_infra, *, agent_id: str, project_id: str
+) -> None:
+    """Soft-delete an agent for workspace cleanup.
+
+    Sets deleted_at and status='deregistered', writes a workspace_cleanup
+    entry to agent_log.  Unlike deregister, this works for any lifetime
+    and does not fire mutation hooks or destroy signing keys.
+
+    Idempotent: no-op if the agent is already deleted.
+    """
+    aweb_db = db_infra.get_manager("aweb")
+    agent_uuid = UUID(agent_id)
+    project_uuid = UUID(project_id)
+
+    async with aweb_db.transaction() as tx:
+        row = await tx.fetch_one(
+            """
+            UPDATE {{tables.agents}}
+            SET status = 'deregistered', deleted_at = NOW()
+            WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+            RETURNING did
+            """,
+            agent_uuid,
+            project_uuid,
+        )
+
+        if row is None:
+            # Already deleted or doesn't exist — idempotent no-op.
+            return
+
+        await tx.execute(
+            """
+            UPDATE {{tables.api_keys}} SET is_active = FALSE
+            WHERE agent_id = $1
+            """,
+            agent_uuid,
+        )
+
+        await tx.execute(
+            """
+            INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did)
+            VALUES ($1, $2, $3, $4)
+            """,
+            agent_uuid,
+            project_uuid,
+            "workspace_cleanup",
+            row["did"],
+        )
