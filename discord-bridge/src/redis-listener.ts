@@ -99,15 +99,26 @@ async function handleChatMessage(
 
   // Double-check this is the message we expect
   if (latest.message_id !== event.message_id) {
-    // Race condition: a newer message was sent. Fetch more to find ours.
+    // Race condition: Redis event can fire before DB transaction commits.
+    // Wait briefly, then retry with more messages.
+    await new Promise((r) => setTimeout(r, 500));
     const all = await getSessionMessages(event.session_id, 20, event.project_id || undefined);
     const target = all.find((m) => m.message_id === event.message_id);
     if (!target) {
-      console.warn(`[bridge] Could not find message ${event.message_id}`);
-      return;
+      // One more retry after a longer delay
+      await new Promise((r) => setTimeout(r, 1500));
+      const retry = await getSessionMessages(event.session_id, 20, event.project_id || undefined);
+      const found = retry.find((m) => m.message_id === event.message_id);
+      if (!found) {
+        console.warn(`[bridge] Could not find message ${event.message_id} after retries`);
+        return;
+      }
+      fromAlias = found.from_agent;
+      body = found.body;
+    } else {
+      fromAlias = target.from_agent;
+      body = target.body;
     }
-    fromAlias = target.from_agent;
-    body = target.body;
   } else {
     fromAlias = latest.from_agent;
     body = latest.body;
