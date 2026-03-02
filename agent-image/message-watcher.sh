@@ -14,7 +14,6 @@ set -euo pipefail
 #   POLL_INTERVAL — seconds between polls (default: 5)
 
 POLL_INTERVAL="${POLL_INTERVAL:-5}"
-SESSION_FILE="/tmp/ordis-session"
 
 echo "[message-watcher] Initializing ordis for control-plane project..."
 bdh :init --alias ordis --role coordinator
@@ -35,7 +34,6 @@ while true; do
   if [ -n "$pending" ] && ! echo "$pending" | grep -qi "no pending"; then
     echo "[message-watcher] Pending messages detected — kicking claude -p"
     claude -p "You have pending messages. Run bdh :aweb chat pending and respond to all conversations." \
-      --resume "$SESSION_FILE" \
       --dangerously-skip-permissions 2>&1 || \
       echo "[message-watcher] Warning: claude -p exited with non-zero status"
   fi
