@@ -121,6 +121,8 @@ export async function getOrCreateThread(
  * Send a message to a Discord thread using the webhook,
  * impersonating the agent via username override.
  * Optional attachments (base64-encoded) are sent with the final chunk.
+ * When files are present, the bot client is used for the final chunk to
+ * avoid Discord error 10003 (webhooks cannot upload files to threads).
  */
 export async function sendAsAgent(
   webhook: WebhookClient,
@@ -128,6 +130,7 @@ export async function sendAsAgent(
   alias: string,
   body: string,
   attachments?: AgentAttachment[],
+  client?: Client,
 ): Promise<void> {
   const emoji = AGENT_AVATARS[alias] ?? "🤖";
   const username = `${emoji} ${alias}`;
@@ -138,12 +141,19 @@ export async function sendAsAgent(
   const chunks = splitMessage(content, config.maxDiscordMessageLength);
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
-    await webhook.send({
-      content: chunks[i],
-      username,
-      threadId: thread.id,
-      ...(isLast && files.length > 0 ? { files } : {}),
-    });
+    if (isLast && files.length > 0) {
+      // Use bot client for file uploads — webhooks cannot upload files to threads
+      if (client) {
+        await thread.send({ content: chunks[i], files });
+      } else {
+        console.warn(
+          `[discord-sender] No bot client available for file upload to thread ${thread.id}; falling back to webhook (may fail)`,
+        );
+        await webhook.send({ content: chunks[i], username, threadId: thread.id, files });
+      }
+    } else {
+      await webhook.send({ content: chunks[i], username, threadId: thread.id });
+    }
   }
 }
 

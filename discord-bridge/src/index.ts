@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   startDiscordListener(client, sessionMap, bridgeIdentity, redis);
 
   // 8. Start agent outbox → Discord relay (orchestrator:outbox + agent:outbox)
-  await startOrchestratorRelay(redis, textChannel, webhook);
+  await startOrchestratorRelay(redis, textChannel, webhook, client);
 
   // 9. Start AI outbox → Discord relay (if AI channel configured)
   if (config.discord.aiChannelId && config.discord.aiWebhookUrl) {

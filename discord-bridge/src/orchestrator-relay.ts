@@ -1,5 +1,5 @@
 import type Redis from "ioredis";
-import type { WebhookClient, TextChannel } from "discord.js";
+import type { Client, WebhookClient, TextChannel } from "discord.js";
 import type { OrchestratorOutboxMessage, AgentOutboxMessage } from "./types.js";
 import { sendAsAgent } from "./discord-sender.js";
 import { stopTypingIndicator } from "./discord-listener.js";
@@ -20,6 +20,7 @@ export async function startOrchestratorRelay(
   redis: Redis,
   channel: TextChannel,
   webhook: WebhookClient,
+  client: Client,
 ): Promise<void> {
   // Dedicated connection for blocking BLPOP
   const blpopRedis = redis.duplicate();
@@ -39,7 +40,7 @@ export async function startOrchestratorRelay(
         if (!result) continue;
 
         const [key, raw] = result;
-        await handleOutboxMessage(key, raw, channel, webhook);
+        await handleOutboxMessage(key, raw, channel, webhook, client);
       } catch (err) {
         console.error("[agent-relay] BLPOP error:", err);
         // Brief pause before retrying on connection errors
@@ -54,6 +55,7 @@ async function handleOutboxMessage(
   raw: string,
   channel: TextChannel,
   webhook: WebhookClient,
+  client: Client,
 ): Promise<void> {
   let msg: OrchestratorOutboxMessage | AgentOutboxMessage;
   try {
@@ -98,7 +100,7 @@ async function handleOutboxMessage(
     await thread.setArchived(false);
   }
 
-  await sendAsAgent(webhook, thread, fromAlias, response, attachments);
+  await sendAsAgent(webhook, thread, fromAlias, response, attachments, client);
 
   const attachmentCount = attachments?.length ?? 0;
   console.log(
