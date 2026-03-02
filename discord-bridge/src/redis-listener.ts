@@ -5,6 +5,7 @@ import type { SessionMap } from "./session-map.js";
 import { config } from "./config.js";
 import { getSessionMessages, getProjectRepos } from "./beadhub-client.js";
 import { getOrCreateThread, sendAsAgent } from "./discord-sender.js";
+import { stopTypingIndicator } from "./discord-listener.js";
 
 /** Set of message_ids we've already relayed (echo suppression + dedup). */
 const recentlyRelayed = new Set<string>();
@@ -152,6 +153,11 @@ async function postToOrdisChannel(fromAlias: string, body: string): Promise<void
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, content: chunk }),
     });
+  }
+
+  // Stop typing indicator on the ordis channel
+  if (config.discord.ordisChannelId) {
+    stopTypingIndicator(config.discord.ordisChannelId);
   }
 
   console.log(`[bridge->ordis] ${fromAlias}: ${body.slice(0, 80)}`);

@@ -44,26 +44,29 @@ function storePendingVoiceNote(message: Message): void {
   }
 }
 
-/** Active typing indicators keyed by thread ID */
+/** Any channel that supports typing indicators */
+type TypableChannel = { id: string; sendTyping(): Promise<unknown> };
+
+/** Active typing indicators keyed by channel/thread ID */
 const typingIntervals = new Map<string, Timer>();
 
-/** Start a typing indicator loop in a thread. Fires every 8s (indicator lasts ~10s). */
-export function startTypingIndicator(thread: ThreadChannel): void {
-  stopTypingIndicator(thread.id);
+/** Start a typing indicator loop in a channel or thread. Fires every 8s (indicator lasts ~10s). */
+export function startTypingIndicator(channel: TypableChannel): void {
+  stopTypingIndicator(channel.id);
   // Fire immediately, then every 8 seconds
-  thread.sendTyping().catch(() => {});
+  channel.sendTyping().catch(() => {});
   const interval = setInterval(() => {
-    thread.sendTyping().catch(() => {});
+    channel.sendTyping().catch(() => {});
   }, 8_000);
-  typingIntervals.set(thread.id, interval);
+  typingIntervals.set(channel.id, interval);
 }
 
-/** Stop the typing indicator for a thread. */
-export function stopTypingIndicator(threadId: string): void {
-  const existing = typingIntervals.get(threadId);
+/** Stop the typing indicator for a channel or thread. */
+export function stopTypingIndicator(channelId: string): void {
+  const existing = typingIntervals.get(channelId);
   if (existing) {
     clearInterval(existing);
-    typingIntervals.delete(threadId);
+    typingIntervals.delete(channelId);
   }
 }
 
@@ -126,6 +129,9 @@ async function handleMessage(
   ) {
     const displayName = message.member?.displayName ?? message.author.username;
     await routeToOrdisChannel(displayName, message.content);
+    if ("sendTyping" in message.channel) {
+      startTypingIndicator(message.channel as TypableChannel);
+    }
     return;
   }
 
