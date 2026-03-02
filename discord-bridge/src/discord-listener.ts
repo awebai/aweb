@@ -3,17 +3,11 @@ import { MessageFlags } from "discord.js";
 import type Redis from "ioredis";
 import type { SessionMap } from "./session-map.js";
 import type { AiInboxMessage } from "./types.js";
-import { joinSession, sendMessage, resolveWorkspaceId } from "./beadhub-client.js";
+import { joinSession, sendMessage, createOrSendChat } from "./beadhub-client.js";
 import { markRelayed } from "./redis-listener.js";
 import { config } from "./config.js";
 
 const AI_INBOX = "ai:inbox";
-
-/** Cached orchestrator workspace_id (resolved once on first use). */
-let orchestratorWorkspaceId: string | null = null;
-
-/** Map Discord threadId → BeadHub chat sessionId for orchestrator conversations. */
-const orchestratorSessionMap = new Map<string, string>();
 
 /**
  * Scripty voice transcription bot application ID.
@@ -168,7 +162,8 @@ async function handleMessage(
 
   if (source === "orchestrator") {
     // Legacy orchestrator-managed thread — migrate to BeadHub chat routing
-    await sendToOrchestratorChat(sessionMap, threadId, sessionId, displayName, message.content, bridgeIdentity);
+    const result = await sendToOrchestratorChat(displayName, message.content);
+    await sessionMap.setWithSource(result.sessionId, threadId, "beadhub");
     startTypingIndicator(message.channel);
     return;
   }
@@ -272,7 +267,8 @@ async function handleVoiceNoteEdit(
 
   if (source === "orchestrator") {
     // Legacy orchestrator-managed thread — migrate to BeadHub chat routing
-    await sendToOrchestratorChat(sessionMap, threadId, sessionId, authorName, cleanTranscript, bridgeIdentity);
+    const result = await sendToOrchestratorChat(authorName, cleanTranscript);
+    await sessionMap.setWithSource(result.sessionId, threadId, "beadhub");
     startTypingIndicator(thread);
     return;
   }
@@ -293,87 +289,45 @@ async function handleVoiceNoteEdit(
 }
 
 /**
- * Resolve the orchestrator's workspace_id (cached after first call).
- * Falls back to the orchestrator alias from config.
- */
-async function getOrchestratorWorkspaceId(): Promise<string> {
-  if (orchestratorWorkspaceId) return orchestratorWorkspaceId;
-
-  const alias = config.orchestrator.alias;
-  // Try the configured alias first, then fall back to "ordis"
-  const aliasesToTry = [alias, ...(alias !== "ordis" ? ["ordis"] : [])];
-
-  for (const a of aliasesToTry) {
-    const wsId = await resolveWorkspaceId(a);
-    if (wsId) {
-      orchestratorWorkspaceId = wsId;
-      console.log(`[discord-listener] Resolved orchestrator workspace: alias=${a} wsId=${wsId.slice(0, 8)}...`);
-      return wsId;
-    }
-  }
-
-  throw new Error(`Could not resolve orchestrator workspace_id for aliases: ${aliasesToTry.join(", ")}`);
-}
-
-/**
- * Create a new BeadHub chat session and route to orchestrator via the chat API.
- * This replaces the old Redis orchestrator:inbox routing.
- * The bdh :notify hook on the orchestrator side will detect the pending message.
+ * Route a new Discord thread message to the orchestrator via BeadHub chat API.
+ * Creates a new session and maps it to the Discord thread.
  */
 async function routeToOrchestratorViaChat(
   sessionMap: SessionMap,
   threadId: string,
   displayName: string,
   content: string,
-  bridgeIdentity: { workspace_id: string; alias: string },
+  _bridgeIdentity: { workspace_id: string; alias: string },
 ): Promise<void> {
-  const sessionId = crypto.randomUUID();
-  await sessionMap.setWithSource(sessionId, threadId, "beadhub");
-  orchestratorSessionMap.set(threadId, sessionId);
-
-  await sendToOrchestratorChat(sessionMap, threadId, sessionId, displayName, content, bridgeIdentity);
+  const result = await sendToOrchestratorChat(displayName, content);
+  await sessionMap.setWithSource(result.sessionId, threadId, "beadhub");
   console.log(
-    `[discord->orchestrator] New chat session ${sessionId.slice(0, 8)}... for thread ${threadId}`,
+    `[discord->orchestrator] New chat session ${result.sessionId.slice(0, 8)}... for thread ${threadId}`,
   );
 }
 
 /**
- * Send a message to the orchestrator via BeadHub chat API.
- * Joins both the orchestrator and bridge as participants, then sends.
+ * Send a message to the orchestrator via BeadHub aweb chat API.
+ * Uses POST /v1/chat/sessions which creates or reuses a session automatically.
+ * The bdh :notify hook on the orchestrator side will detect the pending message.
  */
 async function sendToOrchestratorChat(
-  sessionMap: SessionMap,
-  threadId: string,
-  sessionId: string,
   author: string,
   content: string,
-  bridgeIdentity: { workspace_id: string; alias: string },
-): Promise<void> {
-  const orchWsId = await getOrchestratorWorkspaceId();
-
-  // Join both participants (idempotent)
-  await joinSession(sessionId, orchWsId, "ordis");
-  await joinSession(sessionId, bridgeIdentity.workspace_id, bridgeIdentity.alias);
-
-  // Format message with Discord author name
+): Promise<{ sessionId: string; messageId: string }> {
+  const orchestratorAlias = config.orchestrator.alias;
   const body = `[${author} via Discord] ${content}`;
 
-  const messageId = await sendMessage(
-    sessionId,
-    body,
-    bridgeIdentity.workspace_id,
-    bridgeIdentity.alias,
-  );
+  const result = await createOrSendChat([orchestratorAlias], body);
 
   // Mark as relayed so redis-listener doesn't echo it back to Discord
-  markRelayed(messageId, config.echoSuppressionTtlMs);
-
-  // Ensure the session source is "beadhub" (migrate legacy "orchestrator" sessions)
-  await sessionMap.setWithSource(sessionId, threadId, "beadhub");
+  markRelayed(result.message_id, config.echoSuppressionTtlMs);
 
   console.log(
-    `[discord->orchestrator] ${author} via chat in thread ${threadId}: ${content.slice(0, 80)}`,
+    `[discord->orchestrator] ${author} via chat: ${content.slice(0, 80)}`,
   );
+
+  return { sessionId: result.session_id, messageId: result.message_id };
 }
 
 /** Push message to ai:inbox Redis list for the AI dispatcher */

@@ -102,31 +102,46 @@ export async function sendMessage(
   return data.message_id;
 }
 
-/** Workspace info from the team/list API. */
-export interface WorkspaceInfo {
-  workspace_id: string;
-  alias: string;
-  human_name?: string;
-  project_id?: string;
-  project_slug?: string;
-  role?: string;
-  status?: string;
-  [key: string]: unknown;
+/** Response from POST /v1/chat/sessions (Create Or Send). */
+interface CreateSessionResponse {
+  session_id: string;
+  message_id: string;
+  participants: { workspace_id: string; alias: string }[];
 }
 
-/** List team workspaces (bounded coordination view). */
-export async function listTeamWorkspaces(): Promise<WorkspaceInfo[]> {
-  const data = await api<{ workspaces: WorkspaceInfo[] }>(
-    `/v1/workspaces/team?include_presence=false&only_with_claims=false`,
-  );
-  return data.workspaces;
-}
+/**
+ * Create or reuse a chat session and send a message to target aliases.
+ * Uses Bearer auth (BEADHUB_API_KEY) since the aweb chat endpoint requires
+ * workspace-level identity, not HMAC admin auth.
+ */
+export async function createOrSendChat(
+  toAliases: string[],
+  message: string,
+): Promise<CreateSessionResponse> {
+  const { url, apiKey } = config.beadhub;
+  if (!apiKey) {
+    throw new Error("BEADHUB_API_KEY is required for aweb chat — set it on the bridge deployment");
+  }
 
-/** Resolve a workspace_id for a given alias. Returns null if not found. */
-export async function resolveWorkspaceId(alias: string): Promise<string | null> {
-  const workspaces = await listTeamWorkspaces();
-  const match = workspaces.find((w) => w.alias === alias);
-  return match?.workspace_id ?? null;
+  const res = await fetch(`${url}/v1/chat/sessions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      to_aliases: toAliases,
+      message,
+      leaving: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`BeadHub POST /v1/chat/sessions → ${res.status}: ${body}`);
+  }
+
+  return res.json() as Promise<CreateSessionResponse>;
 }
 
 /** Repo info from the BeadHub repos API. */
