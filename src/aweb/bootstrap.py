@@ -365,9 +365,10 @@ async def soft_delete_agent(
 ) -> None:
     """Soft-delete an agent for workspace cleanup.
 
-    Sets deleted_at and status='deregistered', writes a workspace_cleanup
-    entry to agent_log.  Unlike deregister, this works for any lifetime
-    and does not fire mutation hooks or destroy signing keys.
+    Sets deleted_at, status='deregistered', and clears signing_key_enc.
+    Deactivates API keys and writes a workspace_cleanup entry to agent_log.
+    Unlike deregister, this works for any lifetime and does not fire
+    mutation hooks.
 
     Idempotent: no-op if the agent is already deleted.
     """
@@ -379,7 +380,9 @@ async def soft_delete_agent(
         row = await tx.fetch_one(
             """
             UPDATE {{tables.agents}}
-            SET status = 'deregistered', deleted_at = NOW()
+            SET signing_key_enc = NULL,
+                status = 'deregistered',
+                deleted_at = NOW()
             WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
             RETURNING did
             """,
@@ -387,25 +390,23 @@ async def soft_delete_agent(
             project_uuid,
         )
 
-        if row is None:
-            # Already deleted or doesn't exist — idempotent no-op.
-            return
+        if row is not None:
+            await tx.execute(
+                """
+                UPDATE {{tables.api_keys}} SET is_active = FALSE
+                WHERE agent_id = $1 AND project_id = $2
+                """,
+                agent_uuid,
+                project_uuid,
+            )
 
-        await tx.execute(
-            """
-            UPDATE {{tables.api_keys}} SET is_active = FALSE
-            WHERE agent_id = $1
-            """,
-            agent_uuid,
-        )
-
-        await tx.execute(
-            """
-            INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did)
-            VALUES ($1, $2, $3, $4)
-            """,
-            agent_uuid,
-            project_uuid,
-            "workspace_cleanup",
-            row["did"],
-        )
+            await tx.execute(
+                """
+                INSERT INTO {{tables.agent_log}} (agent_id, project_id, operation, old_did)
+                VALUES ($1, $2, $3, $4)
+                """,
+                agent_uuid,
+                project_uuid,
+                "workspace_cleanup",
+                row["did"],
+            )

@@ -96,6 +96,8 @@ async def test_soft_delete_writes_agent_log(aweb_db_infra):
     )
     assert log is not None
     assert log["operation"] == "workspace_cleanup"
+    # Agent created without DID, so old_did should be None.
+    assert log["old_did"] is None
 
 
 @pytest.mark.asyncio
