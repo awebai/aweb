@@ -45,6 +45,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
                 FROM {{tables.agents}} a
                 JOIN {{tables.projects}} p USING (project_id)
                 WHERE a.agent_id = $1 AND a.project_id = $2
+                  AND p.deleted_at IS NULL
                 """,
                 UUID(internal["actor_id"]),
                 UUID(internal["project_id"]),
@@ -74,6 +75,7 @@ async def introspect(request: Request, db=Depends(get_db)) -> dict:
             FROM {{tables.agents}} a
             JOIN {{tables.projects}} p USING (project_id)
             WHERE a.agent_id = $1 AND a.project_id = $2
+              AND p.deleted_at IS NULL
             """,
             UUID(details["agent_id"]),
             UUID(details["project_id"]),
