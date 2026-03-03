@@ -260,7 +260,9 @@ async def send_message(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
-        project_slug = proj_row["slug"] if proj_row else ""
+        if not proj_row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project_slug = proj_row["slug"]
         recip_row = await aweb_db.fetch_one(
             "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
             UUID(to_agent_id),
@@ -385,7 +387,9 @@ async def inbox(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
-    project_slug = proj_row["slug"] if proj_row else ""
+    if not proj_row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project_slug = proj_row["slug"]
     inbox_owner_address = format_agent_address(project_slug, owner["alias"])
 
     contact_addrs = await get_contact_addresses(db, project_id=project_id)

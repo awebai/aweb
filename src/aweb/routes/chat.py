@@ -264,7 +264,9 @@ async def create_or_send(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
-        project_slug = proj_row["slug"] if proj_row else ""
+        if not proj_row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project_slug = proj_row["slug"]
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = expected_to_stable_id
         to_address = ",".join(
@@ -447,7 +449,9 @@ async def history(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
-    project_slug = proj_row["slug"] if proj_row else ""
+    if not proj_row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project_slug = proj_row["slug"]
     participant_rows = await aweb_db.fetch_all(
         """
         SELECT alias
@@ -564,12 +568,15 @@ async def _sse_events(
             """,
             session_id,
         )
-        project_slug = proj_row["slug"] if proj_row else ""
-        sse_project_id = str(proj_row["project_id"]) if proj_row else ""
+        if not proj_row:
+            yield f"event: error\ndata: {json.dumps({'error': 'Project not found'})}\n\n"
+            return
+        project_slug = proj_row["slug"]
+        sse_project_id = str(proj_row["project_id"])
         # Fetched once per SSE session — contact changes during the stream
         # won't be reflected until the next connection.
         contact_addrs = (
-            await get_contact_addresses(db, project_id=sse_project_id) if sse_project_id else set()
+            await get_contact_addresses(db, project_id=sse_project_id)
         )
         participant_rows = await aweb_db.fetch_all(
             """
@@ -942,7 +949,9 @@ async def send_message(
             "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
-        project_slug = proj_row["slug"] if proj_row else ""
+        if not proj_row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project_slug = proj_row["slug"]
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = expected_to_stable_id
         to_address = _chat_to_address(project_slug, participant_aliases, canonical_alias)

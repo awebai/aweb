@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 from typing import Literal
 from uuid import UUID
@@ -125,10 +124,7 @@ async def list_agents(
         UUID(project_id),
     )
     if not proj_row:
-        logging.getLogger(__name__).error(
-            "Project row missing for authenticated project_id=%s", project_id
-        )
-        raise HTTPException(500, "Internal error")
+        raise HTTPException(404, "Project not found")
     namespace_slug = proj_row["slug"]
 
     type_filter = "" if include_internal else "AND agent_type != 'human'"

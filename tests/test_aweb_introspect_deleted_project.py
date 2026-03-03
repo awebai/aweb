@@ -109,7 +109,7 @@ async def test_introspect_includes_live_project(aweb_db_infra):
 
 @pytest.mark.asyncio
 async def test_list_agents_excludes_deleted_project(aweb_db_infra):
-    """GET /v1/agents should 500 when project is soft-deleted."""
+    """GET /v1/agents should 404 when project is soft-deleted."""
     aweb_db_infra: DatabaseInfra
     aweb_db = aweb_db_infra.get_manager("aweb")
     env = await _setup_agent_with_key(aweb_db)
@@ -129,4 +129,4 @@ async def test_list_agents_excludes_deleted_project(aweb_db_infra):
                 "/v1/agents",
                 headers={"Authorization": f"Bearer {env['api_key']}"},
             )
-            assert resp.status_code == 500
+            assert resp.status_code == 404

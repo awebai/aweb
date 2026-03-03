@@ -60,7 +60,9 @@ async def send_mail(
         "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(auth.project_id),
     )
-    project_slug = proj_row["slug"] if proj_row else ""
+    if not proj_row:
+        return json.dumps({"error": "Project not found"})
+    project_slug = proj_row["slug"]
 
     sign_result = await sign_on_behalf(
         auth.agent_id,
