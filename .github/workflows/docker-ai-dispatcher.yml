@@ -56,3 +56,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=ai-dispatcher
           cache-to: type=gha,mode=max,scope=ai-dispatcher
+
+      - name: Dispatch image update to homelab-k8s
+        run: |
+          gh api repos/Woody88/homelab-k8s/dispatches \
+            -f event_type=image_updated \
+            -f "client_payload[image]=ghcr.io/woody88/ai-dispatcher" \
+            -f "client_payload[tag]=$(echo '${{ steps.meta.outputs.tags }}' | grep 'sha-' | head -1 | cut -d: -f2)" \
+            -f "client_payload[manifest]=manifests/platform/beadhub/ai-dispatcher.yaml"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}

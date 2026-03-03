@@ -59,3 +59,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=hq-beadhub
           cache-to: type=gha,mode=max,scope=hq-beadhub
+
+      - name: Dispatch image update to homelab-k8s
+        run: |
+          gh api repos/Woody88/homelab-k8s/dispatches \
+            -f event_type=image_updated \
+            -f "client_payload[image]=ghcr.io/woody88/hq-beadhub" \
+            -f "client_payload[tag]=$(echo '${{ steps.meta.outputs.tags }}' | grep 'sha-' | head -1 | cut -d: -f2)" \
+            -f "client_payload[manifest]=manifests/platform/beadhub/api.yaml"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
