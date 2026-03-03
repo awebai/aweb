@@ -6,6 +6,7 @@ on:
     paths:
       - 'agent-image/**'
       - '.github/workflows/docker-claude-agent.yml'
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
