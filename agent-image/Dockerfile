@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     redis-tools \
     gh \
+    android-tools-adb \
     && rm -rf /var/lib/apt/lists/*
 
 # kubectl
