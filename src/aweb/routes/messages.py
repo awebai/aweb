@@ -257,7 +257,7 @@ async def send_message(
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
@@ -382,7 +382,7 @@ async def inbox(
     )
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
     project_slug = proj_row["slug"] if proj_row else ""

@@ -57,7 +57,7 @@ async def send_mail(
     pre_message_id = uuid_mod.uuid4()
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(auth.project_id),
     )
     project_slug = proj_row["slug"] if proj_row else ""

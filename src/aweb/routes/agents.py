@@ -121,7 +121,7 @@ async def list_agents(
     aweb_db = db.get_manager("aweb")
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
     if not proj_row:
@@ -378,6 +378,7 @@ async def agent_log(
         FROM {{tables.agents}} a
         JOIN {{tables.projects}} p ON a.project_id = p.project_id
         WHERE a.agent_id = $1 AND a.project_id = $2
+          AND p.deleted_at IS NULL
         """,
         agent_uuid,
         UUID(project_id),
@@ -1021,7 +1022,7 @@ async def retire_agent(
 
     # Resolve protocol-level identifiers for the canonical proof
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
     if proj_row is None:

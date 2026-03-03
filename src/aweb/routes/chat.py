@@ -261,7 +261,7 @@ async def create_or_send(
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
@@ -444,7 +444,7 @@ async def history(
         raise HTTPException(status_code=404, detail="Session not found")
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
     project_slug = proj_row["slug"] if proj_row else ""
@@ -560,6 +560,7 @@ async def _sse_events(
             FROM {{tables.chat_sessions}} s
             JOIN {{tables.projects}} p ON s.project_id = p.project_id
             WHERE s.session_id = $1
+              AND p.deleted_at IS NULL
             """,
             session_id,
         )
@@ -938,7 +939,7 @@ async def send_message(
 
     if payload.signature is None:
         proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
+            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
             UUID(project_id),
         )
         project_slug = proj_row["slug"] if proj_row else ""
