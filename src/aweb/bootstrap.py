@@ -360,9 +360,7 @@ async def bootstrap_identity(
     )
 
 
-async def soft_delete_agent(
-    db_infra, *, agent_id: str, project_id: str
-) -> None:
+async def soft_delete_agent(db_infra, *, agent_id: str, project_id: str) -> None:
     """Soft-delete an agent for workspace cleanup.
 
     Sets deleted_at, status='deregistered', and clears signing_key_enc.
