@@ -785,3 +785,15 @@ async def test_comment_on_nonexistent_task(aweb_db_infra):
                 json={"body": "hello"},
             )
             assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_list_comments_on_nonexistent_task(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            resp = await client.get("/v1/tasks/999/comments", headers=headers)
+            assert resp.status_code == 404, resp.text
