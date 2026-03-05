@@ -787,6 +787,205 @@ async def test_comment_on_nonexistent_task(aweb_db_infra):
             assert resp.status_code == 404, resp.text
 
 
+# -- Blocked tasks --
+
+
+@pytest.mark.asyncio
+async def test_blocked_tasks(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task_a = (await client.post("/v1/tasks", headers=headers, json={"title": "A"})).json()
+            task_b = (await client.post("/v1/tasks", headers=headers, json={"title": "B"})).json()
+            task_c = (await client.post("/v1/tasks", headers=headers, json={"title": "C"})).json()
+
+            # A depends on B (A is blocked by B)
+            await client.post(
+                f"/v1/tasks/{task_a['task_ref']}/deps",
+                headers=headers,
+                json={"depends_on": task_b["task_ref"]},
+            )
+
+            # Blocked should return A (has unresolved dep on B), not B or C
+            resp = await client.get("/v1/tasks/blocked", headers=headers)
+            assert resp.status_code == 200, resp.text
+            refs = [t["task_ref"] for t in resp.json()["tasks"]]
+            assert task_a["task_ref"] in refs
+            assert task_b["task_ref"] not in refs
+            assert task_c["task_ref"] not in refs
+
+            # Close B — A is no longer blocked
+            await client.patch(
+                f"/v1/tasks/{task_b['task_ref']}", headers=headers, json={"status": "closed"}
+            )
+
+            resp = await client.get("/v1/tasks/blocked", headers=headers)
+            refs = [t["task_ref"] for t in resp.json()["tasks"]]
+            assert task_a["task_ref"] not in refs
+
+
+# -- Mutation hook payloads --
+
+
+@pytest.mark.asyncio
+async def test_hook_task_created_payload(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    events = []
+
+    async def on_mutation(event_type, context):
+        events.append((event_type, context))
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    app.state.on_mutation = on_mutation
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+
+            # Create a parent task first
+            parent = (
+                await client.post("/v1/tasks", headers=headers, json={"title": "Parent"})
+            ).json()
+            events.clear()
+
+            # Create child with assignee
+            resp = await client.post(
+                "/v1/tasks",
+                headers=headers,
+                json={
+                    "title": "Child",
+                    "parent_task_id": parent["task_id"],
+                    "assignee_agent_id": seeded["agent_2_id"],
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            created = resp.json()
+
+            assert len(events) == 1
+            evt_type, ctx = events[0]
+            assert evt_type == "task.created"
+            assert ctx["task_id"] == created["task_id"]
+            assert ctx["task_ref"] == created["task_ref"]
+            assert ctx["title"] == "Child"
+            assert ctx["parent_task_id"] == parent["task_id"]
+            assert ctx["assignee_agent_id"] == seeded["agent_2_id"]
+            assert ctx["actor_agent_id"] == seeded["agent_1_id"]
+
+
+@pytest.mark.asyncio
+async def test_hook_task_status_changed(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    events = []
+
+    async def on_mutation(event_type, context):
+        events.append((event_type, context))
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    app.state.on_mutation = on_mutation
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task = (await client.post("/v1/tasks", headers=headers, json={"title": "T1"})).json()
+            events.clear()
+
+            # Move to in_progress (claim)
+            resp = await client.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=headers,
+                json={"status": "in_progress"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Should fire task.status_changed (not just task.updated)
+            status_events = [(t, c) for t, c in events if t == "task.status_changed"]
+            assert len(status_events) == 1
+            evt_type, ctx = status_events[0]
+            assert ctx["old_status"] == "open"
+            assert ctx["new_status"] == "in_progress"
+            assert ctx["task_ref"] == task["task_ref"]
+            assert ctx["task_id"] == task["task_id"]
+            assert ctx["title"] == "T1"
+            assert ctx["assignee_agent_id"] == seeded["agent_1_id"]  # auto-assigned
+            assert ctx["actor_agent_id"] == seeded["agent_1_id"]
+
+            events.clear()
+
+            # Close
+            resp = await client.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=headers,
+                json={"status": "closed"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            status_events = [(t, c) for t, c in events if t == "task.status_changed"]
+            assert len(status_events) == 1
+            _, ctx = status_events[0]
+            assert ctx["old_status"] == "in_progress"
+            assert ctx["new_status"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_hook_task_deleted_has_ref(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    events = []
+
+    async def on_mutation(event_type, context):
+        events.append((event_type, context))
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    app.state.on_mutation = on_mutation
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task = (await client.post("/v1/tasks", headers=headers, json={"title": "T1"})).json()
+            events.clear()
+
+            resp = await client.delete(f"/v1/tasks/{task['task_ref']}", headers=headers)
+            assert resp.status_code == 200, resp.text
+
+            assert len(events) == 1
+            evt_type, ctx = events[0]
+            assert evt_type == "task.deleted"
+            assert ctx["task_id"] == task["task_id"]
+            assert ctx["task_ref"] == task["task_ref"]
+
+
+@pytest.mark.asyncio
+async def test_hook_non_status_update_fires_task_updated(aweb_db_infra):
+    """Title/description changes should fire task.updated, not task.status_changed."""
+    seeded = await _seed(aweb_db_infra)
+    events = []
+
+    async def on_mutation(event_type, context):
+        events.append((event_type, context))
+
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    app.state.on_mutation = on_mutation
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task = (await client.post("/v1/tasks", headers=headers, json={"title": "T1"})).json()
+            events.clear()
+
+            resp = await client.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=headers,
+                json={"title": "Updated Title"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            event_types = [t for t, _ in events]
+            assert "task.updated" in event_types
+            assert "task.status_changed" not in event_types
+
+
 @pytest.mark.asyncio
 async def test_list_comments_on_nonexistent_task(aweb_db_infra):
     seeded = await _seed(aweb_db_infra)

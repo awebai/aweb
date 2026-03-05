@@ -13,6 +13,7 @@ from aweb.tasks_service import (
     add_dependency,
     create_task,
     get_task,
+    list_blocked_tasks,
     list_comments,
     list_ready_tasks,
     list_tasks,
@@ -86,7 +87,14 @@ async def create_task_route(
     await fire_mutation_hook(
         request,
         "task.created",
-        {"task_id": result["task_id"], "task_ref": result["task_ref"], "title": result["title"]},
+        {
+            "task_id": result["task_id"],
+            "task_ref": result["task_ref"],
+            "title": result["title"],
+            "parent_task_id": result["parent_task_id"],
+            "assignee_agent_id": result["assignee_agent_id"],
+            "actor_agent_id": actor_id,
+        },
     )
 
     return result
@@ -122,6 +130,13 @@ async def list_tasks_route(
 async def list_ready_tasks_route(request: Request, db=Depends(get_db)) -> dict[str, Any]:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
     tasks = await list_ready_tasks(db, project_id=project_id)
+    return {"tasks": tasks}
+
+
+@router.get("/blocked")
+async def list_blocked_tasks_route(request: Request, db=Depends(get_db)) -> dict[str, Any]:
+    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    tasks = await list_blocked_tasks(db, project_id=project_id)
     return {"tasks": tasks}
 
 
@@ -164,12 +179,27 @@ async def update_task_route(
         **kwargs,
     )
 
-    event = "task.closed" if payload.status == "closed" else "task.updated"
-    await fire_mutation_hook(
-        request,
-        event,
-        {"task_id": result["task_id"], "task_ref": result["task_ref"]},
-    )
+    if "old_status" in result:
+        await fire_mutation_hook(
+            request,
+            "task.status_changed",
+            {
+                "task_id": result["task_id"],
+                "task_ref": result["task_ref"],
+                "title": result["title"],
+                "old_status": result["old_status"],
+                "new_status": result["status"],
+                "assignee_agent_id": result["assignee_agent_id"],
+                "parent_task_id": result["parent_task_id"],
+                "actor_agent_id": actor_id,
+            },
+        )
+    else:
+        await fire_mutation_hook(
+            request,
+            "task.updated",
+            {"task_id": result["task_id"], "task_ref": result["task_ref"]},
+        )
 
     return result
 
@@ -183,7 +213,7 @@ async def delete_task_route(request: Request, ref: str, db=Depends(get_db)) -> d
     await fire_mutation_hook(
         request,
         "task.deleted",
-        {"task_id": result["task_id"]},
+        {"task_id": result["task_id"], "task_ref": result["task_ref"]},
     )
 
     return result

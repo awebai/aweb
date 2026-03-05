@@ -368,6 +368,52 @@ async def list_ready_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
     ]
 
 
+async def list_blocked_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
+    """Open tasks that have at least one unresolved (non-closed) dependency."""
+    slug = await _get_project_slug(db, project_id=project_id)
+    aweb_db = db.get_manager("aweb")
+
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT t.task_id, t.task_number, t.title, t.status, t.priority, t.task_type,
+               t.assignee_agent_id, t.created_by_agent_id, t.labels, t.created_at, t.updated_at
+        FROM {{tables.tasks}} t
+        WHERE t.project_id = $1
+          AND t.status IN ('open', 'in_progress')
+          AND t.deleted_at IS NULL
+          AND EXISTS (
+              SELECT 1 FROM {{tables.task_dependencies}} d
+              JOIN {{tables.tasks}} blocker ON blocker.task_id = d.depends_on_task_id
+              WHERE d.task_id = t.task_id
+                AND blocker.status != 'closed'
+                AND blocker.deleted_at IS NULL
+          )
+        ORDER BY t.priority ASC, t.task_number ASC
+        """,
+        UUID(project_id),
+    )
+
+    return [
+        {
+            "task_id": str(r["task_id"]),
+            "task_ref": format_task_ref(slug, r["task_number"]),
+            "task_number": r["task_number"],
+            "title": r["title"],
+            "status": r["status"],
+            "priority": r["priority"],
+            "task_type": r["task_type"],
+            "assignee_agent_id": str(r["assignee_agent_id"]) if r["assignee_agent_id"] else None,
+            "created_by_agent_id": (
+                str(r["created_by_agent_id"]) if r["created_by_agent_id"] else None
+            ),
+            "labels": list(r["labels"]) if r["labels"] else [],
+            "created_at": r["created_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 async def update_task(
     db,
     *,
@@ -517,14 +563,19 @@ async def update_task(
             *params,
         )
 
+    old_status = current["status"]
+
     result = await get_task(db, project_id=project_id, ref=str(task_id))
     if auto_closed:
         result["auto_closed"] = auto_closed
+    if status is not None and status != old_status:
+        result["old_status"] = old_status
     return result
 
 
 async def soft_delete_task(db, *, project_id: str, ref: str) -> dict[str, Any]:
     task_id = await resolve_task_ref(db, project_id=project_id, ref=ref)
+    slug = await _get_project_slug(db, project_id=project_id)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
@@ -533,7 +584,7 @@ async def soft_delete_task(db, *, project_id: str, ref: str) -> dict[str, Any]:
             """
             UPDATE {{tables.tasks}} SET deleted_at = $2, updated_at = $2
             WHERE task_id = $1 AND deleted_at IS NULL
-            RETURNING task_id
+            RETURNING task_id, task_number
             """,
             task_id,
             now,
@@ -541,7 +592,11 @@ async def soft_delete_task(db, *, project_id: str, ref: str) -> dict[str, Any]:
         if not row:
             raise NotFoundError("Task not found")
 
-    return {"status": "deleted", "task_id": str(task_id)}
+    return {
+        "status": "deleted",
+        "task_id": str(task_id),
+        "task_ref": format_task_ref(slug, row["task_number"]),
+    }
 
 
 async def add_dependency(
