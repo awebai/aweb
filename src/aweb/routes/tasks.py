@@ -179,7 +179,8 @@ async def update_task_route(
         **kwargs,
     )
 
-    if "old_status" in result:
+    old_status = result.pop("old_status", None)
+    if old_status is not None:
         await fire_mutation_hook(
             request,
             "task.status_changed",
@@ -187,7 +188,7 @@ async def update_task_route(
                 "task_id": result["task_id"],
                 "task_ref": result["task_ref"],
                 "title": result["title"],
-                "old_status": result["old_status"],
+                "old_status": old_status,
                 "new_status": result["status"],
                 "assignee_agent_id": result["assignee_agent_id"],
                 "parent_task_id": result["parent_task_id"],

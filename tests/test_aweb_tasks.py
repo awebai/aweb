@@ -817,6 +817,16 @@ async def test_blocked_tasks(aweb_db_infra):
             assert task_b["task_ref"] not in refs
             assert task_c["task_ref"] not in refs
 
+            # Claim A (move to in_progress) — still blocked
+            await client.patch(
+                f"/v1/tasks/{task_a['task_ref']}",
+                headers=headers,
+                json={"status": "in_progress"},
+            )
+            resp = await client.get("/v1/tasks/blocked", headers=headers)
+            refs = [t["task_ref"] for t in resp.json()["tasks"]]
+            assert task_a["task_ref"] in refs
+
             # Close B — A is no longer blocked
             await client.patch(
                 f"/v1/tasks/{task_b['task_ref']}", headers=headers, json={"status": "closed"}
@@ -899,17 +909,19 @@ async def test_hook_task_status_changed(aweb_db_infra):
                 json={"status": "in_progress"},
             )
             assert resp.status_code == 200, resp.text
+            assert "old_status" not in resp.json()  # internal field, not in API response
 
             # Should fire task.status_changed (not just task.updated)
             status_events = [(t, c) for t, c in events if t == "task.status_changed"]
             assert len(status_events) == 1
-            evt_type, ctx = status_events[0]
+            _, ctx = status_events[0]
             assert ctx["old_status"] == "open"
             assert ctx["new_status"] == "in_progress"
             assert ctx["task_ref"] == task["task_ref"]
             assert ctx["task_id"] == task["task_id"]
             assert ctx["title"] == "T1"
             assert ctx["assignee_agent_id"] == seeded["agent_1_id"]  # auto-assigned
+            assert ctx["parent_task_id"] is None
             assert ctx["actor_agent_id"] == seeded["agent_1_id"]
 
             events.clear()

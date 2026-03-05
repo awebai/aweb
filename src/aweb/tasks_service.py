@@ -369,7 +369,7 @@ async def list_ready_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
 
 
 async def list_blocked_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
-    """Open tasks that have at least one unresolved (non-closed) dependency."""
+    """Open or in-progress tasks that have at least one unresolved (non-closed) dependency."""
     slug = await _get_project_slug(db, project_id=project_id)
     aweb_db = db.get_manager("aweb")
 
