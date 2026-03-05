@@ -6,6 +6,8 @@ from uuid import UUID
 
 from aweb.service_errors import ConflictError, NotFoundError, ValidationError
 
+_UNSET = object()
+
 
 def format_task_ref(project_slug: str, task_number: int) -> str:
     return f"{project_slug}-{task_number:03d}"
@@ -379,7 +381,7 @@ async def update_task(
     priority: int | None = None,
     task_type: str | None = None,
     labels: list[str] | None = None,
-    assignee_agent_id: str | None = ...,  # type: ignore[assignment]
+    assignee_agent_id: str | None | object = _UNSET,
 ) -> dict[str, Any]:
     task_id = await resolve_task_ref(db, project_id=project_id, ref=ref)
     aweb_db = db.get_manager("aweb")
@@ -433,9 +435,9 @@ async def update_task(
             idx += 1
 
         # assignee_agent_id uses sentinel to distinguish "not provided" from "set to null"
-        if assignee_agent_id is not ...:
+        if assignee_agent_id is not _UNSET:
             sets.append(f"assignee_agent_id = ${idx}")
-            params.append(UUID(assignee_agent_id) if assignee_agent_id else None)
+            params.append(UUID(str(assignee_agent_id)) if assignee_agent_id else None)
             idx += 1
 
         auto_closed: list[dict[str, Any]] = []
