@@ -288,3 +288,31 @@ async def test_task_claim_resolves_apex_from_parent(db_infra, redis_client_async
             assert (
                 claim["apex_bead_id"] == setup["task_ref"]
             ), f"Expected apex to be parent {setup['task_ref']}, got {claim['apex_bead_id']}"
+
+
+@pytest.mark.asyncio
+async def test_task_claim_idempotent(db_infra, redis_client_async):
+    """Setting a task to in_progress twice doesn't create duplicate claims."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            setup = await _setup_agent_with_task(client)
+
+            # Claim the task twice
+            for _ in range(2):
+                resp = await client.patch(
+                    f"/v1/tasks/{setup['task_ref']}",
+                    headers={"Authorization": f"Bearer {setup['api_key']}"},
+                    json={"status": "in_progress"},
+                )
+                assert resp.status_code == 200, resp.text
+                await asyncio.sleep(0.3)
+
+            # Should still have exactly one claim
+            claims = await client.get(
+                "/v1/claims",
+                headers={"Authorization": f"Bearer {setup['api_key']}"},
+            )
+            assert claims.status_code == 200, claims.text
+            matching = [c for c in claims.json()["claims"] if c["bead_id"] == setup["task_ref"]]
+            assert len(matching) == 1, f"Expected 1 claim, got {matching}"

@@ -238,6 +238,9 @@ async def _cascade_task_deleted(db_infra: "DatabaseInfra", context: dict) -> Non
         return
 
     server_db = db_infra.get_manager("server")
+    # task_ref includes the project slug (e.g. "myproj-001") so it's unique
+    # per aweb instance. LIMIT 1 is safe since bead_id is unique within a project
+    # and project slugs are unique within an instance.
     claim = await server_db.fetch_one(
         "SELECT project_id FROM {{tables.bead_claims}} WHERE bead_id = $1 LIMIT 1",
         task_ref,
