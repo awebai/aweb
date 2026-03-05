@@ -9,9 +9,11 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.tasks_service import (
+    add_comment,
     add_dependency,
     create_task,
     get_task,
+    list_comments,
     list_ready_tasks,
     list_tasks,
     remove_dependency,
@@ -52,6 +54,12 @@ class AddDependencyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     depends_on: str = Field(..., min_length=1)
+
+
+class AddCommentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(..., min_length=1, max_length=65536)
 
 
 @router.post("")
@@ -218,3 +226,30 @@ async def remove_dependency_route(
     )
 
     return result
+
+
+@router.post("/{ref}/comments")
+async def add_comment_route(
+    request: Request, ref: str, payload: AddCommentRequest, db=Depends(get_db)
+) -> dict[str, Any]:
+    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+
+    result = await add_comment(
+        db, project_id=project_id, ref=ref, agent_id=actor_id, body=payload.body
+    )
+
+    await fire_mutation_hook(
+        request,
+        "task.comment_added",
+        {"task_id": result["task_id"], "comment_id": result["comment_id"]},
+    )
+
+    return result
+
+
+@router.get("/{ref}/comments")
+async def list_comments_route(request: Request, ref: str, db=Depends(get_db)) -> dict[str, Any]:
+    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    comments = await list_comments(db, project_id=project_id, ref=ref)
+    return {"comments": comments}

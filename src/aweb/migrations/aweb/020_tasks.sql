@@ -50,3 +50,15 @@ CREATE TABLE IF NOT EXISTS {{tables.task_dependencies}} (
     PRIMARY KEY (task_id, depends_on_task_id),
     CHECK (task_id != depends_on_task_id)
 );
+
+CREATE TABLE IF NOT EXISTS {{tables.task_comments}} (
+    comment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES {{tables.tasks}}(task_id) ON DELETE CASCADE,
+    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
+    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_comments_task
+ON {{tables.task_comments}} (task_id, created_at);

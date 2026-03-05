@@ -603,3 +603,54 @@ async def remove_dependency(db, *, project_id: str, task_ref: str, dep_ref: str)
         dep_id,
     )
     return {"task_id": str(task_id), "removed_depends_on_task_id": str(dep_id)}
+
+
+async def add_comment(db, *, project_id: str, ref: str, agent_id: str, body: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, project_id=project_id, ref=ref)
+    aweb_db = db.get_manager("aweb")
+
+    row = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.task_comments}} (task_id, project_id, agent_id, body)
+        VALUES ($1, $2, $3, $4)
+        RETURNING comment_id, created_at
+        """,
+        task_id,
+        UUID(project_id),
+        UUID(agent_id),
+        body,
+    )
+
+    return {
+        "comment_id": str(row["comment_id"]),
+        "task_id": str(task_id),
+        "agent_id": agent_id,
+        "body": body,
+        "created_at": row["created_at"].isoformat(),
+    }
+
+
+async def list_comments(db, *, project_id: str, ref: str) -> list[dict[str, Any]]:
+    task_id = await resolve_task_ref(db, project_id=project_id, ref=ref)
+    aweb_db = db.get_manager("aweb")
+
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT comment_id, task_id, agent_id, body, created_at
+        FROM {{tables.task_comments}}
+        WHERE task_id = $1
+        ORDER BY created_at ASC
+        """,
+        task_id,
+    )
+
+    return [
+        {
+            "comment_id": str(r["comment_id"]),
+            "task_id": str(r["task_id"]),
+            "agent_id": str(r["agent_id"]),
+            "body": r["body"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]

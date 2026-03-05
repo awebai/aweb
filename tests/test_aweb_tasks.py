@@ -711,3 +711,77 @@ async def test_clear_assignee(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["assignee_agent_id"] is None
+
+
+# -- Task comments --
+
+
+@pytest.mark.asyncio
+async def test_add_and_list_comments(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            headers_2 = _auth_headers(seeded["api_key_2"])
+            task = (await client.post("/v1/tasks", headers=headers_1, json={"title": "T1"})).json()
+
+            # Add two comments from different agents
+            resp1 = await client.post(
+                f"/v1/tasks/{task['task_ref']}/comments",
+                headers=headers_1,
+                json={"body": "Started investigating"},
+            )
+            assert resp1.status_code == 200, resp1.text
+            c1 = resp1.json()
+            assert c1["body"] == "Started investigating"
+            assert c1["agent_id"] == seeded["agent_1_id"]
+            assert "comment_id" in c1
+            assert "created_at" in c1
+
+            resp2 = await client.post(
+                f"/v1/tasks/{task['task_ref']}/comments",
+                headers=headers_2,
+                json={"body": "Found the root cause"},
+            )
+            assert resp2.status_code == 200, resp2.text
+
+            # List comments — ordered by created_at
+            resp = await client.get(f"/v1/tasks/{task['task_ref']}/comments", headers=headers_1)
+            assert resp.status_code == 200, resp.text
+            comments = resp.json()["comments"]
+            assert len(comments) == 2
+            assert comments[0]["body"] == "Started investigating"
+            assert comments[1]["body"] == "Found the root cause"
+
+
+@pytest.mark.asyncio
+async def test_comments_empty_list(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task = (await client.post("/v1/tasks", headers=headers, json={"title": "T1"})).json()
+
+            resp = await client.get(f"/v1/tasks/{task['task_ref']}/comments", headers=headers)
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["comments"] == []
+
+
+@pytest.mark.asyncio
+async def test_comment_on_nonexistent_task(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            resp = await client.post(
+                "/v1/tasks/999/comments",
+                headers=headers,
+                json={"body": "hello"},
+            )
+            assert resp.status_code == 404, resp.text
