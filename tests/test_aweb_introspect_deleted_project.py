@@ -69,9 +69,7 @@ async def test_introspect_excludes_deleted_project(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
                 "/v1/auth/introspect",
                 headers={"Authorization": f"Bearer {env['api_key']}"},
@@ -93,9 +91,7 @@ async def test_introspect_includes_live_project(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
                 "/v1/auth/introspect",
                 headers={"Authorization": f"Bearer {env['api_key']}"},
@@ -122,9 +118,7 @@ async def test_list_agents_excludes_deleted_project(aweb_db_infra):
 
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
                 "/v1/agents",
                 headers={"Authorization": f"Bearer {env['api_key']}"},

@@ -575,9 +575,7 @@ async def _sse_events(
         sse_project_id = str(proj_row["project_id"])
         # Fetched once per SSE session — contact changes during the stream
         # won't be reflected until the next connection.
-        contact_addrs = (
-            await get_contact_addresses(db, project_id=sse_project_id)
-        )
+        contact_addrs = await get_contact_addresses(db, project_id=sse_project_id)
         participant_rows = await aweb_db.fetch_all(
             """
             SELECT alias
