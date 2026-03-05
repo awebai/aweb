@@ -843,10 +843,11 @@ async def sync(
                     ),
                 )
         elif cmd in ("close", "delete") or (cmd == "update" and status and status != "in_progress"):
-            await _delete_claim(
+            # Release ALL claims on this bead — not just the syncing
+            # workspace's.  A closed/deleted bead should have no claims.
+            await _release_bead_claims(
                 db_infra,
                 project_id=project_id,
-                workspace_id=payload.workspace_id,
                 bead_id=bead_id,
             )
             title = await _get_bead_title(beads_db, project_id, bead_id)
@@ -862,12 +863,11 @@ async def sync(
             )
 
     if payload.deleted_ids:
-        # Ensure deletions also remove claims for this workspace.
+        # Deleted beads should have no claims from any workspace.
         for bid in payload.deleted_ids:
-            await _delete_claim(
+            await _release_bead_claims(
                 db_infra,
                 project_id=project_id,
-                workspace_id=payload.workspace_id,
                 bead_id=bid,
             )
             await publish_event(

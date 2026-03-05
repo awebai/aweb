@@ -438,3 +438,93 @@ class TestParseCommandLine:
     def test_delete(self):
         cmd, bead_id, status = _parse_command_line("delete bd-5")
         assert (cmd, bead_id, status) == ("delete", "bd-5", None)
+
+
+@pytest.mark.asyncio
+async def test_close_releases_claims_from_all_workspaces(db_infra, init_workspace):
+    """Closing a bead should release claims held by ANY workspace, not just the closer."""
+    redis = await Redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    try:
+        await redis.ping()
+    except Exception:
+        pytest.skip("Redis is not available")
+    await redis.flushdb()
+
+    try:
+        app = create_app(db_infra=db_infra, redis=redis, serve_frontend=False)
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                slug = f"bdh-{uuid.uuid4().hex[:8]}"
+                # Two workspaces in the same project.
+                ws_a = await init_workspace(
+                    client,
+                    project_slug=slug,
+                    repo_origin=TEST_REPO_ORIGIN,
+                    alias="alice",
+                    human_name="Alice",
+                    role="agent",
+                )
+                ws_b = await init_workspace(
+                    client,
+                    project_slug=slug,
+                    repo_origin=TEST_REPO_ORIGIN,
+                    alias="bob",
+                    human_name="Bob",
+                    role="agent",
+                )
+
+                # Alice claims bd-1 via sync.
+                resp = await client.post(
+                    "/v1/bdh/sync",
+                    headers=auth_headers(ws_a["api_key"]),
+                    json={
+                        "workspace_id": ws_a["workspace_id"],
+                        "repo_id": ws_a["repo_id"],
+                        "alias": "alice",
+                        "human_name": "Alice",
+                        "repo_origin": TEST_REPO_ORIGIN,
+                        "role": "agent",
+                        "sync_mode": "full",
+                        "issues_jsonl": _jsonl(
+                            {"id": "bd-1", "title": "Fix bug", "status": "in_progress"},
+                        ),
+                        "command_line": "update bd-1 --status in_progress",
+                    },
+                )
+                assert resp.status_code == 200, resp.text
+
+                # Verify Alice's claim exists.
+                claims = await client.get("/v1/claims", headers=auth_headers(ws_a["api_key"]))
+                assert len(claims.json()["claims"]) == 1
+
+                # Bob closes the same bead via sync.
+                resp = await client.post(
+                    "/v1/bdh/sync",
+                    headers=auth_headers(ws_b["api_key"]),
+                    json={
+                        "workspace_id": ws_b["workspace_id"],
+                        "repo_id": ws_b["repo_id"],
+                        "alias": "bob",
+                        "human_name": "Bob",
+                        "repo_origin": TEST_REPO_ORIGIN,
+                        "role": "agent",
+                        "sync_mode": "incremental",
+                        "changed_issues": _jsonl(
+                            {"id": "bd-1", "title": "Fix bug", "status": "closed"},
+                        ),
+                        "deleted_ids": [],
+                        "command_line": "close bd-1",
+                    },
+                )
+                assert resp.status_code == 200, resp.text
+
+                # Alice's claim should be gone — the close released ALL claims.
+                claims = await client.get("/v1/claims", headers=auth_headers(ws_a["api_key"]))
+                assert (
+                    claims.json()["claims"] == []
+                ), "Closing a bead from another workspace should release all claims"
+    finally:
+        await redis.flushdb()
+        await redis.aclose()
