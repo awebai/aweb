@@ -40,6 +40,11 @@ type SortedIssue = Task & {
   _parentId?: string
 }
 
+// Unique identifier for a task — task_id for native tasks, task_ref for beads fallback (where task_id is null)
+function taskUid(t: Task): string {
+  return t.task_id ?? t.task_ref
+}
+
 const issueTypes = [
   { value: "all", label: "All types" },
   { value: "bug", label: "Bug" },
@@ -395,9 +400,9 @@ export function IssuesPage() {
   const collapseAll = useCallback(() => {
     if (allIssues.length === 0) return
     const allParentIds = new Set<string>()
-    const taskIds = new Set(allIssues.map(i => i.task_id))
+    const uidToTask = new Map(allIssues.map(i => [taskUid(i), i]))
     for (const issue of allIssues) {
-      if (issue.parent_task_id && taskIds.has(issue.parent_task_id)) {
+      if (issue.parent_task_id && uidToTask.has(issue.parent_task_id)) {
         allParentIds.add(issue.parent_task_id)
       }
     }
@@ -440,13 +445,14 @@ export function IssuesPage() {
     }
 
     // Tree view: build hierarchy using parent_task_id
-    const taskIds = new Set(issues.map(i => i.task_id))
+    // Use taskUid() as the canonical identifier (handles beads fallback where task_id is null)
+    const uidSet = new Set(issues.map(i => taskUid(i)))
 
     // Build children map: parent task_id -> children
     const childrenMap = new Map<string, Task[]>()
     for (const issue of issues) {
       const parentId = issue.parent_task_id
-      if (parentId && taskIds.has(parentId)) {
+      if (parentId && uidSet.has(parentId)) {
         if (!childrenMap.has(parentId)) {
           childrenMap.set(parentId, [])
         }
@@ -456,7 +462,7 @@ export function IssuesPage() {
 
     // Find root tasks (no parent_task_id or parent not in current set)
     const roots = issues.filter(i => {
-      return !i.parent_task_id || !taskIds.has(i.parent_task_id)
+      return !i.parent_task_id || !uidSet.has(i.parent_task_id)
     })
 
     // Sort roots using the selected sort order
@@ -467,15 +473,16 @@ export function IssuesPage() {
     const visited = new Set<string>()
 
     const addWithChildren = (issue: Task, level: number, parentId?: string) => {
-      if (visited.has(issue.task_id)) return
-      visited.add(issue.task_id)
-      const children = childrenMap.get(issue.task_id) || []
+      const uid = taskUid(issue)
+      if (visited.has(uid)) return
+      visited.add(uid)
+      const children = childrenMap.get(uid) || []
       result.push({ ...issue, _indentLevel: level, _hasChildren: children.length > 0, _parentId: parentId })
 
       // Sort children using the selected sort order
       children.sort(comparator)
       for (const child of children) {
-        addWithChildren(child, level + 1, issue.task_id)
+        addWithChildren(child, level + 1, uid)
       }
     }
 
@@ -485,7 +492,7 @@ export function IssuesPage() {
 
     // Add any orphaned tasks (in case of circular dependencies)
     for (const issue of issues) {
-      if (!visited.has(issue.task_id)) {
+      if (!visited.has(taskUid(issue))) {
         result.push({ ...issue, _indentLevel: 0, _hasChildren: false })
       }
     }
@@ -503,7 +510,7 @@ export function IssuesPage() {
     const findCollapsedAncestor = (issue: SortedIssue): boolean => {
       if (!issue._parentId) return false
       if (collapsedTasks.has(issue._parentId)) return true
-      const parent = sortedIssues.find(i => i.task_id === issue._parentId)
+      const parent = sortedIssues.find(i => taskUid(i) === issue._parentId)
       return parent ? findCollapsedAncestor(parent) : false
     }
 
@@ -662,7 +669,7 @@ export function IssuesPage() {
             <div className="grid gap-2">
               {visibleIssues.map((issue) => (
                 <div
-                  key={issue.task_id}
+                  key={taskUid(issue)}
                   style={{ marginLeft: (issue._indentLevel || 0) * 20 }}
                 >
                   <IssueCard
@@ -670,8 +677,8 @@ export function IssuesPage() {
                     onSelect={setSelectedIssue}
                     indentLevel={issue._indentLevel || 0}
                     hasChildren={issue._hasChildren || false}
-                    isCollapsed={collapsedTasks.has(issue.task_id)}
-                    onToggleCollapse={() => toggleCollapse(issue.task_id)}
+                    isCollapsed={collapsedTasks.has(taskUid(issue))}
+                    onToggleCollapse={() => toggleCollapse(taskUid(issue))}
                   />
                 </div>
               ))}
