@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from aweb.service_errors import ConflictError, NotFoundError
+from aweb.sql import escape_like
 
 RESERVATION_MIN_TTL_SECONDS = 60
 RESERVATION_MAX_TTL_SECONDS = 3600
@@ -202,12 +203,12 @@ async def list_reservations(
             SELECT project_id, resource_key, holder_agent_id, holder_alias,
                    acquired_at, expires_at, metadata_json
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE ($3 || '%')
+            WHERE project_id = $1 AND expires_at > $2 AND resource_key LIKE $3 ESCAPE '\\'
             ORDER BY resource_key ASC
             """,
             UUID(project_id),
             now,
-            prefix,
+            escape_like(prefix) + "%",
         )
 
     return [

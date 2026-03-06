@@ -19,6 +19,7 @@ from aweb.reservations_service import (
     list_reservations,
     release_reservation,
 )
+from aweb.sql import escape_like
 
 router = APIRouter(prefix="/v1/reservations", tags=["aweb-reservations"])
 
@@ -203,27 +204,28 @@ async def revoke(
 
     aweb_db = db.get_manager("aweb")
     if payload.prefix:
+        like_pattern = escape_like(payload.prefix) + "%"
         async with aweb_db.transaction() as tx:
             rows = await tx.fetch_all(
                 """
                 DELETE FROM {{tables.reservations}}
-                WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+                WHERE project_id = $1 AND resource_key LIKE $2 ESCAPE '\\'
                   AND holder_agent_id = $3
                 RETURNING 1
                 """,
                 project_uuid,
-                payload.prefix,
+                like_pattern,
                 actor_uuid,
             )
             if not rows:
                 held_by_others = await tx.fetch_one(
                     """
                     SELECT 1 FROM {{tables.reservations}}
-                    WHERE project_id = $1 AND resource_key LIKE ($2 || '%')
+                    WHERE project_id = $1 AND resource_key LIKE $2 ESCAPE '\\'
                     LIMIT 1
                     """,
                     project_uuid,
-                    payload.prefix,
+                    like_pattern,
                 )
                 if held_by_others:
                     raise HTTPException(
