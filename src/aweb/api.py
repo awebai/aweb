@@ -7,6 +7,7 @@ minimal until the aweb routes and storage are implemented per
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -97,6 +98,15 @@ def create_app(
     @app.exception_handler(ServiceError)
     async def _service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    latest_version = os.environ.get("AWEB_LATEST_AW_VERSION")
+    if latest_version:
+
+        @app.middleware("http")
+        async def add_version_header(request: Request, call_next):
+            response = await call_next(request)
+            response.headers["X-Latest-Client-Version"] = latest_version
+            return response
 
     include_aweb_routers(app)
     return app
