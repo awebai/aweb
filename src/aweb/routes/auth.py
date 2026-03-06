@@ -21,6 +21,7 @@ _AGENT_NAMESPACE_QUERY = """
     FROM {{tables.agents}} a
     JOIN {{tables.projects}} p USING (project_id)
     LEFT JOIN {{tables.namespaces}} n ON n.namespace_id = a.namespace_id
+        AND n.deleted_at IS NULL
     WHERE a.agent_id = $1 AND a.project_id = $2
       AND p.deleted_at IS NULL
 """

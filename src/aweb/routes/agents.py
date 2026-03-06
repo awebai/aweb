@@ -120,21 +120,18 @@ async def list_agents(
     aweb_db = db.get_manager("aweb")
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT 1 FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+        """
+        SELECT p.project_id, n.slug AS namespace_slug
+        FROM {{tables.projects}} p
+        LEFT JOIN {{tables.namespaces}} n ON p.namespace_id = n.namespace_id
+            AND n.deleted_at IS NULL
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL
+        """,
         UUID(project_id),
     )
     if not proj_row:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    ns_row = await aweb_db.fetch_one(
-        """
-        SELECT n.slug FROM {{tables.namespaces}} n
-        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
-        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
-        """,
-        UUID(project_id),
-    )
-    namespace_slug = ns_row["slug"] if ns_row else ""
+    namespace_slug = proj_row["namespace_slug"] or ""
 
     type_filter = "" if include_internal else "AND agent_type != 'human'"
     rows = await aweb_db.fetch_all(
@@ -293,7 +290,7 @@ async def resolve_agent(
     alias: str,
     db=Depends(get_db),
 ) -> ResolveAgentResponse:
-    """Resolve an agent by namespace (project slug) and alias.
+    """Resolve an agent by namespace slug and alias.
 
     Authenticated but NOT project-scoped — any valid API key can resolve any agent.
     Per clawdid/sot.md §4.6.
@@ -1282,37 +1279,30 @@ async def peer_deregister_agent(
     caller_project_id = await get_project_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
 
-    # Resolve namespace → project
-    project_row = await aweb_db.fetch_one(
+    # Resolve namespace/alias → agent (join via agents.namespace_id for consistency
+    # with resolve_agent)
+    agent_row = await aweb_db.fetch_one(
         """
-        SELECT p.project_id FROM {{tables.projects}} p
-        JOIN {{tables.namespaces}} n ON p.namespace_id = n.namespace_id
-        WHERE n.slug = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        SELECT a.agent_id, a.project_id
+        FROM {{tables.agents}} a
+        JOIN {{tables.namespaces}} n ON a.namespace_id = n.namespace_id
+        JOIN {{tables.projects}} p ON a.project_id = p.project_id
+        WHERE n.slug = $1 AND a.alias = $2
+          AND a.deleted_at IS NULL AND p.deleted_at IS NULL AND n.deleted_at IS NULL
         """,
         namespace,
+        alias,
     )
-    if project_row is None:
+    if agent_row is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    target_project_id = str(project_row["project_id"])
+    target_project_id = str(agent_row["project_id"])
 
     # Authorization: caller must be in the same project
     if target_project_id != caller_project_id:
         raise HTTPException(
             status_code=403, detail="Not authorized to deregister agents in another project"
         )
-
-    # Resolve alias → agent
-    agent_row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
-        """,
-        UUID(target_project_id),
-        alias,
-    )
-    if agent_row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
 
     return await _deregister_agent(
         request, aweb_db, agent_uuid=agent_row["agent_id"], project_id=target_project_id
