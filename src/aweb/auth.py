@@ -55,6 +55,11 @@ def verify_api_key_hash(key: str, key_hash: str) -> bool:
     return hmac.compare_digest(_sha256_hex(key), str(key_hash))
 
 
+# Valid namespace_slug pattern: single-segment, lowercase alphanumeric + hyphens.
+# Must start and end with alphanumeric. No slashes, underscores, or dots.
+NAMESPACE_SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+NAMESPACE_SLUG_MAX_LENGTH = 64
+
 # Valid project_slug pattern: alphanumeric, slashes, underscores, hyphens, dots
 PROJECT_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 PROJECT_SLUG_MAX_LENGTH = 256
@@ -322,6 +327,22 @@ async def verify_bearer_token_details(
         "agent_id": str(row["agent_id"]) if row.get("agent_id") is not None else None,
         "user_id": str(row["user_id"]) if row.get("user_id") is not None else None,
     }
+
+
+def validate_namespace_slug(namespace_slug: str) -> str:
+    """Validate namespace_slug format and return normalized slug.
+
+    Namespace slugs are single-segment, lowercase alphanumeric with hyphens.
+    Must start and end with an alphanumeric character.
+    """
+    value = (namespace_slug or "").strip()
+    if not value:
+        raise ValueError("namespace_slug is required")
+    if len(value) > NAMESPACE_SLUG_MAX_LENGTH:
+        raise ValueError("namespace_slug too long")
+    if not NAMESPACE_SLUG_PATTERN.match(value):
+        raise ValueError("Invalid namespace_slug format")
+    return value
 
 
 def validate_project_slug(project_slug: str) -> str:
