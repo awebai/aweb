@@ -293,7 +293,8 @@ async def list_tasks(
     rows = await aweb_db.fetch_all(
         f"""
         SELECT task_id, task_number, title, status, priority, task_type,
-               assignee_agent_id, created_by_agent_id, labels, created_at, updated_at
+               assignee_agent_id, created_by_agent_id, parent_task_id, labels,
+               created_at, updated_at
         FROM {{{{tables.tasks}}}}
         WHERE {where}
         ORDER BY task_number ASC
@@ -314,6 +315,7 @@ async def list_tasks(
             "created_by_agent_id": (
                 str(r["created_by_agent_id"]) if r["created_by_agent_id"] else None
             ),
+            "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
             "updated_at": r["updated_at"].isoformat(),
@@ -330,7 +332,8 @@ async def list_ready_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
     rows = await aweb_db.fetch_all(
         """
         SELECT t.task_id, t.task_number, t.title, t.status, t.priority, t.task_type,
-               t.assignee_agent_id, t.created_by_agent_id, t.labels, t.created_at, t.updated_at
+               t.assignee_agent_id, t.created_by_agent_id, t.parent_task_id, t.labels,
+               t.created_at, t.updated_at
         FROM {{tables.tasks}} t
         WHERE t.project_id = $1
           AND t.status = 'open'
@@ -360,6 +363,7 @@ async def list_ready_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
             "created_by_agent_id": (
                 str(r["created_by_agent_id"]) if r["created_by_agent_id"] else None
             ),
+            "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
             "updated_at": r["updated_at"].isoformat(),
@@ -376,7 +380,8 @@ async def list_blocked_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
     rows = await aweb_db.fetch_all(
         """
         SELECT t.task_id, t.task_number, t.title, t.status, t.priority, t.task_type,
-               t.assignee_agent_id, t.created_by_agent_id, t.labels, t.created_at, t.updated_at
+               t.assignee_agent_id, t.created_by_agent_id, t.parent_task_id, t.labels,
+               t.created_at, t.updated_at
         FROM {{tables.tasks}} t
         WHERE t.project_id = $1
           AND t.status IN ('open', 'in_progress')
@@ -406,6 +411,7 @@ async def list_blocked_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
             "created_by_agent_id": (
                 str(r["created_by_agent_id"]) if r["created_by_agent_id"] else None
             ),
+            "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
             "updated_at": r["updated_at"].isoformat(),
