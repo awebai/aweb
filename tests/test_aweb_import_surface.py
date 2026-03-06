@@ -21,6 +21,8 @@ def test_beadhub_only_imports_supported_aweb_surface() -> None:
         "aweb.messages_service",
         "aweb.presence",
         "aweb.routes",
+        "aweb.service_errors",
+        "aweb.tasks_service",
     )
 
     repo_root = Path(__file__).resolve().parents[1]

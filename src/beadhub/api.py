@@ -32,6 +32,7 @@ from .routes.policies import router as policies_router
 from .routes.repos import router as repos_router
 from .routes.status import router as status_router
 from .routes.subscriptions import router as subscriptions_router
+from .routes.tasks import router as tasks_router
 from .routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,10 @@ def create_app(
     app.include_router(aweb_messages_router)
     app.include_router(aweb_projects_router)
     app.include_router(aweb_reservations_router)
+    # beadhub tasks router overrides GET endpoints to add beads fallback.
+    # Mounted before aweb_tasks_router so GET routes take priority;
+    # aweb_tasks_router still handles POST, PATCH, DELETE, deps, comments.
+    app.include_router(tasks_router)
     app.include_router(aweb_tasks_router)
 
     # beadhub endpoints.

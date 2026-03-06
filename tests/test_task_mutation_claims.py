@@ -349,3 +349,43 @@ async def test_task_title_in_workspace_list(db_infra, redis_client_async):
             assert (
                 claims[0]["title"] == "Fix the login bug"
             ), f"Expected task title in claim, got {claims[0]}"
+
+
+@pytest.mark.asyncio
+async def test_native_task_detail_via_tasks_api(db_infra, redis_client_async):
+    """GET /v1/tasks/{task_ref} returns native aweb task."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            setup = await _setup_agent_with_task(client)
+
+            resp = await client.get(
+                f"/v1/tasks/{setup['task_ref']}",
+                headers={"Authorization": f"Bearer {setup['api_key']}"},
+            )
+            assert resp.status_code == 200, resp.text
+            task = resp.json()
+            assert task["task_ref"] == setup["task_ref"]
+            assert task["title"] == "Fix the login bug"
+            assert task["task_type"] == "bug"
+            assert task["priority"] == 1
+            assert task["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_native_tasks_in_tasks_list(db_infra, redis_client_async):
+    """GET /v1/tasks includes native aweb tasks in the listing."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            setup = await _setup_agent_with_task(client)
+
+            resp = await client.get(
+                "/v1/tasks",
+                headers={"Authorization": f"Bearer {setup['api_key']}"},
+            )
+            assert resp.status_code == 200, resp.text
+            tasks = resp.json()["tasks"]
+            matching = [t for t in tasks if t["task_ref"] == setup["task_ref"]]
+            assert len(matching) == 1, f"Expected native task in listing, got {tasks}"
+            assert matching[0]["title"] == "Fix the login bug"
