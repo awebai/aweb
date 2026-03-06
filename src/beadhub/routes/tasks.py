@@ -41,6 +41,7 @@ def _beads_issue_to_task(row: dict[str, Any]) -> dict[str, Any]:
         "task_type": row.get("issue_type") or "task",
         "assignee_agent_id": None,
         "created_by_agent_id": None,
+        "parent_task_id": None,
         "labels": list(row["labels"]) if row.get("labels") else [],
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
