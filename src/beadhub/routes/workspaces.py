@@ -990,7 +990,73 @@ class ListWorkspacesResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+def _title_join(
+    alias: str,
+    project_col: str,
+    bead_id_col: str,
+    *,
+    include_type: bool = False,
+    beads_repo_col: str | None = None,
+    beads_branch_col: str | None = None,
+    guard_col: str | None = None,
+) -> str:
+    """Lateral join resolving title (+ optional type) from aweb tasks, with beads fallback.
+
+    Args:
+        alias: SQL alias for the lateral join.
+        project_col: Column expression for project_id.
+        bead_id_col: Column expression for the bead_id / task_ref.
+        include_type: If True, also select task_type/issue_type.
+        beads_repo_col: Column for repo matching in beads (apex joins).
+        beads_branch_col: Column for branch matching in beads (apex joins).
+        guard_col: Optional column that must be NOT NULL for the join to run.
+    """
+    type_cols = ", t.task_type AS issue_type" if include_type else ""
+    beads_type_cols = ", bi.issue_type" if include_type else ""
+    select_cols = "title, issue_type" if include_type else "title"
+
+    guard_aweb = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
+    guard_beads = f"\n              AND {guard_col} IS NOT NULL" if guard_col else ""
+
+    beads_extra = ""
+    if beads_repo_col and beads_branch_col:
+        beads_extra = (
+            f"AND bi.repo = {beads_repo_col}\n"
+            f"              AND bi.branch = {beads_branch_col}\n              "
+        )
+
+    return f"""
+        LEFT JOIN LATERAL (
+            SELECT {select_cols} FROM (
+                SELECT t.title{type_cols}, 0 AS _prio
+                FROM aweb.tasks t
+                JOIN aweb.projects p ON t.project_id = p.project_id AND p.deleted_at IS NULL
+                WHERE t.project_id = {project_col}
+                  AND p.slug || '-' || lpad(t.task_number::text, 3, '0') = {bead_id_col}
+                  AND t.deleted_at IS NULL{guard_aweb}
+                UNION ALL
+                (SELECT bi.title{beads_type_cols}, 1 AS _prio
+                FROM beads.beads_issues bi
+                WHERE bi.project_id = {project_col} AND bi.bead_id = {bead_id_col}{guard_beads}
+                {beads_extra}ORDER BY bi.synced_at DESC
+                LIMIT 1)
+            ) _combined
+            ORDER BY _prio
+            LIMIT 1
+        ) {alias} ON true"""
+
+
 def _build_workspace_claims_query(placeholders: str) -> str:
+    claim_join = _title_join("claim_info", "c.project_id", "c.bead_id")
+    apex_join = _title_join(
+        "apex_info",
+        "c.project_id",
+        "c.apex_bead_id",
+        include_type=True,
+        beads_repo_col="c.apex_repo_name",
+        beads_branch_col="c.apex_branch",
+        guard_col="c.apex_bead_id",
+    )
     return f"""
         SELECT
             c.workspace_id,
@@ -999,28 +1065,12 @@ def _build_workspace_claims_query(placeholders: str) -> str:
             c.apex_bead_id,
             c.apex_repo_name,
             c.apex_branch,
-            claim_issue.title AS claim_title,
-            apex_issue.title AS apex_title,
-            apex_issue.issue_type AS apex_type
+            claim_info.title AS claim_title,
+            apex_info.title AS apex_title,
+            apex_info.issue_type AS apex_type
         FROM {{{{tables.bead_claims}}}} c
-        LEFT JOIN LATERAL (
-            SELECT title
-            FROM beads.beads_issues
-            WHERE project_id = c.project_id AND bead_id = c.bead_id
-            ORDER BY synced_at DESC
-            LIMIT 1
-        ) claim_issue ON true
-        LEFT JOIN LATERAL (
-            SELECT title, issue_type
-            FROM beads.beads_issues
-            WHERE c.apex_bead_id IS NOT NULL
-              AND project_id = c.project_id
-              AND bead_id = c.apex_bead_id
-              AND repo = c.apex_repo_name
-              AND branch = c.apex_branch
-            ORDER BY synced_at DESC
-            LIMIT 1
-        ) apex_issue ON true
+        {claim_join}
+        {apex_join}
         WHERE c.workspace_id IN ({placeholders})
         ORDER BY c.workspace_id, c.claimed_at DESC
     """
@@ -1093,7 +1143,8 @@ async def list_workspaces(
 
     # Build query with optional filters
     # Note: agent workspaces have repo_id, dashboard workspaces don't
-    query = """
+    query = (
+        """
         SELECT
             w.workspace_id,
             w.alias,
@@ -1117,19 +1168,20 @@ async def list_workspaces(
         FROM {{tables.workspaces}} w
         JOIN {{tables.projects}} p ON w.project_id = p.id AND p.deleted_at IS NULL
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        LEFT JOIN LATERAL (
-            SELECT title, issue_type
-            FROM beads.beads_issues
-            WHERE w.focus_apex_bead_id IS NOT NULL
-              AND project_id = w.project_id
-              AND bead_id = w.focus_apex_bead_id
-              AND repo = w.focus_apex_repo_name
-              AND branch = w.focus_apex_branch
-            ORDER BY synced_at DESC
-            LIMIT 1
-        ) focus_issue ON true
+        """
+        + _title_join(
+            "focus_issue",
+            "w.project_id",
+            "w.focus_apex_bead_id",
+            include_type=True,
+            beads_repo_col="w.focus_apex_repo_name",
+            beads_branch_col="w.focus_apex_branch",
+            guard_col="w.focus_apex_bead_id",
+        )
+        + """
         WHERE 1=1
     """
+    )
     params: list = []
     param_idx = 1
 
@@ -1381,17 +1433,15 @@ async def list_team_workspaces(
         JOIN {{{{tables.projects}}}} p ON w.project_id = p.id
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
-        LEFT JOIN LATERAL (
-            SELECT title, issue_type
-            FROM beads.beads_issues
-            WHERE w.focus_apex_bead_id IS NOT NULL
-              AND project_id = w.project_id
-              AND bead_id = w.focus_apex_bead_id
-              AND repo = w.focus_apex_repo_name
-              AND branch = w.focus_apex_branch
-            ORDER BY synced_at DESC
-            LIMIT 1
-        ) focus_issue ON true
+        {_title_join(
+            "focus_issue",
+            "w.project_id",
+            "w.focus_apex_bead_id",
+            include_type=True,
+            beads_repo_col="w.focus_apex_repo_name",
+            beads_branch_col="w.focus_apex_branch",
+            guard_col="w.focus_apex_bead_id",
+        )}
         WHERE 1=1
     """
 
@@ -1445,7 +1495,8 @@ async def list_team_workspaces(
         if validated_id not in {str(row["workspace_id"]) for row in rows}:
             id_params: list = []
             id_param_idx = 1
-            id_query = """
+            id_query = (
+                """
                 SELECT
                     w.workspace_id,
                     w.alias,
@@ -1476,19 +1527,20 @@ async def list_team_workspaces(
                     FROM {{tables.bead_claims}}
                     GROUP BY workspace_id
                 ) cs ON cs.workspace_id = w.workspace_id
-                LEFT JOIN LATERAL (
-                    SELECT title, issue_type
-                    FROM beads.beads_issues
-                    WHERE w.focus_apex_bead_id IS NOT NULL
-                      AND project_id = w.project_id
-                      AND bead_id = w.focus_apex_bead_id
-                      AND repo = w.focus_apex_repo_name
-                      AND branch = w.focus_apex_branch
-                    ORDER BY synced_at DESC
-                    LIMIT 1
-                ) focus_issue ON true
+                """
+                + _title_join(
+                    "focus_issue",
+                    "w.project_id",
+                    "w.focus_apex_bead_id",
+                    include_type=True,
+                    beads_repo_col="w.focus_apex_repo_name",
+                    beads_branch_col="w.focus_apex_branch",
+                    guard_col="w.focus_apex_bead_id",
+                )
+                + """
                 WHERE w.workspace_id = $1
             """
+            )
             id_params.append(uuid_module.UUID(validated_id))
             id_param_idx = 2
 

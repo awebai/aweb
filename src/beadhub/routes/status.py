@@ -334,8 +334,10 @@ async def status(
         where_clause = ""
         params = []
 
-    # Query claims with a count of how many workspaces have claimed each bead
-    # LEFT JOIN with beads.beads_issues to get titles (pick any matching title via DISTINCT ON)
+    # Query claims with a count of how many workspaces have claimed each bead.
+    # Title resolved from aweb tasks (primary) with beads_issues fallback.
+    from .workspaces import _title_join
+
     claim_rows = await server_db.fetch_all(
         f"""
         SELECT c.bead_id, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.project_id,
@@ -346,12 +348,7 @@ async def status(
             FROM {{{{tables.bead_claims}}}}
             GROUP BY project_id, bead_id
         ) counts ON c.project_id = counts.project_id AND c.bead_id = counts.bead_id
-        LEFT JOIN LATERAL (
-            SELECT title FROM beads.beads_issues
-            WHERE project_id = c.project_id AND bead_id = c.bead_id
-            ORDER BY synced_at DESC
-            LIMIT 1
-        ) bi ON true
+        {_title_join("bi", "c.project_id", "c.bead_id")}
         {where_clause}
         ORDER BY c.claimed_at DESC
         """,

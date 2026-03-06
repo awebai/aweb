@@ -316,3 +316,36 @@ async def test_task_claim_idempotent(db_infra, redis_client_async):
             assert claims.status_code == 200, claims.text
             matching = [c for c in claims.json()["claims"] if c["bead_id"] == setup["task_ref"]]
             assert len(matching) == 1, f"Expected 1 claim, got {matching}"
+
+
+@pytest.mark.asyncio
+async def test_task_title_in_workspace_list(db_infra, redis_client_async):
+    """Claiming an aweb task shows its title in the workspace list."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            setup = await _setup_agent_with_task(client)
+
+            # Claim the task
+            resp = await client.patch(
+                f"/v1/tasks/{setup['task_ref']}",
+                headers={"Authorization": f"Bearer {setup['api_key']}"},
+                json={"status": "in_progress"},
+            )
+            assert resp.status_code == 200, resp.text
+            await asyncio.sleep(0.3)
+
+            # Fetch workspace list — claim should have the task title
+            ws_resp = await client.get(
+                "/v1/workspaces?include_claims=true",
+                headers={"Authorization": f"Bearer {setup['api_key']}"},
+            )
+            assert ws_resp.status_code == 200, ws_resp.text
+            workspaces = ws_resp.json()["workspaces"]
+            ws = [w for w in workspaces if w["workspace_id"] == setup["workspace_id"]]
+            assert len(ws) == 1
+            claims = ws[0]["claims"]
+            assert len(claims) == 1, f"Expected 1 claim, got {claims}"
+            assert (
+                claims[0]["title"] == "Fix the login bug"
+            ), f"Expected task title in claim, got {claims[0]}"
