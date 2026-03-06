@@ -112,7 +112,7 @@ async def test_bootstrap_identity_idempotent_cloud_path(aweb_db_infra: DatabaseI
 
 @pytest.mark.asyncio
 async def test_bootstrap_identity_two_tenants_same_slug(aweb_db_infra: DatabaseInfra):
-    """Two cloud tenants with same slug but different project_ids get isolated agents."""
+    """Two cloud tenants with different namespaces but same project slug get isolated agents."""
     pid1 = str(uuid.uuid4())
     pid2 = str(uuid.uuid4())
     tid1 = str(uuid.uuid4())
@@ -122,6 +122,7 @@ async def test_bootstrap_identity_two_tenants_same_slug(aweb_db_infra: DatabaseI
         project_slug="shared-slug",
         project_id=pid1,
         tenant_id=tid1,
+        namespace_slug="tenant-a",
         alias="alice",
     )
     r2 = await bootstrap_identity(
@@ -129,9 +130,12 @@ async def test_bootstrap_identity_two_tenants_same_slug(aweb_db_infra: DatabaseI
         project_slug="shared-slug",
         project_id=pid2,
         tenant_id=tid2,
+        namespace_slug="tenant-b",
         alias="alice",
     )
-    # Same alias in different projects — should be separate agents.
+    # Same alias in different namespaces — should be separate agents.
     assert r1.project_id != r2.project_id
     assert r1.agent_id != r2.agent_id
     assert r1.alias == r2.alias == "alice"
+    assert r1.namespace_slug == "tenant-a"
+    assert r2.namespace_slug == "tenant-b"

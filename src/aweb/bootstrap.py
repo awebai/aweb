@@ -8,7 +8,13 @@ from uuid import UUID
 import asyncpg.exceptions
 
 from aweb.alias_allocator import AliasExhaustedError, candidate_name_prefixes, used_name_prefixes
-from aweb.auth import hash_api_key, validate_agent_alias, validate_project_slug
+from aweb.auth import (
+    NAMESPACE_SLUG_MAX_LENGTH,
+    hash_api_key,
+    validate_agent_alias,
+    validate_namespace_slug,
+    validate_project_slug,
+)
 from aweb.custody import encrypt_signing_key, get_custody_key
 from aweb.did import decode_public_key, did_from_public_key, encode_public_key, generate_keypair
 from aweb.stable_id import stable_id_from_did_key
@@ -28,6 +34,7 @@ def generate_api_key() -> tuple[str, str, str]:
 class BootstrapIdentityResult:
     project_id: str
     project_slug: str
+    namespace_slug: str
     project_name: str
     agent_id: str
     alias: str
@@ -46,6 +53,73 @@ class EnsuredProject:
     name: str
 
 
+def _namespace_slug_from_project_slug(project_slug: str) -> str:
+    """Derive a valid namespace slug from a project slug.
+
+    Replaces characters not allowed in namespace slugs (slashes, underscores,
+    dots, uppercase) with hyphens, strips leading/trailing hyphens, and
+    lowercases.
+    """
+    import re
+
+    slug = project_slug.lower()
+    slug = re.sub(r"[^a-z0-9-]", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    slug = slug.strip("-")
+    if not slug:
+        slug = "default"
+    if len(slug) > NAMESPACE_SLUG_MAX_LENGTH:
+        slug = slug[:NAMESPACE_SLUG_MAX_LENGTH].rstrip("-")
+    return slug
+
+
+async def _resolve_namespace(
+    tx,
+    *,
+    namespace_slug: str | None = None,
+    namespace_id: str | None = None,
+) -> dict:
+    """Find or create a namespace row within an existing transaction.
+
+    When namespace_id is provided (cloud path), lookup is by PK.
+    When namespace_slug is provided (OSS path), find-or-create by slug.
+    """
+    if namespace_id is not None:
+        ns = await tx.fetch_one(
+            """
+            SELECT namespace_id, slug
+            FROM {{tables.namespaces}}
+            WHERE namespace_id = $1 AND deleted_at IS NULL
+            """,
+            UUID(namespace_id),
+        )
+        if not ns:
+            raise ValueError(f"Namespace not found: {namespace_id}")
+        return dict(ns)
+
+    if namespace_slug is not None:
+        ns = await tx.fetch_one(
+            """
+            SELECT namespace_id, slug
+            FROM {{tables.namespaces}}
+            WHERE slug = $1 AND deleted_at IS NULL
+            """,
+            namespace_slug,
+        )
+        if not ns:
+            ns = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.namespaces}} (slug)
+                VALUES ($1)
+                RETURNING namespace_id, slug
+                """,
+                namespace_slug,
+            )
+        return dict(ns)
+
+    raise ValueError("namespace_slug or namespace_id is required")
+
+
 async def _resolve_project(
     tx,
     *,
@@ -53,6 +127,7 @@ async def _resolve_project(
     project_name: str,
     project_id: str | None,
     tenant_id: str | None,
+    namespace_id: UUID | None = None,
 ) -> dict:
     """Find or create a project row within an existing transaction.
 
@@ -73,14 +148,26 @@ async def _resolve_project(
             tenant_uuid = UUID(tenant_id) if tenant_id else None
             project = await tx.fetch_one(
                 """
-                INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO {{tables.projects}} (project_id, slug, name, tenant_id, namespace_id)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING project_id, slug, name
                 """,
                 UUID(project_id),
                 project_slug,
                 project_name or "",
                 tenant_uuid,
+                namespace_id,
+            )
+        elif namespace_id is not None:
+            # Existing project — ensure namespace_id is set if not already.
+            await tx.execute(
+                """
+                UPDATE {{tables.projects}}
+                SET namespace_id = COALESCE(namespace_id, $2)
+                WHERE project_id = $1
+                """,
+                UUID(project_id),
+                namespace_id,
             )
     else:
         project = await tx.fetch_one(
@@ -94,12 +181,24 @@ async def _resolve_project(
         if not project:
             project = await tx.fetch_one(
                 """
-                INSERT INTO {{tables.projects}} (slug, name)
-                VALUES ($1, $2)
+                INSERT INTO {{tables.projects}} (slug, name, namespace_id)
+                VALUES ($1, $2, $3)
                 RETURNING project_id, slug, name
                 """,
                 project_slug,
                 project_name or "",
+                namespace_id,
+            )
+        elif namespace_id is not None:
+            # Existing project — ensure namespace_id is set if not already.
+            await tx.execute(
+                """
+                UPDATE {{tables.projects}}
+                SET namespace_id = COALESCE(namespace_id, $2)
+                WHERE project_id = $1
+                """,
+                project["project_id"],
+                namespace_id,
             )
     return dict(project)
 
@@ -138,6 +237,8 @@ async def bootstrap_identity(
     project_name: str = "",
     project_id: str | None = None,
     tenant_id: str | None = None,
+    namespace_slug: str | None = None,
+    namespace_id: str | None = None,
     alias: str | None,
     human_name: str = "",
     agent_type: str = "agent",
@@ -149,6 +250,11 @@ async def bootstrap_identity(
     aweb_db = db.get_manager("aweb")
 
     project_slug = validate_project_slug(project_slug.strip())
+    # Backward compat: if no namespace_slug/namespace_id, derive from project_slug.
+    if namespace_slug is None and namespace_id is None:
+        namespace_slug = _namespace_slug_from_project_slug(project_slug)
+    if namespace_slug is not None:
+        namespace_slug = validate_namespace_slug(namespace_slug.strip())
     alias = validate_agent_alias(alias.strip()) if alias is not None and alias.strip() else None
     human_name = (human_name or "").strip()
     agent_type = (agent_type or "agent").strip() or "agent"
@@ -217,12 +323,22 @@ async def bootstrap_identity(
         agent_stable_id = stable_id_from_did_key(agent_did)
 
     async with aweb_db.transaction() as tx:
+        # Resolve or create namespace.
+        ns = await _resolve_namespace(
+            tx,
+            namespace_slug=namespace_slug,
+            namespace_id=namespace_id,
+        )
+        resolved_namespace_id = ns["namespace_id"]
+        actual_namespace_slug = ns["slug"]
+
         project = await _resolve_project(
             tx,
             project_slug=project_slug,
             project_name=project_name,
             project_id=project_id,
             tenant_id=tenant_id,
+            namespace_id=resolved_namespace_id,
         )
 
         resolved_project_id = str(project["project_id"])
@@ -254,8 +370,9 @@ async def bootstrap_identity(
                     """
                     INSERT INTO {{tables.agents}}
                         (project_id, alias, human_name, agent_type,
-                         did, public_key, stable_id, custody, signing_key_enc, lifetime)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                         did, public_key, stable_id, custody, signing_key_enc, lifetime,
+                         namespace_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     RETURNING agent_id, alias
                     """,
                     UUID(resolved_project_id),
@@ -268,6 +385,7 @@ async def bootstrap_identity(
                     custody,
                     signing_key_enc,
                     lifetime,
+                    resolved_namespace_id,
                 )
                 created = True
                 agent_id = str(agent["agent_id"])
@@ -293,8 +411,9 @@ async def bootstrap_identity(
                         """
                         INSERT INTO {{tables.agents}}
                             (project_id, alias, human_name, agent_type,
-                             did, public_key, stable_id, custody, signing_key_enc, lifetime)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                             did, public_key, stable_id, custody, signing_key_enc, lifetime,
+                             namespace_id)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         RETURNING agent_id, alias
                         """,
                         UUID(resolved_project_id),
@@ -307,6 +426,7 @@ async def bootstrap_identity(
                         custody,
                         signing_key_enc,
                         lifetime,
+                        resolved_namespace_id,
                     )
                 except asyncpg.exceptions.UniqueViolationError:
                     continue
@@ -348,6 +468,7 @@ async def bootstrap_identity(
     return BootstrapIdentityResult(
         project_id=resolved_project_id,
         project_slug=actual_project_slug,
+        namespace_slug=actual_namespace_slug,
         project_name=actual_project_name,
         agent_id=agent_id,
         alias=alias or "",

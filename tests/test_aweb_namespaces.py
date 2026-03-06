@@ -5,7 +5,10 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
 
+from aweb.api import create_app
 from aweb.auth import validate_namespace_slug
 
 
@@ -310,3 +313,147 @@ async def test_agent_alias_reusable_after_soft_delete(aweb_db_infra):
         "charlie",
         ns_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap / Init endpoint tests (beads aweb-1mo.2 and aweb-1mo.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_init_with_namespace_slug(aweb_db_infra):
+    """POST /v1/init with namespace_slug creates namespace and returns both slugs."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "namespace_slug": "test-ns",
+                    "alias": "alice",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "test-ns"
+            assert body["project_slug"] == "test-ns"
+            assert body["alias"] == "alice"
+            assert body["api_key"].startswith("aw_sk_")
+
+
+@pytest.mark.asyncio
+async def test_init_with_namespace_slug_and_project_slug(aweb_db_infra):
+    """POST /v1/init with both namespace_slug and project_slug uses namespace_slug."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "namespace_slug": "my-ns",
+                    "project_slug": "my-proj",
+                    "alias": "bob",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "my-ns"
+            assert body["project_slug"] == "my-proj"
+
+
+@pytest.mark.asyncio
+async def test_init_with_project_slug_only_backward_compat(aweb_db_infra):
+    """POST /v1/init with only project_slug uses it as namespace slug (backward compat)."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "compat-ns",
+                    "alias": "charlie",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "compat-ns"
+            assert body["project_slug"] == "compat-ns"
+
+
+@pytest.mark.asyncio
+async def test_init_with_neither_slug_returns_422(aweb_db_infra):
+    """POST /v1/init with neither namespace_slug nor project_slug returns 422."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "alias": "dave",
+                },
+            )
+            assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_init_namespace_sets_namespace_id_on_project_and_agent(aweb_db_infra):
+    """Bootstrap sets namespace_id on both project and agent rows."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "namespace_slug": "ns-check",
+                    "alias": "eve",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    ns_row = await aweb_db.fetch_one(
+        "SELECT namespace_id FROM {{tables.namespaces}} WHERE slug = $1 AND deleted_at IS NULL",
+        "ns-check",
+    )
+    assert ns_row is not None
+    ns_id = ns_row["namespace_id"]
+
+    proj_row = await aweb_db.fetch_one(
+        "SELECT namespace_id FROM {{tables.projects}} WHERE project_id = $1",
+        uuid.UUID(body["project_id"]),
+    )
+    assert proj_row is not None
+    assert proj_row["namespace_id"] == ns_id
+
+    agent_row = await aweb_db.fetch_one(
+        "SELECT namespace_id FROM {{tables.agents}} WHERE agent_id = $1",
+        uuid.UUID(body["agent_id"]),
+    )
+    assert agent_row is not None
+    assert agent_row["namespace_id"] == ns_id
+
+
+@pytest.mark.asyncio
+async def test_init_reinit_same_namespace(aweb_db_infra):
+    """Re-init with same namespace_slug and alias reuses existing agent."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp1 = await c.post(
+                "/v1/init",
+                json={"namespace_slug": "reinit-ns", "alias": "frank"},
+            )
+            assert resp1.status_code == 200
+            body1 = resp1.json()
+            assert body1["created"] is True
+
+            resp2 = await c.post(
+                "/v1/init",
+                json={"namespace_slug": "reinit-ns", "alias": "frank"},
+            )
+            assert resp2.status_code == 200
+            body2 = resp2.json()
+            assert body2["created"] is False
+            assert body2["agent_id"] == body1["agent_id"]
+            assert body2["namespace_slug"] == "reinit-ns"
