@@ -13,26 +13,34 @@ from aweb.db import DatabaseInfra
 
 async def _setup_agent(aweb_db) -> dict:
     """Create a project + agent + API key directly in the DB."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
     slug = f"test/softdel-{uuid.uuid4().hex[:6]}"
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         "Soft Delete Test",
+        namespace_id,
     )
     await aweb_db.execute(
         """INSERT INTO {{tables.agents}}
-           (agent_id, project_id, alias, human_name, agent_type, lifetime)
-           VALUES ($1, $2, $3, $4, $5, $6)""",
+           (agent_id, project_id, alias, human_name, agent_type, lifetime, namespace_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
         agent_id,
         project_id,
         "cleanup-agent",
         "Cleanup Agent",
         "agent",
         "persistent",
+        namespace_id,
     )
     key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

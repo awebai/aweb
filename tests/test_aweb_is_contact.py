@@ -19,31 +19,36 @@ def _auth(api_key: str) -> dict:
 
 async def _setup_two_agents(aweb_db):
     """Create a project with two agents and API keys directly in the DB."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_a_id = uuid.uuid4()
     agent_b_id = uuid.uuid4()
+    slug = f"test/iscontact-{uuid.uuid4().hex[:6]}"
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
-        f"test/iscontact-{uuid.uuid4().hex[:6]}",
+        slug,
         "Is-Contact Test",
+        namespace_id,
     )
-    slug_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1", project_id
-    )
-    slug = slug_row["slug"]
 
     for aid, alias in [(agent_a_id, "alice"), (agent_b_id, "bob")]:
         await aweb_db.execute(
             """INSERT INTO {{tables.agents}}
-               (agent_id, project_id, alias, human_name, agent_type)
-               VALUES ($1, $2, $3, $4, $5)""",
+               (agent_id, project_id, alias, human_name, agent_type, namespace_id)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
             aid,
             project_id,
             alias,
             alias.title(),
             "agent",
+            namespace_id,
         )
 
     key_a = f"aw_sk_{uuid.uuid4().hex}"

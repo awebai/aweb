@@ -19,9 +19,11 @@ def _auth(api_key: str) -> dict[str, str]:
 
 
 async def _seed_two_self_custody_agents(aweb_db):
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     alice_id = uuid.uuid4()
     bob_id = uuid.uuid4()
+    proj_slug = f"proj-{uuid.uuid4().hex[:8]}"
 
     alice_seed, alice_pub = generate_keypair()
     bob_seed, bob_pub = generate_keypair()
@@ -29,15 +31,21 @@ async def _seed_two_self_custody_agents(aweb_db):
     bob_did = did_from_public_key(bob_pub)
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        proj_slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
-        f"proj-{uuid.uuid4().hex[:8]}",
+        proj_slug,
         "Stable ID Test",
+        namespace_id,
     )
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         alice_id,
         project_id,
         "alice",
@@ -47,11 +55,12 @@ async def _seed_two_self_custody_agents(aweb_db):
         encode_public_key(alice_pub),
         "self",
         "persistent",
+        namespace_id,
     )
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         bob_id,
         project_id,
         "bob",
@@ -61,6 +70,7 @@ async def _seed_two_self_custody_agents(aweb_db):
         encode_public_key(bob_pub),
         "self",
         "persistent",
+        namespace_id,
     )
 
     key_alice = f"aw_sk_{uuid.uuid4().hex}"

@@ -28,12 +28,19 @@ async def _seed_with_retired_agent(aweb_db, *, with_successor: bool = True):
     seed, pub = generate_keypair()
     did = did_from_public_key(pub)
 
+    namespace_id = uuid.uuid4()
     slug = f"retired-{uuid.uuid4().hex[:8]}"
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         "Retired Delivery Test",
+        namespace_id,
     )
 
     if with_successor:
@@ -43,8 +50,8 @@ async def _seed_with_retired_agent(aweb_db, *, with_successor: bool = True):
         # Successor agent (must exist before retired agent due to FK on successor_agent_id)
         await aweb_db.execute(
             "INSERT INTO {{tables.agents}} "
-            "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             successor_id,
             project_id,
             "successor-agent",
@@ -54,13 +61,14 @@ async def _seed_with_retired_agent(aweb_db, *, with_successor: bool = True):
             encode_public_key(succ_pub),
             "self",
             "persistent",
+            namespace_id,
         )
 
     # Retired agent (status='retired', points to successor if provided)
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, status, successor_agent_id) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, status, successor_agent_id, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         retired_id,
         project_id,
         "retired-agent",
@@ -72,17 +80,19 @@ async def _seed_with_retired_agent(aweb_db, *, with_successor: bool = True):
         "persistent",
         "retired",
         successor_id,
+        namespace_id,
     )
 
     # Sender agent
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         sender_id,
         project_id,
         "sender",
         "Sender",
         "agent",
+        namespace_id,
     )
 
     sender_key = f"aw_sk_{uuid.uuid4().hex}"

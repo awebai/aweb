@@ -13,32 +13,49 @@ async def test_introspect_does_not_enrich_cross_project_agent(aweb_db_infra):
     """Introspection must not leak agent metadata across projects."""
     aweb_db = aweb_db_infra.get_manager("aweb")
 
+    namespace_a = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_a,
+        "test-ns-a",
+    )
+
+    namespace_b = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_b,
+        "test-ns-b",
+    )
+
     project_a = uuid.uuid4()
     project_b = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_a,
         "introspect-a",
         "Project A",
+        namespace_a,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_b,
         "introspect-b",
         "Project B",
+        namespace_b,
     )
 
     victim_agent_id = uuid.uuid4()
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         """,
         victim_agent_id,
         project_b,
         "victim",
         "Victim Human",
         "agent",
+        namespace_b,
     )
 
     # Create an API key for project A but (mis)bind its agent_id to the victim agent in project B.

@@ -25,6 +25,7 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
     """Create a project with a custodial agent and a plain agent. Returns IDs and keys."""
     from aweb.custody import encrypt_signing_key
 
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     cust_id = uuid.uuid4()
     plain_id = uuid.uuid4()
@@ -34,17 +35,23 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
     signing_key_enc = encrypt_signing_key(seed, master_key)
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         f"proj-{uuid.uuid4().hex[:8]}",
         "Custodial Test",
+        namespace_id,
     )
 
     # Custodial agent with encrypted key
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         cust_id,
         project_id,
         "custodial-alice",
@@ -55,17 +62,19 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
         "custodial",
         signing_key_enc,
         "persistent",
+        namespace_id,
     )
 
     # Plain agent (no identity)
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         plain_id,
         project_id,
         "plain-bob",
         "Plain Bob",
         "agent",
+        namespace_id,
     )
 
     key_cust = f"aw_sk_{uuid.uuid4().hex}"
@@ -81,15 +90,9 @@ async def _seed_custodial_project(aweb_db, master_key: bytes):
             True,
         )
 
-    # Read back the project slug for address reconstruction in tests.
-    proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1",
-        project_id,
-    )
-
     return {
         "project_id": project_id,
-        "project_slug": proj_row["slug"],
+        "namespace_slug": "test-ns",
         "cust_id": str(cust_id),
         "plain_id": str(plain_id),
         "key_cust": key_cust,
@@ -337,7 +340,7 @@ async def test_custodial_signature_verifies_end_to_end(aweb_db_infra, monkeypatc
 
     aweb_db = aweb_db_infra.get_manager("aweb")
     seed_data = await _seed_custodial_project(aweb_db, master_key)
-    slug = seed_data["project_slug"]
+    slug = seed_data["namespace_slug"]
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):

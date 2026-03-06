@@ -17,22 +17,30 @@ def _auth_headers(api_key: str) -> dict[str, str]:
 async def _seed(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "test-project",
         "Test Project",
+        namespace_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_id,
         project_id,
         "agent-1",
         "Agent One",
         "agent",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"

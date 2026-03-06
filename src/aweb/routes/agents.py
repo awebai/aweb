@@ -120,12 +120,21 @@ async def list_agents(
     aweb_db = db.get_manager("aweb")
 
     proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+        "SELECT 1 FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
         UUID(project_id),
     )
     if not proj_row:
-        raise HTTPException(404, "Project not found")
-    namespace_slug = proj_row["slug"]
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT n.slug FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
+        UUID(project_id),
+    )
+    namespace_slug = ns_row["slug"] if ns_row else ""
 
     type_filter = "" if include_internal else "AND agent_type != 'human'"
     rows = await aweb_db.fetch_all(
@@ -296,13 +305,15 @@ async def resolve_agent(
     row = await aweb_db.fetch_one(
         """
         SELECT a.agent_id, a.alias, a.human_name, a.did, a.stable_id, a.public_key,
-               a.custody, a.lifetime, a.status, p.slug
+               a.custody, a.lifetime, a.status
         FROM {{tables.agents}} a
         JOIN {{tables.projects}} p ON a.project_id = p.project_id
-        WHERE p.slug = $1
+        JOIN {{tables.namespaces}} n ON a.namespace_id = n.namespace_id
+        WHERE n.slug = $1
           AND a.alias = $2
           AND a.deleted_at IS NULL
           AND p.deleted_at IS NULL
+          AND n.deleted_at IS NULL
         """,
         namespace,
         alias,
@@ -370,9 +381,11 @@ async def agent_log(
 
     agent = await aweb_db.fetch_one(
         """
-        SELECT a.agent_id, a.alias, p.slug
+        SELECT a.agent_id, a.alias, n.slug AS namespace_slug
         FROM {{tables.agents}} a
         JOIN {{tables.projects}} p ON a.project_id = p.project_id
+        LEFT JOIN {{tables.namespaces}} n ON a.namespace_id = n.namespace_id
+            AND n.deleted_at IS NULL
         WHERE a.agent_id = $1 AND a.project_id = $2
           AND p.deleted_at IS NULL
         """,
@@ -393,9 +406,10 @@ async def agent_log(
         UUID(project_id),
     )
 
+    namespace_slug = agent["namespace_slug"] or ""
     return AgentLogResponse(
         agent_id=str(agent_uuid),
-        address=f"{agent['slug']}/{agent['alias']}",
+        address=f"{namespace_slug}/{agent['alias']}" if namespace_slug else agent["alias"],
         log=[
             AgentLogEntry(
                 log_id=str(r["log_id"]),
@@ -1017,11 +1031,15 @@ async def retire_agent(
         raise HTTPException(status_code=404, detail="Successor agent not found in this project")
 
     # Resolve protocol-level identifiers for the canonical proof
-    proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT n.slug FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
         UUID(project_id),
     )
-    if proj_row is None:
+    if ns_row is None:
         raise HTTPException(status_code=404, detail="Project not found")
     if not successor["did"]:
         raise HTTPException(
@@ -1029,7 +1047,7 @@ async def retire_agent(
             detail="Successor agent has no DID — cannot build verifiable retirement proof",
         )
     successor_did = successor["did"]
-    successor_address = f"{proj_row['slug']}/{successor['alias']}"
+    successor_address = f"{ns_row['slug']}/{successor['alias']}"
 
     # Build canonical retirement proof with protocol-level fields.
     # The API accepts successor_agent_id, but the proof uses
@@ -1252,7 +1270,7 @@ async def peer_deregister_agent(
     Caller must be authenticated and belong to the same project as the target.
     Ephemeral-only: persistent agents return 400.
     """
-    # Split address into namespace (project slug) and alias on the last '/'
+    # Split address into namespace slug and alias on the last '/'
     sep = address.rfind("/")
     if sep <= 0:
         raise HTTPException(status_code=404, detail="Invalid address format")
@@ -1267,13 +1285,14 @@ async def peer_deregister_agent(
     # Resolve namespace → project
     project_row = await aweb_db.fetch_one(
         """
-        SELECT project_id FROM {{tables.projects}}
-        WHERE slug = $1 AND deleted_at IS NULL
+        SELECT p.project_id FROM {{tables.projects}} p
+        JOIN {{tables.namespaces}} n ON p.namespace_id = n.namespace_id
+        WHERE n.slug = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
         """,
         namespace,
     )
     if project_row is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     target_project_id = str(project_row["project_id"])
 

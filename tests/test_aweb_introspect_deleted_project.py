@@ -15,26 +15,34 @@ from aweb.db import DatabaseInfra
 
 async def _setup_agent_with_key(aweb_db) -> dict:
     """Create project + agent + active API key directly in the DB."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
     slug = f"test/delproj-{uuid.uuid4().hex[:6]}"
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         "Deleted Project Test",
+        namespace_id,
     )
     await aweb_db.execute(
         """INSERT INTO {{tables.agents}}
-           (agent_id, project_id, alias, human_name, agent_type, lifetime)
-           VALUES ($1, $2, $3, $4, $5, $6)""",
+           (agent_id, project_id, alias, human_name, agent_type, lifetime, namespace_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
         agent_id,
         project_id,
         "agent-x",
         "Agent X",
         "agent",
         "persistent",
+        namespace_id,
     )
     key = f"aw_sk_{uuid.uuid4().hex}{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -50,6 +58,7 @@ async def _setup_agent_with_key(aweb_db) -> dict:
         "project_id": project_id,
         "agent_id": agent_id,
         "slug": slug,
+        "namespace_slug": "test-ns",
         "api_key": key,
     }
 
@@ -98,8 +107,8 @@ async def test_introspect_includes_live_project(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["namespace_slug"] == env["slug"]
-            assert body["address"] == f"{env['slug']}/agent-x"
+            assert body["namespace_slug"] == env["namespace_slug"]
+            assert body["address"] == f"{env['namespace_slug']}/agent-x"
             assert body["alias"] == "agent-x"
 
 

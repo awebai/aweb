@@ -13,40 +13,58 @@ async def _seed_two_projects(aweb_db_infra):
     """Seed two projects with agents and contacts table ready."""
     aweb_db = aweb_db_infra.get_manager("aweb")
 
+    namespace_1_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_1_id,
+        "test-ns-1",
+    )
+
     project_1_id = uuid.uuid4()
     agent_1_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_1_id,
         "org-alpha",
         "Org Alpha",
+        namespace_1_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         agent_1_id,
         project_1_id,
         "alice",
         "Alice",
         "agent",
+        namespace_1_id,
+    )
+
+    namespace_2_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_2_id,
+        "test-ns-2",
     )
 
     project_2_id = uuid.uuid4()
     agent_2_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_2_id,
         "org-beta",
         "Org Beta",
+        namespace_2_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         agent_2_id,
         project_2_id,
         "bob",
         "Bob",
         "agent",
+        namespace_2_id,
     )
 
     return {

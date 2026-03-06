@@ -256,22 +256,27 @@ async def send_message(
         )
 
     if payload.signature is None:
-        proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+        ns_row = await aweb_db.fetch_one(
+            """
+            SELECT n.slug
+            FROM {{tables.namespaces}} n
+            JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+            WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+            """,
             UUID(project_id),
         )
-        if not proj_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-        project_slug = proj_row["slug"]
+        if not ns_row:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        namespace_slug = ns_row["slug"]
         recip_row = await aweb_db.fetch_one(
             "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND deleted_at IS NULL",
             UUID(to_agent_id),
         )
-        to_address = f"{project_slug}/{recip_row['alias']}" if recip_row else ""
+        to_address = f"{namespace_slug}/{recip_row['alias']}" if recip_row else ""
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = recipient_stable_id
         message_fields: dict[str, str] = {
-            "from": f"{project_slug}/{sender['alias']}",
+            "from": f"{namespace_slug}/{sender['alias']}",
             "from_did": "",
             "message_id": str(pre_message_id),
             "to": to_address,
@@ -383,14 +388,17 @@ async def inbox(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(actor_id)
     )
 
-    proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT n.slug
+        FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
         UUID(project_id),
     )
-    if not proj_row:
-        raise HTTPException(status_code=404, detail="Project not found")
-    project_slug = proj_row["slug"]
-    inbox_owner_address = format_agent_address(project_slug, owner["alias"])
+    namespace_slug = ns_row["slug"] if ns_row else ""
+    inbox_owner_address = format_agent_address(namespace_slug, owner["alias"])
 
     contact_addrs = await get_contact_addresses(db, project_id=project_id)
 
@@ -403,7 +411,7 @@ async def inbox(
                 message_id=str(r["message_id"]),
                 from_agent_id=str(r["from_agent_id"]),
                 from_alias=r["from_alias"],
-                from_address=format_agent_address(project_slug, r["from_alias"]),
+                from_address=format_agent_address(namespace_slug, r["from_alias"]),
                 subject=r["subject"],
                 body=r["body"],
                 priority=r["priority"],
@@ -419,7 +427,7 @@ async def inbox(
                 signing_key_id=r["signing_key_id"],
                 rotation_announcement=ann,
                 is_contact=is_address_in_contacts(
-                    format_agent_address(project_slug, r["from_alias"]),
+                    format_agent_address(namespace_slug, r["from_alias"]),
                     contact_addrs,
                 ),
             )

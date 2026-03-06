@@ -30,21 +30,28 @@ async def _seed_persistent_self_custodial(aweb_db, *, slug: str = "me-proj", ali
     """Create a persistent self-custodial agent with API key."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         agent_id,
         project_id,
@@ -56,6 +63,7 @@ async def _seed_persistent_self_custodial(aweb_db, *, slug: str = "me-proj", ali
         "self",
         "persistent",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -84,21 +92,28 @@ async def _seed_ephemeral_custodial(aweb_db, *, slug: str, alias: str, master_ke
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
     encrypted_key = encrypt_signing_key(private_key, master_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, signing_key_enc, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             did, public_key, custody, signing_key_enc, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
         agent_id,
         project_id,
@@ -111,6 +126,7 @@ async def _seed_ephemeral_custodial(aweb_db, *, slug: str, alias: str, master_ke
         encrypted_key,
         "ephemeral",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -226,16 +242,20 @@ async def test_me_retire(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
     seed = await _seed_persistent_self_custodial(aweb_db, slug="me-retire")
 
-    # Create successor in same project
+    # Create successor in same project — reuse same namespace
     successor_id = uuid.uuid4()
     s_priv, s_pub = generate_keypair()
     s_did = did_from_public_key(s_pub)
+    ns_row = await aweb_db.fetch_one(
+        "SELECT namespace_id FROM {{tables.projects}} WHERE project_id = $1",
+        uuid.UUID(seed["project_id"]),
+    )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         successor_id,
         uuid.UUID(seed["project_id"]),
@@ -247,6 +267,7 @@ async def test_me_retire(aweb_db_infra):
         "self",
         "persistent",
         "active",
+        ns_row["namespace_id"],
     )
 
     timestamp = "2026-02-22T12:00:00Z"

@@ -53,12 +53,19 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
     succ_seed, succ_pub = generate_keypair()
     succ_did = did_from_public_key(succ_pub)
 
+    namespace_id = uuid.uuid4()
     slug = f"retire-{uuid.uuid4().hex[:8]}"
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         "Retirement Test",
+        namespace_id,
     )
 
     signing_key_enc = None
@@ -67,8 +74,8 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
 
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         agent_id,
         project_id,
         "retiring-agent",
@@ -79,12 +86,13 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         custody,
         signing_key_enc,
         "persistent",
+        namespace_id,
     )
 
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         successor_id,
         project_id,
         "successor-agent",
@@ -94,6 +102,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         encode_public_key(succ_pub),
         "self",
         "persistent",
+        namespace_id,
     )
 
     key = f"aw_sk_{uuid.uuid4().hex}"
@@ -117,7 +126,7 @@ async def _seed_project_with_agents(aweb_db, *, custody: str = "self", master_ke
         "pub": pub,
         "did": did,
         "succ_did": succ_did,
-        "succ_address": f"{slug}/successor-agent",
+        "succ_address": "test-ns/successor-agent",
     }
 
 
@@ -238,16 +247,23 @@ async def test_retire_rejects_ephemeral_agent(aweb_db_infra):
     seed, pub = generate_keypair()
     did = did_from_public_key(pub)
 
+    namespace_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         f"eph-{uuid.uuid4().hex[:8]}",
         "Ephemeral Test",
+        namespace_id,
     )
     await aweb_db.execute(
         "INSERT INTO {{tables.agents}} "
-        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "(agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         agent_id,
         project_id,
         "eph-agent",
@@ -257,6 +273,7 @@ async def test_retire_rejects_ephemeral_agent(aweb_db_infra):
         encode_public_key(pub),
         "self",
         "ephemeral",
+        namespace_id,
     )
     key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

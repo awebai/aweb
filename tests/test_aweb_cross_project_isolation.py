@@ -24,50 +24,70 @@ async def _seed_two_projects(aweb_db_infra):
     agent_3_id = uuid.uuid4()
     agent_4_id = uuid.uuid4()
 
+    namespace_1_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_1_id,
-        "project-1",
-        "Project 1",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_1_id,
+        "test-ns-1",
     )
+
+    namespace_2_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
-        project_2_id,
-        "project-2",
-        "Project 2",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_2_id,
+        "test-ns-2",
     )
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
+        project_1_id,
+        "project-1",
+        "Project 1",
+        namespace_1_id,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
+        project_2_id,
+        "project-2",
+        "Project 2",
+        namespace_2_id,
+    )
+
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_1_id,
         project_1_id,
         "agent-1",
         "Agent One",
         "agent",
+        namespace_1_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_2_id,
         project_1_id,
         "agent-2",
         "Agent Two",
         "agent",
+        namespace_1_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_3_id,
         project_2_id,
         "agent-3",
         "Agent Three",
         "agent",
+        namespace_2_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_4_id,
         project_2_id,
         "agent-4",
         "Agent Four",
         "agent",
+        namespace_2_id,
     )
 
     api_key_1 = f"aw_sk_{uuid.uuid4().hex}"

@@ -24,21 +24,28 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
     encrypted_key = encrypt_signing_key(private_key, master_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         project_slug,
         f"Project {project_slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, signing_key_enc, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             did, public_key, custody, signing_key_enc, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
         agent_id,
         project_id,
@@ -51,6 +58,7 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
         encrypted_key,
         "ephemeral",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -66,6 +74,7 @@ async def _seed_ephemeral_agent(aweb_db, *, project_slug: str, alias: str, maste
 
     return {
         "project_id": str(project_id),
+        "namespace_id": namespace_id,
         "agent_id": str(agent_id),
         "did": did,
         "api_key": api_key,
@@ -76,21 +85,28 @@ async def _seed_persistent_agent_with_key(aweb_db, *, project_slug: str):
     """Create a persistent self-custodial agent with its own API key."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         project_slug,
         f"Project {project_slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         agent_id,
         project_id,
@@ -102,6 +118,7 @@ async def _seed_persistent_agent_with_key(aweb_db, *, project_slug: str):
         "self",
         "persistent",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -242,8 +259,8 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """,
         new_agent_id,
         uuid.UUID(seed["project_id"]),
@@ -254,6 +271,7 @@ async def test_deregister_alias_reusable_after(aweb_db_infra, monkeypatch):
         encode_public_key(public_key),
         "custodial",
         "ephemeral",
+        seed["namespace_id"],
     )
     row = await aweb_db.fetch_one(
         "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1",

@@ -26,14 +26,19 @@ async def add_contact(
         raise ValidationError("Invalid contact_address format")
 
     # Reject self-references.
-    proj = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+    ns = await aweb_db.fetch_one(
+        """
+        SELECT n.slug
+        FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
         UUID(project_id),
     )
-    if proj is None:
-        raise NotFoundError("Project not found")
+    if ns is None:
+        raise NotFoundError("Namespace not found")
 
-    slug = proj["slug"]
+    slug = ns["slug"]
     if addr == slug or addr.startswith(slug + "/"):
         raise BadRequestError("Cannot add self as contact")
 

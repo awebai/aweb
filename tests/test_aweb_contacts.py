@@ -77,13 +77,13 @@ async def test_create_contact_self_rejected(aweb_db_infra):
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            data = await _init_project(c, "test/contacts-self", "alice")
+            data = await _init_project(c, "test-contacts-self", "alice")
             headers = _headers(data["api_key"])
 
             resp = await c.post(
                 "/v1/contacts",
                 headers=headers,
-                json={"contact_address": "test/contacts-self/alice"},
+                json={"contact_address": "test-contacts-self/alice"},
             )
             assert resp.status_code == 400
 
@@ -93,13 +93,13 @@ async def test_create_contact_self_rejected_org_level(aweb_db_infra):
     app = create_app(db_infra=aweb_db_infra, redis=None)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            data = await _init_project(c, "test/contacts-self-org", "alice")
+            data = await _init_project(c, "test-contacts-self-org", "alice")
             headers = _headers(data["api_key"])
 
             resp = await c.post(
                 "/v1/contacts",
                 headers=headers,
-                json={"contact_address": "test/contacts-self-org"},
+                json={"contact_address": "test-contacts-self-org"},
             )
             assert resp.status_code == 400
 

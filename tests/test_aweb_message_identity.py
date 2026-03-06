@@ -21,25 +21,33 @@ def _auth(api_key: str) -> dict[str, str]:
 
 async def _seed_project_and_agents(aweb_db):
     """Create a project with two agents and API keys. Returns IDs and keys."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     a1_id = uuid.uuid4()
     a2_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         f"proj-{uuid.uuid4().hex[:8]}",
         "Test Project",
+        namespace_id,
     )
     for aid, alias, name in [(a1_id, "alice", "Alice"), (a2_id, "bob", "Bob")]:
         await aweb_db.execute(
-            "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-            "VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
             aid,
             project_id,
             alias,
             name,
             "agent",
+            namespace_id,
         )
 
     key1 = f"aw_sk_{uuid.uuid4().hex}"

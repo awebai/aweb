@@ -28,12 +28,19 @@ async def _seed_project_with_agents(
     master_key: bytes,
 ):
     """Create a project with an ephemeral agent and a persistent peer agent."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        project_slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         project_slug,
         f"Project {project_slug}",
+        namespace_id,
     )
 
     # Ephemeral custodial agent (target)
@@ -45,8 +52,8 @@ async def _seed_project_with_agents(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, signing_key_enc, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             did, public_key, custody, signing_key_enc, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
         eph_id,
         project_id,
@@ -59,6 +66,7 @@ async def _seed_project_with_agents(
         eph_enc,
         "ephemeral",
         "active",
+        namespace_id,
     )
     eph_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -79,8 +87,8 @@ async def _seed_project_with_agents(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         peer_id,
         project_id,
@@ -92,6 +100,7 @@ async def _seed_project_with_agents(
         "self",
         "persistent",
         "active",
+        namespace_id,
     )
     peer_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

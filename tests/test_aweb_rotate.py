@@ -42,21 +42,28 @@ async def _seed_persistent_self_custodial(
     """Create a persistent self-custodial agent."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         agent_id,
         project_id,
@@ -68,6 +75,7 @@ async def _seed_persistent_self_custodial(
         "self",
         "persistent",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -84,6 +92,7 @@ async def _seed_persistent_self_custodial(
     return {
         "project_id": str(project_id),
         "agent_id": str(agent_id),
+        "namespace_id": namespace_id,
         "private_key": private_key,
         "public_key": public_key,
         "did": did,
@@ -96,21 +105,28 @@ async def _seed_persistent_custodial(aweb_db, *, slug: str, alias: str, master_k
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
     encrypted_key = encrypt_signing_key(private_key, master_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, signing_key_enc, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             did, public_key, custody, signing_key_enc, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
         agent_id,
         project_id,
@@ -123,6 +139,7 @@ async def _seed_persistent_custodial(aweb_db, *, slug: str, alias: str, master_k
         encrypted_key,
         "persistent",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -276,20 +293,27 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
     # Create an ephemeral agent
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "ephemeral-rotate",
         "Ephemeral",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         agent_id,
         project_id,
@@ -301,6 +325,7 @@ async def test_rotate_rejects_ephemeral_agent(aweb_db_infra, monkeypatch):
         "custodial",
         "ephemeral",
         "active",
+        namespace_id,
     )
     api_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -557,7 +582,7 @@ async def test_rotate_rejects_did_public_key_mismatch(aweb_db_infra):
             assert "does not match" in resp.json()["detail"].lower()
 
 
-async def _add_agent_to_project(aweb_db, *, project_id, alias):
+async def _add_agent_to_project(aweb_db, *, project_id, alias, namespace_id):
     """Add a second agent to an existing project. Returns seed dict."""
     private_key, public_key = generate_keypair()
     did = did_from_public_key(public_key)
@@ -567,8 +592,8 @@ async def _add_agent_to_project(aweb_db, *, project_id, alias):
         """
         INSERT INTO {{tables.agents}}
             (agent_id, project_id, alias, human_name, agent_type,
-             did, public_key, custody, lifetime, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             did, public_key, custody, lifetime, status, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         agent_id,
         uuid.UUID(project_id),
@@ -580,6 +605,7 @@ async def _add_agent_to_project(aweb_db, *, project_id, alias):
         "self",
         "persistent",
         "active",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -607,7 +633,9 @@ async def test_chained_rotation_delivers_earliest_announcement(aweb_db_infra):
     """When an agent rotates A→B→C, peer should see A→B first, then B→C after ack."""
     aweb_db = aweb_db_infra.get_manager("aweb")
     alice = await _seed_persistent_self_custodial(aweb_db, slug="chain-rot", alias="alice")
-    bob = await _add_agent_to_project(aweb_db, project_id=alice["project_id"], alias="bob")
+    bob = await _add_agent_to_project(
+        aweb_db, project_id=alice["project_id"], alias="bob", namespace_id=alice["namespace_id"]
+    )
 
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):

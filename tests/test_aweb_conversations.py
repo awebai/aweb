@@ -21,33 +21,42 @@ async def _seed_two_agents(aweb_db_infra):
     """Seed a project with two agents and API keys."""
     aweb_db = aweb_db_infra.get_manager("aweb")
 
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_1_id = uuid.uuid4()
     agent_2_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "test-conv",
         "Test Conv",
+        namespace_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         agent_1_id,
         project_id,
         "agent-1",
         "Agent One",
         "agent",
+        namespace_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         agent_2_id,
         project_id,
         "agent-2",
         "Agent Two",
         "agent",
+        namespace_id,
     )
 
     api_key_1 = f"aw_sk_{uuid.uuid4().hex}"
@@ -342,24 +351,32 @@ async def test_conversations_project_isolation(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
     # Project A
+    ns_a_id = uuid.uuid4()
     proj_a_id = uuid.uuid4()
     agent_a1 = uuid.uuid4()
     agent_a2 = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        ns_a_id,
+        "test-ns-1",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         proj_a_id,
         "proj-iso-a",
         "Proj A",
+        ns_a_id,
     )
     for aid, alias in [(agent_a1, "a1"), (agent_a2, "a2")]:
         await aweb_db.execute(
-            "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-            "VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
             aid,
             proj_a_id,
             alias,
             alias,
             "agent",
+            ns_a_id,
         )
     key_a1 = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -373,22 +390,30 @@ async def test_conversations_project_isolation(aweb_db_infra):
     )
 
     # Project B
+    ns_b_id = uuid.uuid4()
     proj_b_id = uuid.uuid4()
     agent_b1 = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        ns_b_id,
+        "test-ns-2",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         proj_b_id,
         "proj-iso-b",
         "Proj B",
+        ns_b_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         agent_b1,
         proj_b_id,
         "b1",
         "b1",
         "agent",
+        ns_b_id,
     )
     key_b1 = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

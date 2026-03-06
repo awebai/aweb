@@ -35,31 +35,40 @@ async def _wait_for_sse_waiting(
 async def _seed_basic_project(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_1_id = uuid.uuid4()
     agent_2_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "test-project",
         "Test Project",
+        namespace_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_1_id,
         project_id,
         "agent-1",
         "Agent One",
         "agent",
+        namespace_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_2_id,
         project_id,
         "agent-2",
         "Agent Two",
         "agent",
+        namespace_id,
     )
 
     api_key_1 = f"aw_sk_{uuid.uuid4().hex}"
@@ -83,6 +92,7 @@ async def _seed_basic_project(aweb_db_infra):
 
     return {
         "project_id": str(project_id),
+        "namespace_id": str(namespace_id),
         "agent_1_id": str(agent_1_id),
         "agent_2_id": str(agent_2_id),
         "api_key_1": api_key_1,
@@ -451,12 +461,13 @@ async def test_aweb_chat_send_message_non_participant_rejected(aweb_db_infra):
     # Create a third agent that is NOT part of the chat
     agent_3_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_3_id,
         uuid.UUID(seeded["project_id"]),
         "agent-3",
         "Agent Three",
         "agent",
+        uuid.UUID(seeded["namespace_id"]),
     )
     api_key_3 = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -519,21 +530,29 @@ async def test_aweb_chat_send_message_cross_project_rejected(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
     # Create a second project with its own agent
+    namespace_2_id = uuid.uuid4()
     project_2_id = uuid.uuid4()
     agent_other_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_2_id,
+        "test-ns-2",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_2_id,
         "other-project",
         "Other Project",
+        namespace_2_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_other_id,
         project_2_id,
         "other-agent",
         "Other Agent",
         "agent",
+        namespace_2_id,
     )
     api_key_other = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(
@@ -617,21 +636,29 @@ async def test_aweb_chat_list_sessions_tenant_isolation(aweb_db_infra):
     aweb_db = aweb_db_infra.get_manager("aweb")
 
     # Create a second project with its own agent
+    namespace_2_id = uuid.uuid4()
     project_2_id = uuid.uuid4()
     agent_other_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_2_id,
+        "test-ns-2",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_2_id,
         "other-project",
         "Other Project",
+        namespace_2_id,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5, $6)",
         agent_other_id,
         project_2_id,
         "other-agent",
         "Other Agent",
         "agent",
+        namespace_2_id,
     )
     api_key_other = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

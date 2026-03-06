@@ -71,9 +71,9 @@ def _parse_signed_timestamp(value: str) -> datetime:
     return dt
 
 
-def _chat_to_address(project_slug: str, participant_aliases: list[str], from_alias: str) -> str:
+def _chat_to_address(namespace_slug: str, participant_aliases: list[str], from_alias: str) -> str:
     return ",".join(
-        format_agent_address(project_slug, alias)
+        format_agent_address(namespace_slug, alias)
         for alias in participant_aliases
         if alias != from_alias
     )
@@ -260,20 +260,25 @@ async def create_or_send(
         )
 
     if payload.signature is None:
-        proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+        ns_row = await aweb_db.fetch_one(
+            """
+            SELECT n.slug
+            FROM {{tables.namespaces}} n
+            JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+            WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+            """,
             UUID(project_id),
         )
-        if not proj_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-        project_slug = proj_row["slug"]
+        if not ns_row:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        namespace_slug = ns_row["slug"]
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = expected_to_stable_id
         to_address = ",".join(
-            format_agent_address(project_slug, a) for a in sorted(payload.to_aliases)
+            format_agent_address(namespace_slug, a) for a in sorted(payload.to_aliases)
         )
         message_fields: dict[str, str] = {
-            "from": f"{project_slug}/{sender['alias']}",
+            "from": f"{namespace_slug}/{sender['alias']}",
             "from_did": "",
             "message_id": str(pre_message_id),
             "to": to_address,
@@ -445,13 +450,16 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT n.slug
+        FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
         UUID(project_id),
     )
-    if not proj_row:
-        raise HTTPException(status_code=404, detail="Project not found")
-    project_slug = proj_row["slug"]
+    namespace_slug = ns_row["slug"] if ns_row else ""
     participant_rows = await aweb_db.fetch_all(
         """
         SELECT alias
@@ -478,11 +486,13 @@ async def history(
             {
                 "message_id": m["message_id"],
                 "from_agent": m["from_alias"],
-                "from_address": format_agent_address(project_slug, m["from_alias"]),
+                "from_address": format_agent_address(namespace_slug, m["from_alias"]),
                 "body": m["body"],
                 "timestamp": _utc_iso(m["created_at"]),
                 "sender_leaving": m["sender_leaving"],
-                "to_address": _chat_to_address(project_slug, participant_aliases, m["from_alias"]),
+                "to_address": _chat_to_address(
+                    namespace_slug, participant_aliases, m["from_alias"]
+                ),
                 "from_did": m["from_did"],
                 "from_stable_id": m.get("from_stable_id"),
                 "to_did": m["to_did"],
@@ -490,7 +500,7 @@ async def history(
                 "signature": m["signature"],
                 "signing_key_id": m["signing_key_id"],
                 "is_contact": is_address_in_contacts(
-                    format_agent_address(project_slug, m["from_alias"]),
+                    format_agent_address(namespace_slug, m["from_alias"]),
                     contact_addrs,
                 ),
             }
@@ -560,9 +570,11 @@ async def _sse_events(
     try:
         proj_row = await aweb_db.fetch_one(
             """
-            SELECT s.project_id, p.slug
+            SELECT s.project_id, n.slug AS namespace_slug
             FROM {{tables.chat_sessions}} s
             JOIN {{tables.projects}} p ON s.project_id = p.project_id
+            LEFT JOIN {{tables.namespaces}} n ON p.namespace_id = n.namespace_id
+                AND n.deleted_at IS NULL
             WHERE s.session_id = $1
               AND p.deleted_at IS NULL
             """,
@@ -571,7 +583,7 @@ async def _sse_events(
         if not proj_row:
             yield f"event: error\ndata: {json.dumps({'error': 'Project not found'})}\n\n"
             return
-        project_slug = proj_row["slug"]
+        namespace_slug = proj_row["namespace_slug"] or ""
         sse_project_id = str(proj_row["project_id"])
         # Fetched once per SSE session — contact changes during the stream
         # won't be reflected until the next connection.
@@ -619,7 +631,7 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
-                    "from_address": format_agent_address(project_slug, r["from_alias"]),
+                    "from_address": format_agent_address(namespace_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
@@ -627,7 +639,7 @@ async def _sse_events(
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
                     "to_address": _chat_to_address(
-                        project_slug, participant_aliases, r["from_alias"]
+                        namespace_slug, participant_aliases, r["from_alias"]
                     ),
                     "from_did": r["from_did"],
                     "from_stable_id": r.get("from_stable_id"),
@@ -636,7 +648,7 @@ async def _sse_events(
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                     "is_contact": is_address_in_contacts(
-                        format_agent_address(project_slug, r["from_alias"]),
+                        format_agent_address(namespace_slug, r["from_alias"]),
                         contact_addrs,
                     ),
                 }
@@ -679,7 +691,7 @@ async def _sse_events(
                     "session_id": session_id_str,
                     "message_id": str(r["message_id"]),
                     "from_agent": r["from_alias"],
-                    "from_address": format_agent_address(project_slug, r["from_alias"]),
+                    "from_address": format_agent_address(namespace_slug, r["from_alias"]),
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
                     "sender_waiting": sender_waiting,
@@ -687,7 +699,7 @@ async def _sse_events(
                     "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
                     "timestamp": _utc_iso(r["created_at"]),
                     "to_address": _chat_to_address(
-                        project_slug, participant_aliases, r["from_alias"]
+                        namespace_slug, participant_aliases, r["from_alias"]
                     ),
                     "from_did": r["from_did"],
                     "from_stable_id": r.get("from_stable_id"),
@@ -696,7 +708,7 @@ async def _sse_events(
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                     "is_contact": is_address_in_contacts(
-                        format_agent_address(project_slug, r["from_alias"]),
+                        format_agent_address(namespace_slug, r["from_alias"]),
                         contact_addrs,
                     ),
                 }
@@ -943,18 +955,23 @@ async def send_message(
         )
 
     if payload.signature is None:
-        proj_row = await aweb_db.fetch_one(
-            "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+        ns_row = await aweb_db.fetch_one(
+            """
+            SELECT n.slug
+            FROM {{tables.namespaces}} n
+            JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+            WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+            """,
             UUID(project_id),
         )
-        if not proj_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-        project_slug = proj_row["slug"]
+        if not ns_row:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        namespace_slug = ns_row["slug"]
         msg_from_stable_id = sender_stable_id
         msg_to_stable_id = expected_to_stable_id
-        to_address = _chat_to_address(project_slug, participant_aliases, canonical_alias)
+        to_address = _chat_to_address(namespace_slug, participant_aliases, canonical_alias)
         message_fields: dict[str, str] = {
-            "from": f"{project_slug}/{canonical_alias}",
+            "from": f"{namespace_slug}/{canonical_alias}",
             "from_did": "",
             "message_id": str(pre_message_id),
             "to": to_address,

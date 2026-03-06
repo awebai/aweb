@@ -41,8 +41,8 @@ async def test_introspect_returns_namespace_slug_and_address(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["namespace_slug"] == "test/ns-introspect"
-            assert body["address"] == "test/ns-introspect/alice"
+            assert body["namespace_slug"] == "test-ns-introspect"
+            assert body["address"] == "test-ns-introspect/alice"
             assert body["access_mode"] == "open"
 
 
@@ -56,30 +56,45 @@ async def test_introspect_no_namespace_slug_for_cross_project(aweb_db_infra):
 
     project_a = uuid.uuid4()
     project_b = uuid.uuid4()
+    namespace_a = uuid.uuid4()
+    namespace_b = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_a,
+        "test-ns-a",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_b,
+        "test-ns-b",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_a,
         "ns-cross-a",
         "Project A",
+        namespace_a,
     )
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_b,
         "ns-cross-b",
         "Project B",
+        namespace_b,
     )
 
     victim_agent_id = uuid.uuid4()
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         """,
         victim_agent_id,
         project_b,
         "victim",
         "Victim",
         "agent",
+        namespace_b,
     )
 
     token = "aw_sk_" + uuid.uuid4().hex + uuid.uuid4().hex
@@ -121,4 +136,4 @@ async def test_list_agents_returns_namespace_slug(aweb_db_infra):
             )
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["namespace_slug"] == "test/ns-agents"
+            assert body["namespace_slug"] == "test-ns-agents"

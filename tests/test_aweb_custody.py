@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -120,22 +121,29 @@ class TestSignOnBehalf:
         encrypted_key = encrypt_signing_key(private_key, master_key)
 
         aweb_db = aweb_db_infra.get_manager("aweb")
+        namespace_id = uuid.uuid4()
+        await aweb_db.execute(
+            "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+            namespace_id,
+            "test-ns",
+        )
         project = await aweb_db.fetch_one(
             """
-            INSERT INTO {{tables.projects}} (slug, name)
-            VALUES ($1, $2)
+            INSERT INTO {{tables.projects}} (slug, name, namespace_id)
+            VALUES ($1, $2, $3)
             RETURNING project_id
             """,
             "custody-test",
             "Custody Test",
+            namespace_id,
         )
         project_id = project["project_id"]
 
         agent = await aweb_db.fetch_one(
             """
             INSERT INTO {{tables.agents}}
-                (project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                (project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING agent_id
             """,
             project_id,
@@ -147,6 +155,7 @@ class TestSignOnBehalf:
             "custodial",
             encrypted_key,
             "persistent",
+            namespace_id,
         )
         agent_id = str(agent["agent_id"])
 
@@ -228,20 +237,27 @@ class TestSignOnBehalf:
         did = did_from_public_key(public_key)
 
         aweb_db = aweb_db_infra.get_manager("aweb")
+        namespace_id = uuid.uuid4()
+        await aweb_db.execute(
+            "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+            namespace_id,
+            "test-ns-self",
+        )
         project = await aweb_db.fetch_one(
             """
-            INSERT INTO {{tables.projects}} (slug, name)
-            VALUES ($1, $2)
+            INSERT INTO {{tables.projects}} (slug, name, namespace_id)
+            VALUES ($1, $2, $3)
             RETURNING project_id
             """,
             "self-custody-test",
             "Self Custody Test",
+            namespace_id,
         )
         agent = await aweb_db.fetch_one(
             """
             INSERT INTO {{tables.agents}}
-                (project_id, alias, human_name, agent_type, did, public_key, custody, lifetime)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING agent_id
             """,
             project["project_id"],
@@ -252,6 +268,7 @@ class TestSignOnBehalf:
             encode_public_key(public_key),
             "self",
             "persistent",
+            namespace_id,
         )
 
         from aweb.custody import sign_on_behalf
@@ -282,16 +299,23 @@ class TestDestroySigningKey:
         encrypted_key = encrypt_signing_key(private_key, master_key)
 
         aweb_db = aweb_db_infra.get_manager("aweb")
+        namespace_id = uuid.uuid4()
+        await aweb_db.execute(
+            "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+            namespace_id,
+            "test-ns-destroy",
+        )
         project = await aweb_db.fetch_one(
-            "INSERT INTO {{tables.projects}} (slug, name) VALUES ($1, $2) RETURNING project_id",
+            "INSERT INTO {{tables.projects}} (slug, name, namespace_id) VALUES ($1, $2, $3) RETURNING project_id",
             "destroy-test",
             "Destroy Test",
+            namespace_id,
         )
         agent = await aweb_db.fetch_one(
             """
             INSERT INTO {{tables.agents}}
-                (project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                (project_id, alias, human_name, agent_type, did, public_key, custody, signing_key_enc, lifetime, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING agent_id
             """,
             project["project_id"],
@@ -303,6 +327,7 @@ class TestDestroySigningKey:
             "custodial",
             encrypted_key,
             "persistent",
+            namespace_id,
         )
         agent_id = str(agent["agent_id"])
 

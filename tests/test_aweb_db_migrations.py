@@ -43,10 +43,18 @@ async def test_aweb_migrations_apply(test_db_with_schema):
     assert "user_id" in col_names
     assert "agent_id" in col_names
 
+    namespace_id = uuid.uuid4()
     await test_db_with_schema.execute(
-        "INSERT INTO {{tables.projects}} (slug, name) VALUES ($1, $2)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+
+    await test_db_with_schema.execute(
+        "INSERT INTO {{tables.projects}} (slug, name, namespace_id) VALUES ($1, $2, $3)",
         "test-project",
         "Test Project",
+        namespace_id,
     )
 
     project = await test_db_with_schema.fetch_one(
@@ -56,11 +64,12 @@ async def test_aweb_migrations_apply(test_db_with_schema):
     assert project is not None
 
     await test_db_with_schema.execute(
-        "INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO {{tables.agents}} (project_id, alias, human_name, agent_type, namespace_id) VALUES ($1, $2, $3, $4, $5)",
         project["project_id"],
         "agent-1",
         "Agent One",
         "agent",
+        namespace_id,
     )
 
     agent = await test_db_with_schema.fetch_one(
@@ -88,25 +97,34 @@ async def test_aweb_migrations_apply(test_db_with_schema):
 
     with pytest.raises(Exception):
         await test_db_with_schema.execute(
-            "INSERT INTO {{tables.projects}} (slug, name) VALUES ($1, $2)",
+            "INSERT INTO {{tables.projects}} (slug, name, namespace_id) VALUES ($1, $2, $3)",
             "test-project",
             "Duplicate",
+            namespace_id,
         )
 
     tenant_id = uuid.uuid4()
+    namespace_id_2 = uuid.uuid4()
     await test_db_with_schema.execute(
-        "INSERT INTO {{tables.projects}} (tenant_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id_2,
+        "test-ns-2",
+    )
+    await test_db_with_schema.execute(
+        "INSERT INTO {{tables.projects}} (tenant_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         tenant_id,
         "test-project",
         "Hosted Project",
+        namespace_id_2,
     )
 
     with pytest.raises(Exception):
         await test_db_with_schema.execute(
-            "INSERT INTO {{tables.projects}} (tenant_id, slug, name) VALUES ($1, $2, $3)",
+            "INSERT INTO {{tables.projects}} (tenant_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
             tenant_id,
             "test-project",
             "Hosted Project Duplicate",
+            namespace_id_2,
         )
 
     # --- Migration 013: agent identity columns ---

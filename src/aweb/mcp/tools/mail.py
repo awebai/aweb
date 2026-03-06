@@ -56,21 +56,26 @@ async def send_mail(
     created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
-    proj_row = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE project_id = $1 AND deleted_at IS NULL",
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT n.slug
+        FROM {{tables.namespaces}} n
+        JOIN {{tables.projects}} p ON p.namespace_id = n.namespace_id
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND n.deleted_at IS NULL
+        """,
         UUID(auth.project_id),
     )
-    if not proj_row:
-        return json.dumps({"error": "Project not found"})
-    project_slug = proj_row["slug"]
+    if not ns_row:
+        return json.dumps({"error": "Namespace not found"})
+    namespace_slug = ns_row["slug"]
 
     sign_result = await sign_on_behalf(
         auth.agent_id,
         {
-            "from": f"{project_slug}/{sender['alias']}",
+            "from": f"{namespace_slug}/{sender['alias']}",
             "from_did": "",
             "message_id": str(pre_message_id),
-            "to": f"{project_slug}/{to_alias}",
+            "to": f"{namespace_slug}/{to_alias}",
             "to_did": "",
             "type": "mail",
             "subject": subject,

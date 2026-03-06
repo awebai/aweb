@@ -36,12 +36,19 @@ def _make_rotation_signature(
 
 async def _seed_two_agents(aweb_db, *, slug: str = "ann-proj"):
     """Create a project with two persistent self-custodial agents."""
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
 
     agents = []
@@ -53,8 +60,8 @@ async def _seed_two_agents(aweb_db, *, slug: str = "ann-proj"):
             """
             INSERT INTO {{tables.agents}}
                 (agent_id, project_id, alias, human_name, agent_type,
-                 did, public_key, custody, lifetime, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 did, public_key, custody, lifetime, status, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """,
             agent_id,
             project_id,
@@ -66,6 +73,7 @@ async def _seed_two_agents(aweb_db, *, slug: str = "ann-proj"):
             "self",
             "persistent",
             "active",
+            namespace_id,
         )
         api_key = f"aw_sk_{uuid.uuid4().hex}"
         await aweb_db.execute(
@@ -261,12 +269,19 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
     a third agent who hasn't seen the announcement yet."""
     aweb_db = aweb_db_infra.get_manager("aweb")
     # Create project with 3 agents
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "test-ns",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "ann-3peer",
         "Three Peer",
+        namespace_id,
     )
 
     agents = []
@@ -278,8 +293,8 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
             """
             INSERT INTO {{tables.agents}}
                 (agent_id, project_id, alias, human_name, agent_type,
-                 did, public_key, custody, lifetime, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 did, public_key, custody, lifetime, status, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """,
             agent_id,
             project_id,
@@ -291,6 +306,7 @@ async def test_announcement_per_peer_independent(aweb_db_infra):
             "self",
             "persistent",
             "active",
+            namespace_id,
         )
         api_key = f"aw_sk_{uuid.uuid4().hex}"
         await aweb_db.execute(

@@ -21,20 +21,27 @@ async def _seed_agent_with_log(aweb_db, *, slug: str = "log-proj", alias: str = 
     """Create a project + agent + API key + log entries."""
     _, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        slug,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         slug,
         f"Project {slug}",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """,
         agent_id,
         project_id,
@@ -45,6 +52,7 @@ async def _seed_agent_with_log(aweb_db, *, slug: str = "log-proj", alias: str = 
         encode_public_key(public_key),
         "self",
         "persistent",
+        namespace_id,
     )
 
     api_key = f"aw_sk_{uuid.uuid4().hex}"
@@ -123,20 +131,27 @@ async def test_agent_log_empty_for_no_entries(aweb_db_infra):
     # Create agent without adding log entries
     _, public_key = generate_keypair()
     did = did_from_public_key(public_key)
+    namespace_id = uuid.uuid4()
     project_id = uuid.uuid4()
     agent_id = uuid.uuid4()
 
     await aweb_db.execute(
-        "INSERT INTO {{tables.projects}} (project_id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        namespace_id,
+        "empty-log",
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
         project_id,
         "empty-log",
         "Empty Log",
+        namespace_id,
     )
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (agent_id, project_id, alias, human_name, agent_type, did, public_key, custody, lifetime, namespace_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """,
         agent_id,
         project_id,
@@ -147,6 +162,7 @@ async def test_agent_log_empty_for_no_entries(aweb_db_infra):
         encode_public_key(public_key),
         "self",
         "persistent",
+        namespace_id,
     )
     api_key = f"aw_sk_{uuid.uuid4().hex}"
     await aweb_db.execute(

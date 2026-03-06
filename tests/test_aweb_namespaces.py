@@ -103,7 +103,10 @@ class TestNamespaceSlugFromProjectSlug:
         assert _namespace_slug_from_project_slug("///") == "default"
 
     def test_complex_slug(self):
-        assert _namespace_slug_from_project_slug("test/unclaimed-bootstrap") == "test-unclaimed-bootstrap"
+        assert (
+            _namespace_slug_from_project_slug("test/unclaimed-bootstrap")
+            == "test-unclaimed-bootstrap"
+        )
 
     def test_truncation(self):
         slug = "a" * 100
@@ -140,13 +143,9 @@ async def test_namespace_slug_unique_index(aweb_db_infra):
     from pgdbm.errors import QueryError
 
     aweb_db = aweb_db_infra.get_manager("aweb")
-    await aweb_db.execute(
-        "INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "unique-slug"
-    )
+    await aweb_db.execute("INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "unique-slug")
     with pytest.raises(QueryError, match="unique constraint"):
-        await aweb_db.execute(
-            "INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "unique-slug"
-        )
+        await aweb_db.execute("INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "unique-slug")
 
 
 @pytest.mark.asyncio
@@ -164,9 +163,7 @@ async def test_namespace_slug_reusable_after_soft_delete(aweb_db_infra):
         ns_id,
     )
     # Should succeed — the original is soft-deleted
-    await aweb_db.execute(
-        "INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "reuse-slug"
-    )
+    await aweb_db.execute("INSERT INTO {{tables.namespaces}} (slug) VALUES ($1)", "reuse-slug")
 
 
 @pytest.mark.asyncio
@@ -513,3 +510,54 @@ async def test_init_reinit_same_namespace(aweb_db_infra):
             assert body2["created"] is False
             assert body2["agent_id"] == body1["agent_id"]
             assert body2["namespace_slug"] == "reinit-ns"
+
+
+# ---------------------------------------------------------------------------
+# Introspect tests (bead aweb-1mo.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_introspect_returns_namespace_slug_from_namespaces_table(aweb_db_infra):
+    """GET /v1/auth/introspect returns namespace_slug from namespaces table."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            init = await c.post(
+                "/v1/init",
+                json={"namespace_slug": "intro-ns", "project_slug": "intro-proj", "alias": "alice"},
+            )
+            assert init.status_code == 200
+            api_key = init.json()["api_key"]
+
+            resp = await c.get(
+                "/v1/auth/introspect",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "intro-ns"
+            assert body["address"] == "intro-ns/alice"
+
+
+@pytest.mark.asyncio
+async def test_introspect_with_project_slug_only(aweb_db_infra):
+    """Introspect after init with project_slug only derives correct namespace_slug."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            init = await c.post(
+                "/v1/init",
+                json={"project_slug": "introcompat", "alias": "bob"},
+            )
+            assert init.status_code == 200
+            api_key = init.json()["api_key"]
+
+            resp = await c.get(
+                "/v1/auth/introspect",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "introcompat"
+            assert body["address"] == "introcompat/bob"
