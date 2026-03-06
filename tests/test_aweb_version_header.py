@@ -67,9 +67,13 @@ async def test_version_header_present_when_env_set(aweb_db_infra, monkeypatch):
 @pytest.mark.asyncio
 async def test_version_header_absent_when_env_not_set(aweb_db_infra, monkeypatch):
     monkeypatch.delenv("AWEB_LATEST_AW_VERSION", raising=False)
+    seeded = await _seed(aweb_db_infra)
     app = create_app(db_infra=aweb_db_infra, redis=None)
 
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/health")
+            assert "x-latest-client-version" not in resp.headers
+
+            resp = await client.get("/v1/tasks", headers=_auth_headers(seeded["api_key"]))
             assert "x-latest-client-version" not in resp.headers

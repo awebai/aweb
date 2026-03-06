@@ -99,6 +99,7 @@ def create_app(
     async def _service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
+    # Read once at construction time; env var must be set before create_app() is called.
     latest_version = os.environ.get("AWEB_LATEST_AW_VERSION")
     if latest_version:
 
