@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from dataclasses import dataclass
 from uuid import UUID
@@ -56,12 +57,9 @@ class EnsuredProject:
 def _namespace_slug_from_project_slug(project_slug: str) -> str:
     """Derive a valid namespace slug from a project slug.
 
-    Replaces characters not allowed in namespace slugs (slashes, underscores,
-    dots, uppercase) with hyphens, strips leading/trailing hyphens, and
-    lowercases.
+    Lowercases, replaces disallowed characters (slashes, underscores, dots)
+    with hyphens, collapses consecutive hyphens, and strips edge hyphens.
     """
-    import re
-
     slug = project_slug.lower()
     slug = re.sub(r"[^a-z0-9-]", "-", slug)
     slug = re.sub(r"-+", "-", slug)
@@ -98,23 +96,28 @@ async def _resolve_namespace(
         return dict(ns)
 
     if namespace_slug is not None:
+        # Atomic find-or-create: INSERT with ON CONFLICT handles concurrent requests.
         ns = await tx.fetch_one(
             """
-            SELECT namespace_id, slug
-            FROM {{tables.namespaces}}
-            WHERE slug = $1 AND deleted_at IS NULL
+            INSERT INTO {{tables.namespaces}} (slug)
+            VALUES ($1)
+            ON CONFLICT (slug) WHERE deleted_at IS NULL DO NOTHING
+            RETURNING namespace_id, slug
             """,
             namespace_slug,
         )
         if not ns:
+            # Another transaction won the race — fetch the existing row.
             ns = await tx.fetch_one(
                 """
-                INSERT INTO {{tables.namespaces}} (slug)
-                VALUES ($1)
-                RETURNING namespace_id, slug
+                SELECT namespace_id, slug
+                FROM {{tables.namespaces}}
+                WHERE slug = $1 AND deleted_at IS NULL
                 """,
                 namespace_slug,
             )
+        if not ns:
+            raise ValueError(f"Failed to resolve namespace: {namespace_slug}")
         return dict(ns)
 
     raise ValueError("namespace_slug or namespace_id is required")
@@ -250,7 +253,7 @@ async def bootstrap_identity(
     aweb_db = db.get_manager("aweb")
 
     project_slug = validate_project_slug(project_slug.strip())
-    # Backward compat: if no namespace_slug/namespace_id, derive from project_slug.
+    # OSS path: derive namespace from project slug when not explicitly provided.
     if namespace_slug is None and namespace_id is None:
         namespace_slug = _namespace_slug_from_project_slug(project_slug)
     if namespace_slug is not None:

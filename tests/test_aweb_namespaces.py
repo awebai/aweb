@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
 from aweb.auth import validate_namespace_slug
+from aweb.bootstrap import _namespace_slug_from_project_slug
 
 
 class TestValidateNamespaceSlug:
@@ -72,6 +73,42 @@ class TestValidateNamespaceSlug:
 
     def test_strips_whitespace(self):
         assert validate_namespace_slug("  acme  ") == "acme"
+
+
+class TestNamespaceSlugFromProjectSlug:
+    """_namespace_slug_from_project_slug: derive valid namespace slug from project slug."""
+
+    def test_passthrough_valid_slug(self):
+        assert _namespace_slug_from_project_slug("acme") == "acme"
+
+    def test_slash_replaced_with_hyphen(self):
+        assert _namespace_slug_from_project_slug("test/project") == "test-project"
+
+    def test_underscore_replaced_with_hyphen(self):
+        assert _namespace_slug_from_project_slug("my_project") == "my-project"
+
+    def test_dot_replaced_with_hyphen(self):
+        assert _namespace_slug_from_project_slug("my.org") == "my-org"
+
+    def test_uppercase_lowercased(self):
+        assert _namespace_slug_from_project_slug("MyProject") == "myproject"
+
+    def test_consecutive_special_chars_collapsed(self):
+        assert _namespace_slug_from_project_slug("a//b__c") == "a-b-c"
+
+    def test_leading_trailing_special_stripped(self):
+        assert _namespace_slug_from_project_slug("/project/") == "project"
+
+    def test_all_special_falls_back_to_default(self):
+        assert _namespace_slug_from_project_slug("///") == "default"
+
+    def test_complex_slug(self):
+        assert _namespace_slug_from_project_slug("test/unclaimed-bootstrap") == "test-unclaimed-bootstrap"
+
+    def test_truncation(self):
+        slug = "a" * 100
+        result = _namespace_slug_from_project_slug(slug)
+        assert len(result) <= 64
 
 
 @pytest.mark.asyncio
@@ -378,6 +415,25 @@ async def test_init_with_project_slug_only_backward_compat(aweb_db_infra):
             body = resp.json()
             assert body["namespace_slug"] == "compat-ns"
             assert body["project_slug"] == "compat-ns"
+
+
+@pytest.mark.asyncio
+async def test_init_with_project_slug_containing_slash(aweb_db_infra):
+    """POST /v1/init with project_slug containing '/' normalizes namespace_slug."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/init",
+                json={
+                    "project_slug": "test/my-project",
+                    "alias": "dave",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["namespace_slug"] == "test-my-project"
+            assert body["project_slug"] == "test/my-project"
 
 
 @pytest.mark.asyncio
