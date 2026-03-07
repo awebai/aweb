@@ -503,6 +503,43 @@ async def test_ready_tasks(aweb_db_infra):
             assert task_a["task_ref"] in refs
 
 
+@pytest.mark.asyncio
+async def test_ready_tasks_unclaimed_filter(aweb_db_infra):
+    seeded = await _seed(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers = _auth_headers(seeded["api_key_1"])
+            task_free = (
+                await client.post("/v1/tasks", headers=headers, json={"title": "Free"})
+            ).json()
+            task_claimed = (
+                await client.post("/v1/tasks", headers=headers, json={"title": "Claimed"})
+            ).json()
+
+            # Assign one task
+            await client.patch(
+                f"/v1/tasks/{task_claimed['task_ref']}",
+                headers=headers,
+                json={"assignee_agent_id": str(seeded["agent_1_id"])},
+            )
+
+            # Without filter: both returned
+            resp = await client.get("/v1/tasks/ready", headers=headers)
+            refs = [t["task_ref"] for t in resp.json()["tasks"]]
+            assert task_free["task_ref"] in refs
+            assert task_claimed["task_ref"] in refs
+
+            # With unclaimed=true: only unassigned
+            resp = await client.get(
+                "/v1/tasks/ready", headers=headers, params={"unclaimed": "true"}
+            )
+            refs = [t["task_ref"] for t in resp.json()["tasks"]]
+            assert task_free["task_ref"] in refs
+            assert task_claimed["task_ref"] not in refs
+
+
 # -- Step 11: Sequential numbering --
 
 
