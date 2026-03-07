@@ -28,6 +28,7 @@ from aweb.routes.messages import router as messages_router
 from aweb.routes.policies import router as policies_router
 from aweb.routes.projects import router as projects_router
 from aweb.routes.reservations import router as reservations_router
+from aweb.routes.status import router as status_router
 from aweb.routes.tasks import router as tasks_router
 
 
@@ -44,6 +45,7 @@ def include_aweb_routers(app: FastAPI) -> None:
     app.include_router(policies_router)
     app.include_router(projects_router)
     app.include_router(reservations_router)
+    app.include_router(status_router)
     app.include_router(tasks_router)
 
 
