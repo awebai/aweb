@@ -79,6 +79,99 @@ class SuggestNamePrefixResponse(BaseModel):
     canonical_origin: str
 
 
+async def _resolve_project_for_name_suggestion(
+    server_db, canonical_origin: str, auth_project_id: UUID | None
+) -> tuple[UUID, str, str]:
+    """Resolve (project_id, project_slug, repo_id) for a name prefix suggestion.
+
+    When authenticated, scopes to the authenticated project to prevent
+    classic-name allocation from leaking across projects.
+    """
+    results = await server_db.fetch_all(
+        """
+        SELECT r.id as repo_id, r.canonical_origin,
+               p.id as project_id, p.slug as project_slug
+        FROM {{tables.repos}} r
+        JOIN {{tables.projects}} p ON r.project_id = p.id AND p.deleted_at IS NULL
+        WHERE r.canonical_origin = $1 AND r.deleted_at IS NULL
+        ORDER BY p.slug
+        """,
+        canonical_origin,
+    )
+
+    if auth_project_id is not None:
+        project_row = await server_db.fetch_one(
+            """
+            SELECT id, slug
+            FROM {{tables.projects}}
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            auth_project_id,
+        )
+        if not project_row:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        matched_repo = next((r for r in results if r["project_id"] == auth_project_id), None)
+        return (
+            project_row["id"],
+            project_row["slug"],
+            str(matched_repo["repo_id"]) if matched_repo is not None else "",
+        )
+
+    if not results:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Repo not registered: {canonical_origin}. Run 'bdh :init' to register.",
+        )
+    if len(results) > 1:
+        project_slugs = [r["project_slug"] for r in results]
+        raise HTTPException(
+            status_code=409,
+            detail=f"Repo exists in multiple projects: {', '.join(project_slugs)}. "
+            "Specify project with BEADHUB_PROJECT or --project.",
+        )
+
+    result = results[0]
+    return result["project_id"], result["project_slug"], str(result["repo_id"])
+
+
+def _extract_used_prefixes(aliases: list[str]) -> set[str]:
+    """Extract name prefixes from existing aliases.
+
+    An alias like "alice-programmer" has prefix "alice".
+    An alias like "alice-01-programmer" has prefix "alice-01".
+    An alias like "alice" (no role) also has prefix "alice".
+    """
+    used: set[str] = set()
+    for alias in aliases:
+        parts = alias.split("-")
+        if len(parts) >= 2 and parts[1].isdigit():
+            prefix = f"{parts[0]}-{parts[1]}".lower()
+        else:
+            prefix = parts[0].lower()
+        if prefix:
+            used.add(prefix)
+    return used
+
+
+def _find_available_prefix(used_prefixes: set[str]) -> str | None:
+    """Find the first available classic name prefix.
+
+    Tries base names first (alice, bob, ...), then numbered (alice-01, bob-01, ...).
+    """
+    for name in CLASSIC_NAMES:
+        if name not in used_prefixes:
+            return name
+
+    for num in range(1, 100):
+        for name in CLASSIC_NAMES:
+            numbered = f"{name}-{num:02d}"
+            if numbered not in used_prefixes:
+                return numbered
+
+    return None
+
+
 @router.post("/suggest-name-prefix", response_model=SuggestNamePrefixResponse)
 async def suggest_name_prefix(
     request: Request,
@@ -101,67 +194,15 @@ async def suggest_name_prefix(
     (or the authenticated project is not among them), or all names are taken.
     """
     server_db = db.get_manager("server")
-
     canonical_origin = canonicalize_git_url(payload.origin_url)
 
     auth_project_id: UUID | None = None
     if "Authorization" in request.headers or "X-BH-Auth" in request.headers:
         auth_project_id = UUID(await get_project_from_auth(request, db))
 
-    # Look up repo(s) by canonical origin to see if this repo is already registered.
-    # IMPORTANT: if the caller is authenticated, we MUST scope the suggestion to
-    # the authenticated project (not the first matching repo in some other project),
-    # otherwise classic-name allocation leaks across projects.
-    results = await server_db.fetch_all(
-        """
-        SELECT r.id as repo_id, r.canonical_origin,
-               p.id as project_id, p.slug as project_slug
-        FROM {{tables.repos}} r
-        JOIN {{tables.projects}} p ON r.project_id = p.id AND p.deleted_at IS NULL
-        WHERE r.canonical_origin = $1 AND r.deleted_at IS NULL
-        ORDER BY p.slug
-        """,
-        canonical_origin,
+    project_id, project_slug, repo_id = await _resolve_project_for_name_suggestion(
+        server_db, canonical_origin, auth_project_id
     )
-
-    project_id: UUID
-    project_slug: str
-    repo_id: str
-
-    if auth_project_id is not None:
-        project_row = await server_db.fetch_one(
-            """
-            SELECT id, slug
-            FROM {{tables.projects}}
-            WHERE id = $1 AND deleted_at IS NULL
-            """,
-            auth_project_id,
-        )
-        if not project_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        project_id = project_row["id"]
-        project_slug = project_row["slug"]
-        matched_repo = next((r for r in results if r["project_id"] == auth_project_id), None)
-        repo_id = str(matched_repo["repo_id"]) if matched_repo is not None else ""
-    else:
-        if not results:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Repo not registered: {canonical_origin}. Run 'bdh :init' to register.",
-            )
-        if len(results) > 1:
-            project_slugs = [r["project_slug"] for r in results]
-            raise HTTPException(
-                status_code=409,
-                detail=f"Repo exists in multiple projects: {', '.join(project_slugs)}. "
-                "Specify project with BEADHUB_PROJECT or --project.",
-            )
-
-        result = results[0]
-        project_id = result["project_id"]
-        project_slug = result["project_slug"]
-        repo_id = str(result["repo_id"])
 
     # Query aweb.agents (not server.workspaces) for used aliases.
     # bootstrap_identity creates agents in aweb.agents, and an agent can exist
@@ -177,43 +218,8 @@ async def suggest_name_prefix(
         project_id,
     )
 
-    # Extract name prefixes from existing aliases
-    # An alias like "alice-programmer" has prefix "alice"
-    # An alias like "alice-01-programmer" has prefix "alice-01"
-    # An alias like "alice" (no role) also has prefix "alice"
-    used_prefixes: set[str] = set()
-    for row in existing:
-        alias = row["alias"]
-        parts = alias.split("-")
-        if len(parts) >= 2 and parts[1].isdigit():
-            # Format: name-NN-role or name-NN → prefix is "name-NN"
-            prefix = f"{parts[0]}-{parts[1]}".lower()
-        else:
-            # Format: name-role or name → prefix is "name"
-            prefix = parts[0].lower()
-        if prefix:  # Skip empty prefixes from malformed aliases
-            used_prefixes.add(prefix)
-
-    # Find first available name prefix
-    # First try base names (alice, bob, ...), then numbered (alice-01, bob-01, ...)
-    available_prefix = None
-
-    # Try base names first
-    for name in CLASSIC_NAMES:
-        if name not in used_prefixes:
-            available_prefix = name
-            break
-
-    # If all base names taken, try numbered names
-    if available_prefix is None:
-        for num in range(1, 100):  # Up to 99 numbered suffixes
-            for name in CLASSIC_NAMES:
-                numbered = f"{name}-{num:02d}"
-                if numbered not in used_prefixes:
-                    available_prefix = numbered
-                    break
-            if available_prefix:
-                break
+    used_prefixes = _extract_used_prefixes([row["alias"] for row in existing])
+    available_prefix = _find_available_prefix(used_prefixes)
 
     if available_prefix is None:
         raise HTTPException(
@@ -1093,6 +1099,184 @@ def _timestamp(value: Optional[datetime] | Optional[str]) -> float:
         return 0.0
 
 
+_TEAM_WORKSPACE_COLS = """
+            w.workspace_id,
+            w.alias,
+            w.human_name,
+            w.current_branch,
+            w.project_id,
+            w.role,
+            w.hostname,
+            w.workspace_path,
+            w.last_seen_at,
+            w.focus_apex_bead_id,
+            w.focus_apex_repo_name,
+            w.focus_apex_branch,
+            w.focus_updated_at,
+            focus_issue.title AS focus_apex_title,
+            focus_issue.issue_type AS focus_apex_type,
+            p.slug as project_slug,
+            r.canonical_origin as repo,
+            COALESCE(cs.claim_count, 0) AS claim_count,
+            cs.last_claimed_at"""
+
+_TEAM_FOCUS_JOIN = _title_join(
+    "focus_issue",
+    "w.project_id",
+    "w.focus_apex_bead_id",
+    include_type=True,
+    beads_repo_col="w.focus_apex_repo_name",
+    beads_branch_col="w.focus_apex_branch",
+    guard_col="w.focus_apex_bead_id",
+)
+
+
+async def _fetch_extra_team_workspace(
+    server_db,
+    workspace_id: str,
+    project_id: str,
+    *,
+    human_name: str | None,
+    repo: str | None,
+):
+    """Fetch a single workspace by ID for the always_include_workspace_id guarantee."""
+    params: list = [uuid_module.UUID(workspace_id), uuid_module.UUID(project_id)]
+    param_idx = 3
+
+    query = f"""
+        SELECT {_TEAM_WORKSPACE_COLS}
+        FROM {{{{tables.workspaces}}}} w
+        JOIN {{{{tables.projects}}}} p ON w.project_id = p.id AND p.deleted_at IS NULL
+        LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+        LEFT JOIN (
+            SELECT workspace_id,
+                   COUNT(*) AS claim_count,
+                   MAX(claimed_at) AS last_claimed_at
+            FROM {{{{tables.bead_claims}}}}
+            GROUP BY workspace_id
+        ) cs ON cs.workspace_id = w.workspace_id
+        {_TEAM_FOCUS_JOIN}
+        WHERE w.workspace_id = $1 AND w.project_id = $2
+    """
+
+    if human_name:
+        query += f" AND w.human_name = ${param_idx}"
+        params.append(human_name)
+        param_idx += 1
+
+    if repo:
+        query += f" AND r.canonical_origin = ${param_idx}"
+        params.append(repo)
+        param_idx += 1
+
+    query += " AND w.deleted_at IS NULL"
+
+    return await server_db.fetch_one(query, *params)
+
+
+def _row_to_workspace_info(
+    row,
+    presence: dict | None,
+    workspace_claims: list[Claim],
+    *,
+    public_reader: bool,
+    include_presence: bool,
+) -> WorkspaceInfo:
+    workspace_id = str(row["workspace_id"])
+
+    # Extract apex from first claim (most recent by claimed_at)
+    first_apex_id = workspace_claims[0].apex_id if workspace_claims else None
+    first_apex_title = workspace_claims[0].apex_title if workspace_claims else None
+    first_apex_type = workspace_claims[0].apex_type if workspace_claims else None
+
+    role = row["role"]
+    status = "offline"
+    last_seen = _to_iso(row["last_seen_at"])
+    program = None
+    model = None
+    member_email = None
+    branch = row["current_branch"]
+
+    if include_presence and presence:
+        program = presence.get("program")
+        model = presence.get("model")
+        member_email = presence.get("member_email")
+        branch = presence.get("current_branch") or branch
+        role = presence.get("role") or role
+        status = presence.get("status") or "active"
+        last_seen = presence.get("last_seen") or last_seen
+
+    human_name_value = row["human_name"]
+    member_email_value = member_email
+    role_value = role
+    hostname_value = row["hostname"]
+    workspace_path_value = row["workspace_path"]
+    if public_reader:
+        member_email_value = None
+        role_value = None
+        hostname_value = None
+        workspace_path_value = None
+
+    return WorkspaceInfo(
+        workspace_id=workspace_id,
+        alias=row["alias"],
+        human_name=human_name_value,
+        project_id=str(row["project_id"]),
+        project_slug=row["project_slug"],
+        program=program,
+        model=model,
+        repo=row["repo"],
+        branch=branch,
+        member_email=member_email_value,
+        role=role_value,
+        hostname=hostname_value,
+        workspace_path=workspace_path_value,
+        apex_id=first_apex_id,
+        apex_title=first_apex_title,
+        apex_type=first_apex_type,
+        focus_apex_id=row["focus_apex_bead_id"],
+        focus_apex_title=row["focus_apex_title"],
+        focus_apex_type=row["focus_apex_type"],
+        focus_apex_repo_name=row["focus_apex_repo_name"],
+        focus_apex_branch=row["focus_apex_branch"],
+        focus_updated_at=_to_iso(row["focus_updated_at"]),
+        status=status,
+        last_seen=last_seen,
+        deleted_at=_to_iso(row.get("deleted_at")),
+        claims=workspace_claims,
+    )
+
+
+async def _fetch_presence_map(redis: Redis, workspace_id_strings: list[str]) -> Dict[str, dict]:
+    presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
+    return {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
+
+
+async def _fetch_claims_map(server_db, workspace_ids: list) -> Dict[str, List[Claim]]:
+    if not workspace_ids:
+        return {}
+    placeholders = ", ".join(f"${i}" for i in range(1, len(workspace_ids) + 1))
+    claim_rows = await server_db.fetch_all(
+        _build_workspace_claims_query(placeholders),
+        *workspace_ids,
+    )
+    claims_map: Dict[str, List[Claim]] = {}
+    for cr in claim_rows:
+        ws_id = str(cr["workspace_id"])
+        claim = Claim(
+            bead_id=cr["bead_id"],
+            title=cr["claim_title"],
+            claimed_at=cr["claimed_at"].isoformat() if cr["claimed_at"] else "",
+            apex_id=cr["apex_bead_id"],
+            apex_title=cr["apex_title"],
+            apex_type=cr["apex_type"],
+        )
+        if ws_id not in claims_map:
+            claims_map[ws_id] = []
+        claims_map[ws_id].append(claim)
+    return claims_map
+
+
 @router.get("", response_model=ListWorkspacesResponse)
 async def list_workspaces(
     request: Request,
@@ -1257,98 +1441,22 @@ async def list_workspaces(
 
     presence_map: Dict[str, dict] = {}
     if include_presence and workspace_id_strings:
-        presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
-        presence_map = {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
+        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
-        placeholders = ", ".join(f"${i}" for i in range(1, len(workspace_ids) + 1))
-        claim_rows = await server_db.fetch_all(
-            _build_workspace_claims_query(placeholders),
-            *workspace_ids,
-        )
-        for cr in claim_rows:
-            ws_id = str(cr["workspace_id"])
-            claim = Claim(
-                bead_id=cr["bead_id"],
-                title=cr["claim_title"],
-                claimed_at=cr["claimed_at"].isoformat() if cr["claimed_at"] else "",
-                apex_id=cr["apex_bead_id"],
-                apex_title=cr["apex_title"],
-                apex_type=cr["apex_type"],
-            )
-            if ws_id not in claims_map:
-                claims_map[ws_id] = []
-            claims_map[ws_id].append(claim)
+        claims_map = await _fetch_claims_map(server_db, workspace_ids)
 
     workspaces: List[WorkspaceInfo] = []
     for row in rows:
-        workspace_id = str(row["workspace_id"])
-        presence = presence_map.get(workspace_id)
-        workspace_claims = claims_map.get(workspace_id, []) if include_claims else []
-
-        # Extract apex from first claim (most recent by claimed_at)
-        first_apex_id = workspace_claims[0].apex_id if workspace_claims else None
-        first_apex_title = workspace_claims[0].apex_title if workspace_claims else None
-        first_apex_type = workspace_claims[0].apex_type if workspace_claims else None
-
-        role = row["role"]
-        status = "offline"
-        last_seen = _to_iso(row["last_seen_at"])
-        program = None
-        model = None
-        member_email = None
-        branch = row["current_branch"]
-
-        if include_presence and presence:
-            program = presence.get("program")
-            model = presence.get("model")
-            member_email = presence.get("member_email")
-            branch = presence.get("current_branch") or branch
-            role = presence.get("role") or role
-            status = presence.get("status") or "active"
-            last_seen = presence.get("last_seen") or last_seen
-
-        # Public readers (principal_type="p") must not see PII.
-        human_name_value = row["human_name"]
-        member_email_value = member_email
-        role_value = role
-        hostname_value = row["hostname"]
-        workspace_path_value = row["workspace_path"]
-        if public_reader:
-            member_email_value = None
-            role_value = None
-            hostname_value = None
-            workspace_path_value = None
-
+        workspace_claims = claims_map.get(str(row["workspace_id"]), []) if include_claims else []
         workspaces.append(
-            WorkspaceInfo(
-                workspace_id=workspace_id,
-                alias=row["alias"],
-                human_name=human_name_value,
-                project_id=str(row["project_id"]),
-                project_slug=row["project_slug"],
-                program=program,
-                model=model,
-                repo=row["repo"],
-                branch=branch,
-                member_email=member_email_value,
-                role=role_value,
-                hostname=hostname_value,
-                workspace_path=workspace_path_value,
-                apex_id=first_apex_id,
-                apex_title=first_apex_title,
-                apex_type=first_apex_type,
-                focus_apex_id=row["focus_apex_bead_id"],
-                focus_apex_title=row["focus_apex_title"],
-                focus_apex_type=row["focus_apex_type"],
-                focus_apex_repo_name=row["focus_apex_repo_name"],
-                focus_apex_branch=row["focus_apex_branch"],
-                focus_updated_at=_to_iso(row["focus_updated_at"]),
-                status=status,
-                last_seen=last_seen,
-                deleted_at=_to_iso(row["deleted_at"]),
-                claims=workspace_claims,
+            _row_to_workspace_info(
+                row,
+                presence_map.get(str(row["workspace_id"])),
+                workspace_claims,
+                public_reader=public_reader,
+                include_presence=include_presence,
             )
         )
 
@@ -1409,39 +1517,12 @@ async def list_team_workspaces(
             {claim_stats_where}
             GROUP BY workspace_id
         )
-        SELECT
-            w.workspace_id,
-            w.alias,
-            w.human_name,
-            w.current_branch,
-            w.project_id,
-            w.role,
-            w.hostname,
-            w.workspace_path,
-            w.last_seen_at,
-            w.focus_apex_bead_id,
-            w.focus_apex_repo_name,
-            w.focus_apex_branch,
-            w.focus_updated_at,
-            focus_issue.title AS focus_apex_title,
-            focus_issue.issue_type AS focus_apex_type,
-            p.slug as project_slug,
-            r.canonical_origin as repo,
-            COALESCE(cs.claim_count, 0) AS claim_count,
-            cs.last_claimed_at
+        SELECT {_TEAM_WORKSPACE_COLS}
         FROM {{{{tables.workspaces}}}} w
         JOIN {{{{tables.projects}}}} p ON w.project_id = p.id
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
-        {_title_join(
-            "focus_issue",
-            "w.project_id",
-            "w.focus_apex_bead_id",
-            include_type=True,
-            beads_repo_col="w.focus_apex_repo_name",
-            beads_branch_col="w.focus_apex_branch",
-            guard_col="w.focus_apex_bead_id",
-        )}
+        {_TEAM_FOCUS_JOIN}
         WHERE 1=1
     """
 
@@ -1493,75 +1574,13 @@ async def list_team_workspaces(
             raise HTTPException(status_code=422, detail=str(e))
 
         if validated_id not in {str(row["workspace_id"]) for row in rows}:
-            id_params: list = []
-            id_param_idx = 1
-            id_query = (
-                """
-                SELECT
-                    w.workspace_id,
-                    w.alias,
-                    w.human_name,
-                    w.current_branch,
-                    w.project_id,
-                    w.role,
-                    w.hostname,
-                    w.workspace_path,
-                    w.last_seen_at,
-                    w.focus_apex_bead_id,
-                    w.focus_apex_repo_name,
-                    w.focus_apex_branch,
-                    w.focus_updated_at,
-                    focus_issue.title AS focus_apex_title,
-                    focus_issue.issue_type AS focus_apex_type,
-                    p.slug as project_slug,
-                    r.canonical_origin as repo,
-                    COALESCE(cs.claim_count, 0) AS claim_count,
-                    cs.last_claimed_at
-                FROM {{tables.workspaces}} w
-                JOIN {{tables.projects}} p ON w.project_id = p.id AND p.deleted_at IS NULL
-                LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-                LEFT JOIN (
-                    SELECT workspace_id,
-                           COUNT(*) AS claim_count,
-                           MAX(claimed_at) AS last_claimed_at
-                    FROM {{tables.bead_claims}}
-                    GROUP BY workspace_id
-                ) cs ON cs.workspace_id = w.workspace_id
-                """
-                + _title_join(
-                    "focus_issue",
-                    "w.project_id",
-                    "w.focus_apex_bead_id",
-                    include_type=True,
-                    beads_repo_col="w.focus_apex_repo_name",
-                    beads_branch_col="w.focus_apex_branch",
-                    guard_col="w.focus_apex_bead_id",
-                )
-                + """
-                WHERE w.workspace_id = $1
-            """
+            extra_row = await _fetch_extra_team_workspace(
+                server_db,
+                validated_id,
+                project_id,
+                human_name=human_name,
+                repo=repo,
             )
-            id_params.append(uuid_module.UUID(validated_id))
-            id_param_idx = 2
-
-            # always_include_workspace_id is still scoped to the authenticated project
-            id_query += " AND w.project_id = $2"
-            id_params.append(uuid_module.UUID(project_id))
-            id_param_idx = 3
-
-            if human_name:
-                id_query += f" AND w.human_name = ${id_param_idx}"
-                id_params.append(human_name)
-                id_param_idx += 1
-
-            if repo:
-                id_query += f" AND r.canonical_origin = ${id_param_idx}"
-                id_params.append(repo)
-                id_param_idx += 1
-
-            id_query += " AND w.deleted_at IS NULL"
-
-            extra_row = await server_db.fetch_one(id_query, *id_params)
             if extra_row:
                 rows.append(extra_row)
 
@@ -1570,29 +1589,11 @@ async def list_team_workspaces(
 
     presence_map: Dict[str, dict] = {}
     if include_presence and workspace_id_strings:
-        presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
-        presence_map = {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
+        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
-        placeholders = ", ".join(f"${i}" for i in range(1, len(workspace_ids) + 1))
-        claim_rows = await server_db.fetch_all(
-            _build_workspace_claims_query(placeholders),
-            *workspace_ids,
-        )
-        for cr in claim_rows:
-            ws_id = str(cr["workspace_id"])
-            claim = Claim(
-                bead_id=cr["bead_id"],
-                title=cr["claim_title"],
-                claimed_at=cr["claimed_at"].isoformat() if cr["claimed_at"] else "",
-                apex_id=cr["apex_bead_id"],
-                apex_title=cr["apex_title"],
-                apex_type=cr["apex_type"],
-            )
-            if ws_id not in claims_map:
-                claims_map[ws_id] = []
-            claims_map[ws_id].append(claim)
+        claims_map = await _fetch_claims_map(server_db, workspace_ids)
 
     entries: List[tuple[WorkspaceInfo, int, float, float, int, int]] = []
     for row in rows:
@@ -1600,79 +1601,22 @@ async def list_team_workspaces(
         presence = presence_map.get(workspace_id) if include_presence else None
         workspace_claims = claims_map.get(workspace_id, []) if include_claims else []
 
-        first_apex_id = workspace_claims[0].apex_id if workspace_claims else None
-        first_apex_title = workspace_claims[0].apex_title if workspace_claims else None
-        first_apex_type = workspace_claims[0].apex_type if workspace_claims else None
-
-        role = row["role"]
-        status = "offline"
-        last_seen = _to_iso(row["last_seen_at"])
-        last_seen_ts = _timestamp(row["last_seen_at"])
-        program = None
-        model = None
-        member_email = None
-        branch = row["current_branch"]
-
-        if include_presence and presence:
-            program = presence.get("program")
-            model = presence.get("model")
-            member_email = presence.get("member_email")
-            branch = presence.get("current_branch") or branch
-            role = presence.get("role") or role
-            status = presence.get("status") or "active"
-            last_seen = presence.get("last_seen") or last_seen
-            last_seen_ts = _timestamp(presence.get("last_seen")) or last_seen_ts
+        workspace_info = _row_to_workspace_info(
+            row,
+            presence,
+            workspace_claims,
+            public_reader=public_reader,
+            include_presence=include_presence,
+        )
 
         claim_count = int(row["claim_count"] or 0)
-        last_claimed_ts = _timestamp(row["last_claimed_at"])
-        has_claims = 1 if claim_count > 0 else 0
-        is_online = 1 if (include_presence and presence) else 0
-
-        human_name_value = row["human_name"]
-        member_email_value = member_email
-        role_value = role
-        hostname_value = row["hostname"]
-        workspace_path_value = row["workspace_path"]
-        if public_reader:
-            member_email_value = None
-            role_value = None
-            hostname_value = None
-            workspace_path_value = None
-
-        workspace_info = WorkspaceInfo(
-            workspace_id=workspace_id,
-            alias=row["alias"],
-            human_name=human_name_value,
-            project_id=str(row["project_id"]),
-            project_slug=row["project_slug"],
-            program=program,
-            model=model,
-            repo=row["repo"],
-            branch=branch,
-            member_email=member_email_value,
-            role=role_value,
-            hostname=hostname_value,
-            workspace_path=workspace_path_value,
-            apex_id=first_apex_id,
-            apex_title=first_apex_title,
-            apex_type=first_apex_type,
-            focus_apex_id=row["focus_apex_bead_id"],
-            focus_apex_title=row["focus_apex_title"],
-            focus_apex_type=row["focus_apex_type"],
-            focus_apex_repo_name=row["focus_apex_repo_name"],
-            focus_apex_branch=row["focus_apex_branch"],
-            focus_updated_at=_to_iso(row["focus_updated_at"]),
-            status=status,
-            last_seen=last_seen,
-            claims=workspace_claims,
-        )
         entries.append(
             (
                 workspace_info,
-                has_claims,
-                last_seen_ts,
-                last_claimed_ts,
-                is_online,
+                1 if claim_count > 0 else 0,
+                _timestamp(workspace_info.last_seen),
+                _timestamp(row["last_claimed_at"]),
+                1 if presence is not None else 0,
                 claim_count,
             )
         )
