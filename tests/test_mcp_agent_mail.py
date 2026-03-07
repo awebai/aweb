@@ -382,3 +382,117 @@ async def test_send_message_to_multiple_recipients(db_infra, async_redis, init_w
             assert len(payload["deliveries"]) == 2
             delivered_to = {d["to"] for d in payload["deliveries"]}
             assert delivered_to == {"recip-one", "recip-two"}
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_with_human_key(db_infra, async_redis, init_workspace):
+    """ensure_project returns current project info when called with human_key."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ws = await init_workspace(
+                client,
+                project_slug="mcp-ensure",
+                repo_origin="git@github.com:test/mcp-ensure.git",
+                alias="ensure-agent",
+            )
+
+            result = await _rpc(
+                client,
+                ws["api_key"],
+                "tools/call",
+                _tool_call(
+                    "ensure_project",
+                    {"human_key": "/data/projects/backend"},
+                ),
+            )
+
+            payload = _extract_payload(result)
+            assert payload["project_id"] == ws["project_id"]
+            assert payload["slug"] == "mcp-ensure"
+            assert "name" in payload
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_with_project_key(db_infra, async_redis, init_workspace):
+    """ensure_project returns current project info when called with matching project_key."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ws = await init_workspace(
+                client,
+                project_slug="mcp-ensure-pk",
+                repo_origin="git@github.com:test/mcp-ensure-pk.git",
+                alias="pk-agent",
+            )
+
+            result = await _rpc(
+                client,
+                ws["api_key"],
+                "tools/call",
+                _tool_call(
+                    "ensure_project",
+                    {"project_key": "mcp-ensure-pk"},
+                ),
+            )
+
+            payload = _extract_payload(result)
+            assert payload["project_id"] == ws["project_id"]
+            assert payload["slug"] == "mcp-ensure-pk"
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_wrong_project_key(db_infra, async_redis, init_workspace):
+    """ensure_project rejects a project_key that doesn't match the auth project."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ws = await init_workspace(
+                client,
+                project_slug="mcp-ensure-wrong",
+                repo_origin="git@github.com:test/mcp-ensure-wrong.git",
+                alias="wrong-agent",
+            )
+
+            result = await _rpc(
+                client,
+                ws["api_key"],
+                "tools/call",
+                _tool_call(
+                    "ensure_project",
+                    {"project_key": "totally-different-project"},
+                ),
+            )
+
+            # Should get an error
+            assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_idempotent(db_infra, async_redis, init_workspace):
+    """ensure_project is idempotent — calling it twice returns the same result."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ws = await init_workspace(
+                client,
+                project_slug="mcp-ensure-idem",
+                repo_origin="git@github.com:test/mcp-ensure-idem.git",
+                alias="idem-agent",
+            )
+
+            args = {"human_key": "/data/projects/idem"}
+            r1 = await _rpc(
+                client,
+                ws["api_key"],
+                "tools/call",
+                _tool_call("ensure_project", args),
+            )
+            r2 = await _rpc(
+                client,
+                ws["api_key"],
+                "tools/call",
+                _tool_call("ensure_project", args),
+            )
+
+            assert _extract_payload(r1) == _extract_payload(r2)

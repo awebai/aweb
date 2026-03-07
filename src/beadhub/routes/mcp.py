@@ -193,6 +193,23 @@ TOOL_CATALOG: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "ensure_project",
+        "description": "Idempotently verify the current project exists and return its info (Agent Mail compatible).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "human_key": {
+                    "type": "string",
+                    "description": "Working directory path (Agent Mail convention). Accepted for compatibility; project resolved from auth.",
+                },
+                "project_key": {
+                    "type": "string",
+                    "description": "Project slug. If provided, validated against the authenticated project.",
+                },
+            },
+        },
+    },
+    {
         "name": "send_message",
         "description": "Send a message to one or more agents (Agent Mail compatible).",
         "inputSchema": {
@@ -415,6 +432,8 @@ async def _handle_tools_call(
             result = await _tool_escalate(request, redis, db_infra, arguments)
         elif name == "get_escalation":
             result = await _tool_get_escalation(request, db_infra, arguments)
+        elif name == "ensure_project":
+            result = await _tool_ensure_project(request, db_infra, arguments)
         elif name == "send_message":
             result = await _tool_send_message(request, db_infra, arguments)
         elif name == "fetch_inbox":
@@ -684,6 +703,36 @@ async def _enforce_actor_binding(
     return agent_id
 
 
+async def _tool_ensure_project(
+    request: Request,
+    db_infra: DatabaseInfra,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    identity = await get_identity_from_auth(request, db_infra)
+    project_id = identity.project_id
+    project_key = args.get("project_key")
+
+    server_db = db_infra.get_manager("server")
+    row = await server_db.fetch_one(
+        "SELECT id, slug, name FROM {{tables.projects}} WHERE id = $1",
+        UUID(project_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project_key and row["slug"] != project_key:
+        raise HTTPException(
+            status_code=403,
+            detail="project_key does not match authenticated project",
+        )
+
+    return {
+        "project_id": str(row["id"]),
+        "slug": row["slug"],
+        "name": row.get("name") or "",
+    }
+
+
 async def _validate_project_key(
     db_infra: DatabaseInfra, project_id: str, project_key: str | None
 ) -> None:
@@ -695,7 +744,7 @@ async def _validate_project_key(
         "SELECT slug FROM {{tables.projects}} WHERE id = $1",
         UUID(project_id),
     )
-    if row and row["slug"] != project_key:
+    if not row or row["slug"] != project_key:
         raise HTTPException(
             status_code=403,
             detail="project_key does not match authenticated project",
