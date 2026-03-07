@@ -329,23 +329,28 @@ async def list_tasks(
     ]
 
 
-async def list_ready_tasks(db, *, project_id: str) -> list[dict[str, Any]]:
+async def list_ready_tasks(
+    db, *, project_id: str, unclaimed: bool = False
+) -> list[dict[str, Any]]:
     """Open tasks with no unresolved (non-closed) blockers."""
     slug = await _get_project_slug(db, project_id=project_id)
     aweb_db = db.get_manager("aweb")
 
+    unclaimed_filter = "AND t.assignee_agent_id IS NULL" if unclaimed else ""
+
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT t.task_id, t.task_number, t.title, t.status, t.priority, t.task_type,
                t.assignee_agent_id, t.created_by_agent_id, t.parent_task_id, t.labels,
                t.created_at, t.updated_at
-        FROM {{tables.tasks}} t
+        FROM {{{{tables.tasks}}}} t
         WHERE t.project_id = $1
           AND t.status = 'open'
           AND t.deleted_at IS NULL
+          {unclaimed_filter}
           AND NOT EXISTS (
-              SELECT 1 FROM {{tables.task_dependencies}} d
-              JOIN {{tables.tasks}} blocker ON blocker.task_id = d.depends_on_task_id
+              SELECT 1 FROM {{{{tables.task_dependencies}}}} d
+              JOIN {{{{tables.tasks}}}} blocker ON blocker.task_id = d.depends_on_task_id
               WHERE d.task_id = t.task_id
                 AND blocker.status != 'closed'
                 AND blocker.deleted_at IS NULL

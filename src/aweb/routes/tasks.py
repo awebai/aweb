@@ -127,9 +127,13 @@ async def list_tasks_route(
 
 
 @router.get("/ready")
-async def list_ready_tasks_route(request: Request, db=Depends(get_db)) -> dict[str, Any]:
+async def list_ready_tasks_route(
+    request: Request,
+    unclaimed: bool = Query(False),
+    db=Depends(get_db),
+) -> dict[str, Any]:
     project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    tasks = await list_ready_tasks(db, project_id=project_id)
+    tasks = await list_ready_tasks(db, project_id=project_id, unclaimed=unclaimed)
     return {"tasks": tasks}
 
 
