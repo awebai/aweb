@@ -346,6 +346,14 @@ async def list_escalations(
     return ListEscalationsResponse(escalations=items, has_more=has_more, next_cursor=next_cursor)
 
 
+def _validate_escalation_id(escalation_id: str) -> UUID:
+    """Validate escalation_id is a valid UUID. Raises 422 if not."""
+    try:
+        return UUID(escalation_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid escalation_id: must be a UUID")
+
+
 @router.get("/{escalation_id}", response_model=EscalationDetail)
 async def get_escalation(
     request: Request,
@@ -354,6 +362,7 @@ async def get_escalation(
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> EscalationDetail:
     db = db_infra.get_manager("server")
+    validated_eid = _validate_escalation_id(escalation_id)
 
     project_id = await get_project_from_auth(request, db_infra)
     validated_workspace_id: str | None = None
@@ -385,7 +394,7 @@ async def get_escalation(
         WHERE e.id = $1 AND e.project_id = $2 AND w.deleted_at IS NULL
           AND ($3::uuid IS NULL OR e.workspace_id = $3::uuid)
         """,
-        escalation_id,
+        validated_eid,
         UUID(project_id),
         UUID(validated_workspace_id) if validated_workspace_id else None,
     )
@@ -423,6 +432,7 @@ async def respond_escalation(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
 ) -> RespondEscalationResponse:
+    validated_eid = _validate_escalation_id(escalation_id)
     project_id = await get_project_from_auth(request, db_infra)
     db = db_infra.get_manager("server")
     now = datetime.now(timezone.utc)
@@ -444,7 +454,7 @@ async def respond_escalation(
         payload.response,
         payload.note,
         now,
-        escalation_id,
+        validated_eid,
         UUID(project_id),
     )
 

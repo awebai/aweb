@@ -260,3 +260,53 @@ class TestListEscalationsPagination:
                 resp = await client.get("/v1/escalations?cursor=not-valid-base64!!!")
                 assert resp.status_code == 422
                 assert "cursor" in resp.json()["detail"].lower()
+
+
+class TestEscalationIdValidation:
+    """Tests for escalation_id UUID validation in path parameters."""
+
+    @pytest.mark.asyncio
+    async def test_get_escalation_rejects_non_uuid(self, db_infra, redis_client_async):
+        """GET /v1/escalations/{id} should return 422 for non-UUID escalation_id."""
+        app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                await _init_auth(client)
+                resp = await client.get("/v1/escalations/not-a-uuid")
+                assert resp.status_code == 422
+                assert "escalation_id" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_respond_escalation_rejects_non_uuid(self, db_infra, redis_client_async):
+        """POST /v1/escalations/{id}/respond should return 422 for non-UUID escalation_id."""
+        app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                await _init_auth(client)
+                resp = await client.post(
+                    "/v1/escalations/not-a-uuid/respond",
+                    json={"response": "approve"},
+                )
+                assert resp.status_code == 422
+                assert "escalation_id" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_escalation_accepts_valid_uuid(self, db_infra, redis_client_async):
+        """GET /v1/escalations/{uuid} should not fail on UUID validation (may 404)."""
+        app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+        async with LifespanManager(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                await _init_auth(client)
+                valid_uuid = str(uuid.uuid4())
+                resp = await client.get(f"/v1/escalations/{valid_uuid}")
+                # Should pass UUID validation (404 is fine — escalation doesn't exist)
+                assert resp.status_code == 404
