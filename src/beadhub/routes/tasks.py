@@ -8,6 +8,7 @@ by the aweb tasks router directly.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
 from uuid import UUID
@@ -29,10 +30,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/tasks", tags=["tasks"])
 
 
+def _extract_parent_ref(parent_id: Any) -> str | None:
+    """Extract parent bead_id from the JSONB parent_id column."""
+    if parent_id is None:
+        return None
+    if isinstance(parent_id, dict):
+        return parent_id.get("bead_id") or None
+    if isinstance(parent_id, str):
+        try:
+            parsed = json.loads(parent_id)
+            return (parsed.get("bead_id") or None) if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+    return None
+
+
 def _beads_issue_to_task(row: dict[str, Any]) -> dict[str, Any]:
     """Map a beads_issues row to the aweb task response shape."""
     return {
-        "task_id": None,
+        "task_id": row["bead_id"],
         "task_ref": row["bead_id"],
         "task_number": None,
         "title": row["title"],
@@ -41,7 +57,7 @@ def _beads_issue_to_task(row: dict[str, Any]) -> dict[str, Any]:
         "task_type": row.get("issue_type") or "task",
         "assignee_agent_id": None,
         "created_by_agent_id": None,
-        "parent_task_id": None,
+        "parent_task_id": _extract_parent_ref(row.get("parent_id")),
         "labels": list(row["labels"]) if row.get("labels") else [],
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
@@ -54,7 +70,7 @@ def _beads_issue_detail_to_task(row: dict[str, Any]) -> dict[str, Any]:
     task["description"] = row.get("description") or ""
     task["notes"] = ""
     task["project_id"] = str(row["project_id"]) if row.get("project_id") else None
-    task["parent_task_id"] = None
+    task["parent_task_id"] = _extract_parent_ref(row.get("parent_id"))
     task["closed_by_agent_id"] = None
     task["closed_at"] = None
     task["blocked_by"] = []
@@ -104,7 +120,7 @@ async def _fetch_beads_issues(
     query = (
         "SELECT DISTINCT ON (bead_id)"
         " bead_id, title, status, priority, issue_type,"
-        " labels, created_at, updated_at"
+        " labels, parent_id, created_at, updated_at"
         " FROM {{tables.beads_issues}}"
         f" WHERE {where}"
         " ORDER BY bead_id, updated_at DESC NULLS LAST"
@@ -131,7 +147,7 @@ async def _fetch_beads_issue_detail(
         row = await beads_db.fetch_one(
             """
             SELECT bead_id, project_id, title, description, status, priority,
-                   issue_type, labels, created_at, updated_at
+                   issue_type, labels, parent_id, created_at, updated_at
             FROM {{tables.beads_issues}}
             WHERE project_id = $1 AND bead_id = $2
             ORDER BY updated_at DESC NULLS LAST
