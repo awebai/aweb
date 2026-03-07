@@ -53,9 +53,7 @@ async def _setup_two_agents(client, init_workspace):
 async def test_send_message(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             result = await _rpc(
@@ -85,9 +83,7 @@ async def test_send_message(db_infra, async_redis, init_workspace):
 async def test_fetch_inbox(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             # Send a message first
@@ -133,9 +129,7 @@ async def test_fetch_inbox(db_infra, async_redis, init_workspace):
 async def test_acknowledge_message(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             # Send a message
@@ -181,9 +175,7 @@ async def test_acknowledge_message(db_infra, async_redis, init_workspace):
 async def test_mark_message_read(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             # Send a message
@@ -229,9 +221,7 @@ async def test_mark_message_read(db_infra, async_redis, init_workspace):
 async def test_reply_message(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             # Send original message
@@ -280,9 +270,7 @@ async def test_fetch_inbox_with_limit(db_infra, async_redis, init_workspace):
     """fetch_inbox respects the limit parameter."""
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, recipient = await _setup_two_agents(client, init_workspace)
 
             # Send two messages
@@ -328,9 +316,7 @@ async def test_fetch_inbox_cross_agent_forbidden(db_infra, async_redis, init_wor
     """An agent cannot read another agent's inbox."""
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender, _recipient = await _setup_two_agents(client, init_workspace)
 
             # Sender tries to read recipient's inbox
@@ -355,9 +341,7 @@ async def test_fetch_inbox_cross_agent_forbidden(db_infra, async_redis, init_wor
 async def test_send_message_to_multiple_recipients(db_infra, async_redis, init_workspace):
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             sender = await init_workspace(
                 client,
                 project_slug="mcp-multi",

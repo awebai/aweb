@@ -680,9 +680,7 @@ async def _enforce_actor_binding(
         raise HTTPException(status_code=403, detail="No agent identity in auth context")
     agent_id = await _resolve_agent_id(db_infra, project_id, agent_name)
     if agent_id != identity.agent_id:
-        raise HTTPException(
-            status_code=403, detail="agent_name does not match authenticated agent"
-        )
+        raise HTTPException(status_code=403, detail="agent_name does not match authenticated agent")
     return agent_id
 
 
@@ -725,18 +723,14 @@ async def _tool_send_message(
     await _validate_project_key(db_infra, project_id, project_key)
 
     if not sender_name or not to_list or not subject:
-        raise HTTPException(
-            status_code=422, detail="sender_name, to, and subject are required"
-        )
+        raise HTTPException(status_code=422, detail="sender_name, to, and subject are required")
     if importance not in VALID_PRIORITIES:
         raise HTTPException(
             status_code=422,
             detail=f"importance must be one of: {sorted(VALID_PRIORITIES)}",
         )
 
-    sender_agent_id = await _enforce_actor_binding(
-        identity, db_infra, project_id, sender_name
-    )
+    sender_agent_id = await _enforce_actor_binding(identity, db_infra, project_id, sender_name)
 
     deliveries: list[dict[str, Any]] = []
     for recipient_alias in to_list:
@@ -856,9 +850,7 @@ async def _tool_acknowledge_message(
     await _validate_project_key(db_infra, project_id, project_key)
 
     if not agent_name or not message_id:
-        raise HTTPException(
-            status_code=422, detail="agent_name and message_id are required"
-        )
+        raise HTTPException(status_code=422, detail="agent_name and message_id are required")
 
     agent_id = await _enforce_actor_binding(identity, db_infra, project_id, agent_name)
     return await _mark_message_read_impl(db_infra, project_id, agent_id, message_id, ack=True)
@@ -878,9 +870,7 @@ async def _tool_mark_message_read(
     await _validate_project_key(db_infra, project_id, project_key)
 
     if not agent_name or not message_id:
-        raise HTTPException(
-            status_code=422, detail="agent_name and message_id are required"
-        )
+        raise HTTPException(status_code=422, detail="agent_name and message_id are required")
 
     agent_id = await _enforce_actor_binding(identity, db_infra, project_id, agent_name)
     return await _mark_message_read_impl(db_infra, project_id, agent_id, message_id, ack=False)
@@ -969,9 +959,7 @@ async def _tool_reply_message(
             detail="message_id, sender_name, and body_md are required",
         )
 
-    sender_agent_id = await _enforce_actor_binding(
-        identity, db_infra, project_id, sender_name
-    )
+    sender_agent_id = await _enforce_actor_binding(identity, db_infra, project_id, sender_name)
 
     try:
         original_uuid = UUID(original_message_id)
