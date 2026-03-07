@@ -147,13 +147,12 @@ class TestAwebProxyHeaders:
         monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "test-secret")
 
         project_id = str(uuid.uuid4())
-        principal_id = str(uuid.uuid4())
         actor_id = str(uuid.uuid4())
         internal_auth = _internal_auth_header_value(
             secret="test-secret",
             project_id=str(uuid.UUID(project_id)),
             principal_type="p",
-            principal_id=principal_id,
+            principal_id="anonymous",
             actor_id=actor_id,
         )
 
@@ -175,13 +174,12 @@ class TestAwebProxyHeaders:
         monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "test-secret")
 
         project_id = str(uuid.uuid4())
-        principal_id = str(uuid.uuid4())
         actor_id = str(uuid.uuid4())
         internal_auth = _internal_auth_header_value(
             secret="test-secret",
             project_id=str(uuid.UUID(project_id)),
             principal_type="p",
-            principal_id=principal_id,
+            principal_id="anonymous",
             actor_id=actor_id,
         )
 
@@ -195,7 +193,7 @@ class TestAwebProxyHeaders:
         ctx = _parse_internal_auth_context(request)
         assert ctx is not None
         assert ctx["principal_type"] == "p"
-        assert ctx["principal_id"] == principal_id
+        assert ctx["principal_id"] == "anonymous"
         assert ctx["project_id"] == str(uuid.UUID(project_id))
         assert ctx["actor_id"] == actor_id
 
@@ -235,21 +233,19 @@ class TestAwebProxyHeaders:
         monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "test-secret")
 
         project_id = str(uuid.uuid4())
-        real_principal_id = str(uuid.uuid4())
-        fake_principal_id = str(uuid.uuid4())
         actor_id = str(uuid.uuid4())
 
-        # Sign with the real principal_id
+        # Sign with "anonymous"
         internal_auth = _internal_auth_header_value(
             secret="test-secret",
             project_id=str(uuid.UUID(project_id)),
             principal_type="p",
-            principal_id=real_principal_id,
+            principal_id="anonymous",
             actor_id=actor_id,
         )
 
-        # Tamper: replace real principal_id with fake one in the header
-        tampered_auth = internal_auth.replace(real_principal_id, fake_principal_id)
+        # Tamper: replace "anonymous" with "attacker"
+        tampered_auth = internal_auth.replace("anonymous", "attacker")
 
         request = MagicMock()
         request.headers = {

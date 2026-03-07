@@ -178,12 +178,10 @@ def _parse_internal_auth_context(request: Request) -> Optional[InternalAuthConte
         principal_id = api_key_id
     else:
         # Public reader: no user/key header, extract identity from signed auth header.
+        # principal_id is not necessarily a UUID (e.g. "anonymous"); HMAC covers integrity.
         parts = internal_auth.split(":")
         if len(parts) >= 6 and parts[2] == "p":
-            try:
-                principal_id = str(uuid.UUID(parts[3]))
-            except ValueError:
-                raise HTTPException(status_code=401, detail="Authentication required")
+            principal_id = parts[3]
             principal_type = "p"
         else:
             raise HTTPException(status_code=401, detail="Authentication required")
