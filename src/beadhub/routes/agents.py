@@ -197,6 +197,7 @@ async def list_agents(
                did, custody, lifetime, status, access_mode
         FROM {{tables.agents}}
         WHERE project_id = $1 AND deleted_at IS NULL
+          AND agent_type != 'system'
         ORDER BY alias ASC
         """,
         UUID(project_id),

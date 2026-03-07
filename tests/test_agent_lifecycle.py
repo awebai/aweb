@@ -7,6 +7,7 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from beadhub.api import create_app
+from beadhub.notifications import ensure_system_sender
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -102,3 +103,38 @@ async def test_patch_agent_access_mode(db_infra, redis_client_async):
             assert list_resp.status_code == 200, list_resp.text
             agent = next(a for a in list_resp.json()["agents"] if a["alias"] == "patch-agent")
             assert agent["access_mode"] == "contacts_only"
+
+
+@pytest.mark.asyncio
+async def test_system_agent_excluded_from_listing(db_infra, redis_client_async):
+    """GET /v1/agents should not include the system notification agent."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            init = await client.post(
+                "/v1/init",
+                json={
+                    "project_slug": "lifecycle-sysagent",
+                    "alias": "real-agent",
+                    "agent_type": "agent",
+                },
+            )
+            assert init.status_code == 200, init.text
+            api_key = init.json()["api_key"]
+            project_id = init.json()["project_id"]
+
+            # Create the system notification sender for this project
+            await ensure_system_sender(db_infra, project_id)
+
+            # GET /v1/agents should only show the real agent, not the system one
+            resp = await client.get("/v1/agents", headers=_auth_headers(api_key))
+            assert resp.status_code == 200, resp.text
+            agents = resp.json()["agents"]
+            agent_types = [a.get("agent_type") for a in agents]
+            aliases = [a["alias"] for a in agents]
+            assert (
+                "system" not in agent_types
+            ), f"System agent should be excluded from listing, got types: {agent_types}"
+            assert (
+                "system" not in aliases
+            ), f"System alias should not appear in listing, got: {aliases}"
