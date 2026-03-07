@@ -61,7 +61,6 @@ async def test_subscribe_to_bead(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher-agent",
                     "bead_id": "beadhub-123",
                     "event_types": ["status_change"],
                 },
@@ -92,7 +91,6 @@ async def test_subscribe_rejects_workspace_id_spoofing_within_project(db_infra, 
                 "/v1/subscriptions",
                 json={
                     "workspace_id": b["workspace_id"],
-                    "alias": "agent-b",
                     "bead_id": "beadhub-999",
                     "event_types": ["status_change"],
                 },
@@ -117,7 +115,6 @@ async def test_subscribe_to_bead_with_repo(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher-agent",
                     "bead_id": "beadhub-456",
                     "repo": "myrepo",
                     "event_types": ["status_change", "priority_change"],
@@ -144,7 +141,6 @@ async def test_list_subscriptions(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -154,7 +150,6 @@ async def test_list_subscriptions(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "bead-2",
                     "event_types": ["status_change"],
                 },
@@ -165,7 +160,6 @@ async def test_list_subscriptions(db_infra, async_redis):
                 "/v1/subscriptions",
                 params={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                 },
                 headers=_auth_headers(init["api_key"]),
             )
@@ -189,7 +183,6 @@ async def test_unsubscribe(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -202,7 +195,6 @@ async def test_unsubscribe(db_infra, async_redis):
                 f"/v1/subscriptions/{subscription_id}",
                 params={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                 },
                 headers=_auth_headers(init["api_key"]),
             )
@@ -213,7 +205,6 @@ async def test_unsubscribe(db_infra, async_redis):
                 "/v1/subscriptions",
                 params={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                 },
                 headers=_auth_headers(init["api_key"]),
             )
@@ -235,7 +226,6 @@ async def test_duplicate_subscription_rejected(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -247,7 +237,6 @@ async def test_duplicate_subscription_rejected(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -309,7 +298,6 @@ async def test_mcp_list_subscriptions(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "mcp-watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -357,7 +345,6 @@ async def test_mcp_unsubscribe(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "mcp-watcher",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -423,7 +410,6 @@ async def test_notification_on_status_change(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "test-bead-1",
                     "repo": "notify-repo",
                     "event_types": ["status_change"],
@@ -486,7 +472,6 @@ async def test_no_notification_for_new_beads(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "future-bead",
                     "repo": "no-notify-repo",
                     "event_types": ["status_change"],
@@ -525,15 +510,15 @@ async def test_no_notification_for_new_beads(db_infra, async_redis):
 
 
 @pytest.mark.asyncio
-async def test_notification_outbox_records_failures(db_infra, async_redis):
-    """Failed notifications are recorded in the outbox for retry."""
+async def test_deleted_workspace_excluded_from_subscribers(db_infra, async_redis):
+    """Deleted workspaces are excluded from subscriber lookup — no outbox entry created."""
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            slug = "test-outbox-fail"
+            slug = "test-deleted-sub"
             watcher = await _init_project_auth(client, project_slug=slug, alias="watcher")
             uploader = await _init_project_auth(client, project_slug=slug, alias="uploader")
 
@@ -547,12 +532,11 @@ async def test_notification_outbox_records_failures(db_infra, async_redis):
                 headers=_auth_headers(uploader["api_key"]),
             )
 
-            # Subscribe watcher, then delete its workspace to force notification failure
+            # Subscribe watcher, then delete its workspace
             await client.post(
                 "/v1/subscriptions",
                 json={
                     "workspace_id": watcher["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "outbox-bead",
                     "repo": "outbox-repo",
                     "event_types": ["status_change"],
@@ -565,7 +549,7 @@ async def test_notification_outbox_records_failures(db_infra, async_redis):
             )
             assert delete_resp.status_code == 200
 
-            # Upload status change via uploader — notification to watcher should fail
+            # Status change — deleted workspace is not a subscriber, no notification attempted
             resp = await client.post(
                 "/v1/beads/upload",
                 json={
@@ -576,9 +560,8 @@ async def test_notification_outbox_records_failures(db_infra, async_redis):
             )
             assert resp.status_code == 200
             result = resp.json()
-            # Notification failed because watcher's workspace is deleted
-            assert result["notifications_failed"] == 1
             assert result["notifications_sent"] == 0
+            assert result["notifications_failed"] == 0
 
 
 @pytest.mark.asyncio
@@ -607,7 +590,6 @@ async def test_notification_outbox_tracks_completed(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init["workspace_id"],
-                    "alias": "watcher",
                     "bead_id": "tracked-bead",
                     "repo": "outbox-repo",
                     "event_types": ["status_change"],
@@ -660,7 +642,6 @@ async def test_list_subscriptions_tenant_isolation(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init_a["workspace_id"],
-                    "alias": "agent-a",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -672,7 +653,6 @@ async def test_list_subscriptions_tenant_isolation(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init_b["workspace_id"],
-                    "alias": "agent-b",
                     "bead_id": "bead-2",
                     "event_types": ["status_change"],
                 },
@@ -682,7 +662,7 @@ async def test_list_subscriptions_tenant_isolation(db_infra, async_redis):
             # List as Project A - should only see bead-1
             resp_a = await client.get(
                 "/v1/subscriptions",
-                params={"workspace_id": init_a["workspace_id"], "alias": "agent-a"},
+                params={"workspace_id": init_a["workspace_id"]},
                 headers=_auth_headers(init_a["api_key"]),
             )
             assert resp_a.status_code == 200
@@ -693,7 +673,7 @@ async def test_list_subscriptions_tenant_isolation(db_infra, async_redis):
             # List as Project B - should only see bead-2
             resp_b = await client.get(
                 "/v1/subscriptions",
-                params={"workspace_id": init_b["workspace_id"], "alias": "agent-b"},
+                params={"workspace_id": init_b["workspace_id"]},
                 headers=_auth_headers(init_b["api_key"]),
             )
             assert resp_b.status_code == 200
@@ -726,7 +706,6 @@ async def test_unsubscribe_tenant_isolation(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init_a["workspace_id"],
-                    "alias": "agent-a",
                     "bead_id": "bead-1",
                     "event_types": ["status_change"],
                 },
@@ -739,7 +718,6 @@ async def test_unsubscribe_tenant_isolation(db_infra, async_redis):
                 "/v1/subscriptions",
                 json={
                     "workspace_id": init_b["workspace_id"],
-                    "alias": "agent-b",
                     "bead_id": "bead-2",
                     "event_types": ["status_change"],
                 },
@@ -750,7 +728,7 @@ async def test_unsubscribe_tenant_isolation(db_infra, async_redis):
             # Project B tries to delete Project A's subscription - should fail (404)
             resp = await client.delete(
                 f"/v1/subscriptions/{sub_id_a}",
-                params={"workspace_id": init_b["workspace_id"], "alias": "agent-b"},
+                params={"workspace_id": init_b["workspace_id"]},
                 headers=_auth_headers(init_b["api_key"]),
             )
             assert (
@@ -760,9 +738,100 @@ async def test_unsubscribe_tenant_isolation(db_infra, async_redis):
             # Verify Project A's subscription still exists
             resp_check = await client.get(
                 "/v1/subscriptions",
-                params={"workspace_id": init_a["workspace_id"], "alias": "agent-a"},
+                params={"workspace_id": init_a["workspace_id"]},
                 headers=_auth_headers(init_a["api_key"]),
             )
             subs = resp_check.json()["subscriptions"]
             assert len(subs) == 1
             assert subs[0]["subscription_id"] == sub_id_a
+
+
+@pytest.mark.asyncio
+async def test_subscribe_without_alias(db_infra, async_redis):
+    """POST /v1/subscriptions derives alias from workspace_id — alias not required."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            init = await _init_project_auth(
+                client, project_slug="test-no-alias-sub", alias="auto-agent"
+            )
+            resp = await client.post(
+                "/v1/subscriptions",
+                json={
+                    "workspace_id": init["workspace_id"],
+                    "bead_id": "beadhub-no-alias",
+                    "event_types": ["status_change"],
+                },
+                headers=_auth_headers(init["api_key"]),
+            )
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["bead_id"] == "beadhub-no-alias"
+            # Server should fill in alias from workspace
+            assert data["alias"] == "auto-agent"
+
+
+@pytest.mark.asyncio
+async def test_list_subscriptions_without_alias(db_infra, async_redis):
+    """GET /v1/subscriptions works with workspace_id only — alias not required."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            init = await _init_project_auth(
+                client, project_slug="test-list-no-alias", alias="lister"
+            )
+            # Subscribe first
+            await client.post(
+                "/v1/subscriptions",
+                json={
+                    "workspace_id": init["workspace_id"],
+                    "bead_id": "bead-list-1",
+                },
+                headers=_auth_headers(init["api_key"]),
+            )
+            # List without alias
+            resp = await client.get(
+                "/v1/subscriptions",
+                params={"workspace_id": init["workspace_id"]},
+                headers=_auth_headers(init["api_key"]),
+            )
+            assert resp.status_code == 200, resp.text
+            assert len(resp.json()["subscriptions"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_without_alias(db_infra, async_redis):
+    """DELETE /v1/subscriptions/{id} works with workspace_id only — alias not required."""
+    app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            init = await _init_project_auth(
+                client, project_slug="test-unsub-no-alias", alias="unsub-agent"
+            )
+            # Subscribe
+            resp = await client.post(
+                "/v1/subscriptions",
+                json={
+                    "workspace_id": init["workspace_id"],
+                    "bead_id": "bead-unsub-1",
+                },
+                headers=_auth_headers(init["api_key"]),
+            )
+            sub_id = resp.json()["subscription_id"]
+            # Unsubscribe without alias
+            resp = await client.delete(
+                f"/v1/subscriptions/{sub_id}",
+                params={"workspace_id": init["workspace_id"]},
+                headers=_auth_headers(init["api_key"]),
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["deleted"] is True

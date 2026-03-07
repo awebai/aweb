@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, field_validator
 from beadhub.auth import enforce_actor_binding, validate_workspace_id
 from beadhub.aweb_introspection import get_identity_from_auth
 
-from ..beads_sync import is_valid_alias
 from ..db import DatabaseInfra, get_db_infra
 
 # Bead ID pattern: optionally namespaced "repo:bead-id" or just "bead-id"
@@ -26,22 +25,38 @@ router = APIRouter(prefix="/v1/subscriptions", tags=["subscriptions"])
 
 def _validate_workspace_id_field(v: str) -> str:
     """Pydantic validator wrapper for workspace_id."""
-    try:
-        return validate_workspace_id(v)
-    except ValueError as e:
-        raise ValueError(str(e))
+    return validate_workspace_id(v)
 
 
-def _validate_alias_field(v: str) -> str:
-    """Pydantic validator wrapper for alias."""
-    if not is_valid_alias(v):
-        raise ValueError("Invalid alias: must be alphanumeric with hyphens/underscores, 1-64 chars")
-    return v
+async def _resolve_workspace(
+    db_infra: DatabaseInfra,
+    identity_project_id: str,
+    workspace_id: str,
+) -> str:
+    """Validate workspace belongs to project and return its alias.
+
+    Raises HTTPException(403) if workspace not found or not in project.
+    """
+    db = db_infra.get_manager("server")
+    row = await db.fetch_one(
+        """
+        SELECT alias
+        FROM {{tables.workspaces}}
+        WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        uuid.UUID(workspace_id),
+        uuid.UUID(identity_project_id),
+    )
+    if not row:
+        raise HTTPException(
+            status_code=403,
+            detail="Workspace not found or does not belong to your project",
+        )
+    return row["alias"]
 
 
 class SubscribeRequest(BaseModel):
     workspace_id: str = Field(..., min_length=1)
-    alias: str = Field(..., min_length=1, max_length=64)
     bead_id: str = Field(..., min_length=1)
     repo: Optional[str] = None
     event_types: List[str] = Field(default=["status_change"])
@@ -50,11 +65,6 @@ class SubscribeRequest(BaseModel):
     @classmethod
     def validate_workspace_id(cls, v: str) -> str:
         return _validate_workspace_id_field(v)
-
-    @field_validator("alias")
-    @classmethod
-    def validate_alias(cls, v: str) -> str:
-        return _validate_alias_field(v)
 
 
 class SubscribeResponse(BaseModel):
@@ -95,9 +105,8 @@ async def subscribe(
 ) -> SubscribeResponse:
     """Subscribe to receive notifications when a bead changes.
 
-    Requires an authenticated project context.
+    Requires an authenticated project context. Alias is derived from workspace_id.
     """
-    db = db_infra.get_manager("server")
     identity = await get_identity_from_auth(request, db_infra)
     project_id = identity.project_id
     enforce_actor_binding(identity, payload.workspace_id)
@@ -110,7 +119,6 @@ async def subscribe(
         )
 
     # Validate event_types
-    # Currently only 'status_change' is implemented; others reserved for future use
     valid_events = {"status_change", "priority_change", "assignee_change", "all"}
     for event_type in payload.event_types:
         if event_type not in valid_events:
@@ -119,35 +127,17 @@ async def subscribe(
                 detail=f"Invalid event_type: {event_type}. Valid: {valid_events}",
             )
 
-    # Validate workspace exists and alias matches (tenant isolation)
-    workspace = await db.fetch_one(
-        """
-        SELECT workspace_id, alias
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-        """,
-        uuid.UUID(payload.workspace_id),
-        uuid.UUID(project_id),
-    )
-    if not workspace:
-        raise HTTPException(
-            status_code=403,
-            detail="Workspace not found or does not belong to your project",
-        )
-    if workspace["alias"] != payload.alias:
-        raise HTTPException(
-            status_code=403,
-            detail="Alias does not match workspace_id",
-        )
+    alias = await _resolve_workspace(db_infra, project_id, payload.workspace_id)
 
     # Use upsert to handle duplicate subscriptions (idempotent)
+    db = db_infra.get_manager("server")
     subscription_id = str(uuid.uuid4())
     sql = """
         INSERT INTO {{tables.subscriptions}}
             (id, project_id, workspace_id, alias, bead_id, repo, event_types)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (project_id, workspace_id, bead_id, COALESCE(repo, ''))
-        DO UPDATE SET event_types = $7
+        DO UPDATE SET event_types = $7, alias = $4
         RETURNING id, event_types, created_at
     """
     row = await db.fetch_one(
@@ -155,7 +145,7 @@ async def subscribe(
         uuid.UUID(subscription_id),
         uuid.UUID(project_id),
         uuid.UUID(payload.workspace_id),
-        payload.alias,
+        alias,
         payload.bead_id,
         payload.repo,
         payload.event_types,
@@ -164,7 +154,7 @@ async def subscribe(
     return SubscribeResponse(
         subscription_id=str(row["id"]),
         workspace_id=payload.workspace_id,
-        alias=payload.alias,
+        alias=alias,
         bead_id=payload.bead_id,
         repo=payload.repo,
         event_types=list(row["event_types"]),
@@ -176,46 +166,25 @@ async def subscribe(
 async def list_subscriptions(
     request: Request,
     workspace_id: str = Query(..., min_length=1),
-    alias: str = Query(..., min_length=1, max_length=64),
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> ListSubscriptionsResponse:
-    """List all subscriptions for an agent.
+    """List all subscriptions for a workspace.
 
     Requires an authenticated project context.
     """
     identity = await get_identity_from_auth(request, db_infra)
     project_id = identity.project_id
-    # Validate workspace_id
     try:
         workspace_id = validate_workspace_id(workspace_id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     enforce_actor_binding(identity, workspace_id)
 
+    alias = await _resolve_workspace(db_infra, project_id, workspace_id)
+
     db = db_infra.get_manager("server")
-
-    workspace = await db.fetch_one(
-        """
-        SELECT workspace_id, alias
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-        """,
-        uuid.UUID(workspace_id),
-        uuid.UUID(project_id),
-    )
-    if not workspace:
-        raise HTTPException(
-            status_code=403,
-            detail="Workspace not found or does not belong to your project",
-        )
-    if workspace["alias"] != alias:
-        raise HTTPException(
-            status_code=403,
-            detail="Alias does not match workspace_id",
-        )
-
     sql = """
-        SELECT id, workspace_id, alias, bead_id, repo, event_types, created_at
+        SELECT id, workspace_id, bead_id, repo, event_types, created_at
         FROM {{tables.subscriptions}}
         WHERE project_id = $1 AND workspace_id = $2
         ORDER BY created_at DESC
@@ -226,7 +195,7 @@ async def list_subscriptions(
         SubscriptionInfo(
             subscription_id=str(row["id"]),
             workspace_id=str(row["workspace_id"]),
-            alias=row["alias"],
+            alias=alias,
             bead_id=row["bead_id"],
             repo=row["repo"],
             event_types=list(row["event_types"]),
@@ -243,7 +212,6 @@ async def unsubscribe(
     request: Request,
     subscription_id: str = Path(...),
     workspace_id: str = Query(..., min_length=1),
-    alias: str = Query(..., min_length=1, max_length=64),
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> UnsubscribeResponse:
     """Unsubscribe from a bead.
@@ -252,44 +220,23 @@ async def unsubscribe(
     """
     identity = await get_identity_from_auth(request, db_infra)
     project_id = identity.project_id
-    # Validate workspace_id
     try:
         workspace_id = validate_workspace_id(workspace_id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     enforce_actor_binding(identity, workspace_id)
 
-    db = db_infra.get_manager("server")
-
     try:
         sub_uuid = uuid.UUID(subscription_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid subscription_id format")
 
-    workspace = await db.fetch_one(
-        """
-        SELECT workspace_id, alias
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-        """,
-        uuid.UUID(workspace_id),
-        uuid.UUID(project_id),
-    )
-    if not workspace:
-        raise HTTPException(
-            status_code=403,
-            detail="Workspace not found or does not belong to your project",
-        )
-    if workspace["alias"] != alias:
-        raise HTTPException(
-            status_code=403,
-            detail="Alias does not match workspace_id",
-        )
+    await _resolve_workspace(db_infra, project_id, workspace_id)
 
-    # Delete only if owned by this agent within same project (tenant isolation)
+    db = db_infra.get_manager("server")
     sql = """
         DELETE FROM {{tables.subscriptions}}
-        WHERE id = $1 AND project_id = $2 AND workspace_id = $3 AND alias = $4
+        WHERE id = $1 AND project_id = $2 AND workspace_id = $3
         RETURNING id
     """
     row = await db.fetch_one(
@@ -297,7 +244,6 @@ async def unsubscribe(
         sub_uuid,
         uuid.UUID(project_id),
         uuid.UUID(workspace_id),
-        alias,
     )
 
     if not row:
@@ -319,33 +265,37 @@ async def get_subscribers_for_bead(
     Filters by project_id for tenant isolation, then matches by bead_id
     and optionally by repo for more precise matching.
 
-    Args:
-        db_infra: Database infrastructure
-        project_id: Project UUID for tenant isolation (required)
-        bead_id: The bead ID to find subscribers for
-        event_type: Event type to match (e.g., "status_change")
-        repo: Optional repo filter for more precise matching
+    JOINs the workspaces table to return the current alias (subscriptions
+    may store a stale alias from when the subscription was created).
     """
     db = db_infra.get_manager("server")
     project_uuid = uuid.UUID(project_id)
 
     if repo:
         sql = """
-            SELECT workspace_id, alias, repo
-            FROM {{tables.subscriptions}}
-            WHERE project_id = $1
-              AND bead_id = $2
-              AND repo = $3
-              AND ($4 = ANY(event_types) OR 'all' = ANY(event_types))
+            SELECT s.workspace_id, w.alias, s.repo
+            FROM {{tables.subscriptions}} s
+            JOIN {{tables.workspaces}} w
+              ON w.workspace_id = s.workspace_id
+             AND w.project_id = s.project_id
+             AND w.deleted_at IS NULL
+            WHERE s.project_id = $1
+              AND s.bead_id = $2
+              AND s.repo = $3
+              AND ($4 = ANY(s.event_types) OR 'all' = ANY(s.event_types))
         """
         rows = await db.fetch_all(sql, project_uuid, bead_id, repo, event_type)
     else:
         sql = """
-            SELECT workspace_id, alias, repo
-            FROM {{tables.subscriptions}}
-            WHERE project_id = $1
-              AND bead_id = $2
-              AND ($3 = ANY(event_types) OR 'all' = ANY(event_types))
+            SELECT s.workspace_id, w.alias, s.repo
+            FROM {{tables.subscriptions}} s
+            JOIN {{tables.workspaces}} w
+              ON w.workspace_id = s.workspace_id
+             AND w.project_id = s.project_id
+             AND w.deleted_at IS NULL
+            WHERE s.project_id = $1
+              AND s.bead_id = $2
+              AND ($3 = ANY(s.event_types) OR 'all' = ANY(s.event_types))
         """
         rows = await db.fetch_all(sql, project_uuid, bead_id, event_type)
 

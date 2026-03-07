@@ -568,11 +568,8 @@ async def _tool_subscribe_to_bead(
     event_types = args.get("event_types")
     if not workspace_id or not bead_id:
         raise HTTPException(status_code=422, detail="workspace_id and bead_id are required")
-    project_id = await verify_workspace_access(request, workspace_id, db_infra)
-    alias = await _get_workspace_alias_or_403(db_infra, project_id, workspace_id)
     payload_kwargs: dict[str, Any] = {
         "workspace_id": workspace_id,
-        "alias": alias,
         "bead_id": bead_id,
         "repo": repo,
     }
@@ -591,12 +588,9 @@ async def _tool_list_subscriptions(
     workspace_id = str(args.get("workspace_id") or "").strip()
     if not workspace_id:
         raise HTTPException(status_code=422, detail="workspace_id is required")
-    project_id = await verify_workspace_access(request, workspace_id, db_infra)
-    alias = await _get_workspace_alias_or_403(db_infra, project_id, workspace_id)
     response = await http_list_subscriptions(
         request=request,
         workspace_id=workspace_id,
-        alias=alias,
         db_infra=db_infra,
     )
     return response.model_dump()
@@ -611,36 +605,14 @@ async def _tool_unsubscribe(
     subscription_id = str(args.get("subscription_id") or "").strip()
     if not workspace_id or not subscription_id:
         raise HTTPException(status_code=422, detail="workspace_id and subscription_id are required")
-    project_id = await verify_workspace_access(request, workspace_id, db_infra)
-    alias = await _get_workspace_alias_or_403(db_infra, project_id, workspace_id)
     response = await http_unsubscribe(
         request=request,
         subscription_id=subscription_id,
         workspace_id=workspace_id,
-        alias=alias,
         db_infra=db_infra,
     )
     return response.model_dump()
 
-
-async def _get_workspace_alias_or_403(
-    db_infra: DatabaseInfra, project_id: str, workspace_id: str
-) -> str:
-    server_db = db_infra.get_manager("server")
-    row = await server_db.fetch_one(
-        """
-        SELECT alias
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-        """,
-        UUID(workspace_id),
-        UUID(project_id),
-    )
-    if not row:
-        raise HTTPException(
-            status_code=403, detail="Workspace not found or does not belong to your project"
-        )
-    return row["alias"]
 
 
 async def _tool_escalate(
