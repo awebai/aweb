@@ -253,9 +253,11 @@ function ScopeLabel({ workspace }: { workspace: StatusResponse["workspace"] }) {
 
 export function StatusPage() {
   const api = useApi<ApiClient>()
-  const { apiBasePath, repoFilter, ownerFilter, events, clearEvents } = useStore()
-  // Separate selector for stable function reference — prevents useCallback/useEffect
-  // cascade that reconnects SSE on every store update
+  const apiBasePath = useStore((s) => s.apiBasePath)
+  const repoFilter = useStore((s) => s.repoFilter)
+  const ownerFilter = useStore((s) => s.ownerFilter)
+  const events = useStore((s) => s.events)
+  const clearEvents = useStore((s) => s.clearEvents)
   const addEvent = useStore((s) => s.addEvent)
 
   const filters = repoFilter ? { repo: repoFilter } : undefined

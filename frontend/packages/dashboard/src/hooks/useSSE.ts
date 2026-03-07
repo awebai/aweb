@@ -53,6 +53,7 @@ export function useSSE({
   const api = useApi<ApiClient>()
   const abortRef = useRef<AbortController | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
+  const backoffDelayRef = useRef(5000)
   const connectRef = useRef<() => void>(() => {})
   const [connected, setConnected] = useState(false)
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null)
@@ -93,11 +94,13 @@ export function useSSE({
     const scheduleReconnect = (error: Event) => {
       setConnected(false)
       onError?.(error)
+      const delay = backoffDelayRef.current
+      backoffDelayRef.current = Math.min(delay * 2, 60000)
       reconnectTimerRef.current = window.setTimeout(() => {
         if (enabled) {
           connectRef.current()
         }
-      }, 5000)
+      }, delay)
     }
 
     ;(async () => {
@@ -112,6 +115,7 @@ export function useSSE({
         }
 
         setConnected(true)
+        backoffDelayRef.current = 5000
 
         const reader = response.body.getReader()
         const decoder = new TextDecoder("utf-8")
