@@ -34,6 +34,88 @@ VALID_ISSUE_TYPES = {"bug", "feature", "task", "epic", "chore"}
 VALID_STATUSES = {"open", "in_progress", "closed"}
 
 
+async def _record_upload_audit(
+    db_infra: DatabaseInfra,
+    project_id: str,
+    repo: str,
+    branch: str,
+    result: BeadsSyncResult,
+    source: str,
+) -> None:
+    """Record audit log entry for a beads upload."""
+    server_db = db_infra.get_manager("server")
+    await server_db.execute(
+        """
+        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
+        VALUES ($1, $2, $3::jsonb)
+        """,
+        project_id,
+        "beads_uploaded",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "repo": repo,
+                "branch": branch,
+                "issues_synced": result.issues_synced,
+                "issues_added": result.issues_added,
+                "issues_updated": result.issues_updated,
+                "source": source,
+            }
+        ),
+    )
+
+
+async def _process_status_notifications(
+    db_infra: DatabaseInfra,
+    project_id: str,
+    request: Request,
+    redis: Redis,
+    result: BeadsSyncResult,
+) -> tuple[int, int]:
+    """Process notification intents and SSE events for status changes.
+
+    Returns (notifications_sent, notifications_failed).
+    """
+    if not result.status_changes:
+        return 0, 0
+
+    await record_notification_intents(result.status_changes, project_id, db_infra)
+    identity = await resolve_aweb_identity(request, db_infra)
+    sent, failed = await process_notification_outbox(
+        project_id,
+        db_infra,
+        sender_agent_id=identity.agent_id,
+        sender_alias=identity.alias,
+    )
+    await publish_bead_status_events(
+        redis,
+        workspace_id=identity.agent_id,
+        project_slug=identity.project_slug,
+        status_changes=result.status_changes,
+        alias=identity.alias,
+    )
+    return sent, failed
+
+
+def _upload_response(
+    repo: str, result: BeadsSyncResult, notifications_sent: int, notifications_failed: int
+) -> dict:
+    """Build the standard response dict for beads upload endpoints."""
+    return {
+        "status": "completed" if notifications_failed == 0 else "completed_with_errors",
+        "repo": repo,
+        "branch": result.branch,
+        "issues_synced": result.issues_synced,
+        "issues_added": result.issues_added,
+        "issues_updated": result.issues_updated,
+        "conflicts": result.conflicts,
+        "conflicts_count": result.conflicts_count,
+        "notifications_sent": notifications_sent,
+        "notifications_failed": notifications_failed,
+        "synced_at": result.synced_at,
+    }
+
+
 def _escape_like_pattern(s: str) -> str:
     r"""Escape SQL LIKE metacharacters in user input.
 
@@ -83,7 +165,6 @@ async def beads_upload(
     """
     project_id = await get_project_from_auth(request, db_infra)
     beads_db = db_infra.get_manager("beads")
-    server_db = db_infra.get_manager("server")
 
     # repo is already validated by BeadsUploadRequest.validate_repo field_validator
 
@@ -103,65 +184,11 @@ async def beads_upload(
         issues, beads_db, project_id=project_id, repo=payload.repo, branch=branch_name
     )
 
-    # Record audit log
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (
-            project_id,
-            event_type,
-            details
-        )
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "beads_uploaded",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "repo": payload.repo,
-                "branch": branch_name,
-                "issues_synced": result.issues_synced,
-                "issues_added": result.issues_added,
-                "issues_updated": result.issues_updated,
-                "source": "json",
-            }
-        ),
+    await _record_upload_audit(db_infra, project_id, payload.repo, branch_name, result, "json")
+    notifications_sent, notifications_failed = await _process_status_notifications(
+        db_infra, project_id, request, redis, result
     )
-
-    # Record notification intents in outbox, then process them
-    # This ensures we have a record of what should be sent even if processing fails
-    notifications_sent = 0
-    notifications_failed = 0
-    if result.status_changes:
-        await record_notification_intents(result.status_changes, project_id, db_infra)
-        identity = await resolve_aweb_identity(request, db_infra)
-        notifications_sent, notifications_failed = await process_notification_outbox(
-            project_id,
-            db_infra,
-            sender_agent_id=identity.agent_id,
-            sender_alias=identity.alias,
-        )
-        await publish_bead_status_events(
-            redis,
-            workspace_id=identity.agent_id,
-            project_slug=identity.project_slug,
-            status_changes=result.status_changes,
-            alias=identity.alias,
-        )
-
-    return {
-        "status": "completed" if notifications_failed == 0 else "completed_with_errors",
-        "repo": payload.repo,
-        "branch": result.branch,
-        "issues_synced": result.issues_synced,
-        "issues_added": result.issues_added,
-        "issues_updated": result.issues_updated,
-        "conflicts": result.conflicts,
-        "conflicts_count": result.conflicts_count,
-        "notifications_sent": notifications_sent,
-        "notifications_failed": notifications_failed,
-        "synced_at": result.synced_at,
-    }
+    return _upload_response(payload.repo, result, notifications_sent, notifications_failed)
 
 
 MAX_JSONL_SIZE = 10 * 1024 * 1024  # 10MB
@@ -196,7 +223,6 @@ async def beads_upload_jsonl(
     """
     project_id = await get_project_from_auth(request, db_infra)
     beads_db = db_infra.get_manager("beads")
-    server_db = db_infra.get_manager("server")
 
     # Validate repo (canonical origin format like github.com/org/repo)
     if not is_valid_canonical_origin(repo):
@@ -227,65 +253,11 @@ async def beads_upload_jsonl(
         issues, beads_db, project_id=project_id, repo=repo, branch=branch_name
     )
 
-    # Record audit log
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (
-            project_id,
-            event_type,
-            details
-        )
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "beads_uploaded",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "repo": repo,
-                "branch": branch_name,
-                "issues_synced": result.issues_synced,
-                "issues_added": result.issues_added,
-                "issues_updated": result.issues_updated,
-                "source": "jsonl",
-            }
-        ),
+    await _record_upload_audit(db_infra, project_id, repo, branch_name, result, "jsonl")
+    notifications_sent, notifications_failed = await _process_status_notifications(
+        db_infra, project_id, request, redis, result
     )
-
-    # Record notification intents in outbox, then process them
-    # This ensures we have a record of what should be sent even if processing fails
-    notifications_sent = 0
-    notifications_failed = 0
-    if result.status_changes:
-        await record_notification_intents(result.status_changes, project_id, db_infra)
-        identity = await resolve_aweb_identity(request, db_infra)
-        notifications_sent, notifications_failed = await process_notification_outbox(
-            project_id,
-            db_infra,
-            sender_agent_id=identity.agent_id,
-            sender_alias=identity.alias,
-        )
-        await publish_bead_status_events(
-            redis,
-            workspace_id=identity.agent_id,
-            project_slug=identity.project_slug,
-            status_changes=result.status_changes,
-            alias=identity.alias,
-        )
-
-    return {
-        "status": "completed" if notifications_failed == 0 else "completed_with_errors",
-        "repo": repo,
-        "branch": result.branch,
-        "issues_synced": result.issues_synced,
-        "issues_added": result.issues_added,
-        "issues_updated": result.issues_updated,
-        "conflicts": result.conflicts,
-        "conflicts_count": result.conflicts_count,
-        "notifications_sent": notifications_sent,
-        "notifications_failed": notifications_failed,
-        "synced_at": result.synced_at,
-    }
+    return _upload_response(repo, result, notifications_sent, notifications_failed)
 
 
 @router.get("/issues")
