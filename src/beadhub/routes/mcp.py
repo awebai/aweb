@@ -763,7 +763,7 @@ async def _tool_fetch_inbox(
     request: Request,
     db_infra: DatabaseInfra,
     args: dict[str, Any],
-) -> list[dict[str, Any]]:
+) -> Any:
     identity = await get_identity_from_auth(request, db_infra)
     project_id = identity.project_id
     project_key = args.get("project_key")
