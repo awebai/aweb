@@ -11,7 +11,9 @@ from aweb.routes.messages import router as aweb_messages_router
 from aweb.routes.projects import router as aweb_projects_router
 from aweb.routes.reservations import router as aweb_reservations_router
 from aweb.routes.tasks import router as aweb_tasks_router
+from aweb.service_errors import ServiceError
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
@@ -197,6 +199,18 @@ def create_app(
         lifespan = _make_standalone_lifespan()
 
     app = FastAPI(title="BeadHub OSS Core", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(ServiceError)
+    async def _service_error_handler(request: Request, exc: ServiceError):
+        if exc.status_code >= 500:
+            logger.exception("Unhandled ServiceError", exc_info=exc)
+            return JSONResponse(
+                status_code=500, content={"detail": "Internal server error"}
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
 
     @app.get("/health", tags=["internal"])
     async def health(request: Request) -> dict:

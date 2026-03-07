@@ -81,6 +81,24 @@ async def test_mcp_unknown_tool(db_infra, redis_client_async):
 
 
 @pytest.mark.asyncio
+async def test_task_patch_nonexistent_returns_404(db_infra, redis_client_async):
+    """PATCH /v1/tasks/{ref} returns 404 for non-numeric bead refs (not 500)."""
+    app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
+    async with LifespanManager(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            await _init_workspace_and_auth(client)
+            resp = await client.patch(
+                "/v1/tasks/beadhub-xbdk",
+                json={"status": "closed"},
+            )
+            assert resp.status_code == 404
+            assert resp.json()["detail"] == "Task not found"
+
+
+@pytest.mark.asyncio
 async def test_escalation_not_found(db_infra, redis_client_async):
     """Fetching a nonexistent escalation returns 404."""
     app = create_app(db_infra=db_infra, redis=redis_client_async, serve_frontend=False)
