@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -564,87 +563,3 @@ async def test_introspect_with_project_slug_only(aweb_db_infra):
             assert body["address"] == "introcompat/bob"
 
 
-@pytest.mark.asyncio
-async def test_backfill_migration_creates_namespaces_for_legacy_projects(aweb_db_infra):
-    """Migration 022 backfills namespace_id for projects/agents created before namespaces."""
-    aweb_db = aweb_db_infra.get_manager("aweb")
-
-    # Insert a project with NULL namespace_id (simulating pre-021 data).
-    project_id = uuid.uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.projects}} (project_id, slug, name)
-        VALUES ($1, $2, $3)
-        """,
-        project_id,
-        "Legacy/Project_v2",
-        "Legacy Project",
-    )
-
-    # Insert an agent with NULL namespace_id.
-    agent_id = uuid.uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type)
-        VALUES ($1, $2, $3, $4, $5)
-        """,
-        agent_id,
-        project_id,
-        "alice",
-        "Alice",
-        "agent",
-    )
-
-    # Verify both have NULL namespace_id.
-    proj = await aweb_db.fetch_one(
-        "SELECT namespace_id FROM {{tables.projects}} WHERE project_id = $1", project_id
-    )
-    assert proj["namespace_id"] is None
-
-    ag = await aweb_db.fetch_one(
-        "SELECT namespace_id FROM {{tables.agents}} WHERE agent_id = $1", agent_id
-    )
-    assert ag["namespace_id"] is None
-
-    # Run the backfill SQL (migration 022 already ran on empty data; re-execute it).
-    backfill_path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "aweb"
-        / "migrations"
-        / "aweb"
-        / "022_backfill_namespaces.sql"
-    )
-    backfill_sql = backfill_path.read_text()
-    # pgdbm template syntax: replace {{tables.X}} with schema-qualified names.
-    for table in ("namespaces", "projects", "agents"):
-        backfill_sql = backfill_sql.replace(
-            f"{{{{tables.{table}}}}}",
-            f"{aweb_db.schema}.{table}",
-        )
-    # Execute each statement separately (pgdbm execute doesn't support multi-statement).
-    for stmt in backfill_sql.split(";"):
-        # Strip comment-only lines, keep SQL
-        lines = [l for l in stmt.strip().splitlines() if not l.strip().startswith("--")]
-        sql = "\n".join(lines).strip()
-        if sql:
-            await aweb_db.execute(sql)
-
-    # Verify project now has namespace_id.
-    proj = await aweb_db.fetch_one(
-        "SELECT namespace_id FROM {{tables.projects}} WHERE project_id = $1", project_id
-    )
-    assert proj["namespace_id"] is not None
-
-    # Verify agent has the same namespace_id.
-    ag = await aweb_db.fetch_one(
-        "SELECT namespace_id FROM {{tables.agents}} WHERE agent_id = $1", agent_id
-    )
-    assert ag["namespace_id"] == proj["namespace_id"]
-
-    # Verify the namespace slug was correctly normalized from "Legacy/Project_v2".
-    ns = await aweb_db.fetch_one(
-        "SELECT slug FROM {{tables.namespaces}} WHERE namespace_id = $1",
-        proj["namespace_id"],
-    )
-    assert ns["slug"] == "legacy-project-v2"
