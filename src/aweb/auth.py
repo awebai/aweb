@@ -79,7 +79,7 @@ INTERNAL_ACTOR_ID_HEADER = "X-Aweb-Actor-ID"
 
 class InternalAuthContext(TypedDict):
     project_id: str
-    principal_type: str  # "u" or "k"
+    principal_type: str  # "u", "k", or "p"
     principal_id: str
     actor_id: str
 
@@ -177,7 +177,16 @@ def _parse_internal_auth_context(request: Request) -> Optional[InternalAuthConte
         principal_type = "k"
         principal_id = api_key_id
     else:
-        raise HTTPException(status_code=401, detail="Authentication required")
+        # Public reader: no user/key header, extract identity from signed auth header.
+        parts = internal_auth.split(":")
+        if len(parts) >= 6 and parts[2] == "p":
+            try:
+                principal_id = str(uuid.UUID(parts[3]))
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            principal_type = "p"
+        else:
+            raise HTTPException(status_code=401, detail="Authentication required")
 
     actor_id = request.headers.get(INTERNAL_ACTOR_ID_HEADER)
     if not actor_id:
