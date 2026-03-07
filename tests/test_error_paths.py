@@ -63,6 +63,7 @@ async def test_mcp_unknown_tool(db_infra, redis_client_async):
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
+            await _init_workspace_and_auth(client)
             req = {
                 "jsonrpc": "2.0",
                 "id": 1,
