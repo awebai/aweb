@@ -204,9 +204,7 @@ def create_app(
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
             logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(
-                status_code=500, content={"detail": "Internal server error"}
-            )
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
