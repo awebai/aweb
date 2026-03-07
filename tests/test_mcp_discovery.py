@@ -62,9 +62,7 @@ async def test_tools_list_returns_all_tools(db_infra, async_redis, init_workspac
 
 
 @pytest.mark.asyncio
-async def test_tools_list_existing_tools_call_still_works(
-    db_infra, async_redis, init_workspace
-):
+async def test_tools_list_existing_tools_call_still_works(db_infra, async_redis, init_workspace):
     """Verify tools/call still works after adding tools/list."""
     app = create_app(db_infra=db_infra, redis=async_redis, serve_frontend=False)
     async with LifespanManager(app):
