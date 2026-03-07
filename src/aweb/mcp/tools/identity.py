@@ -16,6 +16,7 @@ async def whoami(db_infra) -> str:
     agent = await aweb_db.fetch_one(
         """
         SELECT a.alias, a.human_name, a.agent_type, a.did, a.custody, a.lifetime,
+               a.role, a.program, a.context,
                n.slug AS namespace_slug
         FROM {{tables.agents}} a
         LEFT JOIN {{tables.namespaces}} n ON a.namespace_id = n.namespace_id
@@ -37,6 +38,15 @@ async def whoami(db_infra) -> str:
         result["did"] = agent.get("did") or ""
         result["custody"] = agent.get("custody") or ""
         result["lifetime"] = agent.get("lifetime") or "persistent"
+        result["role"] = agent.get("role")
+        result["program"] = agent.get("program")
+        ctx = agent.get("context")
+        if isinstance(ctx, str):
+            try:
+                ctx = json.loads(ctx)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        result["context"] = ctx
         ns_slug = agent.get("namespace_slug")
         if ns_slug:
             result["namespace_slug"] = ns_slug

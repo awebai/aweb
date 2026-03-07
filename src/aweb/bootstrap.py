@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as json_module
 import logging
 import re
 import secrets
@@ -249,6 +250,9 @@ async def bootstrap_identity(
     public_key: str | None = None,
     custody: str | None = None,
     lifetime: str = "persistent",
+    role: str | None = None,
+    program: str | None = None,
+    context: dict | None = None,
 ) -> BootstrapIdentityResult:
     aweb_db = db.get_manager("aweb")
 
@@ -374,8 +378,8 @@ async def bootstrap_identity(
                     INSERT INTO {{tables.agents}}
                         (project_id, alias, human_name, agent_type,
                          did, public_key, stable_id, custody, signing_key_enc, lifetime,
-                         namespace_id)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                         namespace_id, role, program, context)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                     RETURNING agent_id, alias
                     """,
                     UUID(resolved_project_id),
@@ -389,6 +393,9 @@ async def bootstrap_identity(
                     signing_key_enc,
                     lifetime,
                     resolved_namespace_id,
+                    role,
+                    program,
+                    json_module.dumps(context) if context else None,
                 )
                 created = True
                 agent_id = str(agent["agent_id"])
@@ -415,8 +422,8 @@ async def bootstrap_identity(
                         INSERT INTO {{tables.agents}}
                             (project_id, alias, human_name, agent_type,
                              did, public_key, stable_id, custody, signing_key_enc, lifetime,
-                             namespace_id)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                             namespace_id, role, program, context)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                         RETURNING agent_id, alias
                         """,
                         UUID(resolved_project_id),
@@ -430,6 +437,9 @@ async def bootstrap_identity(
                         signing_key_enc,
                         lifetime,
                         resolved_namespace_id,
+                        role,
+                        program,
+                        json_module.dumps(context) if context else None,
                     )
                 except asyncpg.exceptions.UniqueViolationError:
                     continue
