@@ -36,8 +36,13 @@ from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 
 
-def _register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]) -> None:
-    """Register all aweb MCP tools on the server."""
+def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]) -> None:
+    """Register all aweb MCP tools on *mcp*.
+
+    Call this on your own :class:`FastMCP` instance to compose aweb tools
+    alongside additional tools.  Pass ``redis=None`` if Redis is unavailable;
+    presence-related tools will degrade gracefully.
+    """
 
     # -- Identity --
 
@@ -236,7 +241,7 @@ def create_mcp_app(
         ),
     )
 
-    _register_tools(mcp, db_infra, redis)
+    register_tools(mcp, db_infra, redis)
 
     # streamable_http_app() returns a Starlette app with the MCP endpoint
     # at streamable_http_path. We wrap it with auth middleware.

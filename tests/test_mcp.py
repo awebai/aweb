@@ -11,7 +11,26 @@ from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
-from aweb.mcp import create_mcp_app
+from aweb.mcp import create_mcp_app, register_tools
+
+_ALL_TOOL_NAMES = {
+    "whoami",
+    "send_mail",
+    "check_inbox",
+    "ack_message",
+    "list_agents",
+    "heartbeat",
+    "chat_send",
+    "chat_pending",
+    "chat_history",
+    "chat_read",
+    "contacts_list",
+    "contacts_add",
+    "contacts_remove",
+    "lock_acquire",
+    "lock_release",
+    "lock_list",
+}
 
 
 async def _init_agent(client: AsyncClient, slug: str, alias: str) -> dict:
@@ -122,6 +141,18 @@ async def _setup_mcp_session(aweb_db_infra, slug: str, alias: str) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_register_tools_on_external_mcp(aweb_db_infra):
+    """register_tools adds aweb tools to a caller-provided FastMCP instance."""
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("custom-server", stateless_http=True, json_response=True)
+    register_tools(mcp, db_infra=aweb_db_infra, redis=None)
+
+    tool_names = {t.name for t in await mcp.list_tools()}
+    assert _ALL_TOOL_NAMES == tool_names
+
+
+@pytest.mark.asyncio
 async def test_mcp_app_can_be_created(aweb_db_infra):
     """create_mcp_app returns an ASGI app."""
     mcp_app = create_mcp_app(db_infra=aweb_db_infra)
@@ -174,25 +205,7 @@ async def test_mcp_lists_all_tools(aweb_db_infra):
             result = await _mcp_call(mc, "tools/list", {}, session_id, headers=auth)
 
             tool_names = {t["name"] for t in result["result"]["tools"]}
-            expected = {
-                "whoami",
-                "send_mail",
-                "check_inbox",
-                "ack_message",
-                "list_agents",
-                "heartbeat",
-                "chat_send",
-                "chat_pending",
-                "chat_history",
-                "chat_read",
-                "contacts_list",
-                "contacts_add",
-                "contacts_remove",
-                "lock_acquire",
-                "lock_release",
-                "lock_list",
-            }
-            assert expected == tool_names
+            assert _ALL_TOOL_NAMES == tool_names
 
 
 # ---------------------------------------------------------------------------
