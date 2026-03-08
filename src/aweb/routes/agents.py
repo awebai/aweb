@@ -1346,9 +1346,7 @@ async def deregister_agent_by_address(
 
     # Authorization: caller can only deregister themselves
     if caller_agent_id != str(agent_row["agent_id"]):
-        raise HTTPException(
-            status_code=403, detail="Agents can only deregister themselves"
-        )
+        raise HTTPException(status_code=403, detail="Agents can only deregister themselves")
 
     return await _deregister_agent(
         request, aweb_db, agent_uuid=agent_row["agent_id"], project_id=target_project_id
