@@ -51,6 +51,25 @@ async def get_agent_by_alias(db, *, project_id: str, alias: str) -> dict[str, An
     return dict(row)
 
 
+async def get_agents_by_aliases(
+    db, *, project_id: str, aliases: list[str]
+) -> list[dict[str, Any]]:
+    """Resolve multiple aliases to agents in a single query."""
+    if not aliases:
+        return []
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT agent_id, alias
+        FROM {{tables.agents}}
+        WHERE project_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
+        """,
+        UUID(project_id),
+        aliases,
+    )
+    return [dict(r) for r in rows]
+
+
 async def ensure_session(
     db,
     *,

@@ -17,8 +17,8 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth, valid
 from aweb.chat_service import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
-    get_agent_by_alias,
     get_agent_by_id,
+    get_agents_by_aliases,
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
@@ -191,15 +191,18 @@ async def create_or_send(
     to_aliases = [a for a in payload.to_aliases if a]
     if not to_aliases:
         raise HTTPException(status_code=422, detail="to_aliases must not be empty")
+    if len(to_aliases) != len(set(to_aliases)):
+        raise HTTPException(status_code=422, detail="to_aliases contains duplicates")
     if sender["alias"] in to_aliases:
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
-    targets: list[dict[str, Any]] = []
-    for alias in to_aliases:
-        agent = await get_agent_by_alias(db, project_id=project_id, alias=alias)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        targets.append(agent)
+    targets = await get_agents_by_aliases(db, project_id=project_id, aliases=to_aliases)
+    if len(targets) != len(to_aliases):
+        found = {t["alias"] for t in targets}
+        missing = [a for a in to_aliases if a not in found]
+        raise HTTPException(
+            status_code=404, detail=f"Agent not found: {missing[0]}"
+        )
 
     # Ensure no duplicate aliases.
     target_ids = sorted({str(t["agent_id"]) for t in targets})

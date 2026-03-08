@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
+from aweb.chat_service import get_agents_by_aliases
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -98,6 +99,42 @@ async def _seed_basic_project(aweb_db_infra):
         "api_key_1": api_key_1,
         "api_key_2": api_key_2,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_agents_by_aliases_batch(aweb_db_infra):
+    """get_agents_by_aliases resolves multiple aliases in one query."""
+    seed = await _seed_basic_project(aweb_db_infra)
+
+    result = await get_agents_by_aliases(
+        aweb_db_infra, project_id=seed["project_id"], aliases=["agent-1", "agent-2"]
+    )
+    assert len(result) == 2
+    aliases_found = {r["alias"] for r in result}
+    assert aliases_found == {"agent-1", "agent-2"}
+
+
+@pytest.mark.asyncio
+async def test_get_agents_by_aliases_missing(aweb_db_infra):
+    """get_agents_by_aliases returns only found agents (missing aliases omitted)."""
+    seed = await _seed_basic_project(aweb_db_infra)
+
+    result = await get_agents_by_aliases(
+        aweb_db_infra, project_id=seed["project_id"], aliases=["agent-1", "nonexistent"]
+    )
+    assert len(result) == 1
+    assert result[0]["alias"] == "agent-1"
+
+
+@pytest.mark.asyncio
+async def test_get_agents_by_aliases_empty(aweb_db_infra):
+    """get_agents_by_aliases returns empty list for empty input."""
+    seed = await _seed_basic_project(aweb_db_infra)
+
+    result = await get_agents_by_aliases(
+        aweb_db_infra, project_id=seed["project_id"], aliases=[]
+    )
+    assert result == []
 
 
 async def _collect_sse_text(
@@ -1272,6 +1309,24 @@ async def test_aweb_chat_rejects_to_aliases_with_slash(aweb_db_infra):
             )
             assert r.status_code == 422, r.text
             assert "Invalid alias format" in r.text
+
+
+@pytest.mark.asyncio
+async def test_aweb_chat_rejects_duplicate_to_aliases(aweb_db_infra):
+    """POST /v1/chat/sessions rejects duplicate entries in to_aliases with 422."""
+    seeded = await _seed_basic_project(aweb_db_infra)
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            headers_1 = _auth_headers(seeded["api_key_1"])
+            r = await client.post(
+                "/v1/chat/sessions",
+                headers=headers_1,
+                json={"to_aliases": ["agent-2", "agent-2"], "message": "hi", "leaving": False},
+            )
+            assert r.status_code == 422, r.text
+            assert "duplicates" in r.text.lower()
 
 
 @pytest.mark.asyncio
