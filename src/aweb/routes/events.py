@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -13,6 +14,8 @@ from fastapi.responses import StreamingResponse
 
 from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 
@@ -135,8 +138,8 @@ async def _sse_agent_events(
     # Connected event
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'project_id': project_id})}\n\n"
 
-    # Initial sweep: check for existing pending items (unread mail, unread chat, ready work).
-    # Use epoch as "since" to catch everything that already exists.
+    # Initial sweep: emit all pre-existing pending items so the agent knows
+    # the current state on connect.  Far-past sentinel catches everything.
     epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=epoch)
@@ -156,6 +159,9 @@ async def _sse_agent_events(
         prev_ready_ids.add(evt["task_id"])
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
+    # Note: last_check uses the app server clock while DB rows use Postgres NOW().
+    # Minor clock skew could cause a duplicate or missed event at the boundary;
+    # acceptable for wake-signal semantics (clients re-fetch full state anyway).
     last_check = datetime.now(timezone.utc)
 
     while datetime.now(timezone.utc) < deadline:
@@ -164,14 +170,22 @@ async def _sse_agent_events(
         if await request.is_disconnected():
             break
 
+        # Guard against sleep or is_disconnected taking longer than remaining time.
         if datetime.now(timezone.utc) >= deadline:
             break
 
-        now = datetime.now(timezone.utc)
+        try:
+            # Capture before queries so events created during execution are
+            # caught on the next cycle (not dropped in the gap).
+            check_start = datetime.now(timezone.utc)
 
-        mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=last_check)
-        chat_events = await _poll_unread_chat(aweb_db, project_id=pid, agent_id=aid, since=last_check)
-        work_events = await _poll_ready_tasks(aweb_db, project_id=pid)
+            mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=last_check)
+            chat_events = await _poll_unread_chat(aweb_db, project_id=pid, agent_id=aid, since=last_check)
+            work_events = await _poll_ready_tasks(aweb_db, project_id=pid)
+        except Exception:
+            logger.exception("event-stream poll error for agent %s", agent_id)
+            yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
+            break
 
         for evt in mail_events:
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
@@ -185,7 +199,7 @@ async def _sse_agent_events(
                 yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         prev_ready_ids = current_ready_ids
 
-        last_check = now
+        last_check = check_start
 
 
 @router.get("/stream")

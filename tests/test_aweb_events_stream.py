@@ -16,7 +16,7 @@ def auth(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _short_deadline(seconds: float = 1.0) -> str:
+def _short_deadline(seconds: float = 0.3) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
 
@@ -100,7 +100,7 @@ async def test_event_stream_mail_wake(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=auth(info_a["api_key"]),
             )
             events = _parse_sse_events(text)
@@ -132,7 +132,7 @@ async def test_event_stream_chat_wake(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=auth(info_a["api_key"]),
             )
             events = _parse_sse_events(text)
@@ -159,7 +159,7 @@ async def test_event_stream_work_available(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=auth(info["api_key"]),
             )
             events = _parse_sse_events(text)
@@ -192,7 +192,7 @@ async def test_event_stream_blocked_task_excluded(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=hdrs,
             )
             events = _parse_sse_events(text)
@@ -214,7 +214,7 @@ async def test_event_stream_blocked_task_excluded(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=hdrs,
             )
             events = _parse_sse_events(text)
@@ -250,7 +250,7 @@ async def test_event_stream_scoped_to_agent(aweb_db_infra):
             text = await _collect_sse_text(
                 client=c,
                 url="/v1/events/stream",
-                params={"deadline": _short_deadline(1.5)},
+                params={"deadline": _short_deadline()},
                 headers=auth(info_a["api_key"]),
             )
             events = _parse_sse_events(text)
