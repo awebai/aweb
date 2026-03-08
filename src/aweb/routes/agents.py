@@ -1283,7 +1283,7 @@ async def deregister_agent(
     (sets deleted_at so the alias can be reused). Rejects persistent agents
     with 400 — use the retire endpoint instead.
 
-    For peer deregistration, use DELETE /v1/agents/{namespace}/{alias}.
+    Also available via DELETE /v1/agents/{namespace}/{alias} (by address).
     """
     project_id = await get_project_from_auth(request, db)
     agent_id = await get_actor_agent_id_from_auth(request, db)
@@ -1296,14 +1296,14 @@ async def deregister_agent(
 # Catch-all: must be registered LAST — static DELETE routes (/me) above
 # take precedence only because of registration order.
 @router.delete("/{address:path}", response_model=DeregisterAgentResponse)
-async def peer_deregister_agent(
+async def deregister_agent_by_address(
     request: Request,
     address: str,
     db=Depends(get_db),
 ) -> DeregisterAgentResponse:
     """Deregister an ephemeral agent by address (namespace/alias).
 
-    Caller must be authenticated and belong to the same project as the target.
+    Caller must be the target agent (self-deregistration by address).
     Ephemeral-only: persistent agents return 400.
     """
     # Split address into namespace slug and alias on the last '/'
@@ -1316,6 +1316,7 @@ async def peer_deregister_agent(
         raise HTTPException(status_code=404, detail="Invalid address format")
 
     caller_project_id = await get_project_from_auth(request, db)
+    caller_agent_id = await get_actor_agent_id_from_auth(request, db)
     aweb_db = db.get_manager("aweb")
 
     # Resolve namespace/alias → agent (join via agents.namespace_id for consistency
@@ -1341,6 +1342,12 @@ async def peer_deregister_agent(
     if target_project_id != caller_project_id:
         raise HTTPException(
             status_code=403, detail="Not authorized to deregister agents in another project"
+        )
+
+    # Authorization: caller can only deregister themselves
+    if caller_agent_id != str(agent_row["agent_id"]):
+        raise HTTPException(
+            status_code=403, detail="Agents can only deregister themselves"
         )
 
     return await _deregister_agent(

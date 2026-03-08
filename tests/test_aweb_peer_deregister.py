@@ -132,7 +132,7 @@ async def _seed_project_with_agents(
 
 @pytest.mark.asyncio
 async def test_peer_deregister_ephemeral_agent(aweb_db_infra, monkeypatch):
-    """A project peer can deregister an ephemeral agent by namespace/alias."""
+    """An ephemeral agent can deregister itself by namespace/alias."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
@@ -145,7 +145,7 @@ async def test_peer_deregister_ephemeral_agent(aweb_db_infra, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
                 f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}",
-                headers=_auth(seed["peer"]["api_key"]),
+                headers=_auth(seed["ephemeral"]["api_key"]),
             )
             assert resp.status_code == 200, resp.text
             body = resp.json()
@@ -155,7 +155,7 @@ async def test_peer_deregister_ephemeral_agent(aweb_db_infra, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_peer_deregister_clears_signing_key(aweb_db_infra, monkeypatch):
-    """Peer deregistration destroys the signing key and soft-deletes."""
+    """Deregistration by address destroys the signing key and soft-deletes."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
@@ -168,7 +168,7 @@ async def test_peer_deregister_clears_signing_key(aweb_db_infra, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
                 f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}",
-                headers=_auth(seed["peer"]["api_key"]),
+                headers=_auth(seed["ephemeral"]["api_key"]),
             )
             assert resp.status_code == 200
 
@@ -183,7 +183,7 @@ async def test_peer_deregister_clears_signing_key(aweb_db_infra, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_peer_deregister_creates_log_entry(aweb_db_infra, monkeypatch):
-    """Peer deregistration appends a 'deregister' entry to agent_log."""
+    """Deregistration by address appends a 'deregister' entry to agent_log."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
@@ -196,7 +196,7 @@ async def test_peer_deregister_creates_log_entry(aweb_db_infra, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.delete(
                 f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}",
-                headers=_auth(seed["peer"]["api_key"]),
+                headers=_auth(seed["ephemeral"]["api_key"]),
             )
 
     log = await aweb_db.fetch_one(
@@ -221,10 +221,10 @@ async def test_peer_deregister_rejects_persistent_agent(aweb_db_infra, monkeypat
     app = create_app(db_infra=aweb_db_infra)
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            # Try to deregister the persistent peer agent (should fail)
+            # Persistent agent tries to deregister itself by address (should fail: persistent)
             resp = await c.delete(
                 f"/v1/agents/{seed['project_slug']}/{seed['peer']['alias']}",
-                headers=_auth(seed["ephemeral"]["api_key"]),
+                headers=_auth(seed["peer"]["api_key"]),
             )
             assert resp.status_code == 400
             assert (
@@ -300,7 +300,7 @@ async def test_peer_deregister_404_unknown_namespace(aweb_db_infra, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_peer_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
-    """Deregistering the same agent twice via peer endpoint returns 404."""
+    """Deregistering the same agent twice via address endpoint returns 404."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
@@ -312,7 +312,7 @@ async def test_peer_deregister_twice_returns_404(aweb_db_infra, monkeypatch):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             url = f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}"
-            headers = _auth(seed["peer"]["api_key"])
+            headers = _auth(seed["ephemeral"]["api_key"])
 
             resp1 = await c.delete(url, headers=headers)
             assert resp1.status_code == 200
@@ -332,8 +332,30 @@ async def test_peer_deregister_requires_auth(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_peer_deregister_by_different_agent_forbidden(aweb_db_infra, monkeypatch):
+    """A different same-project agent cannot deregister another agent (aweb-nc4)."""
+    master_key = secrets.token_bytes(32)
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
+    aweb_db = aweb_db_infra.get_manager("aweb")
+    seed = await _seed_project_with_agents(
+        aweb_db, project_slug="peer-dereg/ownership", master_key=master_key
+    )
+
+    app = create_app(db_infra=aweb_db_infra)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Peer agent tries to deregister the ephemeral agent — should be denied
+            resp = await c.delete(
+                f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}",
+                headers=_auth(seed["peer"]["api_key"]),
+            )
+            assert resp.status_code == 403
+            assert resp.json()["detail"] == "Agents can only deregister themselves"
+
+
+@pytest.mark.asyncio
 async def test_peer_deregister_fires_mutation_hook(aweb_db_infra, monkeypatch):
-    """Peer deregistration fires an agent.deregistered mutation hook."""
+    """Deregistration by address fires an agent.deregistered mutation hook."""
     master_key = secrets.token_bytes(32)
     monkeypatch.setenv("AWEB_CUSTODY_KEY", master_key.hex())
     aweb_db = aweb_db_infra.get_manager("aweb")
@@ -360,7 +382,7 @@ async def test_peer_deregister_fires_mutation_hook(aweb_db_infra, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete(
                 f"/v1/agents/{seed['project_slug']}/{seed['ephemeral']['alias']}",
-                headers=_auth(seed["peer"]["api_key"]),
+                headers=_auth(seed["ephemeral"]["api_key"]),
             )
             assert resp.status_code == 200
 
