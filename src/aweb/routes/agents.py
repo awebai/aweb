@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Literal
 from uuid import UUID
@@ -20,6 +21,20 @@ from aweb.presence import (
 from aweb.stable_id import stable_id_from_did_key
 
 router = APIRouter(prefix="/v1/agents", tags=["aweb-agents"])
+
+
+def _parse_context(val):
+    """Parse context from DB — may be a JSON string or already a dict."""
+    if val is None:
+        return None
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            return val
+    return val
 
 
 class SuggestAliasPrefixRequest(BaseModel):
@@ -100,6 +115,9 @@ class AgentView(BaseModel):
     custody: str | None = None
     lifetime: str = "persistent"
     identity_status: str = "active"
+    role: str | None = None
+    program: str | None = None
+    context: dict | None = None
 
 
 class ListAgentsResponse(BaseModel):
@@ -137,7 +155,7 @@ async def list_agents(
     rows = await aweb_db.fetch_all(
         f"""
         SELECT agent_id, alias, human_name, agent_type, access_mode,
-               did, custody, lifetime, status
+               did, custody, lifetime, status, role, program, context
         FROM {{{{tables.agents}}}}
         WHERE project_id = $1 AND deleted_at IS NULL
           {type_filter}
@@ -168,6 +186,9 @@ async def list_agents(
                 custody=r.get("custody"),
                 lifetime=r.get("lifetime", "persistent"),
                 identity_status=r.get("status", "active"),
+                role=r.get("role"),
+                program=r.get("program"),
+                context=_parse_context(r.get("context")),
             )
         )
 
@@ -219,6 +240,9 @@ class PatchAgentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     access_mode: str | None = None
+    role: str | None = None
+    program: str | None = None
+    context: dict | None = None
 
     @field_validator("access_mode")
     @classmethod
@@ -231,6 +255,9 @@ class PatchAgentRequest(BaseModel):
 class PatchAgentResponse(BaseModel):
     agent_id: str
     access_mode: str
+    role: str | None = None
+    program: str | None = None
+    context: dict | None = None
 
 
 @router.patch("/me", response_model=PatchAgentResponse)
@@ -244,7 +271,7 @@ async def patch_agent(
 
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, access_mode
+        SELECT agent_id, access_mode, role, program, context
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
         """,
@@ -255,19 +282,31 @@ async def patch_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     new_access_mode = payload.access_mode if payload.access_mode is not None else row["access_mode"]
+    new_role = payload.role if payload.role is not None else row["role"]
+    new_program = payload.program if payload.program is not None else row["program"]
+    new_context = payload.context if payload.context is not None else row["context"]
 
     await aweb_db.execute(
         """
         UPDATE {{tables.agents}}
-        SET access_mode = $1
-        WHERE agent_id = $2 AND project_id = $3
+        SET access_mode = $1, role = $2, program = $3, context = $4
+        WHERE agent_id = $5 AND project_id = $6
         """,
         new_access_mode,
+        new_role,
+        new_program,
+        json.dumps(new_context) if isinstance(new_context, dict) else new_context,
         agent_uuid,
         UUID(project_id),
     )
 
-    return PatchAgentResponse(agent_id=str(agent_uuid), access_mode=new_access_mode)
+    return PatchAgentResponse(
+        agent_id=str(agent_uuid),
+        access_mode=new_access_mode,
+        role=new_role,
+        program=new_program,
+        context=_parse_context(new_context),
+    )
 
 
 class ResolveAgentResponse(BaseModel):

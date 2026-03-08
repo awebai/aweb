@@ -17,7 +17,9 @@ router = APIRouter(prefix="/v1/auth", tags=["aweb-auth"])
 
 
 _AGENT_NAMESPACE_QUERY = """
-    SELECT a.alias, a.human_name, a.agent_type, a.access_mode, n.slug AS namespace_slug
+    SELECT a.alias, a.human_name, a.agent_type, a.access_mode,
+           a.role, a.program, a.context,
+           n.slug AS namespace_slug
     FROM {{tables.agents}} a
     JOIN {{tables.projects}} p USING (project_id)
     LEFT JOIN {{tables.namespaces}} n ON n.namespace_id = a.namespace_id
@@ -33,10 +35,26 @@ def _enrich_with_agent(result: dict, agent) -> None:
     result["human_name"] = agent.get("human_name") or ""
     result["agent_type"] = agent.get("agent_type") or "agent"
     result["access_mode"] = agent.get("access_mode") or "open"
+    result["role"] = agent.get("role")
+    result["program"] = agent.get("program")
+    ctx = agent.get("context")
+    result["context"] = _parse_json(ctx) if isinstance(ctx, str) else ctx
     ns_slug = agent.get("namespace_slug")
     if ns_slug:
         result["namespace_slug"] = ns_slug
         result["address"] = f"{ns_slug}/{agent['alias']}"
+
+
+def _parse_json(val):
+    """Parse a JSON string, returning None on failure."""
+    if val is None:
+        return None
+    import json
+
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return val
 
 
 @router.get("/introspect")

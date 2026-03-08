@@ -33,6 +33,9 @@ class InitRequest(BaseModel):
     )  # base64url, 43 chars for 32 bytes
     custody: Optional[Literal["self", "custodial"]] = None
     lifetime: Literal["persistent", "ephemeral"] = "persistent"
+    role: Optional[str] = Field(default=None, max_length=64)
+    program: Optional[str] = Field(default=None, max_length=64)
+    context: Optional[dict] = None
 
     @model_validator(mode="after")
     def _require_at_least_one_slug(self) -> "InitRequest":
@@ -114,6 +117,9 @@ async def init(request: Request, payload: InitRequest, db=Depends(get_db)) -> In
             public_key=payload.public_key,
             custody=payload.custody,
             lifetime=payload.lifetime,
+            role=payload.role,
+            program=payload.program,
+            context=payload.context,
         )
     except AliasExhaustedError as e:
         raise HTTPException(status_code=409, detail=str(e))
