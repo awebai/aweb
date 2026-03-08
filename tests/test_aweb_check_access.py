@@ -184,6 +184,147 @@ async def test_check_access_same_project_always_allowed(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_check_access_multi_segment_slug_no_false_positive(aweb_db_infra):
+    """A sender from 'test/sub' must NOT match project 'test' via org extraction.
+
+    Regression: split('/')[0] took only the first segment, so 'test/sub/alice'
+    matched project 'test'.  The org should be 'test/sub' (everything before the
+    last '/').
+    """
+    db = aweb_db_infra
+    aweb_db = db.get_manager("aweb")
+
+    # Create a project with slug 'test' and a contacts_only agent
+    ns_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        ns_id,
+        "test",
+    )
+    project_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
+        project_id,
+        "test",
+        "Test Proj",
+        ns_id,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, access_mode, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        agent_id,
+        project_id,
+        "target",
+        "Target",
+        "agent",
+        "contacts_only",
+        ns_id,
+    )
+
+    # Sender is 'test/sub/alice' — org is 'test/sub', NOT 'test'
+    result = await check_access(
+        db,
+        target_project_id=str(project_id),
+        target_agent_id=str(agent_id),
+        sender_address="test/sub/alice",
+    )
+    # Should be denied: 'test/sub' != 'test' (different project)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_access_multi_segment_slug_same_project_allowed(aweb_db_infra):
+    """A sender from 'org-sub' matches project 'org-sub' via same-project bypass."""
+    db = aweb_db_infra
+    aweb_db = db.get_manager("aweb")
+
+    ns_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        ns_id,
+        "org-sub",
+    )
+    project_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
+        project_id,
+        "org-sub",
+        "Org Sub",
+        ns_id,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, access_mode, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        agent_id,
+        project_id,
+        "target",
+        "Target",
+        "agent",
+        "contacts_only",
+        ns_id,
+    )
+
+    result = await check_access(
+        db,
+        target_project_id=str(project_id),
+        target_agent_id=str(agent_id),
+        sender_address="org-sub/alice",
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_check_access_multi_segment_org_contact_no_false_positive(aweb_db_infra):
+    """Org-level contact 'test' must NOT grant access to sender 'test/sub/alice'."""
+    db = aweb_db_infra
+    aweb_db = db.get_manager("aweb")
+
+    ns_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.namespaces}} (namespace_id, slug) VALUES ($1, $2)",
+        ns_id,
+        "other-ns",
+    )
+    project_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    await aweb_db.execute(
+        "INSERT INTO {{tables.projects}} (project_id, slug, name, namespace_id) VALUES ($1, $2, $3, $4)",
+        project_id,
+        "other",
+        "Other Proj",
+        ns_id,
+    )
+    await aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, project_id, alias, human_name, agent_type, access_mode, namespace_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        agent_id,
+        project_id,
+        "target",
+        "Target",
+        "agent",
+        "contacts_only",
+        ns_id,
+    )
+    # Add org-level contact for 'test' (single segment)
+    await aweb_db.execute(
+        "INSERT INTO {{tables.contacts}} (project_id, contact_address) VALUES ($1, $2)",
+        project_id,
+        "test",
+    )
+
+    # Sender 'test/sub/alice' has org 'test/sub', NOT 'test'
+    result = await check_access(
+        db,
+        target_project_id=str(project_id),
+        target_agent_id=str(agent_id),
+        sender_address="test/sub/alice",
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_check_access_nonexistent_agent(aweb_db_infra):
     db = aweb_db_infra
 

@@ -8,6 +8,11 @@ async def check_access(
 ) -> bool:
     """Check whether sender_address is allowed to reach the target agent.
 
+    *sender_address* must be in ``<org>/<alias>`` format (may contain nested
+    slashes, e.g. ``ns/sub/alice``).  The org portion is everything before
+    the last ``/``.  Callers must validate the format before calling this
+    function; the routing layer rejects malformed addresses.
+
     Returns True if:
     - Target agent's access_mode is 'open', OR
     - Sender is in the same project as target, OR
@@ -32,7 +37,8 @@ async def check_access(
         return True
 
     # 2. Same-project bypass: extract org_slug from sender_address.
-    org_slug = sender_address.split("/")[0] if "/" in sender_address else sender_address
+    last_slash = sender_address.rfind("/")
+    org_slug = sender_address[:last_slash] if last_slash > 0 else sender_address
 
     proj = await aweb_db.fetch_one(
         "SELECT project_id FROM {{tables.projects}} WHERE slug = $1 AND deleted_at IS NULL",
