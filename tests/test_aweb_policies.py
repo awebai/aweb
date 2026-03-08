@@ -213,4 +213,7 @@ async def test_list_policies_scoped_to_project(aweb_db_infra):
 
             assert len(resp_a.json()["policies"]) == 1
             assert len(resp_b.json()["policies"]) == 1
-            assert resp_a.json()["policies"][0]["policy_id"] != resp_b.json()["policies"][0]["policy_id"]
+            assert (
+                resp_a.json()["policies"][0]["policy_id"]
+                != resp_b.json()["policies"][0]["policy_id"]
+            )

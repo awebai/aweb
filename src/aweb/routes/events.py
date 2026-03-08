@@ -30,7 +30,9 @@ def _parse_deadline(raw: str) -> datetime:
     return dt
 
 
-async def _poll_unread_mail(aweb_db, *, project_id: UUID, agent_id: UUID, since: datetime) -> list[dict]:
+async def _poll_unread_mail(
+    aweb_db, *, project_id: UUID, agent_id: UUID, since: datetime
+) -> list[dict]:
     """Check for new unread mail to this agent since the given timestamp."""
     rows = await aweb_db.fetch_all(
         """
@@ -58,7 +60,9 @@ async def _poll_unread_mail(aweb_db, *, project_id: UUID, agent_id: UUID, since:
     ]
 
 
-async def _poll_unread_chat(aweb_db, *, project_id: UUID, agent_id: UUID, since: datetime) -> list[dict]:
+async def _poll_unread_chat(
+    aweb_db, *, project_id: UUID, agent_id: UUID, since: datetime
+) -> list[dict]:
     """Check for new chat messages to sessions this agent participates in."""
     rows = await aweb_db.fetch_all(
         """
@@ -248,8 +252,12 @@ async def _sse_agent_events(
             # caught on the next cycle (not dropped in the gap).
             check_start = datetime.now(timezone.utc)
 
-            mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=last_check)
-            chat_events = await _poll_unread_chat(aweb_db, project_id=pid, agent_id=aid, since=last_check)
+            mail_events = await _poll_unread_mail(
+                aweb_db, project_id=pid, agent_id=aid, since=last_check
+            )
+            chat_events = await _poll_unread_chat(
+                aweb_db, project_id=pid, agent_id=aid, since=last_check
+            )
             work_events = await _poll_ready_tasks(aweb_db, project_id=pid)
             claim_events = await _poll_agent_claims(aweb_db, project_id=pid, agent_id=aid)
             control_events = await _poll_control_signals(aweb_db, project_id=pid, agent_id=aid)

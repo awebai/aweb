@@ -94,9 +94,7 @@ async def test_status_stream_includes_claims(aweb_db_infra):
             api_key = info["api_key"]
 
             # Create and assign a task
-            task = await c.post(
-                "/v1/tasks", headers=auth(api_key), json={"title": "Stream task"}
-            )
+            task = await c.post("/v1/tasks", headers=auth(api_key), json={"title": "Stream task"})
             task_ref = task.json()["task_ref"]
             await c.patch(
                 f"/v1/tasks/{task_ref}",
@@ -126,9 +124,7 @@ async def test_status_stream_includes_active_policy(aweb_db_infra):
             info = await _init_project(c)
             api_key = info["api_key"]
 
-            pol = await c.post(
-                "/v1/policies", headers=auth(api_key), json={"content": {"v": 1}}
-            )
+            pol = await c.post("/v1/policies", headers=auth(api_key), json={"content": {"v": 1}})
             policy_id = pol.json()["policy_id"]
             await c.post(f"/v1/policies/{policy_id}/activate", headers=auth(api_key))
 

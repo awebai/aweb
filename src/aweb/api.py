@@ -22,8 +22,8 @@ from aweb.routes.auth import router as auth_router
 from aweb.routes.chat import router as chat_router
 from aweb.routes.claims import router as claims_router
 from aweb.routes.contacts import router as contacts_router
-from aweb.routes.events import router as events_router
 from aweb.routes.conversations import router as conversations_router
+from aweb.routes.events import router as events_router
 from aweb.routes.init import router as init_router
 from aweb.routes.messages import router as messages_router
 from aweb.routes.policies import router as policies_router

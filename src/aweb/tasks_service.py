@@ -329,9 +329,7 @@ async def list_tasks(
     ]
 
 
-async def list_ready_tasks(
-    db, *, project_id: str, unclaimed: bool = False
-) -> list[dict[str, Any]]:
+async def list_ready_tasks(db, *, project_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
     """Open tasks with no unresolved (non-closed) blockers."""
     slug = await _get_project_slug(db, project_id=project_id)
     aweb_db = db.get_manager("aweb")

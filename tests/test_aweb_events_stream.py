@@ -85,9 +85,9 @@ async def test_event_stream_mail_wake(aweb_db_infra):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             # Set up two agents in the same project
             info_a = await _init_project(c, alias="alice")
-            info_b = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
-            )).json()
+            info_b = (
+                await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "bob"})
+            ).json()
 
             # Send a mail from bob to alice
             await c.post(
@@ -116,9 +116,9 @@ async def test_event_stream_chat_wake(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             info_a = await _init_project(c, alias="alice")
-            info_b = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
-            )).json()
+            info_b = (
+                await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "bob"})
+            ).json()
 
             # Create a chat session
             sess = await c.post(
@@ -178,7 +178,9 @@ async def test_event_stream_blocked_task_excluded(aweb_db_infra):
 
             # Create a blocker and a dependent task
             blocker = (await c.post("/v1/tasks", headers=hdrs, json={"title": "Blocker"})).json()
-            dependent = (await c.post("/v1/tasks", headers=hdrs, json={"title": "Dependent"})).json()
+            dependent = (
+                await c.post("/v1/tasks", headers=hdrs, json={"title": "Dependent"})
+            ).json()
 
             # dependent depends on blocker
             dep_resp = await c.post(
@@ -263,9 +265,9 @@ async def test_event_stream_claim_reflects_reassignment(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             info_a = await _init_project(c, alias="alice")
-            info_b = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
-            )).json()
+            info_b = (
+                await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "bob"})
+            ).json()
             hdrs_a = auth(info_a["api_key"])
 
             # Create a task and assign it to alice
@@ -278,8 +280,10 @@ async def test_event_stream_claim_reflects_reassignment(aweb_db_infra):
 
             # First stream — alice sees the claim
             text = await _collect_sse_text(
-                client=c, url="/v1/events/stream",
-                params={"deadline": _short_deadline()}, headers=hdrs_a,
+                client=c,
+                url="/v1/events/stream",
+                params={"deadline": _short_deadline()},
+                headers=hdrs_a,
             )
             events = _parse_sse_events(text)
             assert any(
@@ -296,13 +300,13 @@ async def test_event_stream_claim_reflects_reassignment(aweb_db_infra):
 
             # Second stream — alice should no longer see claim_update for this task
             text = await _collect_sse_text(
-                client=c, url="/v1/events/stream",
-                params={"deadline": _short_deadline()}, headers=hdrs_a,
+                client=c,
+                url="/v1/events/stream",
+                params={"deadline": _short_deadline()},
+                headers=hdrs_a,
             )
             events = _parse_sse_events(text)
-            claim_task_ids = {
-                e["data"]["task_id"] for e in events if e["event"] == "claim_update"
-            }
+            claim_task_ids = {e["data"]["task_id"] for e in events if e["event"] == "claim_update"}
             assert task["task_id"] not in claim_task_ids
 
 
@@ -313,9 +317,9 @@ async def test_event_stream_control_signal(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             info_a = await _init_project(c, alias="alice")
-            info_b = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
-            )).json()
+            info_b = (
+                await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "bob"})
+            ).json()
 
             # Bob sends a pause signal to alice
             resp = await c.post(
@@ -344,12 +348,10 @@ async def test_event_stream_scoped_to_agent(aweb_db_infra):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             info_a = await _init_project(c, alias="alice")
-            info_b = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
-            )).json()
-            info_c = (await c.post(
-                "/v1/init", json={"project_slug": "evt-test", "alias": "charlie"}
-            )).json()
+            info_b = (
+                await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "bob"})
+            ).json()
+            await c.post("/v1/init", json={"project_slug": "evt-test", "alias": "charlie"})
 
             # Bob sends mail to charlie (not alice)
             await c.post(

@@ -561,5 +561,3 @@ async def test_introspect_with_project_slug_only(aweb_db_infra):
             body = resp.json()
             assert body["namespace_slug"] == "introcompat"
             assert body["address"] == "introcompat/bob"
-
-
