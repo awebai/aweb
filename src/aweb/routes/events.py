@@ -120,6 +120,66 @@ async def _poll_ready_tasks(aweb_db, *, project_id: UUID) -> list[dict]:
     ]
 
 
+async def _poll_agent_claims(aweb_db, *, project_id: UUID, agent_id: UUID) -> list[dict]:
+    """Return all tasks currently assigned to this agent."""
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT t.task_id, t.task_number, t.title, t.status
+        FROM {{tables.tasks}} t
+        WHERE t.project_id = $1
+          AND t.assignee_agent_id = $2
+          AND t.deleted_at IS NULL
+        ORDER BY t.task_number ASC
+        LIMIT 50
+        """,
+        project_id,
+        agent_id,
+    )
+    return [
+        {
+            "type": "claim_update",
+            "task_id": str(r["task_id"]),
+            "title": r["title"],
+            "status": r["status"],
+        }
+        for r in rows
+    ]
+
+
+async def _poll_control_signals(aweb_db, *, project_id: UUID, agent_id: UUID) -> list[dict]:
+    """Consume and return pending control signals for this agent.
+
+    At-most-once delivery: signals are marked consumed atomically with the read.
+    If the connection drops before the client receives the SSE frame, the signal
+    is lost.  Acceptable for wake-signal semantics where clients re-fetch state
+    after reconnecting.
+    """
+    rows = await aweb_db.fetch_all(
+        """
+        UPDATE {{tables.control_signals}}
+        SET consumed_at = NOW()
+        WHERE signal_id IN (
+            SELECT signal_id FROM {{tables.control_signals}}
+            WHERE project_id = $1
+              AND target_agent_id = $2
+              AND consumed_at IS NULL
+            ORDER BY created_at ASC
+            LIMIT 10
+        )
+        RETURNING signal_id, signal_type, created_at
+        """,
+        project_id,
+        agent_id,
+    )
+    return [
+        {
+            "type": f"control_{r['signal_type']}",
+            "signal_id": str(r["signal_id"]),
+        }
+        for r in rows
+    ]
+
+
 async def _sse_agent_events(
     *,
     request: Request,
@@ -145,18 +205,27 @@ async def _sse_agent_events(
     mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=epoch)
     chat_events = await _poll_unread_chat(aweb_db, project_id=pid, agent_id=aid, since=epoch)
     work_events = await _poll_ready_tasks(aweb_db, project_id=pid)
+    claim_events = await _poll_agent_claims(aweb_db, project_id=pid, agent_id=aid)
+    control_events = await _poll_control_signals(aweb_db, project_id=pid, agent_id=aid)
 
     for evt in mail_events:
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in chat_events:
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+    for evt in control_events:
+        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
-    # Track ready task IDs so we only emit newly-appeared tasks on subsequent polls.
+    # Track ready task IDs and claim IDs via set-diff so we only emit changes.
     # This avoids depending on updated_at, which misses tasks that become unblocked
     # when their blocker is closed (the dependent's updated_at is not bumped).
     prev_ready_ids: set[str] = set()
     for evt in work_events:
         prev_ready_ids.add(evt["task_id"])
+        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+
+    prev_claim_ids: set[str] = set()
+    for evt in claim_events:
+        prev_claim_ids.add(evt["task_id"])
         yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
     # Note: last_check uses the app server clock while DB rows use Postgres NOW().
@@ -182,6 +251,8 @@ async def _sse_agent_events(
             mail_events = await _poll_unread_mail(aweb_db, project_id=pid, agent_id=aid, since=last_check)
             chat_events = await _poll_unread_chat(aweb_db, project_id=pid, agent_id=aid, since=last_check)
             work_events = await _poll_ready_tasks(aweb_db, project_id=pid)
+            claim_events = await _poll_agent_claims(aweb_db, project_id=pid, agent_id=aid)
+            control_events = await _poll_control_signals(aweb_db, project_id=pid, agent_id=aid)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
@@ -191,6 +262,8 @@ async def _sse_agent_events(
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in chat_events:
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        for evt in control_events:
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
         current_ready_ids = {evt["task_id"] for evt in work_events}
         new_ready_ids = current_ready_ids - prev_ready_ids
@@ -198,6 +271,16 @@ async def _sse_agent_events(
             if evt["task_id"] in new_ready_ids:
                 yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         prev_ready_ids = current_ready_ids
+
+        current_claim_ids = {evt["task_id"] for evt in claim_events}
+        new_claim_ids = current_claim_ids - prev_claim_ids
+        removed_claim_ids = prev_claim_ids - current_claim_ids
+        for task_id in removed_claim_ids:
+            yield f"event: claim_removed\ndata: {json.dumps({'type': 'claim_removed', 'task_id': task_id})}\n\n"
+        for evt in claim_events:
+            if evt["task_id"] in new_claim_ids:
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        prev_claim_ids = current_claim_ids
 
         last_check = check_start
 

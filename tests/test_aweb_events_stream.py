@@ -226,6 +226,118 @@ async def test_event_stream_blocked_task_excluded(aweb_db_infra):
 
 
 @pytest.mark.asyncio
+async def test_event_stream_claim_update(aweb_db_infra):
+    """Assigning a task to an agent triggers a claim_update event."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            info = await _init_project(c)
+            hdrs = auth(info["api_key"])
+
+            # Create a task and assign it to the agent
+            task = (await c.post("/v1/tasks", headers=hdrs, json={"title": "My work"})).json()
+            resp = await c.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=hdrs,
+                json={"assignee_agent_id": info["agent_id"]},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Stream should show a claim_update event
+            text = await _collect_sse_text(
+                client=c,
+                url="/v1/events/stream",
+                params={"deadline": _short_deadline()},
+                headers=hdrs,
+            )
+            events = _parse_sse_events(text)
+            claim_events = [e for e in events if e["event"] == "claim_update"]
+            assert len(claim_events) >= 1
+            assert claim_events[0]["data"]["task_id"] == task["task_id"]
+
+
+@pytest.mark.asyncio
+async def test_event_stream_claim_reflects_reassignment(aweb_db_infra):
+    """After reassignment, the previous assignee no longer sees the claim."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            info_a = await _init_project(c, alias="alice")
+            info_b = (await c.post(
+                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
+            )).json()
+            hdrs_a = auth(info_a["api_key"])
+
+            # Create a task and assign it to alice
+            task = (await c.post("/v1/tasks", headers=hdrs_a, json={"title": "Claimed"})).json()
+            await c.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=hdrs_a,
+                json={"assignee_agent_id": info_a["agent_id"]},
+            )
+
+            # First stream — alice sees the claim
+            text = await _collect_sse_text(
+                client=c, url="/v1/events/stream",
+                params={"deadline": _short_deadline()}, headers=hdrs_a,
+            )
+            events = _parse_sse_events(text)
+            assert any(
+                e["event"] == "claim_update" and e["data"]["task_id"] == task["task_id"]
+                for e in events
+            )
+
+            # Reassign to bob (alice loses the claim)
+            await c.patch(
+                f"/v1/tasks/{task['task_ref']}",
+                headers=hdrs_a,
+                json={"assignee_agent_id": info_b["agent_id"]},
+            )
+
+            # Second stream — alice should no longer see claim_update for this task
+            text = await _collect_sse_text(
+                client=c, url="/v1/events/stream",
+                params={"deadline": _short_deadline()}, headers=hdrs_a,
+            )
+            events = _parse_sse_events(text)
+            claim_task_ids = {
+                e["data"]["task_id"] for e in events if e["event"] == "claim_update"
+            }
+            assert task["task_id"] not in claim_task_ids
+
+
+@pytest.mark.asyncio
+async def test_event_stream_control_signal(aweb_db_infra):
+    """Sending a control signal triggers the corresponding event."""
+    app = create_app(db_infra=aweb_db_infra, redis=None)
+    async with LifespanManager(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            info_a = await _init_project(c, alias="alice")
+            info_b = (await c.post(
+                "/v1/init", json={"project_slug": "evt-test", "alias": "bob"}
+            )).json()
+
+            # Bob sends a pause signal to alice
+            resp = await c.post(
+                "/v1/agents/alice/control",
+                headers=auth(info_b["api_key"]),
+                json={"signal": "pause"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            # Alice's stream should show a control_pause event
+            text = await _collect_sse_text(
+                client=c,
+                url="/v1/events/stream",
+                params={"deadline": _short_deadline()},
+                headers=auth(info_a["api_key"]),
+            )
+            events = _parse_sse_events(text)
+            control_events = [e for e in events if e["event"] == "control_pause"]
+            assert len(control_events) == 1
+
+
+@pytest.mark.asyncio
 async def test_event_stream_scoped_to_agent(aweb_db_infra):
     """Events are scoped — agent only sees their own mail/chat."""
     app = create_app(db_infra=aweb_db_infra, redis=None)

@@ -1307,3 +1307,49 @@ async def peer_deregister_agent(
     return await _deregister_agent(
         request, aweb_db, agent_uuid=agent_row["agent_id"], project_id=target_project_id
     )
+
+
+# ── Control signals ──────────────────────────────────────────────────
+
+
+class SendControlSignalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    signal: Literal["pause", "resume", "interrupt"]
+
+
+@router.post("/{alias}/control")
+async def send_control_signal(
+    request: Request,
+    alias: str,
+    payload: SendControlSignalRequest,
+    db=Depends(get_db),
+):
+    """Send a control signal (pause/resume/interrupt) to an agent in the same project."""
+    project_id = await get_project_from_auth(request, db)
+    from_agent_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+
+    aweb_db = db.get_manager("aweb")
+    target = await aweb_db.fetch_one(
+        """
+        SELECT agent_id FROM {{tables.agents}}
+        WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
+        """,
+        UUID(project_id),
+        alias,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    result = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.control_signals}} (project_id, target_agent_id, from_agent_id, signal_type)
+        VALUES ($1, $2, $3, $4)
+        RETURNING signal_id
+        """,
+        UUID(project_id),
+        target["agent_id"],
+        UUID(from_agent_id),
+        payload.signal,
+    )
+    return {"signal_id": str(result["signal_id"]), "signal": payload.signal}
