@@ -51,9 +51,7 @@ async def get_agent_by_alias(db, *, project_id: str, alias: str) -> dict[str, An
     return dict(row)
 
 
-async def get_agents_by_aliases(
-    db, *, project_id: str, aliases: list[str]
-) -> list[dict[str, Any]]:
+async def get_agents_by_aliases(db, *, project_id: str, aliases: list[str]) -> list[dict[str, Any]]:
     """Resolve multiple aliases to agents in a single query."""
     if not aliases:
         return []

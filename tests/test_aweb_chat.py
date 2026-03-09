@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.api import create_app
 from aweb.auth import hash_api_key
-from aweb.chat_service import get_agents_by_aliases
+from aweb.chat_service import _participant_hash, get_agents_by_aliases
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -101,6 +101,42 @@ async def _seed_basic_project(aweb_db_infra):
     }
 
 
+def test_participant_hash_order_independent():
+    """Same IDs in different order produce the same hash."""
+    a, b, c = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    assert _participant_hash([a, b, c]) == _participant_hash([c, a, b])
+    assert _participant_hash([a, b, c]) == _participant_hash([b, c, a])
+
+
+def test_participant_hash_deduplicates():
+    """Duplicate IDs produce the same hash as the deduplicated list."""
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    assert _participant_hash([a, b, a]) == _participant_hash([a, b])
+
+
+def test_participant_hash_different_sets_differ():
+    """Two different sets of IDs produce different hashes."""
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    c, d = str(uuid.uuid4()), str(uuid.uuid4())
+    assert _participant_hash([a, b]) != _participant_hash([c, d])
+
+
+def test_participant_hash_single_id():
+    """A single ID works and returns a 64-char hex digest."""
+    a = str(uuid.uuid4())
+    h = _participant_hash([a])
+    assert isinstance(h, str)
+    assert len(h) == 64
+    # Deterministic: same input, same output.
+    assert h == _participant_hash([a])
+
+
+def test_participant_hash_normalizes_uuid_case():
+    """Uppercase and lowercase hex representations produce the same hash."""
+    a = str(uuid.uuid4())
+    assert _participant_hash([a.upper()]) == _participant_hash([a.lower()])
+
+
 @pytest.mark.asyncio
 async def test_get_agents_by_aliases_batch(aweb_db_infra):
     """get_agents_by_aliases resolves multiple aliases in one query."""
@@ -131,9 +167,7 @@ async def test_get_agents_by_aliases_empty(aweb_db_infra):
     """get_agents_by_aliases returns empty list for empty input."""
     seed = await _seed_basic_project(aweb_db_infra)
 
-    result = await get_agents_by_aliases(
-        aweb_db_infra, project_id=seed["project_id"], aliases=[]
-    )
+    result = await get_agents_by_aliases(aweb_db_infra, project_id=seed["project_id"], aliases=[])
     assert result == []
 
 
@@ -1424,8 +1458,6 @@ async def test_ensure_session_is_atomic(aweb_db_infra):
         )
 
     # No orphaned session should exist for this participant hash.
-    from aweb.chat_service import _participant_hash
-
     p_hash = _participant_hash([str(r["agent_id"]) for r in agent_rows])
 
     row = await aweb_db.fetch_one(

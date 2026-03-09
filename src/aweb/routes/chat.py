@@ -200,9 +200,7 @@ async def create_or_send(
     if len(targets) != len(to_aliases):
         found = {t["alias"] for t in targets}
         missing = [a for a in to_aliases if a not in found]
-        raise HTTPException(
-            status_code=404, detail=f"Agent not found: {missing[0]}"
-        )
+        raise HTTPException(status_code=404, detail=f"Agent not found: {missing[0]}")
 
     # Ensure no duplicate aliases.
     target_ids = sorted({str(t["agent_id"]) for t in targets})
