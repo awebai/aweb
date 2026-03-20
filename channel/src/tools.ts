@@ -89,21 +89,24 @@ async function buildSigningFields(
 ): Promise<Record<string, string>> {
   if (!ctx.seed || !ctx.did) return {};
 
-  env.from_did = ctx.did;
-  env.from_stable_id = ctx.stableID || undefined;
-  env.timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  env.message_id = crypto.randomUUID();
+  const signed: MessageEnvelope = {
+    ...env,
+    from_did: ctx.did,
+    from_stable_id: ctx.stableID || undefined,
+    timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    message_id: crypto.randomUUID(),
+  };
 
-  const sig = await signMessage(ctx.seed, env);
+  const sig = await signMessage(ctx.seed, signed);
 
   return {
     from_did: ctx.did,
     from_stable_id: ctx.stableID || "",
     signature: sig,
     signing_key_id: ctx.did,
-    timestamp: env.timestamp,
-    message_id: env.message_id,
-    signed_payload: canonicalJSON(env),
+    timestamp: signed.timestamp,
+    message_id: signed.message_id!,
+    signed_payload: canonicalJSON(signed),
   };
 }
 

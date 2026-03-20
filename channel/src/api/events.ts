@@ -53,6 +53,8 @@ export async function* streamAgentEvents(
       if (signal.aborted) return;
       // Stream ended or errored — reconnect after brief pause
       await sleep(1000, signal);
+    } finally {
+      resp.body?.cancel().catch(() => {});
     }
   }
 }

@@ -79,7 +79,7 @@ export async function ackMessage(
   client: APIClient,
   messageId: string,
 ): Promise<void> {
-  await client.post(`/v1/messages/${encodeURIComponent(messageId)}/ack`, null);
+  await client.post(`/v1/messages/${encodeURIComponent(messageId)}/ack`);
 }
 
 async function verifyInboxMessage(msg: InboxMessage): Promise<VerificationStatus> {

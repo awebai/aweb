@@ -12,13 +12,14 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolveConfig } from "./config.js";
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent } from "./api/events.js";
-import { fetchInbox, type InboxMessage } from "./api/mail.js";
-import { fetchHistory, type ChatMessage } from "./api/chat.js";
+import { fetchInbox, ackMessage, type InboxMessage } from "./api/mail.js";
+import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { loadSigningKey } from "./identity/keys.js";
 import { PinStore } from "./identity/pinstore.js";
 import { TOOL_DEFINITIONS, handleToolCall } from "./tools.js";
 
 const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
+const MAX_DISPATCHED_IDS = 2000;
 
 async function loadPinStore(): Promise<PinStore> {
   try {
@@ -33,15 +34,20 @@ async function savePinStore(store: PinStore): Promise<void> {
   await writeFile(PIN_STORE_PATH, store.toYAML(), { mode: 0o600 });
 }
 
+interface TOFUResult {
+  status: string | undefined;
+  stored: boolean;
+}
+
 function checkTOFUPin(
   store: PinStore,
   verificationStatus: string | undefined,
   fromAlias: string,
   fromDID: string | undefined,
   fromStableID: string | undefined,
-): string | undefined {
+): TOFUResult {
   if (!verificationStatus || verificationStatus !== "verified" || !fromDID || !fromAlias) {
-    return verificationStatus;
+    return { status: verificationStatus, stored: false };
   }
 
   const pinKey = fromStableID?.startsWith("did:aw:") ? fromStableID : fromDID;
@@ -55,13 +61,24 @@ function checkTOFUPin(
         pin.stable_id = fromStableID;
         pin.did_key = fromDID;
       }
-      return verificationStatus;
+      return { status: verificationStatus, stored: true };
     case "ok":
-      return verificationStatus;
+      return { status: verificationStatus, stored: false };
     case "mismatch":
-      return "identity_mismatch";
+      return { status: "identity_mismatch", stored: false };
     case "skipped":
-      return verificationStatus;
+      return { status: verificationStatus, stored: false };
+  }
+}
+
+function pruneDispatched(dispatched: Set<string>): void {
+  if (dispatched.size <= MAX_DISPATCHED_IDS) return;
+  const excess = dispatched.size - MAX_DISPATCHED_IDS;
+  let removed = 0;
+  for (const id of dispatched) {
+    if (removed >= excess) break;
+    dispatched.delete(id);
+    removed++;
   }
 }
 
@@ -146,12 +163,12 @@ async function startEventLoop(
   selfAlias: string,
   signal: AbortSignal,
 ): Promise<void> {
-  // Track dispatched message IDs to prevent duplicates from burst SSE events
   const dispatched = new Set<string>();
 
   for await (const event of streamAgentEvents(client, signal)) {
     try {
       await dispatchEvent(mcp, client, pinStore, selfAlias, dispatched, event);
+      pruneDispatched(dispatched);
     } catch (err) {
       console.error(`[aw-channel] dispatch error: ${err}`);
     }
@@ -174,12 +191,12 @@ async function dispatchEvent(
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        // TOFU pin check
         const from = msg.from_alias || msg.from_address || "";
-        msg.verification_status = checkTOFUPin(
+        const tofu = checkTOFUPin(
           pinStore, msg.verification_status, from, msg.from_did, msg.from_stable_id,
-        ) as InboxMessage["verification_status"];
-        if (msg.verification_status !== msg.verification_status) pinsDirty = true;
+        );
+        msg.verification_status = tofu.status as InboxMessage["verification_status"];
+        if (tofu.stored) pinsDirty = true;
 
         const meta: Record<string, string> = {
           type: "mail",
@@ -194,6 +211,11 @@ async function dispatchEvent(
           method: "notifications/claude/channel",
           params: { content: msg.body, meta },
         });
+
+        // Auto-ack: message has been delivered to Claude
+        ackMessage(client, msg.message_id).catch((err) =>
+          console.error(`[aw-channel] ack failed: ${err}`),
+        );
       }
       if (pinsDirty) await savePinStore(pinStore);
       break;
@@ -203,16 +225,17 @@ async function dispatchEvent(
       if (!event.session_id) break;
       const messages = await fetchHistory(client, event.session_id, true, 10);
       let pinsDirty = false;
+      let lastMessageId: string | undefined;
       for (const msg of messages) {
         if (msg.from_agent === selfAlias) continue;
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        // TOFU pin check
-        msg.verification_status = checkTOFUPin(
+        const tofu = checkTOFUPin(
           pinStore, msg.verification_status, msg.from_agent, msg.from_did, msg.from_stable_id,
-        ) as ChatMessage["verification_status"];
-        if (msg.verification_status !== msg.verification_status) pinsDirty = true;
+        );
+        msg.verification_status = tofu.status as ChatMessage["verification_status"];
+        if (tofu.stored) pinsDirty = true;
 
         const meta: Record<string, string> = {
           type: "chat",
@@ -227,7 +250,17 @@ async function dispatchEvent(
           method: "notifications/claude/channel",
           params: { content: msg.body, meta },
         });
+
+        lastMessageId = msg.message_id;
       }
+
+      // Mark read up to last dispatched message
+      if (lastMessageId) {
+        markRead(client, event.session_id, lastMessageId).catch((err) =>
+          console.error(`[aw-channel] mark-read failed: ${err}`),
+        );
+      }
+
       if (pinsDirty) await savePinStore(pinStore);
       break;
     }
