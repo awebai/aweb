@@ -5,7 +5,7 @@ export async function loadSigningKey(path: string): Promise<Uint8Array> {
   const content = await readFile(path, "utf-8");
 
   const match = content.match(
-    /-----BEGIN ED25519 PRIVATE KEY-----\n([\s\S]+?)\n-----END ED25519 PRIVATE KEY-----/,
+    /-----BEGIN ED25519 PRIVATE KEY-----\r?\n([\s\S]+?)\r?\n-----END ED25519 PRIVATE KEY-----/,
   );
   if (!match) {
     throw new Error(`no ED25519 PRIVATE KEY PEM block in ${path}`);

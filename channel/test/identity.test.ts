@@ -201,12 +201,14 @@ describe("loadSigningKey", () => {
     const pem = `-----BEGIN ED25519 PRIVATE KEY-----\n${lines.join("\n")}\n-----END ED25519 PRIVATE KEY-----\n`;
     writeFileSync(pemPath, pem, { mode: 0o600 });
 
-    const loaded = await loadSigningKey(pemPath);
-    expect(loaded.length).toBe(32);
-    expect(Buffer.from(loaded).toString("base64")).toBe(
-      Buffer.from(seed).toString("base64"),
-    );
-
-    unlinkSync(pemPath);
+    try {
+      const loaded = await loadSigningKey(pemPath);
+      expect(loaded.length).toBe(32);
+      expect(Buffer.from(loaded).toString("base64")).toBe(
+        Buffer.from(seed).toString("base64"),
+      );
+    } finally {
+      unlinkSync(pemPath);
+    }
   });
 });

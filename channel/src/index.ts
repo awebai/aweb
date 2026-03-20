@@ -5,14 +5,65 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 
 import { resolveConfig } from "./config.js";
 import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent } from "./api/events.js";
-import { fetchInbox } from "./api/mail.js";
-import { fetchHistory } from "./api/chat.js";
+import { fetchInbox, type InboxMessage } from "./api/mail.js";
+import { fetchHistory, type ChatMessage } from "./api/chat.js";
 import { loadSigningKey } from "./identity/keys.js";
+import { PinStore } from "./identity/pinstore.js";
 import { TOOL_DEFINITIONS, handleToolCall } from "./tools.js";
+
+const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
+
+async function loadPinStore(): Promise<PinStore> {
+  try {
+    const content = await readFile(PIN_STORE_PATH, "utf-8");
+    return PinStore.fromYAML(content);
+  } catch {
+    return new PinStore();
+  }
+}
+
+async function savePinStore(store: PinStore): Promise<void> {
+  await writeFile(PIN_STORE_PATH, store.toYAML(), { mode: 0o600 });
+}
+
+function checkTOFUPin(
+  store: PinStore,
+  verificationStatus: string | undefined,
+  fromAlias: string,
+  fromDID: string | undefined,
+  fromStableID: string | undefined,
+): string | undefined {
+  if (!verificationStatus || verificationStatus !== "verified" || !fromDID || !fromAlias) {
+    return verificationStatus;
+  }
+
+  const pinKey = fromStableID?.startsWith("did:aw:") ? fromStableID : fromDID;
+  const result = store.checkPin(fromAlias, pinKey, "persistent");
+
+  switch (result) {
+    case "new":
+      store.storePin(pinKey, fromAlias, "", "");
+      if (fromStableID?.startsWith("did:aw:")) {
+        const pin = store.pins.get(pinKey)!;
+        pin.stable_id = fromStableID;
+        pin.did_key = fromDID;
+      }
+      return verificationStatus;
+    case "ok":
+      return verificationStatus;
+    case "mismatch":
+      return "identity_mismatch";
+    case "skipped":
+      return verificationStatus;
+  }
+}
 
 async function main() {
   const workdir = process.cwd();
@@ -29,6 +80,7 @@ async function main() {
   }
 
   const client = new APIClient(config.baseURL, config.apiKey);
+  const pinStore = await loadPinStore();
   const signing = {
     seed,
     did: config.did,
@@ -62,12 +114,17 @@ Always use the session_id and message_id from the event attributes when replying
   }));
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-    return handleToolCall(
-      req.params.name,
-      req.params.arguments as Record<string, unknown>,
-      client,
-      signing,
-    );
+    try {
+      return await handleToolCall(
+        req.params.name,
+        req.params.arguments as Record<string, unknown>,
+        client,
+        signing,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: "text" as const, text: `error: ${msg}` }], isError: true };
+    }
   });
 
   // Connect MCP over stdio
@@ -79,18 +136,22 @@ Always use the session_id and message_id from the event attributes when replying
   process.on("SIGINT", () => abort.abort());
   process.on("SIGTERM", () => abort.abort());
 
-  startEventLoop(mcp, client, config.alias, abort.signal);
+  startEventLoop(mcp, client, pinStore, config.alias, abort.signal);
 }
 
 async function startEventLoop(
   mcp: Server,
   client: APIClient,
+  pinStore: PinStore,
   selfAlias: string,
   signal: AbortSignal,
 ): Promise<void> {
+  // Track dispatched message IDs to prevent duplicates from burst SSE events
+  const dispatched = new Set<string>();
+
   for await (const event of streamAgentEvents(client, signal)) {
     try {
-      await dispatchEvent(mcp, client, selfAlias, event);
+      await dispatchEvent(mcp, client, pinStore, selfAlias, dispatched, event);
     } catch (err) {
       console.error(`[aw-channel] dispatch error: ${err}`);
     }
@@ -100,16 +161,29 @@ async function startEventLoop(
 async function dispatchEvent(
   mcp: Server,
   client: APIClient,
+  pinStore: PinStore,
   selfAlias: string,
+  dispatched: Set<string>,
   event: AgentEvent,
 ): Promise<void> {
   switch (event.type) {
     case "mail_message": {
       const messages = await fetchInbox(client, true, 10);
+      let pinsDirty = false;
       for (const msg of messages) {
+        if (dispatched.has(msg.message_id)) continue;
+        dispatched.add(msg.message_id);
+
+        // TOFU pin check
+        const from = msg.from_alias || msg.from_address || "";
+        msg.verification_status = checkTOFUPin(
+          pinStore, msg.verification_status, from, msg.from_did, msg.from_stable_id,
+        ) as InboxMessage["verification_status"];
+        if (msg.verification_status !== msg.verification_status) pinsDirty = true;
+
         const meta: Record<string, string> = {
           type: "mail",
-          from: msg.from_alias || msg.from_address || "",
+          from,
           message_id: msg.message_id,
         };
         if (msg.subject) meta.subject = msg.subject;
@@ -121,15 +195,24 @@ async function dispatchEvent(
           params: { content: msg.body, meta },
         });
       }
+      if (pinsDirty) await savePinStore(pinStore);
       break;
     }
 
     case "chat_message": {
       if (!event.session_id) break;
       const messages = await fetchHistory(client, event.session_id, true, 10);
+      let pinsDirty = false;
       for (const msg of messages) {
-        // Skip own messages
         if (msg.from_agent === selfAlias) continue;
+        if (dispatched.has(msg.message_id)) continue;
+        dispatched.add(msg.message_id);
+
+        // TOFU pin check
+        msg.verification_status = checkTOFUPin(
+          pinStore, msg.verification_status, msg.from_agent, msg.from_did, msg.from_stable_id,
+        ) as ChatMessage["verification_status"];
+        if (msg.verification_status !== msg.verification_status) pinsDirty = true;
 
         const meta: Record<string, string> = {
           type: "chat",
@@ -145,6 +228,7 @@ async function dispatchEvent(
           params: { content: msg.body, meta },
         });
       }
+      if (pinsDirty) await savePinStore(pinStore);
       break;
     }
 
@@ -166,7 +250,6 @@ async function dispatchEvent(
       break;
     }
 
-    // Coordination events — surface as informational
     case "work_available": {
       await mcp.notification({
         method: "notifications/claude/channel",

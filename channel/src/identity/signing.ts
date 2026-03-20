@@ -99,7 +99,9 @@ function escapeJSON(s: string): string {
 }
 
 function b64Encode(bytes: Uint8Array): string {
-  const bin = String.fromCharCode(...bytes);
+  // Build binary string without spread to avoid stack overflow on large inputs
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   // Base64 RFC 4648 no padding (RawStdEncoding)
   return btoa(bin).replace(/=+$/, "");
 }
