@@ -59,13 +59,6 @@ class BootstrapIdentityResult:
     address_reachability: str | None = None
 
 
-@dataclass(frozen=True)
-class EnsuredProject:
-    project_id: str
-    slug: str
-    name: str
-
-
 async def _resolve_project(
     tx,
     *,
@@ -152,37 +145,6 @@ async def _resolve_project(
                 owner_ref,
             )
     return dict(project)
-
-
-async def ensure_project(
-    db,
-    *,
-    project_slug: str,
-    project_name: str = "",
-    project_id: str | None = None,
-    tenant_id: str | None = None,
-    owner_type: str | None = None,
-    owner_ref: str | None = None,
-) -> EnsuredProject:
-    aweb_db = db.get_manager("aweb")
-    project_slug = validate_project_slug(project_slug.strip())
-
-    async with aweb_db.transaction() as tx:
-        project = await _resolve_project(
-            tx,
-            project_slug=project_slug,
-            project_name=project_name,
-            project_id=project_id,
-            tenant_id=tenant_id,
-            owner_type=owner_type,
-            owner_ref=owner_ref,
-        )
-
-    return EnsuredProject(
-        project_id=str(project["project_id"]),
-        slug=project["slug"],
-        name=project.get("name") or "",
-    )
 
 
 async def bootstrap_identity(

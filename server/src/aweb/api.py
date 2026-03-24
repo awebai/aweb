@@ -16,6 +16,7 @@ from .logging import configure_logging
 from .mutation_hooks import create_mutation_handler
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .routes.auth import router as auth_router
 from .routes.agents import router as agents_router
 from .routes.chat import router as chat_router
@@ -26,11 +27,12 @@ from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.events import router as events_router
-from .routes.init import router as init_router
+from .routes.init import bootstrap_router, router as init_router
 from .routes.messages import router as messages_router
 from .routes.projects import router as projects_router
 from .routes.reservations import router as reservations_router
 from .routes.scopes import router as scopes_router
+from .routes.spawn import router as spawn_router
 from .routes.status import router as status_router
 from .coordination.routes.policies import router as policies_router
 from .coordination.routes.repos import router as repos_router
@@ -49,12 +51,10 @@ async def _mount_mcp_app(app: FastAPI, db_infra: DatabaseInfra, redis: Redis) ->
         return
 
     from .mcp import create_mcp_app
-    from .mcp.server import NormalizeMountedMCPPathMiddleware
 
     mcp_app = create_mcp_app(db_infra=db_infra, redis=redis, streamable_http_path="/")
     await mcp_app.startup()
     app.state.mcp_app = mcp_app
-    app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
     app.mount("/mcp", mcp_app)
     move_mount_before_spa_fallback(app, "/mcp")
     logger.info("MCP endpoint mounted at /mcp/")
@@ -223,6 +223,7 @@ def create_app(
         lifespan = _make_standalone_lifespan()
 
     app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
@@ -260,8 +261,10 @@ def create_app(
 
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}
 
+    app.include_router(bootstrap_router)
     if enable_bootstrap_routes:
         app.include_router(init_router)
+        app.include_router(spawn_router)
     app.include_router(auth_router)
     app.include_router(agents_router)
     app.include_router(chat_router)

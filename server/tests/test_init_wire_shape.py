@@ -1,15 +1,41 @@
-"""Verify the init route wire shape matches the aw client contract."""
+"""Verify the bootstrap/init wire shape matches the aw client contract."""
 
-from aweb.routes.init import InitRequest, InitResponse
+import pytest
+from pydantic import ValidationError
+
+from aweb.routes.init import CreateProjectRequest, InitRequest, InitResponse
+
+
+def test_create_project_request_requires_project_slug():
+    with pytest.raises(ValidationError, match="Field required"):
+        CreateProjectRequest(alias="alice")
+
+
+def test_create_project_request_requires_handle():
+    with pytest.raises(ValidationError, match="either alias or name is required"):
+        CreateProjectRequest(project_slug="my-project")
+
+
+def test_create_project_request_requires_name_for_persistent():
+    with pytest.raises(ValidationError, match="name is required for persistent identities"):
+        CreateProjectRequest(project_slug="my-project", alias="alice", lifetime="persistent")
+
+
+def test_create_project_request_rejects_both_alias_and_name():
+    with pytest.raises(ValidationError, match="provide either alias or name, not both"):
+        CreateProjectRequest(
+            project_slug="my-project",
+            alias="alice",
+            name="alice",
+        )
 
 
 def test_init_request_accepts_aw_client_fields():
     """InitRequest must accept all fields the aw client sends."""
     req = InitRequest(
         project_slug="my-project",
-        namespace_slug="example.com",
-        alias="alice-01-agent",
-        name="Alice",
+        namespace_slug="example",
+        name="alice",
         address_reachability="public",
         human_name="Alice Agent",
         agent_type="agent",
@@ -19,26 +45,28 @@ def test_init_request_accepts_aw_client_fields():
         lifetime="persistent",
     )
     # namespace_slug should be normalized to namespace
-    assert req.namespace == "example.com"
+    assert req.namespace == "example"
+    assert req.name == "alice"
+    assert req.alias is None
 
 
 def test_init_request_accepts_namespace_directly():
     """InitRequest still accepts the namespace field directly."""
     req = InitRequest(
         project_slug="my-project",
-        namespace="example.com",
+        namespace="example",
     )
-    assert req.namespace == "example.com"
+    assert req.namespace == "example"
 
 
 def test_init_request_namespace_slug_does_not_override_namespace():
     """When both namespace and namespace_slug are provided, namespace wins."""
     req = InitRequest(
         project_slug="my-project",
-        namespace="primary.com",
-        namespace_slug="secondary.com",
+        namespace="primary",
+        namespace_slug="secondary",
     )
-    assert req.namespace == "primary.com"
+    assert req.namespace == "primary"
 
 
 def test_init_request_accepts_coordination_extension_fields():
