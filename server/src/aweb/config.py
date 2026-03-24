@@ -32,7 +32,6 @@ class Settings:
     database_uses_transaction_pooler: bool
     database_statement_cache_size: Optional[int]
     presence_ttl_seconds: int
-    dashboard_human: str
 
 
 def get_settings() -> Settings:
@@ -89,5 +88,4 @@ def get_settings() -> Settings:
             "DATABASE_STATEMENT_CACHE_SIZE",
         ),
         presence_ttl_seconds=presence_ttl,
-        dashboard_human=os.getenv("AWEB_DASHBOARD_HUMAN", "admin"),
     )

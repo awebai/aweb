@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from aweb.auth import (
     _parse_internal_auth_context,
@@ -99,62 +99,10 @@ class MCPAuthMiddleware:
             if ctx is None:
                 return  # Response already sent by _resolve_bearer_auth.
 
-        log_hosted_mcp = ctx.principal_type == "m"
-        response_status: int | None = None
-
-        async def _send_with_status(message: Message) -> None:
-            nonlocal response_status
-            if message["type"] == "http.response.start":
-                response_status = int(message["status"])
-            await send(message)
-
-        if log_hosted_mcp:
-            logger.info(
-                "Hosted MCP request start method=%s path=%s origin=%s accept=%s content_type=%s "
-                "protocol_version=%s session_id=%s project_id=%s actor_id=%s principal_id=%s",
-                scope.get("method"),
-                scope.get("path"),
-                request.headers.get("origin", ""),
-                request.headers.get("accept", ""),
-                request.headers.get("content-type", ""),
-                request.headers.get("mcp-protocol-version", ""),
-                request.headers.get("mcp-session-id", ""),
-                ctx.project_id,
-                ctx.agent_id,
-                ctx.principal_id or "",
-            )
-
         cv_token = _auth_context.set(ctx)
         try:
-            await self.app(scope, receive, _send_with_status if log_hosted_mcp else send)
-        except Exception:
-            if log_hosted_mcp:
-                logger.exception(
-                    "Hosted MCP request exception method=%s path=%s protocol_version=%s session_id=%s "
-                    "project_id=%s actor_id=%s principal_id=%s",
-                    scope.get("method"),
-                    scope.get("path"),
-                    request.headers.get("mcp-protocol-version", ""),
-                    request.headers.get("mcp-session-id", ""),
-                    ctx.project_id,
-                    ctx.agent_id,
-                    ctx.principal_id or "",
-                )
-            raise
+            await self.app(scope, receive, send)
         finally:
-            if log_hosted_mcp:
-                logger.info(
-                    "Hosted MCP request finished method=%s path=%s status=%s protocol_version=%s "
-                    "session_id=%s project_id=%s actor_id=%s principal_id=%s",
-                    scope.get("method"),
-                    scope.get("path"),
-                    response_status,
-                    request.headers.get("mcp-protocol-version", ""),
-                    request.headers.get("mcp-session-id", ""),
-                    ctx.project_id,
-                    ctx.agent_id,
-                    ctx.principal_id or "",
-                )
             _auth_context.reset(cv_token)
 
     @staticmethod

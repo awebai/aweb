@@ -1008,35 +1008,6 @@ async def heartbeat(
             },
         )
 
-    # Track workspace for usage metering (Cloud mode only, best effort, non-blocking).
-    # In Cloud deployments, usage_service is injected into app.state by Cloud middleware.
-    usage_service = getattr(request.app.state, "usage_service", None)
-    if usage_service:
-        try:
-            await usage_service.track_workspace(
-                project_id=str(project_id),
-                workspace_id=payload.workspace_id,
-                presence_ttl_seconds=settings.presence_ttl_seconds,
-            )
-        except ValueError as e:
-            logger.warning(
-                "Usage metering track_workspace configuration error",
-                extra={
-                    "workspace_id": payload.workspace_id,
-                    "project_id": str(project_id),
-                    "error": str(e),
-                },
-            )
-        except Exception as e:
-            logger.warning(
-                "Usage metering track_workspace failed",
-                extra={
-                    "workspace_id": payload.workspace_id,
-                    "project_id": str(project_id),
-                    "error": str(e),
-                },
-            )
-
     return WorkspaceHeartbeatResponse(ok=True, workspace_id=payload.workspace_id)
 
 
@@ -1497,7 +1468,6 @@ async def list_workspaces(
     server_db = db_infra.get_manager("server")
 
     # Build query with optional filters
-    # Note: agent workspaces have repo_id, dashboard workspaces don't
     query = (
         """
         SELECT
@@ -1662,8 +1632,8 @@ async def list_team_workspaces(
     """
     List a bounded team-status view of workspaces for coordination.
 
-    This endpoint is optimized for CLI/dashboard usage and always returns a
-    limited, prioritized set of workspaces.
+    This endpoint is optimized for CLI usage and always returns a limited,
+    prioritized set of workspaces.
     """
     project_id = await get_project_from_auth(request, db_infra)
     public_reader = is_public_reader(request)

@@ -282,7 +282,7 @@ async def stream_events_multi(
 
     # Redis pub/sub has no message persistence. Events published while the
     # subscription is down (during reconnect or initial connect failure) are
-    # silently lost. This is acceptable for dashboard SSE consumers because:
+    # silently lost. This is acceptable for SSE consumers because:
     # 1. The next successfully received event carries current state.
     # 2. Consumers that need at-least-once delivery should poll DB state as
     #    a catch-up mechanism (the per-agent wake stream in routes/events.py

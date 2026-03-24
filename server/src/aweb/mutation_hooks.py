@@ -1,8 +1,8 @@
-"""Translate aweb mutation hooks into aweb SSE events.
+"""Translate aweb mutation hooks into SSE events.
 
 aweb fires app.state.on_mutation(event_type, context) after successful
 mutations. This module registers a handler that publishes corresponding
-Event dataclasses to Redis pub/sub for the dashboard SSE stream.
+Event dataclasses to Redis pub/sub for the SSE event stream.
 """
 
 from __future__ import annotations

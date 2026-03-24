@@ -82,22 +82,6 @@ def _trust_aweb_proxy_headers() -> bool:
     )
 
 
-class AuthConfigurationError(Exception):
-    """Raised when auth configuration is invalid at startup."""
-
-
-def validate_auth_config() -> None:
-    if _trust_aweb_proxy_headers() and not (
-        os.getenv("AWEB_INTERNAL_AUTH_SECRET") or os.getenv("SESSION_SECRET_KEY")
-    ):
-        msg = (
-            "AWEB_TRUST_PROXY_HEADERS is enabled but no internal auth secret is configured. "
-            "Set AWEB_INTERNAL_AUTH_SECRET."
-        )
-        logger.error(msg)
-        raise AuthConfigurationError(msg)
-
-
 def _parse_internal_auth_context(request: Request):
     from .internal_auth import parse_internal_auth_context
 

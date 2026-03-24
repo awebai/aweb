@@ -1,12 +1,10 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
@@ -24,13 +22,18 @@ from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
+from .routes.did import router as did_router
+from .routes.dns_addresses import router as dns_addresses_router
+from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.events import router as events_router
 from .routes.init import router as init_router
 from .routes.messages import router as messages_router
+from .routes.projects import router as projects_router
 from .routes.reservations import router as reservations_router
+from .routes.scopes import router as scopes_router
+from .routes.status import router as status_router
 from .coordination.routes.policies import router as policies_router
 from .coordination.routes.repos import router as repos_router
-from .routes.status import router as status_router
 from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
 
@@ -160,7 +163,6 @@ def create_app(
     *,
     db_infra: Optional[DatabaseInfra] = None,
     redis: Optional[Redis] = None,
-    serve_frontend: bool = True,
     enable_bootstrap_routes: bool = True,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
@@ -170,8 +172,6 @@ def create_app(
                   If None, creates own connections (standalone mode).
         redis: External async Redis client (library mode).
                If None, creates own connection (standalone mode).
-        serve_frontend: If True, serve the dashboard frontend from /frontend/dist.
-                        Set to False when embedding in another app that serves its own UI.
         enable_bootstrap_routes: If True, expose bootstrap routes such as `/v1/workspaces/init`.
                                  Embedded/proxy deployments should set this to False.
 
@@ -260,57 +260,27 @@ def create_app(
 
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}
 
-    # Route order matters: project-facing coordination routes should win on
-    # overlapping paths, while protocol lifecycle/comms surfaces stay in the
-    # embedded aweb core.
     if enable_bootstrap_routes:
         app.include_router(init_router)
     app.include_router(auth_router)
-    # The agents router handles both project-facing list/register/activity
-    # routes and the embedded protocol lifecycle operations.
     app.include_router(agents_router)
     app.include_router(chat_router)
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)
+    app.include_router(did_router)
+    app.include_router(dns_addresses_router)
+    app.include_router(dns_namespaces_router)
     app.include_router(events_router)
     app.include_router(messages_router)
+    app.include_router(projects_router)
     app.include_router(reservations_router)
-    app.include_router(policies_router)
+    app.include_router(scopes_router)
     app.include_router(status_router)
+    app.include_router(policies_router)
     app.include_router(tasks_router)
-
-
     app.include_router(workspaces_router)
     app.include_router(repos_router)
-
-    # Serve frontend dashboard if available and enabled
-    if serve_frontend:
-        # Look for frontend dist relative to this file's location
-        frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
-        if frontend_dist.exists():
-            # Serve static assets
-            app.mount(
-                "/assets",
-                StaticFiles(directory=frontend_dist / "assets"),
-                name="assets",
-            )
-
-            # Serve index.html for all unmatched routes (SPA routing)
-            from fastapi.responses import FileResponse
-
-            @app.get("/{full_path:path}", include_in_schema=False)
-            async def serve_spa(full_path: str):
-                # API routes are handled by routers registered before this catch-all
-                # This only catches non-API paths for SPA routing
-                index_path = frontend_dist / "index.html"
-                if index_path.exists():
-                    return FileResponse(index_path)
-                raise HTTPException(status_code=404, detail="Frontend not found")
-
-            logger.info("Frontend dashboard enabled at /")
-        else:
-            logger.debug("Frontend not found at %s, skipping", frontend_dist)
 
     return app
 
