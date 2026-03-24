@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
         deleted_at IS NOT NULL OR
         (
             (workspace_type = 'agent' AND repo_id IS NOT NULL) OR
-            (workspace_type IN ('dashboard', 'hosted', 'local_dir', 'service_process', 'manual') AND repo_id IS NULL)
+            (workspace_type IN ('dashboard', 'local_dir', 'service_process', 'manual') AND repo_id IS NULL)
         )
     ),
     CONSTRAINT chk_workspace_role_length CHECK (role IS NULL OR length(role) <= 50)
