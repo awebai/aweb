@@ -3,7 +3,7 @@ name: aw Sync and Release
 # When we tag aw-vX.Y.Z on aweb, this workflow:
 # 1. Pushes cli/go/ contents to awebai/aw (preserving aw's .github/)
 # 2. Tags the commit as vX.Y.Z
-# 3. Triggers aw's release workflow via workflow_dispatch
+# The tag push triggers aw's own release workflow (goreleaser + npm).
 #
 # Requires AW_REPO_TOKEN secret: fine-grained PAT with contents:write,
 # actions:write, and metadata:read on awebai/aw.
@@ -56,18 +56,6 @@ jobs:
             git push origin main
           fi
 
-          # Tag (always — this is what the release is built from)
+          # Tag — the push triggers aw's release workflow
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
-
-      - name: Trigger aw release workflow
-        env:
-          AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          curl -sf -X POST \
-            -H "Authorization: token ${AW_REPO_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/awebai/aw/actions/workflows/aw-release.yml/dispatches" \
-            -d "{\"ref\":\"v${VERSION}\",\"inputs\":{\"tag\":\"v${VERSION}\"}}"
-          echo "Dispatched aw release workflow for v${VERSION}"
