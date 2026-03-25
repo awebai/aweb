@@ -5,7 +5,7 @@ used to live in this document.
 
 The normative identity source of truth is:
 
-- [../aweb-cloud-quinn/docs/id-sot.md](../aweb-cloud-quinn/docs/id-sot.md)
+- [../2026-03-23-sot.md](../2026-03-23-sot.md)
 
 Use these current repo documents for implementation guidance:
 

@@ -1,0 +1,910 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+	"github.com/joho/godotenv"
+)
+
+// DefaultServerURL is the public aweb instance used when no server URL is
+// configured via flags, environment, or local config.
+const DefaultServerURL = "https://app.aweb.ai"
+
+func loadDotenvBestEffort() {
+	// Best effort: load from current working directory.
+	_ = godotenv.Load()
+	_ = godotenv.Overload(".env.aweb")
+}
+
+// lastClient holds the most recently created client, used to check
+// the X-Latest-Client-Version header after command execution.
+var lastClient *aweb.Client
+
+func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
+	wd, _ := os.Getwd()
+	return resolveClientSelectionForDir(wd)
+}
+
+func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
+	cfg, err := awconfig.LoadGlobal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+	sel, err := awconfig.Resolve(cfg, awconfig.ResolveOptions{
+		ServerName:        serverFlag,
+		AccountName:       accountFlag,
+		ClientName:        "aw",
+		WorkingDir:        workingDir,
+		AllowEnvOverrides: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sel, nil
+}
+
+func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := checkIdentityMismatch(workingDir, sel); err != nil {
+		return nil, nil, err
+	}
+
+	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	sel.BaseURL = baseURL
+
+	var c *aweb.Client
+	if sel.SigningKey != "" && sel.DID != "" {
+		priv, err := awid.LoadSigningKey(sel.SigningKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load signing key: %w", err)
+		}
+		c, err = aweb.NewWithIdentity(baseURL, sel.APIKey, priv, sel.DID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid identity configuration: %w", err)
+		}
+		c.SetAddress(deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle))
+		c.SetProjectSlug(sel.DefaultProject)
+		if sel.StableID != "" {
+			c.SetStableID(sel.StableID)
+		}
+		c.SetResolver(&awid.ServerResolver{Client: c.Client})
+
+		// Load TOFU pin store for sender identity verification.
+		cfgPath, err := defaultGlobalPath()
+		if err != nil {
+			return nil, nil, err
+		}
+		pinPath := filepath.Join(filepath.Dir(cfgPath), "known_agents.yaml")
+		ps, err := awid.LoadPinStore(pinPath)
+		if err != nil {
+			debugLog("load pin store: %v", err)
+			ps = awid.NewPinStore()
+		}
+		c.SetPinStore(ps, pinPath)
+	} else {
+		var err error
+		c, err = aweb.NewWithAPIKey(baseURL, sel.APIKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid base URL: %w", err)
+		}
+	}
+
+	configureBaseURLFallback(c, sel, baseURL)
+	lastClient = c
+	return c, sel, nil
+}
+
+func resolveClient() (*aweb.Client, error) {
+	c, _, err := resolveClientSelection()
+	return c, err
+}
+
+// resolveAPIKeyOnly resolves config and creates a client using only
+// the API key (no signing key). Used by commands like reset that need
+// to work even when the local signing key is missing or invalid.
+func resolveAPIKeyOnly() (*aweb.Client, *awconfig.Selection, error) {
+	wd, _ := os.Getwd()
+	sel, err := resolveSelectionForDir(wd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	sel.BaseURL = baseURL
+
+	c, err := aweb.NewWithAPIKey(baseURL, sel.APIKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid base URL: %w", err)
+	}
+	configureBaseURLFallback(c, sel, baseURL)
+	lastClient = c
+	return c, sel, nil
+}
+
+func cleanBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("empty base url")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid base url %q", raw)
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+
+func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
+	// Stable across our servers: exists (POST) on /v1/agents/heartbeat.
+	// We use GET to avoid side effects; success is any non-404 response
+	// with a non-HTML content type (to distinguish a web app from an API).
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/agents/heartbeat", nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return false, err
+	}
+	_ = resp.Body.Close()
+	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "text/html") {
+		debugLog("probe aweb base url: %s rejected (HTML response)", baseURL)
+		return false, nil
+	}
+	return true, nil
+}
+
+func resolveWorkingBaseURL(raw string) (string, error) {
+	return resolveWorkingBaseURLContext(context.Background(), raw)
+}
+
+func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, error) {
+	base, err := cleanBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+
+	candidates := make([]string, 0, 4)
+	add := func(v string) {
+		v = strings.TrimSuffix(strings.TrimSpace(v), "/")
+		if v == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == v {
+				return
+			}
+		}
+		candidates = append(candidates, v)
+	}
+
+	add(base)
+	if strings.HasSuffix(base, "/v1") {
+		add(strings.TrimSuffix(base, "/v1"))
+	}
+	if strings.HasSuffix(base, "/api/v1") {
+		add(strings.TrimSuffix(base, "/v1"))
+	}
+	if strings.HasSuffix(base, "/api") {
+		add(strings.TrimSuffix(base, "/api"))
+	}
+	if !strings.HasSuffix(base, "/api") {
+		add(base + "/api")
+	}
+
+	var lastErr error
+	for _, cand := range candidates {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		debugLog("resolve base url: probing %s", cand)
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		ok, err := probeAwebBaseURL(probeCtx, cand)
+		cancel()
+		if err != nil {
+			debugLog("resolve base url: probe %s failed: %v", cand, err)
+			lastErr = err
+			continue
+		}
+		if ok {
+			debugLog("resolve base url: selected %s", cand)
+			return cand, nil
+		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("no aweb API detected at %q (tried %v): %w", raw, candidates, lastErr)
+	}
+	return "", fmt.Errorf("no aweb API detected at %q (tried %v)", raw, candidates)
+}
+
+func resolveAuthenticatedBaseURL(raw string) (string, error) {
+	if strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return resolveWorkingBaseURL(raw)
+	}
+	return cleanBaseURL(raw)
+}
+
+func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL string) {
+	if c == nil || sel == nil || strings.TrimSpace(sel.ServerName) == "" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return
+	}
+	state := &baseURLFallbackState{
+		configuredBaseURL: strings.TrimSuffix(baseURL, "/"),
+		currentBaseURL:    strings.TrimSuffix(baseURL, "/"),
+		persist: func(resolved string) {
+			if err := persistResolvedServerURL(sel.ServerName, resolved); err != nil {
+				debugLog("persist resolved base URL for %s: %v", sel.ServerName, err)
+			}
+		},
+	}
+	c.SetHTTPClient(&http.Client{
+		Timeout: awid.DefaultTimeout,
+		Transport: &baseURLFallbackTransport{
+			base:  http.DefaultTransport,
+			state: state,
+		},
+	})
+	c.SetSSEClient(&http.Client{
+		Transport: &baseURLFallbackTransport{
+			base:  http.DefaultTransport,
+			state: state,
+		},
+	})
+}
+
+func persistResolvedServerURL(serverName, baseURL string) error {
+	serverName = strings.TrimSpace(serverName)
+	baseURL = strings.TrimSpace(baseURL)
+	if serverName == "" || baseURL == "" {
+		return nil
+	}
+	return awconfig.UpdateGlobal(func(cfg *awconfig.GlobalConfig) error {
+		if cfg.Servers == nil {
+			cfg.Servers = map[string]awconfig.Server{}
+		}
+		srv := cfg.Servers[serverName]
+		if strings.TrimSpace(srv.URL) == baseURL {
+			return nil
+		}
+		srv.URL = baseURL
+		cfg.Servers[serverName] = srv
+		return nil
+	})
+}
+
+type baseURLFallbackState struct {
+	configuredBaseURL string
+	currentBaseURL    string
+	mu                sync.RWMutex
+	persist           func(string)
+}
+
+type baseURLFallbackTransport struct {
+	base  http.RoundTripper
+	state *baseURLFallbackState
+}
+
+func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if t.state == nil {
+		return base.RoundTrip(req)
+	}
+
+	current := t.state.current()
+	prepared, err := t.requestForBase(req, current)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := base.RoundTrip(prepared)
+	if !shouldRetryBaseURLRequest(resp, err) {
+		return resp, err
+	}
+
+	debugLog("baseurl fallback: triggering for %s %s", req.Method, req.URL.String())
+	fresh, changed := t.state.refresh(req.Context(), current)
+	if !changed {
+		debugLog("baseurl fallback: no recovered base URL for %s", current)
+		return resp, err
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+
+	retried, err := t.requestForBase(req, fresh)
+	if err != nil {
+		return nil, err
+	}
+	resp, err = base.RoundTrip(retried)
+	if err == nil && t.state.persist != nil {
+		t.state.persist(fresh)
+	}
+	debugLog("baseurl fallback: retried via %s", fresh)
+	return resp, err
+}
+
+func (s *baseURLFallbackState) current() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.currentBaseURL
+}
+
+func (s *baseURLFallbackState) refresh(ctx context.Context, stale string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.currentBaseURL != stale {
+		return s.currentBaseURL, s.currentBaseURL != stale
+	}
+	fresh, err := resolveWorkingBaseURLContext(ctx, stale)
+	if err != nil || fresh == "" || fresh == stale {
+		return stale, false
+	}
+	s.currentBaseURL = fresh
+	return fresh, true
+}
+
+func (t *baseURLFallbackTransport) requestForBase(req *http.Request, baseURL string) (*http.Request, error) {
+	if t.state == nil || strings.TrimSuffix(baseURL, "/") == t.state.configuredBaseURL {
+		return req, nil
+	}
+
+	clone := req.Clone(req.Context())
+	if req.Body != nil {
+		if req.GetBody == nil {
+			return nil, fmt.Errorf("request body cannot be retried for base URL fallback")
+		}
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		clone.Body = body
+	}
+	rebased, err := rebaseRequestURL(req.URL, t.state.configuredBaseURL, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	clone.URL = rebased
+	clone.Host = rebased.Host
+	return clone, nil
+}
+
+func shouldRetryBaseURLRequest(resp *http.Response, err error) bool {
+	if err != nil {
+		return true
+	}
+	return resp != nil && resp.StatusCode == http.StatusNotFound
+}
+
+func rebaseRequestURL(reqURL *url.URL, fromBaseURL, toBaseURL string) (*url.URL, error) {
+	from, err := url.Parse(fromBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	to, err := url.Parse(toBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	fromPath := strings.TrimSuffix(from.Path, "/")
+	toPath := strings.TrimSuffix(to.Path, "/")
+	relPath := reqURL.Path
+	if fromPath != "" && strings.HasPrefix(relPath, fromPath) {
+		relPath = strings.TrimPrefix(relPath, fromPath)
+		if relPath == "" {
+			relPath = "/"
+		}
+	}
+
+	rebased := *reqURL
+	rebased.Scheme = to.Scheme
+	rebased.Host = to.Host
+	rebased.Path = joinURLPath(toPath, relPath)
+	rebased.RawPath = ""
+	return &rebased, nil
+}
+
+func joinURLPath(basePath, relPath string) string {
+	basePath = strings.TrimSuffix(basePath, "/")
+	if relPath == "" {
+		relPath = "/"
+	}
+	if !strings.HasPrefix(relPath, "/") {
+		relPath = "/" + relPath
+	}
+	if basePath == "" {
+		return relPath
+	}
+	return basePath + relPath
+}
+
+func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, global *awconfig.GlobalConfig, err error) {
+	global, err = awconfig.LoadGlobal()
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	wd, _ := os.Getwd()
+	ctx, _, _ := awconfig.LoadWorktreeContextFromDir(wd)
+
+	baseURL = strings.TrimSpace(urlVal)
+	serverName = strings.TrimSpace(serverVal)
+
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+	}
+	// If the user didn't specify a server/url, prefer the current worktree context
+	// (keeps "init/rotate" operations scoped to the same server as normal commands).
+	if baseURL == "" && serverName == "" && ctx != nil {
+		if v := strings.TrimSpace(ctx.DefaultAccount); v != "" {
+			if acct, ok := global.Accounts[v]; ok {
+				serverName = strings.TrimSpace(acct.Server)
+			}
+		}
+		if serverName == "" && len(ctx.ServerAccounts) == 1 {
+			for k := range ctx.ServerAccounts {
+				serverName = strings.TrimSpace(k)
+				break
+			}
+		}
+	}
+	if baseURL == "" && serverName != "" {
+		if srv, ok := global.Servers[serverName]; ok && strings.TrimSpace(srv.URL) != "" {
+			baseURL = strings.TrimSpace(srv.URL)
+		} else {
+			baseURL, err = awconfig.DeriveBaseURLFromServerName(serverName)
+			if err != nil {
+				return "", "", nil, err
+			}
+		}
+	}
+	if baseURL == "" {
+		baseURL = DefaultServerURL
+	}
+	if serverName == "" {
+		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
+		if derr == nil {
+			serverName = derived
+		}
+	}
+	if err := awconfig.ValidateBaseURL(baseURL); err != nil {
+		return "", "", nil, err
+	}
+	baseURL, err = resolveWorkingBaseURL(baseURL)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return baseURL, serverName, global, nil
+}
+
+func isTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func sanitizeSlug(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "demo"
+	}
+	return out
+}
+
+func promptString(label, defaultValue string) (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprintf(os.Stderr, "%s [%s]: ", label, defaultValue)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultValue, nil
+	}
+	return line, nil
+}
+
+func promptRequiredString(label, suggestedValue string) (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		if strings.TrimSpace(suggestedValue) != "" {
+			fmt.Fprintf(os.Stderr, "%s [%s]: ", label, suggestedValue)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: ", label)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line, nil
+		}
+		if strings.TrimSpace(suggestedValue) != "" {
+			return strings.TrimSpace(suggestedValue), nil
+		}
+		fmt.Fprintf(os.Stderr, "%s is required.\n", label)
+	}
+}
+
+func promptIndexedChoice(label string, options []string, defaultIndex int, in io.Reader, out io.Writer) (string, error) {
+	if len(options) == 0 {
+		return "", fmt.Errorf("no options available")
+	}
+	hasDefault := defaultIndex >= 0 && defaultIndex < len(options)
+	if !hasDefault {
+		defaultIndex = -1
+	}
+
+	for i, option := range options {
+		fmt.Fprintf(out, "  %d. %s\n", i+1, option)
+	}
+
+	reader := bufio.NewReader(in)
+	for {
+		if hasDefault {
+			fmt.Fprintf(out, "%s number [%d]: ", label, defaultIndex+1)
+		} else {
+			fmt.Fprintf(out, "%s number: ", label)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if hasDefault {
+				return options[defaultIndex], nil
+			}
+			fmt.Fprintf(out, "Enter a number between 1 and %d.\n", len(options))
+			continue
+		}
+		index, err := strconv.Atoi(line)
+		if err == nil && index >= 1 && index <= len(options) {
+			return options[index-1], nil
+		}
+		fmt.Fprintf(out, "Enter a number between 1 and %d.\n", len(options))
+	}
+}
+
+func defaultGlobalPath() (string, error) {
+	return awconfig.DefaultGlobalConfigPath()
+}
+
+func sanitizeKeyComponent(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return "x"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "x"
+	}
+	return out
+}
+
+func deriveAccountName(serverName, namespaceSlug, handle string) string {
+	return "acct-" + sanitizeKeyComponent(serverName) + "__" + sanitizeKeyComponent(namespaceSlug) + "__" + sanitizeKeyComponent(handle)
+}
+
+// deriveIdentityAddress builds the canonical external identity address from
+// namespace/project context plus the local routing handle or permanent name.
+func deriveIdentityAddress(namespaceSlug, projectSlug, handle string) string {
+	if namespaceSlug != "" {
+		return namespaceSlug + "/" + handle
+	}
+	if projectSlug != "" {
+		return projectSlug + "/" + handle
+	}
+	return handle
+}
+
+func handleFromAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return ""
+	}
+	if idx := strings.LastIndexByte(address, '/'); idx >= 0 && idx+1 < len(address) {
+		return strings.TrimSpace(address[idx+1:])
+	}
+	if idx := strings.LastIndexByte(address, '~'); idx >= 0 && idx+1 < len(address) {
+		return strings.TrimSpace(address[idx+1:])
+	}
+	return address
+}
+
+func writeOrUpdateContext(serverName, accountName string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return writeOrUpdateContextAt(wd, serverName, accountName, true)
+}
+
+func writeOrUpdateContextWithOptions(serverName, accountName string, setDefault bool) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return writeOrUpdateContextAt(wd, serverName, accountName, setDefault)
+}
+
+func writeOrUpdateContextAt(workingDir, serverName, accountName string, setDefault bool) error {
+	// Always write to workingDir/.aw/context. Never walk up the directory
+	// tree — that would write to a parent project's context and cause
+	// identity mismatches.
+	ctxPath := filepath.Join(workingDir, awconfig.DefaultWorktreeContextRelativePath())
+
+	ctx := &awconfig.WorktreeContext{
+		DefaultAccount: accountName,
+		ServerAccounts: map[string]string{serverName: accountName},
+	}
+	if existing, err := awconfig.LoadWorktreeContextFrom(ctxPath); err == nil {
+		ctx = existing
+		if ctx.ServerAccounts == nil {
+			ctx.ServerAccounts = map[string]string{}
+		}
+		// Multi-server-friendly: keep the existing default unless explicitly asked
+		// to override it, while still adding/updating the per-server mapping.
+		if strings.TrimSpace(ctx.DefaultAccount) == "" || setDefault {
+			ctx.DefaultAccount = accountName
+		}
+		ctx.ServerAccounts[serverName] = accountName
+	}
+	if ctx.ClientDefaultAccounts == nil {
+		ctx.ClientDefaultAccounts = map[string]string{}
+	}
+	// `aw` should default to the last identity set by `aw` in this directory.
+	ctx.ClientDefaultAccounts["aw"] = accountName
+
+	return awconfig.SaveWorktreeContextTo(ctxPath, ctx)
+}
+
+func printJSON(v any) {
+	data, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Println(string(data))
+}
+
+func printOutput(v any, formatter func(v any) string) {
+	if jsonFlag {
+		printJSON(v)
+		return
+	}
+	fmt.Print(formatter(v))
+}
+
+func parseTimeBestEffort(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts, true
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts, true
+	}
+	return time.Time{}, false
+}
+
+func formatTimeAgo(timestamp string) string {
+	ts, ok := parseTimeBestEffort(timestamp)
+	if !ok {
+		return timestamp
+	}
+	d := time.Since(ts)
+	if d < 0 {
+		d = 0
+	}
+	secs := int(d.Seconds())
+	if secs < 60 {
+		return fmt.Sprintf("%ds ago", secs)
+	}
+	mins := secs / 60
+	if mins < 60 {
+		return fmt.Sprintf("%dm ago", mins)
+	}
+	hours := mins / 60
+	if hours < 48 {
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	days := hours / 24
+	return fmt.Sprintf("%dd ago", days)
+}
+
+func formatDuration(seconds int) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	if seconds < 3600 {
+		mins := seconds / 60
+		secs := seconds % 60
+		if secs == 0 {
+			return fmt.Sprintf("%dm", mins)
+		}
+		return fmt.Sprintf("%dm%ds", mins, secs)
+	}
+	hours := seconds / 3600
+	mins := (seconds % 3600) / 60
+	if mins == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, mins)
+}
+
+func ttlRemainingSeconds(expiresAt string, now time.Time) int {
+	if expiresAt == "" {
+		return 0
+	}
+	ts, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		ts, err = time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			return 0
+		}
+	}
+	secs := int(math.Ceil(ts.Sub(now).Seconds()))
+	if secs < 0 {
+		return 0
+	}
+	return secs
+}
+
+// checkVerificationRequired detects EMAIL_VERIFICATION_REQUIRED 403 errors
+// and returns a user-friendly message. Returns "" for non-matching errors.
+func checkVerificationRequired(err error) string {
+	statusCode, ok := awid.HTTPStatusCode(err)
+	if !ok || statusCode != 403 {
+		return ""
+	}
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return ""
+	}
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details struct {
+				MaskedEmail string `json:"masked_email"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &envelope) != nil || envelope.Error.Code != "EMAIL_VERIFICATION_REQUIRED" {
+		return ""
+	}
+	hint := "email verification required"
+	if envelope.Error.Details.MaskedEmail != "" {
+		hint += " (" + envelope.Error.Details.MaskedEmail + ")"
+	}
+	hint += ". Verify this account in the dashboard, then reconnect with `aw connect` or re-run `aw init` with a fresh project key."
+	return hint
+}
+
+// networkError wraps an error with a user-friendly message for network 404 errors.
+// When a network send fails because the target agent doesn't exist, the raw error
+// is "aweb: http 404: ..." which looks like a broken endpoint. This rewrites it
+// to mention the target address.
+func networkError(err error, target string) error {
+	code, ok := awid.HTTPStatusCode(err)
+	if ok && code == 404 {
+		return fmt.Errorf("agent not found: %s", target)
+	}
+	return err
+}
+
+// checkIdentityMismatch verifies that the resolved account matches
+// the local workspace identity. Prevents silently running as the
+// wrong agent when .aw/context resolves to a different account than
+// .aw/workspace.yaml expects.
+func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
+	if sel == nil || strings.TrimSpace(sel.IdentityHandle) == "" {
+		return nil
+	}
+	ws, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err != nil || ws == nil {
+		return nil
+	}
+	wsAlias := strings.TrimSpace(ws.Alias)
+	selAlias := strings.TrimSpace(sel.IdentityHandle)
+	if wsAlias == "" || selAlias == "" {
+		return nil
+	}
+	if wsAlias != selAlias {
+		ctxPath := "(resolved from config)"
+		if p, err := awconfig.FindWorktreeContextPath(workingDir); err == nil {
+			ctxPath = p
+		}
+		wsPath := "(unknown)"
+		if p, err := awconfig.FindWorktreeWorkspacePath(workingDir); err == nil {
+			wsPath = p
+		}
+		return fmt.Errorf("identity mismatch: .aw/context at %s resolves to %q, but .aw/workspace.yaml at %s says %q. Run 'aw init' in this worktree to fix.",
+			ctxPath, selAlias, wsPath, wsAlias)
+	}
+	return nil
+}
+
+func debugLog(format string, args ...any) {
+	if debugFlag {
+		fmt.Fprintf(os.Stderr, "[debug] "+format+"\n", args...)
+	}
+}

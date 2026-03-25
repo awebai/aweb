@@ -34,6 +34,8 @@ type recordingUI struct {
 	*fakeInputController
 	statusMu sync.Mutex
 	statuses []string
+	busyMu   sync.Mutex
+	busy     []bool
 	outputMu sync.Mutex
 	output   string
 }
@@ -55,6 +57,11 @@ func (r *recordingUI) SetInputLine(string)      {}
 func (r *recordingUI) ClearInputLine()          {}
 func (r *recordingUI) SetExitConfirmation(bool) {}
 func (r *recordingUI) HasActiveProgram() bool   { return true }
+func (r *recordingUI) SetBusy(active bool) {
+	r.busyMu.Lock()
+	defer r.busyMu.Unlock()
+	r.busy = append(r.busy, active)
+}
 
 func (r *recordingUI) SetStatusLine(text string) {
 	r.statusMu.Lock()
@@ -83,6 +90,17 @@ func (r *recordingUI) sawOutputContaining(substr string) bool {
 	r.outputMu.Lock()
 	defer r.outputMu.Unlock()
 	return strings.Contains(r.output, substr)
+}
+
+func (r *recordingUI) sawBusy(active bool) bool {
+	r.busyMu.Lock()
+	defer r.busyMu.Unlock()
+	for _, state := range r.busy {
+		if state == active {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeDispatcher struct {
@@ -206,6 +224,75 @@ func TestLoopMaintainsCodexSessionContinuity(t *testing.T) {
 	}
 }
 
+func TestLoopDoesNotExposeProviderInputWithoutPTY(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	var sawStdinReady bool
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		sinks, _ := stderrSink.(*commandOutputSinks)
+		sawStdinReady = sinks != nil && sinks.stdinReady != nil
+		onLine("ignored")
+		return nil
+	}
+	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{Mission: "first", WaitSeconds: 0}},
+	}
+
+	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if sawStdinReady {
+		t.Fatal("expected non-PTY run to avoid provider stdin wiring")
+	}
+}
+
+func TestLoopExposesProviderInputWithPTY(t *testing.T) {
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+	var sawStdinReady bool
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		sinks, _ := stderrSink.(*commandOutputSinks)
+		sawStdinReady = sinks != nil && sinks.stdinReady != nil
+		onLine("ignored")
+		return nil
+	}
+	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{Mission: "first", WaitSeconds: 0}},
+	}
+
+	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1, ProviderPTY: true})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !sawStdinReady {
+		t.Fatal("expected PTY run to keep provider stdin wiring")
+	}
+}
+
+func TestLoopMarksUIBusyDuringRun(t *testing.T) {
+	ui := newRecordingUI()
+	loop := NewLoop(ClaudeProvider{}, &bytes.Buffer{})
+	loop.Control = ui
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		onLine(`{"type":"result","duration_ms":1000,"session_id":"sess-42"}`)
+		return nil
+	}
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{{Mission: "check status", WaitSeconds: 0}},
+	}
+
+	if err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !ui.sawBusy(true) {
+		t.Fatal("expected loop to mark UI busy during the run")
+	}
+	if !ui.sawBusy(false) {
+		t.Fatal("expected loop to clear busy state after the run")
+	}
+}
+
 func TestLoopWaitForWorkWakesOnChatMessage(t *testing.T) {
 	bus := newTestEventBus(
 		awid.AgentEvent{Type: awid.AgentEventChatMessage, FromAlias: "mia"},
@@ -272,6 +359,46 @@ func TestLoopDoesNotSuppressBdhSpecificEchoText(t *testing.T) {
 	}
 	if strings.Contains(got, "[suppressed prompt/policy echo]") {
 		t.Fatalf("unexpected suppression marker in output: %q", got)
+	}
+}
+
+func TestLoopRendersCodexMarkdownWithMargin(t *testing.T) {
+	var out bytes.Buffer
+	loop := NewLoop(CodexProvider{}, &out)
+	st := &state{}
+
+	loop.handleOutputLine(`{"type":"item.completed","item":{"type":"agent_message","text":"## Title\n\n- first item\n"}}`, &presenterState{}, st, nil, nil)
+
+	got := out.String()
+	if strings.Contains(got, "## Title") {
+		t.Fatalf("expected markdown heading to be rendered, got %q", got)
+	}
+	if !strings.Contains(got, "  Title") {
+		t.Fatalf("expected rendered text to keep a left margin, got %q", got)
+	}
+	if !strings.Contains(got, "first item") {
+		t.Fatalf("expected list item content to remain, got %q", got)
+	}
+}
+
+func TestLoopAddsClaudeMarginAcrossStreamingChunks(t *testing.T) {
+	var out bytes.Buffer
+	loop := NewLoop(ClaudeProvider{}, &out)
+	st := &state{}
+	presenter := &presenterState{}
+
+	loop.handleOutputLine(`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"Hello "}}}`, presenter, st, nil, nil)
+	loop.handleOutputLine(`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"world\n- item"}}}`, presenter, st, nil, nil)
+
+	got := out.String()
+	if !strings.Contains(got, "  Hello world") {
+		t.Fatalf("expected Claude text to start with a left margin, got %q", got)
+	}
+	if !strings.Contains(got, "\n  - item") {
+		t.Fatalf("expected Claude continuation line to keep the left margin, got %q", got)
+	}
+	if strings.Contains(got, "Hello   world") {
+		t.Fatalf("expected no extra indentation injected mid-line, got %q", got)
 	}
 }
 
@@ -366,20 +493,15 @@ func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 	}
 }
 
-func TestFormatRunStatusShowsContextAndCost(t *testing.T) {
+func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 	st := &state{
-		RunLabel:    "run 1",
-		HasRunUsage: true,
-		LastRunUsage: UsageStats{
-			InputTokens:       45000,
-			ContextWindowSize: 100000,
-		},
+		RunLabel:          "run 1",
 		CumulativeCostUSD: 0.05,
 		Autofeed:          true,
 		ConnState:         ConnStreaming,
 	}
 	got := formatRunStatus(st)
-	want := "ctx 45% · $0.05 · autofeed · streaming"
+	want := "$0.05 · autofeed · streaming"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -443,96 +565,7 @@ func TestHandleOutputLineAccumulatesCost(t *testing.T) {
 	}
 }
 
-func TestAutoCompactShowsDistinctLabel(t *testing.T) {
-	var out bytes.Buffer
-	provider := fakeProvider{
-		event: &Event{
-			Type:    EventDone,
-			Session: "sess-42",
-			Usage: &UsageStats{
-				InputTokens:       90000,
-				ContextWindowSize: 100000,
-			},
-		},
-	}
-	loop := NewLoop(provider, &out)
-	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
-		onLine("done")
-		return nil
-	}
-	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
-	loop.Dispatch = &fakeDispatcher{
-		decisions: []DispatchDecision{
-			{Mission: "work", WaitSeconds: 0},
-		},
-	}
-
-	err := loop.Run(context.Background(), LoopOptions{
-		MaxRuns:             1,
-		CompactThresholdPct: 80,
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "info: compacting context") {
-		t.Fatalf("expected compact info line, got %q", output)
-	}
-	if strings.Count(output, "> work") != 1 {
-		t.Fatalf("expected exactly one '> work' prompt (not duplicated by compact), got %q", output)
-	}
-}
-
-func TestAutoCompactDoesNotCountTowardMaxRuns(t *testing.T) {
-	var out bytes.Buffer
-	realRunCount := 0
-	compactRunCount := 0
-	provider := fakeProvider{
-		event: &Event{
-			Type:    EventDone,
-			Session: "sess-42",
-			Usage: &UsageStats{
-				InputTokens:       90000,
-				ContextWindowSize: 100000,
-			},
-		},
-	}
-	loop := NewLoop(provider, &out)
-	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
-		if len(argv) > 1 && argv[1] == "/compact" {
-			compactRunCount++
-		} else {
-			realRunCount++
-		}
-		onLine("done")
-		return nil
-	}
-	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
-	loop.Dispatch = &fakeDispatcher{
-		decisions: []DispatchDecision{
-			{Mission: "work", WaitSeconds: 0},
-			{Mission: "work", WaitSeconds: 0},
-		},
-	}
-
-	err := loop.Run(context.Background(), LoopOptions{
-		MaxRuns:             2,
-		CompactThresholdPct: 80,
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if realRunCount != 2 {
-		t.Fatalf("expected 2 real runs, got %d", realRunCount)
-	}
-	if compactRunCount != 2 {
-		t.Fatalf("expected 2 compact runs (one after each real run), got %d", compactRunCount)
-	}
-}
-
-func TestRunSeparatorAppearsBetweenRuns(t *testing.T) {
+func TestFollowUpRunsDoNotEmitSeparatorLine(t *testing.T) {
 	var out bytes.Buffer
 	loop := NewLoop(ClaudeProvider{}, &out)
 	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
@@ -553,42 +586,16 @@ func TestRunSeparatorAppearsBetweenRuns(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, runSeparator) {
-		t.Fatalf("expected run separator between runs, got:\n%s", output)
+	if strings.Contains(output, strings.Repeat("─", 40)) {
+		t.Fatalf("expected no run separator line, got:\n%s", output)
 	}
 	firstPromptIdx := strings.Index(output, "> first")
-	separatorIdx := strings.Index(output, runSeparator)
 	secondPromptIdx := strings.Index(output, "> second")
-	if separatorIdx <= firstPromptIdx {
-		t.Fatalf("separator should appear after first prompt")
+	if firstPromptIdx < 0 || secondPromptIdx < 0 {
+		t.Fatalf("expected both prompts in output, got:\n%s", output)
 	}
-	if separatorIdx >= secondPromptIdx {
-		t.Fatalf("separator should appear before second prompt")
-	}
-}
-
-func TestNoSeparatorBeforeFirstRun(t *testing.T) {
-	var out bytes.Buffer
-	loop := NewLoop(ClaudeProvider{}, &out)
-	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
-		onLine(`{"type":"result","duration_ms":1000,"session_id":"sess-42"}`)
-		return nil
-	}
-	loop.Sleep = func(ctx context.Context, d time.Duration) error { return nil }
-	loop.Dispatch = &fakeDispatcher{
-		decisions: []DispatchDecision{
-			{Mission: "first", WaitSeconds: 0},
-		},
-	}
-
-	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	output := out.String()
-	if strings.Contains(output, runSeparator) {
-		t.Fatalf("expected no separator before first run, got:\n%s", output)
+	if secondPromptIdx <= firstPromptIdx {
+		t.Fatalf("expected second prompt after first prompt, got:\n%s", output)
 	}
 }
 
@@ -1728,6 +1735,47 @@ func TestRealCommandRunnerAcceptsProviderInput(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for provider stdin round-trip")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RealCommandRunner returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for RealCommandRunner to finish")
+	}
+}
+
+func TestRealCommandRunnerUsesNullStdinWhenProviderInputIsUnused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+
+	lineSeen := make(chan string, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- RealCommandRunner(context.Background(), "", []string{
+			"sh", "-c", "if read answer; then printf 'data\\n'; else printf 'eof\\n'; fi",
+		}, func(line string) {
+			select {
+			case lineSeen <- line:
+			default:
+			}
+		}, &commandOutputSinks{})
+	}()
+
+	select {
+	case got := <-lineSeen:
+		if got != "eof" {
+			t.Fatalf("unexpected stdout line %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for unused stdin to resolve as EOF")
 	}
 
 	select {

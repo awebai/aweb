@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-var runSeparator = strings.Repeat("─", 40)
-
 type presenterState struct {
 	lastWasText              bool
 	lastWasStructured        bool
@@ -36,12 +34,94 @@ func formatDone(event *Event) string {
 }
 
 func formatToolCallLines(call ToolCall) []string {
+	if line, ok := formatCoordinationToolCall(call); ok {
+		return []string{line}
+	}
 	args := formatToolSummaryArgs(call.Input)
 	lines := formatToolSummaryLines(call.Name, args)
 	if description := formatToolDescription(call.Input); description != "" {
 		lines = append(lines, "  "+description)
 	}
 	return lines
+}
+
+func formatToolResultLines(text string) []string {
+	lines := trimOuterBlankLines(strings.Split(strings.ReplaceAll(text, "\r", ""), "\n"))
+	if len(lines) == 0 {
+		return nil
+	}
+
+	const maxLines = 6
+	formatted := make([]string, 0, min(len(lines), maxLines)+1)
+	for i, line := range lines {
+		if i >= maxLines {
+			formatted = append(formatted, fmt.Sprintf("  = ... +%d lines", len(lines)-maxLines))
+			break
+		}
+		formatted = append(formatted, "  = "+truncateLine(line, 150))
+	}
+	return formatted
+}
+
+func formatCoordinationToolCall(call ToolCall) (string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(call.Name), "Bash") {
+		return "", false
+	}
+	command, _ := call.Input["command"].(string)
+	if command == "" {
+		return "", false
+	}
+	return formatAWCoordinationCommand(command)
+}
+
+func formatAWCoordinationCommand(command string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 3 || fields[0] != "aw" {
+		return "", false
+	}
+
+	switch fields[1] {
+	case "mail":
+		if fields[2] != "send" {
+			return "", false
+		}
+		alias := findFlagValue(fields[3:], "--to")
+		if alias == "" {
+			return "", false
+		}
+		return "-> " + alias + " (mail)", true
+	case "chat":
+		switch fields[2] {
+		case "send-and-wait", "send-and-leave":
+			alias := firstNonFlag(fields[3:])
+			if alias == "" {
+				return "", false
+			}
+			return "-> " + alias + " (chat)", true
+		default:
+			return "", false
+		}
+	default:
+		return "", false
+	}
+}
+
+func findFlagValue(fields []string, flag string) string {
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == flag {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func firstNonFlag(fields []string) string {
+	for _, field := range fields {
+		if !strings.HasPrefix(field, "-") {
+			return field
+		}
+	}
+	return ""
 }
 
 func formatToolSummaryLines(name string, args []string) []string {
@@ -164,4 +244,27 @@ func truncateText(s string, max int) string {
 		return s[:max]
 	}
 	return s[:max-3] + "..."
+}
+
+func truncateLine(s string, max int) string {
+	runes := []rune(strings.TrimRight(s, " "))
+	if len(runes) <= max {
+		return string(runes)
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
+}
+
+func trimOuterBlankLines(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return lines[start:end]
 }

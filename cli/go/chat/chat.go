@@ -266,24 +266,24 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 	events := make([]Event, len(messages))
 	for i, m := range messages {
 		events[i] = Event{
-			Type:                 "message",
-			MessageID:            m.MessageID,
-			FromAgent:            m.FromAgent,
-			FromAddress:          m.FromAddress,
-			ToAddress:            m.ToAddress,
-			Body:                 m.Body,
-			Timestamp:            m.Timestamp,
-			SenderLeaving:        m.SenderLeaving,
-			FromDID:              m.FromDID,
-			ToDID:                m.ToDID,
-			FromStableID:         m.FromStableID,
-			ToStableID:           m.ToStableID,
-			Signature:            m.Signature,
-			SigningKeyID:         m.SigningKeyID,
+			Type:                    "message",
+			MessageID:               m.MessageID,
+			FromAgent:               m.FromAgent,
+			FromAddress:             m.FromAddress,
+			ToAddress:               m.ToAddress,
+			Body:                    m.Body,
+			Timestamp:               m.Timestamp,
+			SenderLeaving:           m.SenderLeaving,
+			FromDID:                 m.FromDID,
+			ToDID:                   m.ToDID,
+			FromStableID:            m.FromStableID,
+			ToStableID:              m.ToStableID,
+			Signature:               m.Signature,
+			SigningKeyID:            m.SigningKeyID,
 			RotationAnnouncement:    m.RotationAnnouncement,
 			ReplacementAnnouncement: m.ReplacementAnnouncement,
 			VerificationStatus:      m.VerificationStatus,
-			IsContact:            m.IsContact,
+			IsContact:               m.IsContact,
 		}
 	}
 	return events
@@ -378,7 +378,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			if chatEvent.FromAddress != "" {
 				tofuFrom = chatEvent.FromAddress
 			}
-			chatEvent.VerificationStatus = client.CheckTOFUPin(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement)
+			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeSenderTrust(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
 
 			if chatEvent.Type == "read_receipt" {
 				result.Events = append(result.Events, chatEvent)
@@ -462,7 +462,6 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		TargetsLeft:      createResp.TargetsLeft,
 	}, myAlias, targets, message, opts, &sentAt, callback)
 }
-
 
 // sendCommon handles the post-send wait logic shared by Send and SendNetwork.
 func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpener, resp sendResponse, myAlias string, targets []string, message string, opts SendOptions, after *time.Time, callback StatusCallback) (*SendResult, error) {

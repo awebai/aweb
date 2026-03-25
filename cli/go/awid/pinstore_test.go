@@ -191,3 +191,21 @@ func TestPinStoreSaveFilePermissions(t *testing.T) {
 		t.Fatalf("permissions=%o, want 0600", perm)
 	}
 }
+
+func TestPinStoreRemoveAddress(t *testing.T) {
+	t.Parallel()
+
+	ps := NewPinStore()
+	did := "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+	ps.StorePin(did, "myco/agent", "@bob", "app.aweb.ai")
+
+	if !ps.RemoveAddress("myco/agent") {
+		t.Fatal("expected address removal")
+	}
+	if _, ok := ps.Addresses["myco/agent"]; ok {
+		t.Fatal("address index should be removed")
+	}
+	if _, ok := ps.Pins[did]; ok {
+		t.Fatal("pin should be removed")
+	}
+}

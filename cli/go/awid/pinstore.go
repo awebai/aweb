@@ -134,3 +134,29 @@ func (ps *PinStore) StorePin(did, address, handle, server string) {
 	}
 	ps.Addresses[address] = did
 }
+
+// RemoveAddress removes any reverse index and pin associated with an address.
+// Returns true when anything was removed.
+func (ps *PinStore) RemoveAddress(address string) bool {
+	removed := false
+	if pinKey, ok := ps.Addresses[address]; ok {
+		delete(ps.Addresses, address)
+		if pin, exists := ps.Pins[pinKey]; exists {
+			if pin.Address == address {
+				delete(ps.Pins, pinKey)
+			}
+		}
+		removed = true
+	}
+	for pinKey, pin := range ps.Pins {
+		if pin == nil || pin.Address != address {
+			continue
+		}
+		delete(ps.Pins, pinKey)
+		if mapped, ok := ps.Addresses[address]; ok && mapped == pinKey {
+			delete(ps.Addresses, address)
+		}
+		removed = true
+	}
+	return removed
+}

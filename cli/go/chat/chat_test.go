@@ -418,6 +418,78 @@ func TestSendWithReply(t *testing.T) {
 	}
 }
 
+func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+			})
+		},
+		"GET /v1/agents/resolve/architect": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, map[string]any{
+				"did":         "did:key:z6MkSender",
+				"identity_id": "identity-uuid-1",
+				"address":     "myteam/architect",
+				"lifetime":    "ephemeral",
+				"custody":     "self",
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "implementer", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type":       "message",
+				"message_id": "msg-reply-1",
+				"from_agent": "architect",
+				"body":       "hi back!",
+				"from_did":   "did:key:z6MkSender",
+				"is_contact": false,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetAddress("myteam/implementer")
+	client.SetResolver(&awid.ServerResolver{Client: client})
+
+	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	if result.Reply != "hi back!" {
+		t.Fatalf("reply=%s", result.Reply)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d, want 1", len(result.Events))
+	}
+	if result.Events[0].IsContact != nil {
+		t.Fatalf("ephemeral SSE sender should suppress contact tag, got %v", *result.Events[0].IsContact)
+	}
+}
+
 func TestSendWithTimeout(t *testing.T) {
 	t.Parallel()
 

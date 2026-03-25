@@ -1,0 +1,28 @@
+{
+  "name": "@awebai/aw",
+  "version": "0.0.0",
+  "description": "CLI for the aWeb agent coordination protocol",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/awebai/aw.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "aw": "bin/aw"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "preferUnplugged": true,
+  "optionalDependencies": {
+    "@awebai/aw-linux-x64": "0.0.0",
+    "@awebai/aw-linux-arm64": "0.0.0",
+    "@awebai/aw-darwin-x64": "0.0.0",
+    "@awebai/aw-darwin-arm64": "0.0.0",
+    "@awebai/aw-windows-x64": "0.0.0",
+    "@awebai/aw-windows-arm64": "0.0.0"
+  }
+}

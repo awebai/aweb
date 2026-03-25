@@ -37,7 +37,7 @@ func (CodexProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, e
 		return nil, fmt.Errorf("provider codex does not support --allowed-tools")
 	}
 
-	command := []string{"codex", "exec", "--skip-git-repo-check"}
+	command := []string{"codex", "exec", "--skip-git-repo-check", "--full-auto"}
 	if strings.TrimSpace(opts.SessionID) != "" {
 		command = append(command, "resume", opts.SessionID)
 	} else if opts.ContinueSession {

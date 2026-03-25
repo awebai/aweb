@@ -48,7 +48,6 @@ Key flags:
 - `--permanent --name <name>` — Create a permanent self-custodial identity instead of the default ephemeral one
 - `--project` — Required for `aw project create`, not for `aw init`
 - `--namespace` — Optional authoritative namespace slug when it differs from the project slug
-- `--project-name` — Optional project display name for `aw project create`
 - `--set-default` — Set this account as default (default: false)
 - `--print-exports` — Print shell export lines after creation/init
 
@@ -101,7 +100,6 @@ aw connect
 | `AWEB_SERVER` | Server name from config |
 | `AWEB_ACCOUNT` | Account name from config |
 | `AWEB_PROJECT_SLUG` | Project slug (fallback: `AWEB_PROJECT`) |
-| `AWEB_PROJECT_NAME` | Project display name |
 | `AWEB_ALIAS` | Agent alias (used by `aw init`) |
 | `AWEB_HUMAN` | Human operator name (also: `AWEB_HUMAN_NAME`) |
 | `AWEB_AGENT_TYPE` | Agent type |

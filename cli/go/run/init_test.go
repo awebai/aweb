@@ -13,7 +13,7 @@ func TestInitUserConfigWritesConfig(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("AW_CONFIG_PATH", "")
 
-	input := strings.NewReader("coordinate with mia\nreview before finish\nreturn to work\n15\n45\n70\n")
+	input := strings.NewReader("coordinate with mia\nreview before finish\nreturn to work\n15\n45\n")
 	var output bytes.Buffer
 
 	if err := InitUserConfig(input, &output, UserConfig{}); err != nil {
@@ -39,9 +39,6 @@ func TestInitUserConfigWritesConfig(t *testing.T) {
 	if cfg.IdleWaitSeconds == nil || *cfg.IdleWaitSeconds != 45 {
 		t.Fatalf("expected idle_wait_seconds=45, got %#v", cfg.IdleWaitSeconds)
 	}
-	if cfg.CompactThreshold == nil || *cfg.CompactThreshold != 70 {
-		t.Fatalf("expected compact_threshold_pct=70, got %#v", cfg.CompactThreshold)
-	}
 	if !strings.Contains(output.String(), filepath.Join(dir, ".config", "aw", "run.json")) {
 		t.Fatalf("expected output to mention config path, got %q", output.String())
 	}
@@ -52,7 +49,7 @@ func TestInitUserConfigSeedsSuggestedDefaultsWhenUnset(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("AW_CONFIG_PATH", "")
 
-	input := strings.NewReader("\n\n\n\n\n\n")
+	input := strings.NewReader("\n\n\n\n\n")
 	var output bytes.Buffer
 
 	if err := InitUserConfig(input, &output, UserConfig{}); err != nil {
@@ -77,9 +74,6 @@ func TestInitUserConfigSeedsSuggestedDefaultsWhenUnset(t *testing.T) {
 	}
 	if cfg.IdleWaitSeconds == nil || *cfg.IdleWaitSeconds != DefaultIdleWaitSeconds {
 		t.Fatalf("expected default idle_wait_seconds, got %#v", cfg.IdleWaitSeconds)
-	}
-	if cfg.CompactThreshold == nil || *cfg.CompactThreshold != DefaultCompactThreshold {
-		t.Fatalf("expected default compact threshold, got %#v", cfg.CompactThreshold)
 	}
 }
 

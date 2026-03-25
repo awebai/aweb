@@ -8,7 +8,6 @@ import (
 // CreateProjectRequest is sent to POST /api/v1/create-project.
 type CreateProjectRequest struct {
 	ProjectSlug         string  `json:"project_slug"`
-	ProjectName         string  `json:"project_name,omitempty"`
 	NamespaceSlug       string  `json:"namespace_slug,omitempty"`
 	Alias               *string `json:"alias,omitempty"`
 	Name                *string `json:"name,omitempty"`

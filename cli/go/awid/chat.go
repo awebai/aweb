@@ -84,12 +84,12 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 }
 
 type ChatCreateSessionRequest struct {
-	ToAliases    []string `json:"to_aliases"`
-	Message      string   `json:"message"`
-	Leaving      bool     `json:"leaving,omitempty"`
-	FromDID      string   `json:"from_did,omitempty"`
-	ToDID        string   `json:"to_did,omitempty"`
-	FromStableID string   `json:"from_stable_id,omitempty"`
+	ToAliases     []string `json:"to_aliases"`
+	Message       string   `json:"message"`
+	Leaving       bool     `json:"leaving,omitempty"`
+	FromDID       string   `json:"from_did,omitempty"`
+	ToDID         string   `json:"to_did,omitempty"`
+	FromStableID  string   `json:"from_stable_id,omitempty"`
 	Signature     string   `json:"signature,omitempty"`
 	SigningKeyID  string   `json:"signing_key_id,omitempty"`
 	Timestamp     string   `json:"timestamp,omitempty"`
@@ -192,24 +192,24 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
-	MessageID            string                `json:"message_id"`
-	FromAgent            string                `json:"from_agent"`
-	FromAddress          string                `json:"from_address,omitempty"`
-	ToAddress            string                `json:"to_address,omitempty"`
-	Body                 string                `json:"body"`
-	Timestamp            string                `json:"timestamp"`
-	SenderLeaving        bool                  `json:"sender_leaving"`
-	FromDID              string                `json:"from_did,omitempty"`
-	ToDID                string                `json:"to_did,omitempty"`
-	FromStableID         string                `json:"from_stable_id,omitempty"`
-	ToStableID           string                `json:"to_stable_id,omitempty"`
-	Signature            string                `json:"signature,omitempty"`
-	SigningKeyID         string                `json:"signing_key_id,omitempty"`
-	SignedPayload        string                `json:"signed_payload,omitempty"`
-	RotationAnnouncement *RotationAnnouncement `json:"rotation_announcement,omitempty"`
+	MessageID               string                   `json:"message_id"`
+	FromAgent               string                   `json:"from_agent"`
+	FromAddress             string                   `json:"from_address,omitempty"`
+	ToAddress               string                   `json:"to_address,omitempty"`
+	Body                    string                   `json:"body"`
+	Timestamp               string                   `json:"timestamp"`
+	SenderLeaving           bool                     `json:"sender_leaving"`
+	FromDID                 string                   `json:"from_did,omitempty"`
+	ToDID                   string                   `json:"to_did,omitempty"`
+	FromStableID            string                   `json:"from_stable_id,omitempty"`
+	ToStableID              string                   `json:"to_stable_id,omitempty"`
+	Signature               string                   `json:"signature,omitempty"`
+	SigningKeyID            string                   `json:"signing_key_id,omitempty"`
+	SignedPayload           string                   `json:"signed_payload,omitempty"`
+	RotationAnnouncement    *RotationAnnouncement    `json:"rotation_announcement,omitempty"`
 	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
-	VerificationStatus   VerificationStatus    `json:"verification_status,omitempty"`
-	IsContact            *bool                 `json:"is_contact,omitempty"`
+	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
+	IsContact               *bool                    `json:"is_contact,omitempty"`
 }
 
 type ChatHistoryParams struct {
@@ -262,7 +262,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			}
 			m.VerificationStatus, _ = VerifyMessage(env)
 		}
-		m.VerificationStatus = c.CheckTOFUPin(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement)
+		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return &out, nil
 }

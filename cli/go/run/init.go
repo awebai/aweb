@@ -43,18 +43,12 @@ func InitUserConfig(in io.Reader, out io.Writer, existing UserConfig) error {
 	if err != nil {
 		return err
 	}
-	compactThreshold, err := promptConfigInt(reader, out, "compact_threshold_pct", current.CompactThreshold)
-	if err != nil {
-		return err
-	}
-
 	cfg := UserConfig{
 		BasePrompt:        basePrompt,
 		WorkPromptSuffix:  workSuffix,
 		CommsPromptSuffix: commsSuffix,
 		WaitSeconds:       waitSeconds,
 		IdleWaitSeconds:   idleWaitSeconds,
-		CompactThreshold:  compactThreshold,
 	}
 	path, err := WriteUserConfig(cfg)
 	if err != nil {

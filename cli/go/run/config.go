@@ -13,7 +13,6 @@ import (
 const (
 	DefaultWaitSeconds      = 20
 	DefaultIdleWaitSeconds  = 30
-	DefaultCompactThreshold = 80
 	DefaultBasePrompt       = ""
 	DefaultWorkPromptSuffix = "Before finishing, run a self-review or code-review pass on your changes."
 	DefaultCommsPrompt      = ""
@@ -25,7 +24,6 @@ type UserConfig struct {
 	CommsPromptSuffix *string         `json:"comms_prompt_suffix"`
 	WaitSeconds       *int            `json:"wait_seconds"`
 	IdleWaitSeconds   *int            `json:"idle_wait_seconds"`
-	CompactThreshold  *int            `json:"compact_threshold_pct"`
 	Services          []ServiceConfig `json:"services"`
 }
 
@@ -35,7 +33,6 @@ type Settings struct {
 	CommsPromptSuffix string
 	WaitSeconds       int
 	IdleWaitSeconds   int
-	CompactThreshold  int
 	Services          []ServiceConfig
 }
 
@@ -45,7 +42,6 @@ type SettingOverrides struct {
 	CommsPromptSuffix *string
 	WaitSeconds       *int
 	IdleWaitSeconds   *int
-	CompactThreshold  *int
 }
 
 func DefaultConfigPath() (string, error) {
@@ -117,7 +113,6 @@ func ResolveSettings(cfg UserConfig, overrides SettingOverrides) (Settings, erro
 		CommsPromptSuffix: DefaultCommsPrompt,
 		WaitSeconds:       DefaultWaitSeconds,
 		IdleWaitSeconds:   DefaultIdleWaitSeconds,
-		CompactThreshold:  DefaultCompactThreshold,
 	}
 
 	if cfg.BasePrompt != nil {
@@ -134,9 +129,6 @@ func ResolveSettings(cfg UserConfig, overrides SettingOverrides) (Settings, erro
 	}
 	if cfg.IdleWaitSeconds != nil {
 		settings.IdleWaitSeconds = *cfg.IdleWaitSeconds
-	}
-	if cfg.CompactThreshold != nil {
-		settings.CompactThreshold = *cfg.CompactThreshold
 	}
 	if cfg.Services != nil {
 		settings.Services = append([]ServiceConfig(nil), cfg.Services...)
@@ -157,18 +149,11 @@ func ResolveSettings(cfg UserConfig, overrides SettingOverrides) (Settings, erro
 	if overrides.IdleWaitSeconds != nil {
 		settings.IdleWaitSeconds = *overrides.IdleWaitSeconds
 	}
-	if overrides.CompactThreshold != nil {
-		settings.CompactThreshold = *overrides.CompactThreshold
-	}
-
 	if settings.WaitSeconds < 0 {
 		return Settings{}, fmt.Errorf("wait_seconds must be >= 0")
 	}
 	if settings.IdleWaitSeconds < 0 {
 		return Settings{}, fmt.Errorf("idle_wait_seconds must be >= 0")
-	}
-	if settings.CompactThreshold < 0 || settings.CompactThreshold > 100 {
-		return Settings{}, fmt.Errorf("compact_threshold_pct must be between 0 and 100")
 	}
 	for _, service := range settings.Services {
 		if strings.TrimSpace(service.Name) == "" {
@@ -214,9 +199,6 @@ func mergeUserConfig(base UserConfig, override UserConfig) UserConfig {
 	}
 	if override.IdleWaitSeconds != nil {
 		merged.IdleWaitSeconds = override.IdleWaitSeconds
-	}
-	if override.CompactThreshold != nil {
-		merged.CompactThreshold = override.CompactThreshold
 	}
 	if override.Services != nil {
 		merged.Services = append([]ServiceConfig(nil), override.Services...)

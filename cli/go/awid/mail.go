@@ -16,15 +16,15 @@ const (
 )
 
 type SendMessageRequest struct {
-	ToAgentID    string          `json:"to_agent_id,omitempty"`
-	ToAlias      string          `json:"to_alias,omitempty"`
-	Subject      string          `json:"subject,omitempty"`
-	Body         string          `json:"body"`
-	Priority     MessagePriority `json:"priority,omitempty"`
-	ThreadID     *string         `json:"thread_id,omitempty"`
-	FromDID      string          `json:"from_did,omitempty"`
-	ToDID        string          `json:"to_did,omitempty"`
-	FromStableID string          `json:"from_stable_id,omitempty"`
+	ToAgentID     string          `json:"to_agent_id,omitempty"`
+	ToAlias       string          `json:"to_alias,omitempty"`
+	Subject       string          `json:"subject,omitempty"`
+	Body          string          `json:"body"`
+	Priority      MessagePriority `json:"priority,omitempty"`
+	ThreadID      *string         `json:"thread_id,omitempty"`
+	FromDID       string          `json:"from_did,omitempty"`
+	ToDID         string          `json:"to_did,omitempty"`
+	FromStableID  string          `json:"from_stable_id,omitempty"`
 	Signature     string          `json:"signature,omitempty"`
 	SigningKeyID  string          `json:"signing_key_id,omitempty"`
 	Timestamp     string          `json:"timestamp,omitempty"`
@@ -88,29 +88,29 @@ func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*Sen
 }
 
 type InboxMessage struct {
-	MessageID            string                `json:"message_id"`
-	FromAgentID          string                `json:"from_agent_id"`
-	FromAlias            string                `json:"from_alias"`
-	ToAlias              string                `json:"to_alias,omitempty"`
-	FromAddress          string                `json:"from_address,omitempty"`
-	ToAddress            string                `json:"to_address,omitempty"`
-	Subject              string                `json:"subject"`
-	Body                 string                `json:"body"`
-	Priority             MessagePriority       `json:"priority"`
-	ThreadID             *string               `json:"thread_id"`
-	ReadAt               *string               `json:"read_at"`
-	CreatedAt            string                `json:"created_at"`
-	FromDID              string                `json:"from_did,omitempty"`
-	ToDID                string                `json:"to_did,omitempty"`
-	FromStableID         string                `json:"from_stable_id,omitempty"`
-	ToStableID           string                `json:"to_stable_id,omitempty"`
-	Signature            string                `json:"signature,omitempty"`
-	SigningKeyID         string                `json:"signing_key_id,omitempty"`
-	SignedPayload        string                `json:"signed_payload,omitempty"`
-	RotationAnnouncement *RotationAnnouncement `json:"rotation_announcement,omitempty"`
+	MessageID               string                   `json:"message_id"`
+	FromAgentID             string                   `json:"from_agent_id"`
+	FromAlias               string                   `json:"from_alias"`
+	ToAlias                 string                   `json:"to_alias,omitempty"`
+	FromAddress             string                   `json:"from_address,omitempty"`
+	ToAddress               string                   `json:"to_address,omitempty"`
+	Subject                 string                   `json:"subject"`
+	Body                    string                   `json:"body"`
+	Priority                MessagePriority          `json:"priority"`
+	ThreadID                *string                  `json:"thread_id"`
+	ReadAt                  *string                  `json:"read_at"`
+	CreatedAt               string                   `json:"created_at"`
+	FromDID                 string                   `json:"from_did,omitempty"`
+	ToDID                   string                   `json:"to_did,omitempty"`
+	FromStableID            string                   `json:"from_stable_id,omitempty"`
+	ToStableID              string                   `json:"to_stable_id,omitempty"`
+	Signature               string                   `json:"signature,omitempty"`
+	SigningKeyID            string                   `json:"signing_key_id,omitempty"`
+	SignedPayload           string                   `json:"signed_payload,omitempty"`
+	RotationAnnouncement    *RotationAnnouncement    `json:"rotation_announcement,omitempty"`
 	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
-	VerificationStatus   VerificationStatus    `json:"verification_status,omitempty"`
-	IsContact            *bool                 `json:"is_contact,omitempty"`
+	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
+	IsContact               *bool                    `json:"is_contact,omitempty"`
 }
 
 type InboxResponse struct {
@@ -168,7 +168,7 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 			m.VerificationStatus, _ = VerifyMessage(env)
 		}
 		m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID)
-		m.VerificationStatus = c.CheckTOFUPin(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement)
+		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return &out, nil
 }

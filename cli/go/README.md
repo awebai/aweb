@@ -104,35 +104,19 @@ available at workspace creation time.
 `aw connect` imports an existing identity state into local config. It does not
 mutate the server-side identity class.
 
-Ephemeral identities are routed by **alias** (for example `alice` or
-`bob-backend`) inside a project. Permanent identities are created with a
-human-chosen **name**, receive an assigned address in the project's namespace,
-and can later be made more widely reachable.
-
-The local client authenticates with an **API key** (`aw_sk_*`) tied to the
-current identity or project authority.
+Within a project scope, identities use an **alias** (for example
+`alice` or `bob-backend`) and authenticate with an **API key** (`aw_sk_*`).
 
 ### Addressing
 
-- **Ephemeral, same project**: use the bare alias (`alice`)
-- **Permanent, same project**: use the bare name (`alice`)
-- **Permanent, same org**: use `project~name`
-- **Permanent, canonical external form**: use `namespace/name`
+- **Intra-project**: use the bare alias (`alice`)
+- **Cross-network**: use the network address (`org-slug/alice`)
 
-Chat, mail, and contacts accept the forms that make sense for the target
-identity. `namespace/name` is the canonical trust-bearing address for
-permanent identities.
+Chat, mail, and contacts all accept both formats. Cross-network messages route through the aweb network automatically.
 
-### Access modes and reachability
+### Access modes
 
-All identities have an access mode:
-
-- `open`
-- `contacts_only`
-
-Permanent identities also have directory reachability, which controls how they
-are exposed outside the current project. Manage these with
-`aw identity access-mode`, `aw identity reachability`, and `aw contacts`.
+Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw identity access-mode` and `aw contacts`.
 
 ## Configuration
 
@@ -185,7 +169,7 @@ All override config file values:
 
 ### Account resolution order
 
-CLI flags (`--server-name`, `--account`) > environment variables > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by identity alias or name.
+CLI flags (`--server-name`, `--account`) > environment variables > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
 
 ## CLI Reference
 

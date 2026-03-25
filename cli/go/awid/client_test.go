@@ -2877,6 +2877,7 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps := NewPinStore()
+	ps.StorePin("did:key:stale", "myco/ephemeral-bot", "", "")
 	c.SetPinStore(ps, "")
 	c.SetResolver(&ServerResolver{Client: c})
 
@@ -2893,7 +2894,10 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 		t.Fatal("ephemeral agent should not be pinned")
 	}
 	if _, ok := ps.Addresses["myco/ephemeral-bot"]; ok {
-		t.Fatal("ephemeral agent should not be in address index")
+		t.Fatal("ephemeral agent should not remain in address index")
+	}
+	if _, ok := ps.Pins["did:key:stale"]; ok {
+		t.Fatal("stale ephemeral pin should be pruned")
 	}
 }
 
@@ -3125,13 +3129,13 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 	c.SetPinStore(ps, "")
 	c.SetResolver(&ServerResolver{Client: c})
 
-	// First call: resolver fails → defaults to persistent/self, not cached.
+	// First call: resolver fails → status remains verified, and the failure is not cached.
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.Messages[0].VerificationStatus != Verified {
-		t.Fatalf("first call: status=%q, want verified (defaults)", resp.Messages[0].VerificationStatus)
+		t.Fatalf("first call: status=%q, want verified", resp.Messages[0].VerificationStatus)
 	}
 	if resolveCount != 1 {
 		t.Fatalf("resolveCount=%d after first call", resolveCount)
@@ -3149,6 +3153,187 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 	// Now that resolver succeeds, custodial custody should be detected.
 	if resp.Messages[0].VerificationStatus != VerifiedCustodial {
 		t.Fatalf("second call: status=%q, want verified_custodial", resp.Messages[0].VerificationStatus)
+	}
+}
+
+func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderPub)
+
+	env := &MessageEnvelope{
+		From:      "architect",
+		FromDID:   senderDID,
+		To:        "implementer",
+		Type:      "mail",
+		Subject:   "hello",
+		Body:      "world",
+		Timestamp: "2026-03-24T13:17:17Z",
+		MessageID: "msg-local-1",
+	}
+	sig, err := SignMessage(senderPriv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolvePaths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
+			resolvePaths = append(resolvePaths, r.URL.Path)
+			if r.URL.Path != "/v1/agents/resolve/architect" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":         senderDID,
+				"identity_id": "identity-uuid-1",
+				"address":     "myteam/architect",
+				"lifetime":    "ephemeral",
+				"custody":     "self",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{{
+				"message_id":     "msg-local-1",
+				"from_agent_id":  "identity-uuid-1",
+				"from_alias":     "architect",
+				"from_address":   "architect",
+				"to_alias":       "implementer",
+				"to_address":     "implementer",
+				"subject":        "hello",
+				"body":           "world",
+				"priority":       "normal",
+				"created_at":     "2026-03-24T13:17:17Z",
+				"from_did":       senderDID,
+				"signature":      sig,
+				"signing_key_id": senderDID,
+				"is_contact":     false,
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myteam/implementer")
+	ps := NewPinStore()
+	ps.StorePin("did:aw:old-architect", "architect", "", "")
+	c.SetPinStore(ps, "")
+	c.SetResolver(&ServerResolver{Client: c})
+
+	resp, err := c.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Messages[0].VerificationStatus != Verified {
+		t.Fatalf("status=%q, want verified", resp.Messages[0].VerificationStatus)
+	}
+	if resp.Messages[0].IsContact != nil {
+		t.Fatalf("ephemeral sender should suppress contact tag, got %v", *resp.Messages[0].IsContact)
+	}
+	if len(resolvePaths) != 1 || resolvePaths[0] != "/v1/agents/resolve/architect" {
+		t.Fatalf("resolvePaths=%v, want [/v1/agents/resolve/architect]", resolvePaths)
+	}
+	if _, ok := ps.Addresses["myteam/architect"]; ok {
+		t.Fatalf("ephemeral sender should not be pinned under canonical address")
+	}
+	if _, ok := ps.Addresses["architect"]; ok {
+		t.Fatalf("legacy bare alias pin should be pruned for ephemeral sender")
+	}
+}
+
+func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderPub)
+
+	env := &MessageEnvelope{
+		From:      "architect",
+		FromDID:   senderDID,
+		To:        "implementer",
+		Type:      "chat",
+		Body:      "hello",
+		Timestamp: "2026-03-24T13:12:05Z",
+		MessageID: "msg-chat-local-1",
+	}
+	sig, err := SignMessage(senderPriv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolvePaths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
+			resolvePaths = append(resolvePaths, r.URL.Path)
+			if r.URL.Path != "/v1/agents/resolve/architect" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":         senderDID,
+				"identity_id": "identity-uuid-2",
+				"address":     "myteam/architect",
+				"lifetime":    "ephemeral",
+				"custody":     "self",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{{
+				"message_id":     "msg-chat-local-1",
+				"from_agent":     "architect",
+				"from_address":   "architect",
+				"to_address":     "implementer",
+				"body":           "hello",
+				"timestamp":      "2026-03-24T13:12:05Z",
+				"from_did":       senderDID,
+				"signature":      sig,
+				"signing_key_id": senderDID,
+				"is_contact":     false,
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myteam/implementer")
+	ps := NewPinStore()
+	ps.StorePin("did:aw:old-architect", "architect", "", "")
+	c.SetPinStore(ps, "")
+	c.SetResolver(&ServerResolver{Client: c})
+
+	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Messages[0].VerificationStatus != Verified {
+		t.Fatalf("status=%q, want verified", resp.Messages[0].VerificationStatus)
+	}
+	if resp.Messages[0].IsContact != nil {
+		t.Fatalf("ephemeral sender should suppress contact tag, got %v", *resp.Messages[0].IsContact)
+	}
+	if len(resolvePaths) != 1 || resolvePaths[0] != "/v1/agents/resolve/architect" {
+		t.Fatalf("resolvePaths=%v, want [/v1/agents/resolve/architect]", resolvePaths)
+	}
+	if _, ok := ps.Addresses["myteam/architect"]; ok {
+		t.Fatalf("ephemeral sender should not be pinned under canonical address")
+	}
+	if _, ok := ps.Addresses["architect"]; ok {
+		t.Fatalf("legacy bare alias pin should be pruned for ephemeral sender")
 	}
 }
 

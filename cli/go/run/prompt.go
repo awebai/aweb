@@ -52,9 +52,6 @@ func formatRunStatus(st *state) string {
 		return ""
 	}
 	var parts []string
-	if st.HasRunUsage && st.LastRunUsage.ContextWindowSize > 0 {
-		parts = append(parts, fmt.Sprintf("ctx %.0f%%", st.LastRunUsage.ContextPct()))
-	}
 	if st.CumulativeCostUSD > 0 {
 		parts = append(parts, fmt.Sprintf("$%.2f", st.CumulativeCostUSD))
 	}

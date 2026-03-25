@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+"use strict";
+const { execFileSync } = require("child_process");
+const os = require("os");
+const path = require("path");
+
+const PLATFORMS = {
+  "linux x64":    { pkg: "@awebai/aw-linux-x64",      bin: "bin/aw" },
+  "linux arm64":  { pkg: "@awebai/aw-linux-arm64",     bin: "bin/aw" },
+  "darwin x64":   { pkg: "@awebai/aw-darwin-x64",      bin: "bin/aw" },
+  "darwin arm64": { pkg: "@awebai/aw-darwin-arm64",     bin: "bin/aw" },
+  "win32 x64":    { pkg: "@awebai/aw-windows-x64",     bin: "bin/aw.exe" },
+  "win32 arm64":  { pkg: "@awebai/aw-windows-arm64",   bin: "bin/aw.exe" },
+};
+
+const key = `${process.platform} ${os.arch()}`;
+const platform = PLATFORMS[key];
+if (!platform) {
+  console.error(`Error: Unsupported platform: ${key}`);
+  console.error("Visit https://github.com/awebai/aw for installation alternatives.");
+  process.exit(1);
+}
+
+let binPath;
+try {
+  binPath = require.resolve(`${platform.pkg}/${platform.bin}`);
+} catch {
+  console.error(`Error: Could not find the aw binary for ${key}.`);
+  console.error("The platform-specific package may not have been installed.");
+  console.error("Try: npm install @awebai/aw --force");
+  process.exit(1);
+}
+
+try {
+  const result = execFileSync(binPath, process.argv.slice(2), { stdio: "inherit" });
+} catch (e) {
+  if (e.status !== null) process.exit(e.status);
+  throw e;
+}

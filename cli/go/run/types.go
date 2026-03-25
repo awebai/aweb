@@ -12,7 +12,6 @@ type UsageStats struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	OutputTokens             int
-	ContextWindowSize        int
 }
 
 type RunSummary struct {
@@ -30,13 +29,6 @@ type ServiceConfig struct {
 
 func (s UsageStats) TotalInput() int {
 	return s.InputTokens + s.CacheCreationInputTokens + s.CacheReadInputTokens
-}
-
-func (s UsageStats) ContextPct() float64 {
-	if s.ContextWindowSize <= 0 {
-		return 0
-	}
-	return float64(s.TotalInput()) / float64(s.ContextWindowSize) * 100
 }
 
 type BuildOptions struct {
@@ -151,17 +143,16 @@ type CommandRunner func(ctx context.Context, dir string, argv []string, onLine f
 type SleepFunc func(ctx context.Context, d time.Duration) error
 
 type LoopOptions struct {
-	InitialPrompt       string
-	BasePrompt          string
-	WaitSeconds         int
-	IdleWaitSeconds     int
-	MaxRuns             int
-	Autofeed            bool
-	ContinueMode        bool
-	WorkingDir          string
-	AllowedTools        string
-	Model               string
-	ProviderPTY         bool
-	CompactThresholdPct int
-	Services            []ServiceConfig
+	InitialPrompt   string
+	BasePrompt      string
+	WaitSeconds     int
+	IdleWaitSeconds int
+	MaxRuns         int
+	Autofeed        bool
+	ContinueMode    bool
+	WorkingDir      string
+	AllowedTools    string
+	Model           string
+	ProviderPTY     bool
+	Services        []ServiceConfig
 }

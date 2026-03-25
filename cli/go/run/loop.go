@@ -36,7 +36,6 @@ type Loop struct {
 
 type state struct {
 	Run                int
-	CompactRuns        int
 	RunLabel           string
 	CumulativeCostUSD  float64
 	SessionID          string
@@ -228,20 +227,6 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 				return err
 			}
 		}
-		compacted, err := l.maybeAutoCompact(ctx, opts, state)
-		if err != nil {
-			if state.StopRequested && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-				return nil
-			}
-			return err
-		}
-		if compacted {
-			if opts.MaxRuns > 0 && state.Run >= opts.MaxRuns {
-				l.printf("\ndone: reached max-runs (%d)\n", opts.MaxRuns)
-				return nil
-			}
-			continue
-		}
 		if opts.MaxRuns > 0 && state.Run >= opts.MaxRuns {
 			l.printf("\ndone: reached max-runs (%d)\n", opts.MaxRuns)
 			return nil
@@ -324,20 +309,13 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 		return err
 	}
 
-	if followUpRun {
-		l.printf("\n%s\n", runSeparator)
-	}
-
-	if display == "/compact" {
-		st.RunLabel = "compact"
-		l.printf("\ninfo: compacting context\n\n")
+	st.RunLabel = "active"
+	l.setBusy(true)
+	defer l.setBusy(false)
+	if strings.HasPrefix(strings.TrimSpace(display), "<- ") {
+		l.printf("\n%s\n\n", display)
 	} else {
-		st.RunLabel = "active"
-		if strings.HasPrefix(strings.TrimSpace(display), "<- ") {
-			l.printf("\n%s\n\n", display)
-		} else {
-			l.printf("\n> %s\n\n", display)
-		}
+		l.printf("\n> %s\n\n", display)
 	}
 	l.setStatusLine(formatRunStatus(st))
 	l.renderInputPrompt(st)
@@ -346,12 +324,17 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	st.StructuredOut = false
 	observedSessionID := ""
 	var agentText strings.Builder
-	providerInput := &providerInputState{}
-	st.ProviderInput = providerInput
+	var providerInput *providerInputState
+	if opts.ProviderPTY {
+		providerInput = &providerInputState{}
+		st.ProviderInput = providerInput
+	}
 	defer func() {
-		providerInput.Clear()
+		if providerInput != nil {
+			providerInput.Clear()
+		}
 		st.ProviderInput = nil
-		if l.OnRunComplete == nil || display == "/compact" {
+		if l.OnRunComplete == nil {
 			return
 		}
 		text := strings.TrimSpace(agentText.String())
@@ -376,12 +359,12 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	}
 
 	sinks := &commandOutputSinks{
-		stdinReady: func(w io.WriteCloser) {
-			providerInput.SetWriter(w)
-		},
 		usePTY: opts.ProviderPTY,
 	}
 	if opts.ProviderPTY {
+		sinks.stdinReady = func(w io.WriteCloser) {
+			providerInput.SetWriter(w)
+		}
 		sinks.ptyPartial = func(chunk string) {
 			l.handleRawProviderChunk("", chunk, presenter)
 		}
@@ -459,22 +442,6 @@ func (l *Loop) resetSessionContinuity(st *state, message string) {
 	l.printf("warning: %s\n", message)
 }
 
-func (l *Loop) maybeAutoCompact(ctx context.Context, opts LoopOptions, st *state) (bool, error) {
-	if opts.CompactThresholdPct <= 0 || st == nil || !st.HasRunUsage {
-		return false, nil
-	}
-	pct := st.LastRunUsage.ContextPct()
-	if pct <= float64(opts.CompactThresholdPct) {
-		return false, nil
-	}
-	st.CompactRuns++
-	l.printf("\ninfo: context %.1f%% exceeds %d%%; running compact\n", pct, opts.CompactThresholdPct)
-	if err := l.runOnce(ctx, opts, st, "/compact", "/compact", ""); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (l *Loop) drainPendingControlEvents(st *state, activeRun bool) {
 	for {
 		select {
@@ -521,10 +488,12 @@ func (l *Loop) handleOutputLine(line string, presenter *presenterState, st *stat
 			agentText.WriteString(event.Text)
 		}
 		l.runPresenterEnsureTextSpacing(presenter)
-		l.print(event.Text)
+		startsAtLine := presenter == nil || !presenter.lastWasText || presenter.lastTextEndedWithNewline
+		renderedText := renderAssistantText(l.Provider.Name(), event.Text, l.Out, startsAtLine)
+		l.print(renderedText)
 		presenter.lastWasText = true
 		presenter.lastWasStructured = false
-		presenter.lastTextEndedWithNewline = strings.HasSuffix(event.Text, "\n")
+		presenter.lastTextEndedWithNewline = strings.HasSuffix(renderedText, "\n")
 	case EventToolCall:
 		st.StructuredOut = true
 		l.runPresenterEnsureStructuredSpacing(presenter)
@@ -537,8 +506,8 @@ func (l *Loop) handleOutputLine(line string, presenter *presenterState, st *stat
 	case EventToolResult:
 		st.StructuredOut = true
 		l.runPresenterEnsureStructuredSpacing(presenter)
-		if text := strings.TrimSpace(event.Text); text != "" {
-			l.printf("  -> %s\n", truncateText(text, 150))
+		for _, line := range formatToolResultLines(event.Text) {
+			l.printf("%s\n", line)
 		}
 		presenter.lastWasStructured = true
 	case EventDone:
@@ -1283,6 +1252,15 @@ func (l *Loop) setExitConfirmation(active bool) {
 	}
 }
 
+func (l *Loop) setBusy(active bool) {
+	if l == nil || l.Control == nil {
+		return
+	}
+	if busyUI, ok := l.Control.(interface{ SetBusy(bool) }); ok {
+		busyUI.SetBusy(active)
+	}
+}
+
 func (l *Loop) screen() UI {
 	if l == nil || l.Control == nil {
 		return nil
@@ -1359,21 +1337,25 @@ func RealCommandRunner(ctx context.Context, dir string, argv []string, onLine fu
 		return err
 	}
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
 
+	stdinCallback := stdinReadyCallback(stderrSink)
+	var stdin io.WriteCloser
+	if stdinCallback != nil {
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	if callback := stdinReadyCallback(stderrSink); callback != nil {
-		callback(stdin)
+	if stdinCallback != nil {
+		stdinCallback(stdin)
 	}
 
 	stderrResultCh := make(chan pipeScanResult, 1)

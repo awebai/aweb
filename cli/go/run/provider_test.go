@@ -63,7 +63,7 @@ func TestCodexProviderBuildCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "codex exec --skip-git-repo-check --json -m gpt-5-codex fix the bug") {
+	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --json -m gpt-5-codex fix the bug") {
 		t.Fatalf("unexpected codex command: %q", joined)
 	}
 	if strings.Contains(joined, "resume --last") {

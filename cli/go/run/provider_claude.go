@@ -84,10 +84,6 @@ func (ClaudeProvider) ParseOutput(line string) (*Event, error) {
 				CacheCreationInputTokens: message.Usage.CacheCreationInputTokens,
 				CacheReadInputTokens:     message.Usage.CacheReadInputTokens,
 				OutputTokens:             message.Usage.OutputTokens,
-				ContextWindowSize:        claudeContextWindowSize(message.Model),
-			}
-			if usage.ContextWindowSize == 0 {
-				usage.ContextWindowSize = claudeContextWindowSize(envelope.Model)
 			}
 		}
 		if len(calls) > 0 {
@@ -128,14 +124,6 @@ func (ClaudeProvider) ParseOutput(line string) (*Event, error) {
 	}
 
 	return &Event{}, nil
-}
-
-func claudeContextWindowSize(model string) int {
-	trimmed := strings.TrimSpace(model)
-	if trimmed == "" {
-		return 200000
-	}
-	return 200000
 }
 
 func (ClaudeProvider) SessionID(event *Event) string {
