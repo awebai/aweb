@@ -3,6 +3,10 @@ name: aw Sync and Release
 # When we tag aw-vX.Y.Z on aweb, this workflow pushes cli/go/ to the
 # awebai/aw repo with tag vX.Y.Z. The aw repo's own release workflow
 # then handles goreleaser (binaries) and npm publishing.
+#
+# Uses AW_REPO_TOKEN (PAT with Contents write on awebai/aw) so the
+# push triggers the aw repo's release workflow. Deploy keys don't
+# trigger workflows.
 
 on:
   push:
@@ -23,25 +27,14 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#aw-v}" >> "$GITHUB_OUTPUT"
 
-      - name: Configure SSH for awebai/aw
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AW_DEPLOY_KEY }}" > ~/.ssh/aw_deploy_key
-          chmod 600 ~/.ssh/aw_deploy_key
-          cat >> ~/.ssh/config <<EOF
-          Host github.com-aw
-            HostName github.com
-            User git
-            IdentityFile ~/.ssh/aw_deploy_key
-            StrictHostKeyChecking no
-          EOF
-
       - name: Push cli/go to awebai/aw
+        env:
+          AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
-          # Clone aw repo
-          git clone git@github.com-aw:awebai/aw.git /tmp/aw-release
+          # Clone aw repo using PAT (so the push triggers workflows)
+          git clone "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" /tmp/aw-release
           cd /tmp/aw-release
 
           # Remove everything except .git
