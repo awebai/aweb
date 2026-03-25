@@ -244,8 +244,45 @@ async def check_inbox(
         },
     )
 
+    unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
+    acknowledged_at_by_id: dict[str, str] = {}
+    if unread_message_ids:
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.messages}}
+            SET read_at = COALESCE(read_at, NOW())
+            WHERE recipient_project_id = $1
+              AND to_agent_id = $2
+              AND message_id = ANY($3::uuid[])
+            """,
+            UUID(auth.project_id),
+            UUID(auth.agent_id),
+            unread_message_ids,
+        )
+        acknowledged_rows = await aweb_db.fetch_all(
+            """
+            SELECT message_id, read_at
+            FROM {{tables.messages}}
+            WHERE recipient_project_id = $1
+              AND to_agent_id = $2
+              AND message_id = ANY($3::uuid[])
+            """,
+            UUID(auth.project_id),
+            UUID(auth.agent_id),
+            unread_message_ids,
+        )
+        acknowledged_at_by_id = {
+            str(row["message_id"]): _utc_iso(row["read_at"])
+            for row in acknowledged_rows
+            if row["read_at"] is not None
+        }
+
     messages = []
     for r in rows:
+        message_id = str(r["message_id"])
+        read_at = acknowledged_at_by_id.get(message_id) or (
+            _utc_iso(r["read_at"]) if r["read_at"] is not None else None
+        )
         sender_project_id = str(r["project_id"])
         recipient_project_id = str(r["recipient_project_id"])
         sender_project_slug = slug_by_project_id.get(sender_project_id)
@@ -265,15 +302,15 @@ async def check_inbox(
             alias=owner["alias"],
         )
         msg: dict = {
-            "message_id": str(r["message_id"]),
+            "message_id": message_id,
             "from_agent_id": str(r["from_agent_id"]),
             "from_alias": r["from_alias"],
             "from_address": from_address,
             "subject": r["subject"],
             "priority": r["priority"],
             "thread_id": str(r["thread_id"]) if r["thread_id"] is not None else None,
-            "read": r["read_at"] is not None,
-            "read_at": _utc_iso(r["read_at"]) if r["read_at"] is not None else None,
+            "read": read_at is not None,
+            "read_at": read_at,
             "created_at": _utc_iso(r["created_at"]),
             "to_address": to_address,
             "is_contact": is_address_in_contacts(from_address, contact_addrs),

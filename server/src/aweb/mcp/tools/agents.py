@@ -31,7 +31,11 @@ async def list_agents(db_infra, redis) -> str:
 
     agent_ids = [str(r["agent_id"]) for r in rows]
     presences = await list_agent_presences_by_ids(redis, agent_ids)
-    presence_map = {p["agent_id"]: p for p in presences}
+    presence_map = {}
+    for presence in presences:
+        presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
+        if presence_id:
+            presence_map[presence_id] = presence
 
     agents = []
     for r in rows:

@@ -29,7 +29,6 @@ from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
 from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
 from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
-from aweb.mcp.tools.mail import ack_message as _ack_message_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 
@@ -170,13 +169,6 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
             limit=limit,
             include_bodies=include_bodies,
         )
-
-    @mcp.tool(
-        name="ack_message",
-        description="Acknowledge (mark as read) a message by its ID.",
-    )
-    async def ack_message(message_id: str) -> str:
-        return await _ack_message_impl(db_infra, message_id=message_id)
 
     # -- Agents --
 
