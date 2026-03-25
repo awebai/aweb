@@ -32,11 +32,21 @@ from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 from aweb.mcp.tools.policies import policy_show as _policy_show_impl
+from aweb.mcp.tools.policies import roles_list as _roles_list_impl
+from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
 from aweb.mcp.tools.tasks import task_close as _task_close_impl
+from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
+from aweb.mcp.tools.tasks import task_comment_list as _task_comment_list_impl
 from aweb.mcp.tools.tasks import task_create as _task_create_impl
 from aweb.mcp.tools.tasks import task_get as _task_get_impl
 from aweb.mcp.tools.tasks import task_list as _task_list_impl
+from aweb.mcp.tools.tasks import task_reopen as _task_reopen_impl
 from aweb.mcp.tools.tasks import task_ready as _task_ready_impl
+from aweb.mcp.tools.tasks import task_update as _task_update_impl
+from aweb.mcp.tools.work import work_active as _work_active_impl
+from aweb.mcp.tools.work import work_blocked as _work_blocked_impl
+from aweb.mcp.tools.work import work_ready as _work_ready_impl
+from aweb.mcp.tools.workspace import workspace_status as _workspace_status_impl
 
 class NormalizeMountedMCPPathMiddleware:
     """Rewrite exact /mcp requests to /mcp/ before FastAPI routing.
@@ -321,6 +331,62 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
     async def task_close(ref: str) -> str:
         return await _task_close_impl(db_infra, ref=ref)
 
+    @mcp.tool(
+        name="task_update",
+        description="Update task fields such as status, title, notes, assignee, or labels.",
+    )
+    async def task_update(
+        ref: str,
+        status: str = "",
+        title: str = "",
+        description: str = "",
+        notes: str = "",
+        task_type: str = "",
+        priority: int = -1,
+        labels: list[str] | None = None,
+        assignee: str = "",
+    ) -> str:
+        return await _task_update_impl(
+            db_infra,
+            ref=ref,
+            status=status,
+            title=title,
+            description=description,
+            notes=notes,
+            task_type=task_type,
+            priority=priority,
+            labels=labels,
+            assignee=assignee,
+        )
+
+    @mcp.tool(
+        name="task_reopen",
+        description="Reopen a closed task.",
+    )
+    async def task_reopen(ref: str) -> str:
+        return await _task_reopen_impl(db_infra, ref=ref)
+
+    @mcp.tool(
+        name="task_claim",
+        description="Claim a task by marking it in progress for the current agent.",
+    )
+    async def task_claim(ref: str) -> str:
+        return await _task_claim_impl(db_infra, ref=ref)
+
+    @mcp.tool(
+        name="task_comment_add",
+        description="Add a comment to a task.",
+    )
+    async def task_comment_add(ref: str, body: str) -> str:
+        return await _task_comment_add_impl(db_infra, ref=ref, body=body)
+
+    @mcp.tool(
+        name="task_comment_list",
+        description="List comments on a task.",
+    )
+    async def task_comment_list(ref: str) -> str:
+        return await _task_comment_list_impl(db_infra, ref=ref)
+
     # -- Policies --
 
     @mcp.tool(
@@ -329,6 +395,45 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
     )
     async def policy_show(only_selected: bool = False) -> str:
         return await _policy_show_impl(db_infra, only_selected=only_selected)
+
+    @mcp.tool(
+        name="roles_list",
+        description="List available roles from the active project policy.",
+    )
+    async def roles_list() -> str:
+        return await _roles_list_impl(db_infra)
+
+    # -- Work --
+
+    @mcp.tool(
+        name="work_ready",
+        description="List ready tasks that are not already claimed by another workspace.",
+    )
+    async def work_ready() -> str:
+        return await _work_ready_impl(db_infra)
+
+    @mcp.tool(
+        name="work_active",
+        description="List active in-progress work across the project.",
+    )
+    async def work_active() -> str:
+        return await _work_active_impl(db_infra)
+
+    @mcp.tool(
+        name="work_blocked",
+        description="List blocked tasks in the current project.",
+    )
+    async def work_blocked() -> str:
+        return await _work_blocked_impl(db_infra)
+
+    # -- Workspace --
+
+    @mcp.tool(
+        name="workspace_status",
+        description="Show self/team coordination status for the current agent.",
+    )
+    async def workspace_status(limit: int = 15) -> str:
+        return await _workspace_status_impl(db_infra, redis, limit=limit)
 
     # -- Contacts --
 

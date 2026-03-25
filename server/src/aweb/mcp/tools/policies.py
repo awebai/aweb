@@ -68,3 +68,33 @@ async def policy_show(db_infra, *, only_selected: bool = False) -> str:
             "adapters": policy.bundle.adapters,
         }
     )
+
+
+async def roles_list(db_infra) -> str:
+    """List available roles from the active project policy plus the agent's current role."""
+    auth = get_auth()
+    aweb_db = db_infra.get_manager("aweb")
+    server_db = db_infra.get_manager("server")
+
+    agent = await aweb_db.fetch_one(
+        """
+        SELECT role
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        """,
+        UUID(auth.agent_id),
+        UUID(auth.project_id),
+    )
+    current_role = (agent.get("role") or "").strip() if agent else ""
+
+    policy = await get_active_policy(server_db, auth.project_id, bootstrap_if_missing=True)
+    available_roles = sorted(policy.bundle.roles.keys()) if policy else []
+
+    return json.dumps(
+        {
+            "project_id": auth.project_id,
+            "agent_id": auth.agent_id,
+            "current_role": current_role or None,
+            "roles": available_roles,
+        }
+    )
