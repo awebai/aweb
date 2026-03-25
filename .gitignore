@@ -11,7 +11,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .aw/
-.claude/
+.claude/settings*
 
 # server/
 server/.venv/

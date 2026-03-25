@@ -137,6 +137,7 @@ async def send_in_session(
     session_id: UUID,
     agent_id: str,
     body: str,
+    reply_to_message_id: UUID | None = None,
     leaving: bool = False,
     hang_on: bool = False,
     from_did: str | None = None,
@@ -175,8 +176,8 @@ async def send_in_session(
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_agent_id, from_alias, body, sender_leaving, hang_on,
-             from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             reply_to_message_id, from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -186,6 +187,7 @@ async def send_in_session(
         body,
         bool(leaving),
         bool(hang_on),
+        reply_to_message_id,
         from_did,
         from_stable_id,
         to_did,
@@ -234,7 +236,11 @@ async def get_pending_conversations(
             lm.body AS last_message,
             lm.from_alias AS last_from,
             lm.created_at AS last_activity,
-            COALESCE(unread.cnt, 0) AS unread_count
+            COALESCE(unread.cnt, 0) AS unread_count,
+            s.wait_seconds,
+            s.wait_started_at,
+            s.wait_started_by_agent_id,
+            COALESCE(wait_ext.total_seconds, 0) AS extended_wait_seconds
         FROM {{tables.chat_sessions}} s
         JOIN {{tables.chat_session_participants}} p
           ON p.session_id = s.session_id AND p.agent_id = $1
@@ -258,12 +264,30 @@ async def get_pending_conversations(
               AND m.from_agent_id <> $1
               AND m.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
         ) unread ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM($2::int), 0)::int AS total_seconds
+            FROM {{tables.chat_messages}} m
+            WHERE m.session_id = s.session_id
+              AND m.hang_on = TRUE
+              AND (s.wait_started_at IS NULL OR m.created_at >= s.wait_started_at)
+        ) wait_ext ON TRUE
         WHERE p.agent_id = $1
-        GROUP BY s.session_id, lm.body, lm.from_alias, lm.created_at, unread.cnt
+        GROUP BY
+            s.session_id,
+            lm.body,
+            lm.from_alias,
+            lm.created_at,
+            unread.cnt,
+            s.wait_seconds,
+            s.wait_started_at,
+            s.wait_started_by_agent_id,
+            wait_ext.total_seconds
         HAVING COALESCE(unread.cnt, 0) > 0
+            OR s.wait_started_at IS NOT NULL
         ORDER BY lm.created_at DESC
         """,
         UUID(agent_id),
+        HANG_ON_EXTENSION_SECONDS,
     )
 
     return [
@@ -275,6 +299,14 @@ async def get_pending_conversations(
             "last_from": r["last_from"] or "",
             "unread_count": int(r["unread_count"] or 0),
             "last_activity": r["last_activity"],
+            "wait_seconds": int(r["wait_seconds"]) if r.get("wait_seconds") is not None else None,
+            "wait_started_at": r.get("wait_started_at"),
+            "wait_started_by_agent_id": (
+                str(r["wait_started_by_agent_id"])
+                if r.get("wait_started_by_agent_id") is not None
+                else None
+            ),
+            "extended_wait_seconds": int(r["extended_wait_seconds"] or 0),
         }
         for r in rows
     ]
@@ -324,7 +356,8 @@ async def get_message_history(
     rows = await aweb_db.fetch_all(
         """
         SELECT message_id, from_alias, body, created_at, sender_leaving,
-               from_agent_id, from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
+               from_agent_id, reply_to_message_id,
+               from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
         FROM {{tables.chat_messages}}
         WHERE session_id = $1
           AND ($2::bool IS FALSE OR (created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz) AND from_agent_id <> $4))
@@ -347,6 +380,11 @@ async def get_message_history(
             "body": r["body"],
             "created_at": r["created_at"],
             "sender_leaving": bool(r["sender_leaving"]),
+            "reply_to_message_id": (
+                str(r["reply_to_message_id"])
+                if r.get("reply_to_message_id") is not None
+                else None
+            ),
             "from_did": r.get("from_did"),
             "from_stable_id": r.get("from_stable_id"),
             "to_did": r.get("to_did"),

@@ -13,7 +13,7 @@ from uuid import UUID
 import asyncpg.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
@@ -152,6 +152,7 @@ class CreateSessionRequest(BaseModel):
     leaving: bool = False
     wait_seconds: int | None = None
     message_id: str | None = None
+    reply_to_message_id: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
     from_stable_id: str | None = Field(default=None, max_length=256)
@@ -175,12 +176,12 @@ class CreateSessionRequest(BaseModel):
             raise ValueError("to_aliases must not be empty")
         return cleaned
 
-    @field_validator("message_id")
+    @field_validator("message_id", "reply_to_message_id")
     @classmethod
-    def _validate_message_id(cls, v: str | None) -> str | None:
+    def _validate_message_id(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
             return None
-        return _parse_uuid(v, field="message_id")
+        return _parse_uuid(v, field=str(info.field_name or "message_id"))
 
     @field_validator("from_stable_id", "to_stable_id")
     @classmethod
@@ -317,6 +318,18 @@ async def create_or_send(
         raise HTTPException(
             status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
         )
+    if payload.reply_to_message_id is not None:
+        reply_target = await aweb_db.fetch_one(
+            """
+            SELECT 1
+            FROM {{tables.chat_messages}}
+            WHERE session_id = $1 AND message_id = $2
+            """,
+            session_uuid,
+            uuid_mod.UUID(payload.reply_to_message_id),
+        )
+        if reply_target is None:
+            raise HTTPException(status_code=404, detail="Replied-to message not found")
 
     if payload.signature is None:
         cross_project = any(r.project_slug != sender_scope.project_slug for r in resolved_targets)
@@ -373,6 +386,21 @@ async def create_or_send(
         raise
     if msg_row is None:
         raise HTTPException(status_code=500, detail="Failed to send message")
+
+    if payload.wait_seconds is not None:
+        await aweb_db.execute(
+            """
+            UPDATE {{tables.chat_sessions}}
+            SET wait_seconds = $2,
+                wait_started_at = $3,
+                wait_started_by_agent_id = $4
+            WHERE session_id = $1
+            """,
+            session_id,
+            int(payload.wait_seconds),
+            msg_row["created_at"],
+            UUID(actor_id),
+        )
 
     participants_rows = await aweb_db.fetch_all(
         """
@@ -495,6 +523,22 @@ async def pending(
             ),
             r["last_from"],
         )
+        time_remaining_seconds = (
+            max(
+                0,
+                int(r["wait_seconds"] or 0)
+                + int(r["extended_wait_seconds"] or 0)
+                - int((datetime.now(timezone.utc) - r["wait_started_at"]).total_seconds()),
+            )
+            if (
+                len(waiting) > 0
+                and r.get("wait_seconds") is not None
+                and r.get("wait_started_at") is not None
+            )
+            else 0
+        )
+        if int(r["unread_count"] or 0) <= 0 and time_remaining_seconds <= 0:
+            continue
         pending_items.append(
             {
                 "session_id": r["session_id"],
@@ -504,7 +548,7 @@ async def pending(
                 "unread_count": r["unread_count"],
                 "last_activity": _utc_iso(r["last_activity"]) if r["last_activity"] else "",
                 "sender_waiting": len(waiting) > 0,
-                "time_remaining_seconds": 0,
+                "time_remaining_seconds": time_remaining_seconds,
             }
         )
 
@@ -584,6 +628,7 @@ async def history(
                 "body": m["body"],
                 "timestamp": _utc_iso(m["created_at"]),
                 "sender_leaving": m["sender_leaving"],
+                "reply_to_message_id": m.get("reply_to_message_id"),
                 "to_address": _chat_to_address(
                     participant_rows, from_agent_id=m["from_agent_id"]
                 ),
@@ -747,7 +792,7 @@ async def _sse_events(
             recent = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on,
+                       sender_leaving, hang_on, reply_to_message_id,
                        from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
@@ -782,10 +827,15 @@ async def _sse_events(
                     "from_address": from_address,
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
-                    "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
-                    "hang_on": is_hang_on,
-                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                    "timestamp": _utc_iso(r["created_at"]),
+                        "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
+                        "hang_on": is_hang_on,
+                        "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                        "reply_to_message_id": (
+                            str(r["reply_to_message_id"])
+                            if r.get("reply_to_message_id") is not None
+                            else None
+                        ),
+                        "timestamp": _utc_iso(r["created_at"]),
                     "to_address": _chat_to_address(participant_rows, from_agent_id=str(r["from_agent_id"])),
                     "from_did": r["from_did"],
                     "from_stable_id": r.get("from_stable_id"),
@@ -877,7 +927,7 @@ async def _sse_events(
                 new_msgs = await aweb_db.fetch_all(
                     """
                     SELECT message_id, from_agent_id, from_alias, body, created_at,
-                           sender_leaving, hang_on,
+                           sender_leaving, hang_on, reply_to_message_id,
                            from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
@@ -922,6 +972,11 @@ async def _sse_events(
                         "sender_waiting": str(r["from_agent_id"]) in sender_waiting_ids,
                         "hang_on": is_hang_on,
                         "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                        "reply_to_message_id": (
+                            str(r["reply_to_message_id"])
+                            if r.get("reply_to_message_id") is not None
+                            else None
+                        ),
                         "timestamp": _utc_iso(r["created_at"]),
                         "to_address": _chat_to_address(participant_rows, from_agent_id=str(r["from_agent_id"])),
                         "from_did": r["from_did"],
@@ -1063,6 +1118,7 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
+    reply_to_message_id: str | None = None
     message_id: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
@@ -1073,7 +1129,7 @@ class SendMessageRequest(BaseModel):
     signing_key_id: str | None = Field(default=None, max_length=256)
     signed_payload: str | None = None
 
-    @field_validator("message_id")
+    @field_validator("message_id", "reply_to_message_id")
     @classmethod
     def _validate_message_id(cls, v: str | None) -> str | None:
         if v is None:
@@ -1248,6 +1304,11 @@ async def send_message(
             session_id=session_uuid,
             agent_id=actor_id,
             body=payload.body,
+            reply_to_message_id=(
+                uuid_mod.UUID(payload.reply_to_message_id)
+                if payload.reply_to_message_id is not None
+                else None
+            ),
             hang_on=payload.hang_on,
             from_did=msg_from_did,
             from_stable_id=msg_from_stable_id,

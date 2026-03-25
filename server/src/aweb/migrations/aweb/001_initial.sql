@@ -191,7 +191,11 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_sessions}} (
     session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
     participant_hash TEXT NOT NULL,
+    wait_seconds INTEGER,
+    wait_started_at TIMESTAMPTZ,
+    wait_started_by_agent_id UUID REFERENCES {{tables.agents}}(agent_id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_chat_sessions_wait_seconds CHECK (wait_seconds IS NULL OR wait_seconds >= 1),
     UNIQUE (participant_hash)
 );
 
@@ -213,6 +217,7 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_messages}} (
     from_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
     from_alias TEXT NOT NULL,
     body TEXT NOT NULL,
+    reply_to_message_id UUID REFERENCES {{tables.chat_messages}}(message_id),
     sender_leaving BOOLEAN NOT NULL DEFAULT FALSE,
     hang_on BOOLEAN NOT NULL DEFAULT FALSE,
     -- Identity fields
@@ -229,6 +234,10 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_messages}} (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
 ON {{tables.chat_messages}} (session_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_reply_to
+ON {{tables.chat_messages}} (reply_to_message_id)
+WHERE reply_to_message_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
     session_id UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id) ON DELETE CASCADE,
