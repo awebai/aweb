@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -35,6 +36,31 @@ func loadDotenvBestEffort() {
 // lastClient holds the most recently created client, used to check
 // the X-Latest-Client-Version header after command execution.
 var lastClient *aweb.Client
+
+type identityMismatchError struct {
+	ContextPath    string
+	WorkspacePath  string
+	ResolvedAlias  string
+	WorkspaceAlias string
+}
+
+func (e *identityMismatchError) Error() string {
+	ctxPath := e.ContextPath
+	if strings.TrimSpace(ctxPath) == "" {
+		ctxPath = "(resolved from config)"
+	}
+	wsPath := e.WorkspacePath
+	if strings.TrimSpace(wsPath) == "" {
+		wsPath = "(unknown)"
+	}
+	return fmt.Sprintf("identity mismatch: .aw/context at %s resolves to %q, but .aw/workspace.yaml at %s says %q. Run 'aw init' in this worktree to fix.",
+		ctxPath, strings.TrimSpace(e.ResolvedAlias), wsPath, strings.TrimSpace(e.WorkspaceAlias))
+}
+
+func isIdentityMismatchError(err error) bool {
+	var mismatch *identityMismatchError
+	return errors.As(err, &mismatch)
+}
 
 func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 	wd, _ := os.Getwd()
@@ -917,8 +943,12 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 		if p, err := awconfig.FindWorktreeWorkspacePath(workingDir); err == nil {
 			wsPath = p
 		}
-		return fmt.Errorf("identity mismatch: .aw/context at %s resolves to %q, but .aw/workspace.yaml at %s says %q. Run 'aw init' in this worktree to fix.",
-			ctxPath, selAlias, wsPath, wsAlias)
+		return &identityMismatchError{
+			ContextPath:    ctxPath,
+			WorkspacePath:  wsPath,
+			ResolvedAlias:  selAlias,
+			WorkspaceAlias: wsAlias,
+		}
 	}
 	return nil
 }

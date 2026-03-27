@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,14 +49,13 @@ var (
 			Stream: awrun.NewEventStreamOpener(client.Client),
 		})
 	}
-	runNewScreenController   = awrun.NewScreenController
-	runResolveClientForDir   = resolveClientSelectionForDir
-	runResolveBaseURLForInit = resolveBaseURLForInit
-	runExecuteInitFlow       = executeInit
-	runFetchInitSuggestion   = fetchInitSuggestion
-	runPrintInitSummary      = printInitSummary
-	runPrintPostInitActions  = printPostInitActions
-	runGetwd                 = os.Getwd
+	runNewScreenController  = awrun.NewScreenController
+	runResolveClientForDir  = resolveClientSelectionForDir
+	runExecuteInitFlow      = executeInit
+	runWorkspaceStateForDir = resolveRunWorkspaceStateForDir
+	runPrintInitSummary     = printInitSummary
+	runPrintPostInitActions = printPostInitActions
+	runGetwd                = os.Getwd
 )
 
 var runCmd = &cobra.Command{
@@ -312,55 +312,56 @@ func resolveRunInvocation(cmd *cobra.Command, args []string, interactive bool, p
 	return providerName, strings.TrimSpace(runInitialPrompt), nil
 }
 
+type runWorkspaceState int
+
+const (
+	runWorkspaceStateInitialized runWorkspaceState = iota
+	runWorkspaceStateMissing
+)
+
 func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive bool, promptInput io.Reader) (*aweb.Client, *awconfig.Selection, error) {
-	client, sel, err := runResolveClientForDir(workingDir)
-	if err == nil {
-		return client, sel, nil
+	state, err := runWorkspaceStateForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
 	}
-	if !interactive || !isRunOnboardingCandidate(err) {
-		if interactive {
-			return nil, nil, err
+	if state == runWorkspaceStateMissing {
+		if !interactive {
+			return nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`, or rerun in a TTY for guided onboarding")
 		}
-		return nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`, or rerun in a TTY for guided onboarding")
+		proceed, promptErr := promptRunYesNo(
+			"This directory is not initialized as an aweb workspace. Initialize now?",
+			true,
+			promptInput,
+			cmd.ErrOrStderr(),
+		)
+		if promptErr != nil {
+			return nil, nil, promptErr
+		}
+		if !proceed {
+			return nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`")
+		}
+
+		if onboardingErr := runOnboardingWizard(cmd, workingDir, promptInput); onboardingErr != nil {
+			return nil, nil, onboardingErr
+		}
 	}
 
-	proceed, promptErr := promptRunYesNo(
-		"This directory is not initialized as an aweb workspace. Initialize now?",
-		true,
-		promptInput,
-		cmd.ErrOrStderr(),
-	)
-	if promptErr != nil {
-		return nil, nil, promptErr
+	client, sel, err := runResolveClientForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
 	}
-	if !proceed {
-		return nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`")
-	}
-
-	if onboardingErr := runOnboardingWizard(cmd, workingDir, promptInput); onboardingErr != nil {
-		return nil, nil, onboardingErr
-	}
-	return runResolveClientForDir(workingDir)
+	return client, sel, nil
 }
 
-func isRunOnboardingCandidate(err error) bool {
+func resolveRunWorkspaceStateForDir(workingDir string) (runWorkspaceState, error) {
+	_, _, err := awconfig.LoadWorktreeContextFromDir(workingDir)
 	if err == nil {
-		return false
+		return runWorkspaceStateInitialized, nil
 	}
-	msg := strings.ToLower(err.Error())
-	candidates := []string{
-		"no default account configured",
-		"no account configured for server",
-		"unknown account",
-		"failed to read config",
-		"identity mismatch",
+	if errors.Is(err, os.ErrNotExist) {
+		return runWorkspaceStateMissing, nil
 	}
-	for _, candidate := range candidates {
-		if strings.Contains(msg, candidate) {
-			return true
-		}
-	}
-	return false
+	return runWorkspaceStateInitialized, fmt.Errorf("invalid local workspace context: %w", err)
 }
 
 func promptRunYesNo(label string, defaultYes bool, in io.Reader, out io.Writer) (bool, error) {
@@ -399,52 +400,29 @@ func runOnboardingWizard(cmd *cobra.Command, workingDir string, promptInput io.R
 }
 
 func runWizardInitExistingProject(cmd *cobra.Command, workingDir string, promptInput io.Reader) error {
-	serverDefault := strings.TrimSpace(os.Getenv("AWEB_URL"))
-	if serverDefault == "" {
-		serverDefault = DefaultServerURL
-	}
-	serverURL, err := promptRequiredStringWithIO("Server URL", serverDefault, promptInput, cmd.ErrOrStderr())
+	serverURL, err := promptRequiredStringWithIO("Server URL", defaultWizardServerURL(), promptInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	baseURL, serverName, _, err := runResolveBaseURLForInit(serverURL, serverFlag)
-	if err != nil {
-		return err
-	}
-
-	apiKey := strings.TrimSpace(os.Getenv("AWEB_API_KEY"))
-	suggestion := runFetchInitSuggestion(baseURL, "", apiKey)
-	aliasSuggestion := strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
-	if aliasSuggestion == "" && suggestion != nil {
-		aliasSuggestion = strings.TrimSpace(suggestion.NamePrefix)
-	}
-	alias, err := promptRequiredStringWithIO("Alias", aliasSuggestion, promptInput, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-
-	role := ""
-	if suggestion != nil && len(suggestion.Roles) > 0 {
-		role, err = selectRoleFromAvailableRoles("", suggestion.Roles, true, promptInput, cmd.ErrOrStderr())
-		if err != nil {
-			return err
-		}
-	}
-
-	result, err := runExecuteInitFlow(initOptions{
-		Flow:          flowProjectKey,
-		WorkingDir:    workingDir,
-		BaseURL:       baseURL,
-		ServerName:    serverName,
-		IdentityAlias: alias,
-		HumanName:     resolveHumanName(),
-		AgentType:     resolveAgentType(),
-		SaveConfig:    true,
-		WriteContext:  true,
-		AuthToken:     apiKey,
-		WorkspaceRole: role,
-		Lifetime:      awid.LifetimeEphemeral,
+	opts, err := collectInitOptionsWithInput(flowProjectKey, initCollectionInput{
+		WorkingDir:   workingDir,
+		Interactive:  true,
+		PromptIn:     promptInput,
+		PromptOut:    cmd.ErrOrStderr(),
+		ServerURL:    serverURL,
+		ServerName:   serverFlag,
+		Alias:        resolveAliasValue(""),
+		HumanName:    resolveHumanName(),
+		AgentType:    resolveAgentType(),
+		SaveConfig:   true,
+		WriteContext: true,
+		AuthToken:    strings.TrimSpace(os.Getenv("AWEB_API_KEY")),
 	})
+	if err != nil {
+		return err
+	}
+
+	result, err := runExecuteInitFlow(opts)
 	if err != nil {
 		return err
 	}
@@ -454,63 +432,43 @@ func runWizardInitExistingProject(cmd *cobra.Command, workingDir string, promptI
 }
 
 func runWizardCreateProject(cmd *cobra.Command, workingDir string, promptInput io.Reader) error {
-	serverDefault := strings.TrimSpace(os.Getenv("AWEB_URL"))
-	if serverDefault == "" {
-		serverDefault = DefaultServerURL
-	}
-	serverURL, err := promptRequiredStringWithIO("Server URL", serverDefault, promptInput, cmd.ErrOrStderr())
+	serverURL, err := promptRequiredStringWithIO("Server URL", defaultWizardServerURL(), promptInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	baseURL, serverName, _, err := runResolveBaseURLForInit(serverURL, serverFlag)
-	if err != nil {
-		return err
-	}
-
-	projectSuggestion := sanitizeSlug(filepath.Base(workingDir))
-	projectSlug, err := promptRequiredStringWithIO("Project", projectSuggestion, promptInput, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-	namespaceSlug, err := promptStringWithIO("Namespace (blank = same as project)", "", promptInput, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-	namespaceSlug = strings.TrimSpace(namespaceSlug)
-	if namespaceSlug == "" {
-		namespaceSlug = projectSlug
-	}
-
-	suggestion := runFetchInitSuggestion(baseURL, projectSlug, "")
-	aliasSuggestion := strings.TrimSpace(os.Getenv("AWEB_ALIAS"))
-	if aliasSuggestion == "" && suggestion != nil {
-		aliasSuggestion = strings.TrimSpace(suggestion.NamePrefix)
-	}
-	alias, err := promptRequiredStringWithIO("Alias", aliasSuggestion, promptInput, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-
-	result, err := runExecuteInitFlow(initOptions{
-		Flow:          flowHeadless,
-		WorkingDir:    workingDir,
-		BaseURL:       baseURL,
-		ServerName:    serverName,
-		ProjectSlug:   projectSlug,
-		NamespaceSlug: namespaceSlug,
-		IdentityAlias: alias,
-		HumanName:     resolveHumanName(),
-		AgentType:     resolveAgentType(),
-		SaveConfig:    true,
-		WriteContext:  true,
-		Lifetime:      awid.LifetimeEphemeral,
+	opts, err := collectInitOptionsWithInput(flowHeadless, initCollectionInput{
+		WorkingDir:   workingDir,
+		Interactive:  true,
+		PromptIn:     promptInput,
+		PromptOut:    cmd.ErrOrStderr(),
+		ServerURL:    serverURL,
+		ServerName:   serverFlag,
+		ProjectSlug:  sanitizeSlug(filepath.Base(workingDir)),
+		Alias:        resolveAliasValue(""),
+		HumanName:    resolveHumanName(),
+		AgentType:    resolveAgentType(),
+		SaveConfig:   true,
+		WriteContext: true,
 	})
+	if err != nil {
+		return err
+	}
+
+	result, err := runExecuteInitFlow(opts)
 	if err != nil {
 		return err
 	}
 	runPrintInitSummary(result.Response, result.AccountName, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, workingDir, "Created project and initialized workspace")
 	runPrintPostInitActions(result, workingDir)
 	return nil
+}
+
+func defaultWizardServerURL() string {
+	serverDefault := strings.TrimSpace(os.Getenv("AWEB_URL"))
+	if serverDefault == "" {
+		serverDefault = DefaultServerURL
+	}
+	return serverDefault
 }
 
 func runWizardJoinExistingProject(cmd *cobra.Command, workingDir string, promptInput io.Reader) error {
@@ -543,7 +501,7 @@ func runWizardJoinExistingProject(cmd *cobra.Command, workingDir string, promptI
 	if err != nil {
 		return err
 	}
-	baseURL, serverName, _, err := runResolveBaseURLForInit(serverURL, serverFlag)
+	baseURL, serverName, _, err := initResolveBaseURLForCollection(serverURL, serverFlag)
 	if err != nil {
 		return err
 	}

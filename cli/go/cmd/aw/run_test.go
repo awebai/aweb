@@ -81,6 +81,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -90,6 +91,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -124,6 +126,9 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 			t.Fatalf("expected selection dir to match working dir, got %q", dir)
 		}
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+	}
+	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) {
+		return runWorkspaceStateInitialized, nil
 	}
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus {
 		if client == nil {
@@ -207,9 +212,11 @@ func TestRunRequiresPromptWithoutConfiguredBasePrompt(t *testing.T) {
 
 	oldLoad := runLoadUserConfig
 	oldResolveSettings := runResolveSettings
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -217,6 +224,7 @@ func TestRunRequiresPromptWithoutConfiguredBasePrompt(t *testing.T) {
 	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
 		return awrun.Settings{}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 
 	cmd := &cobraCommandClone{Command: *runCmd}
 	cmd.ResetFlagsForTest()
@@ -270,6 +278,7 @@ func TestRunAllowsEmptyPromptWhenInteractiveScreenIsAvailable(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -279,6 +288,7 @@ func TestRunAllowsEmptyPromptWhenInteractiveScreenIsAvailable(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -292,6 +302,7 @@ func TestRunAllowsEmptyPromptWhenInteractiveScreenIsAvailable(t *testing.T) {
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
@@ -334,6 +345,7 @@ func TestRunDefaultsCodexToNonPTYWhenInteractive(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -343,6 +355,7 @@ func TestRunDefaultsCodexToNonPTYWhenInteractive(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -356,6 +369,7 @@ func TestRunDefaultsCodexToNonPTYWhenInteractive(t *testing.T) {
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
@@ -395,6 +409,7 @@ func TestRunHonorsExplicitCodexPTYOverride(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -404,6 +419,7 @@ func TestRunHonorsExplicitCodexPTYOverride(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -417,6 +433,7 @@ func TestRunHonorsExplicitCodexPTYOverride(t *testing.T) {
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
@@ -455,11 +472,13 @@ func TestRunNonInteractiveMissingContextPrintsOnboardingHint(t *testing.T) {
 	oldResolveSettings := runResolveSettings
 	oldResolveClient := runResolveClientForDir
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
 		runResolveClientForDir = oldResolveClient
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -467,9 +486,7 @@ func TestRunNonInteractiveMissingContextPrintsOnboardingHint(t *testing.T) {
 	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
 		return awrun.Settings{BasePrompt: "mission"}, nil
 	}
-	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
-		return nil, nil, errors.New("no default account configured")
-	}
+	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) { return runWorkspaceStateMissing, nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
 
 	cmd := &cobraCommandClone{Command: *runCmd}
@@ -498,9 +515,10 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	oldNewLoop := runNewLoop
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
-	oldResolveBaseURLForInit := runResolveBaseURLForInit
+	oldWorkspaceState := runWorkspaceStateForDir
+	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
 	oldExecuteInitFlow := runExecuteInitFlow
-	oldFetchInitSuggestion := runFetchInitSuggestion
+	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
 	oldPrintInitSummary := runPrintInitSummary
 	oldPrintPostInitActions := runPrintPostInitActions
 	t.Cleanup(func() {
@@ -512,9 +530,10 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		runNewLoop = oldNewLoop
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
-		runResolveBaseURLForInit = oldResolveBaseURLForInit
+		runWorkspaceStateForDir = oldWorkspaceState
+		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
 		runExecuteInitFlow = oldExecuteInitFlow
-		runFetchInitSuggestion = oldFetchInitSuggestion
+		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
 		runPrintInitSummary = oldPrintInitSummary
 		runPrintPostInitActions = oldPrintPostInitActions
 		initRunCommandVars()
@@ -528,13 +547,11 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
 		return awrun.Settings{BasePrompt: "mission"}, nil
 	}
+	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) { return runWorkspaceStateMissing, nil }
 
 	var resolveCalls int
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
 		resolveCalls++
-		if resolveCalls == 1 {
-			return nil, nil, errors.New("no default account configured")
-		}
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
@@ -550,10 +567,10 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		return nil
 	}
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
-	runResolveBaseURLForInit = func(baseURL, serverName string) (string, string, *awconfig.GlobalConfig, error) {
+	initResolveBaseURLForCollection = func(baseURL, serverName string) (string, string, *awconfig.GlobalConfig, error) {
 		return "https://app.aweb.ai/api", "app.aweb.ai", nil, nil
 	}
-	runFetchInitSuggestion = func(baseURL, nsSlug, authToken string) *awid.SuggestAliasPrefixResponse {
+	initFetchSuggestionForCollection = func(baseURL, nsSlug, authToken string) *awid.SuggestAliasPrefixResponse {
 		return &awid.SuggestAliasPrefixResponse{NamePrefix: "alice"}
 	}
 
@@ -585,8 +602,8 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	if capturedOpts.IdentityAlias != "alice" {
 		t.Fatalf("expected suggested alias to be accepted, got %+v", capturedOpts)
 	}
-	if resolveCalls < 2 {
-		t.Fatalf("expected client resolution to be retried after onboarding, got %d calls", resolveCalls)
+	if resolveCalls != 1 {
+		t.Fatalf("expected client resolution after onboarding, got %d calls", resolveCalls)
 	}
 }
 
@@ -805,6 +822,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 	oldResolveClient := runResolveClientForDir
 	oldNewLoop := runNewLoop
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -812,6 +830,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 		runResolveClientForDir = oldResolveClient
 		runNewLoop = oldNewLoop
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -866,6 +885,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
 		return client, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
 		loop := awrun.NewLoop(provider, out)
 		loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
@@ -922,6 +942,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 	oldResolveClient := runResolveClientForDir
 	oldNewLoop := runNewLoop
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -929,6 +950,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 		runResolveClientForDir = oldResolveClient
 		runNewLoop = oldNewLoop
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
@@ -977,6 +999,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
 		return client, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
 		loop := awrun.NewLoop(provider, out)
 		loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
@@ -1058,6 +1081,7 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
 		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
 	}
+	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
