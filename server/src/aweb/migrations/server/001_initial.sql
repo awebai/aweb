@@ -11,9 +11,35 @@ CREATE TABLE IF NOT EXISTS {{tables.projects}} (
     name TEXT,
     -- Active policy pointer (FK added after project_policies exists)
     active_policy_id UUID,
+    visibility TEXT NOT NULL DEFAULT 'private'
+        CHECK (visibility IN ('private', 'public')),
+    owner_type TEXT,
+    owner_ref TEXT,
+    owner_user_id UUID,
+    owner_org_id UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     -- Soft-delete support: NULL means active
-    deleted_at TIMESTAMPTZ
+    deleted_at TIMESTAMPTZ,
+    CONSTRAINT chk_projects_owner_fields CHECK (
+        (
+            owner_type IS NULL
+            AND owner_ref IS NULL
+            AND owner_user_id IS NULL
+            AND owner_org_id IS NULL
+        )
+        OR
+        (
+            owner_type = 'user'
+            AND (owner_ref IS NOT NULL OR owner_user_id IS NOT NULL)
+            AND owner_org_id IS NULL
+        )
+        OR
+        (
+            owner_type = 'organization'
+            AND (owner_ref IS NOT NULL OR owner_org_id IS NOT NULL)
+            AND owner_user_id IS NULL
+        )
+    )
 );
 
 -- Slugs unique within tenant (or globally if no tenant), for non-deleted projects.
@@ -60,6 +86,7 @@ CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
     -- Only checked for workspaces on the current hostname to avoid cross-machine false positives
     hostname TEXT,
     workspace_path TEXT,
+    timezone TEXT,
     -- Workspace classification
     workspace_type TEXT NOT NULL DEFAULT 'agent',
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -179,6 +206,7 @@ CREATE TABLE IF NOT EXISTS {{tables.audit_log}} (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
     workspace_id UUID REFERENCES {{tables.workspaces}}(workspace_id) ON DELETE SET NULL,
+    agent_id UUID,
     event_type TEXT NOT NULL,
     alias TEXT,
     member_email TEXT,
@@ -227,54 +255,8 @@ CREATE TRIGGER project_policies_update_timestamp
     BEFORE UPDATE ON {{tables.project_policies}}
     FOR EACH ROW
     EXECUTE FUNCTION {{schema}}.project_policies_update_timestamp();
-ALTER TABLE {{tables.projects}}
-ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
-
-DO $$
-BEGIN
-    ALTER TABLE {{tables.projects}}
-    ADD CONSTRAINT projects_visibility_check
-    CHECK (visibility IN ('private', 'public'));
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
-ALTER TABLE {{tables.workspaces}} ADD COLUMN IF NOT EXISTS timezone TEXT;
-ALTER TABLE {{tables.audit_log}}
-    ADD COLUMN IF NOT EXISTS agent_id UUID;
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_agent_id ON {{tables.audit_log}}(agent_id, created_at DESC);
-ALTER TABLE {{tables.projects}}
-ADD COLUMN IF NOT EXISTS owner_type TEXT,
-ADD COLUMN IF NOT EXISTS owner_ref TEXT,
-ADD COLUMN IF NOT EXISTS owner_user_id UUID,
-ADD COLUMN IF NOT EXISTS owner_org_id UUID;
-
-ALTER TABLE {{tables.projects}}
-DROP CONSTRAINT IF EXISTS chk_projects_owner_fields;
-
-ALTER TABLE {{tables.projects}}
-ADD CONSTRAINT chk_projects_owner_fields
-CHECK (
-    (
-        owner_type IS NULL
-        AND owner_ref IS NULL
-        AND owner_user_id IS NULL
-        AND owner_org_id IS NULL
-    )
-    OR
-    (
-        owner_type = 'user'
-        AND (owner_ref IS NOT NULL OR owner_user_id IS NOT NULL)
-        AND owner_org_id IS NULL
-    )
-    OR
-    (
-        owner_type = 'organization'
-        AND (owner_ref IS NOT NULL OR owner_org_id IS NOT NULL)
-        AND owner_user_id IS NULL
-    )
-);
-
 CREATE INDEX IF NOT EXISTS idx_projects_owner_scope
     ON {{tables.projects}}(owner_type, owner_ref, slug)
     WHERE owner_ref IS NOT NULL AND deleted_at IS NULL;
