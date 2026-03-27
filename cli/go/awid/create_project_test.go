@@ -24,19 +24,19 @@ func TestCreateProject(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"project_id":   "proj-1",
-			"project_slug": "default",
+			"project_id":     "proj-1",
+			"project_slug":   "default",
 			"namespace_slug": "myteam",
-			"namespace":    "myteam.aweb.ai",
-			"identity_id":  "identity-1",
-			"alias":        "deploy-bot",
-			"address":      "myteam.aweb.ai/deploy-bot",
-			"api_key":      "aw_sk_headless_test",
-			"did":          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-			"stable_id":    "stable-1",
-			"custody":      "self",
-			"lifetime":     "persistent",
-			"created":      true,
+			"namespace":      "myteam.aweb.ai",
+			"identity_id":    "identity-1",
+			"alias":          "deploy-bot",
+			"address":        "myteam.aweb.ai/deploy-bot",
+			"api_key":        "aw_sk_headless_test",
+			"did":            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+			"stable_id":      "stable-1",
+			"custody":        "self",
+			"lifetime":       "persistent",
+			"created":        true,
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -47,16 +47,16 @@ func TestCreateProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alias := "deploy-bot"
+	name := "deploy-bot"
 	resp, err := c.CreateProject(context.Background(), &CreateProjectRequest{
-		ProjectSlug: "default",
+		ProjectSlug:   "default",
 		NamespaceSlug: "myteam",
-		Alias:       &alias,
-		AgentType:   "agent",
-		DID:         "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-		PublicKey:   "Lm/M42cB3HkUiODQsXRcweM6TByfzEHGO9ND274JcOY",
-		Custody:     CustodySelf,
-		Lifetime:    LifetimePersistent,
+		Name:          &name,
+		AgentType:     "agent",
+		DID:           "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+		PublicKey:     "Lm/M42cB3HkUiODQsXRcweM6TByfzEHGO9ND274JcOY",
+		Custody:       CustodySelf,
+		Lifetime:      LifetimePersistent,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +71,8 @@ func TestCreateProject(t *testing.T) {
 	if gotBody["namespace_slug"] != "myteam" {
 		t.Fatalf("request namespace_slug=%v", gotBody["namespace_slug"])
 	}
-	if gotBody["alias"] != "deploy-bot" {
-		t.Fatalf("request alias=%v", gotBody["alias"])
+	if gotBody["name"] != "deploy-bot" {
+		t.Fatalf("request name=%v", gotBody["name"])
 	}
 	if gotBody["did"] != "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK" {
 		t.Fatalf("request did=%v", gotBody["did"])
@@ -142,9 +142,9 @@ func TestCreateProjectHTTPError(t *testing.T) {
 
 	alias := "deploy-bot"
 	_, err = c.CreateProject(context.Background(), &CreateProjectRequest{
-		ProjectSlug: "default",
+		ProjectSlug:   "default",
 		NamespaceSlug: "myteam",
-		Alias:       &alias,
+		Alias:         &alias,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -152,5 +152,60 @@ func TestCreateProjectHTTPError(t *testing.T) {
 	code, ok := HTTPStatusCode(err)
 	if !ok || code != 429 {
 		t.Fatalf("expected 429, got %d (ok=%v)", code, ok)
+	}
+}
+
+func TestCreateProjectAllowsEphemeralAliasOmission(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/create-project" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"project_id":     "proj-1",
+			"project_slug":   "default",
+			"namespace_slug": "myteam",
+			"namespace":      "myteam.aweb.ai",
+			"identity_id":    "identity-1",
+			"alias":          "alice",
+			"address":        "myteam.aweb.ai/alice",
+			"api_key":        "aw_sk_headless_test",
+			"did":            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+			"stable_id":      "stable-1",
+			"custody":        "self",
+			"lifetime":       "ephemeral",
+			"created":        true,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.CreateProject(context.Background(), &CreateProjectRequest{
+		ProjectSlug:   "default",
+		NamespaceSlug: "myteam",
+		AgentType:     "agent",
+		DID:           "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+		PublicKey:     "Lm/M42cB3HkUiODQsXRcweM6TByfzEHGO9ND274JcOY",
+		Custody:       CustodySelf,
+		Lifetime:      LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gotBody["alias"]; ok {
+		t.Fatalf("alias should be omitted, got %v", gotBody["alias"])
+	}
+	if resp.Alias != "alice" {
+		t.Fatalf("alias=%q", resp.Alias)
 	}
 }

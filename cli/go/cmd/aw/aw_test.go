@@ -2631,6 +2631,133 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 	}
 }
 
+func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
+		case "/api/v1/create-project":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "demo",
+				"namespace_slug": "demo",
+				"identity_id":    "identity-new",
+				"alias":          "alice",
+				"api_key":        "aw_sk_new",
+				"created":        true,
+				"did":            "did:key:z6MkTest",
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+			})
+		case "/v1/policies/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"policy_id": "pol-1",
+				"roles": map[string]any{
+					"coordinator": map[string]any{"title": "Coordinator"},
+					"developer":   map[string]any{"title": "Developer"},
+				},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "project", "create",
+		"--server-url", server.URL,
+		"--project", "demo",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Stdin = strings.NewReader("")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected missing-role error, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "no role specified; available roles: coordinator, developer") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config should not be written on failure, statErr=%v", statErr)
+	}
+}
+
+func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/spawn/accept-invite":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "demo",
+				"namespace_slug": "demo",
+				"identity_id":    "identity-new",
+				"alias":          "alice",
+				"api_key":        "aw_sk_new",
+				"created":        true,
+				"did":            "did:key:z6MkTest",
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+			})
+		case "/v1/policies/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"policy_id": "pol-1",
+				"roles": map[string]any{
+					"coordinator": map[string]any{"title": "Coordinator"},
+					"developer":   map[string]any{"title": "Developer"},
+				},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "spawn", "accept-invite", "aw_inv_test",
+		"--server-url", server.URL,
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Stdin = strings.NewReader("")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected missing-role error, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "no role specified; available roles: coordinator, developer") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config should not be written on failure, statErr=%v", statErr)
+	}
+}
+
 func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 

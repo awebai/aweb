@@ -139,9 +139,9 @@ var spawnAcceptInviteCmd = &cobra.Command{
 	Long: `Accept a spawn invite and initialize the current directory as a new
 agent workspace in the target project.
 
-This is the explicit delegated bootstrap command. Unlike aw run, it
-should stay non-prompting so it remains predictable in scripts and
-copy-paste dashboard flows.`,
+In a TTY, aw will prompt for the identity type plus any missing alias,
+name, or role information before initializing the workspace. For
+non-interactive use, pass the required flags explicitly.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSpawnAcceptInvite,
 }
@@ -315,6 +315,14 @@ func runSpawnAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err := validateInitIdentityFlags(); err != nil {
 		return err
 	}
+	permanent := initPermanent
+	if isTTY() && !jsonFlag && !cmd.Flags().Changed("permanent") {
+		var err error
+		permanent, err = promptIdentityLifetime(os.Stdin, os.Stderr)
+		if err != nil {
+			return err
+		}
+	}
 
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -322,27 +330,29 @@ func runSpawnAcceptInvite(cmd *cobra.Command, args []string) error {
 	}
 	opts, err := collectInviteInitOptionsWithInput(token, initCollectionInput{
 		WorkingDir:  workingDir,
-		Interactive: false,
+		Interactive: isTTY() && !jsonFlag,
 		JSONOutput:  jsonFlag,
 		PromptIn:    os.Stdin,
 		PromptOut:   os.Stderr,
 		ServerURL:   initServerURL,
 		ServerName:  serverFlag,
 		Alias: func() string {
-			if initPermanent {
+			if permanent {
 				return strings.TrimSpace(initAlias)
 			}
 			return resolveAliasValue(strings.TrimSpace(initAlias))
 		}(),
-		Name:         strings.TrimSpace(initName),
-		Reachability: strings.TrimSpace(initReachability),
-		HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-		AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-		SaveConfig:   initSaveConfig,
-		SetDefault:   initSetDefault,
-		WriteContext: initWriteContext,
-		Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-		Permanent:    initPermanent,
+		Name:            strings.TrimSpace(initName),
+		Reachability:    strings.TrimSpace(initReachability),
+		HumanName:       resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		AgentType:       resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		SaveConfig:      initSaveConfig,
+		SetDefault:      initSetDefault,
+		WriteContext:    initWriteContext,
+		Role:            resolveRequestedRole(strings.TrimSpace(initRole)),
+		Permanent:       permanent,
+		PromptName:      isTTY() && !jsonFlag,
+		DeferRolePrompt: isTTY() && !jsonFlag,
 	})
 	if err != nil {
 		return err

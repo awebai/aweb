@@ -86,6 +86,7 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("developer\n")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
@@ -137,6 +138,45 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("missing invited account in config:\n%s", string(cfgData))
+	}
+}
+
+func TestCollectInviteInitOptionsInteractiveRequiresAliasPrompt(t *testing.T) {
+	t.Parallel()
+
+	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
+	t.Cleanup(func() {
+		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
+	})
+
+	initResolveBaseURLForCollection = func(baseURL, serverName string) (string, string, *awconfig.GlobalConfig, error) {
+		return "https://app.aweb.ai/api", "app.aweb.ai", nil, nil
+	}
+
+	var promptOut strings.Builder
+	opts, err := collectInviteInitOptionsWithInput("aw_inv_test", initCollectionInput{
+		WorkingDir:      t.TempDir(),
+		Interactive:     true,
+		PromptIn:        strings.NewReader("\nreviewer\n"),
+		PromptOut:       &promptOut,
+		ServerURL:       "https://app.aweb.ai",
+		HumanName:       "tester",
+		AgentType:       "agent",
+		SaveConfig:      true,
+		WriteContext:    true,
+		DeferRolePrompt: true,
+	})
+	if err != nil {
+		t.Fatalf("collectInviteInitOptionsWithInput returned error: %v", err)
+	}
+	if opts.IdentityAlias != "reviewer" {
+		t.Fatalf("expected prompted alias to be captured, got %+v", opts)
+	}
+	if !opts.PromptRoleAfterBootstrap {
+		t.Fatalf("expected role selection to stay deferred until after bootstrap, got %+v", opts)
+	}
+	if !strings.Contains(promptOut.String(), "Alias is required.") {
+		t.Fatalf("expected blank interactive alias to reprompt, got %q", promptOut.String())
 	}
 }
 
@@ -205,6 +245,7 @@ func TestAwInitInviteAcceptUsesServerProvidedAliasHint(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("\ndeveloper\n")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
@@ -283,6 +324,7 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("\ndeveloper\n\n")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
@@ -349,6 +391,7 @@ func TestAwInitInviteAcceptRequiresAPIKeyInResponse(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("\ndeveloper\n")
 	out, err := run.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected failure, got success:\n%s", string(out))
@@ -399,6 +442,7 @@ func TestAwInitInviteAliasErrorOnlyMapsAliasValidation(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("\ndeveloper\n\n")
 	out, err := run.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected failure, got success:\n%s", string(out))
@@ -472,6 +516,7 @@ func TestAwInitInviteTextOutputSaysJoined(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
+	run.Stdin = strings.NewReader("\ndeveloper\n")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))

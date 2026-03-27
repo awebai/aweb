@@ -162,8 +162,8 @@ class CreateProjectRequest(_BootstrapBaseModel):
 
     @model_validator(mode="after")
     def _validate_identity_presence(self):
-        if self.alias is None and self.name is None:
-            raise ValueError("either alias or name is required")
+        if self.lifetime == "persistent" and self.name is None:
+            raise ValueError("name is required for persistent identities")
         return self
 
 

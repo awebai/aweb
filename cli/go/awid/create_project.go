@@ -26,8 +26,8 @@ func (c *Client) CreateProject(ctx context.Context, req *CreateProjectRequest) (
 	if req.ProjectSlug == "" {
 		return nil, fmt.Errorf("aweb: project_slug is required for create-project")
 	}
-	if req.Alias == nil && req.Name == nil {
-		return nil, fmt.Errorf("aweb: either alias or name is required for create-project")
+	if req.Name == nil && req.Lifetime == LifetimePersistent {
+		return nil, fmt.Errorf("aweb: name is required for persistent create-project")
 	}
 	var out BootstrapIdentityResponse
 	if err := c.Post(ctx, "/api/v1/create-project", req, &out); err != nil {
