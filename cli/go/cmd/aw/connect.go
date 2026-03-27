@@ -36,11 +36,14 @@ type connectResult struct {
 
 var connectCmd = &cobra.Command{
 	Use:   "connect",
-	Short: "Import an existing identity context using environment credentials",
+	Short: "Import an existing identity into this directory",
 	Long: `Reads AWEB_URL and AWEB_API_KEY from the environment (or .env.aweb),
 validates them via introspect, and writes local config so future commands
 work without environment variables. This command imports the server's
-current identity state; it does not create or mutate an identity.`,
+current identity state; it does not create or mutate an identity.
+
+Use this when you already have an identity-bound API key and want to bind
+the current directory to that identity.`,
 	RunE: runConnect,
 }
 

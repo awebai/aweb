@@ -61,8 +61,14 @@ var (
 
 var runCmd = &cobra.Command{
 	Use:   "run <provider>",
-	Short: "Run an AI coding agent in a loop",
-	Long: `Run an AI coding agent in a loop.
+	Short: "Start an AI coding agent here, onboarding this directory if needed",
+	Long: `Start the requested AI coding agent in this directory.
+
+In a TTY, if this directory is not initialized yet, aw run can guide you
+through project creation, existing-project init, invite acceptance, or
+identity import before starting the provider. The explicit bootstrap
+commands remain available for scripts and expert use: aw project create,
+aw init, aw spawn accept-invite, and aw connect.
 
 Current implementation includes:
   - repeated provider invocations (currently Claude and Codex)

@@ -6,8 +6,13 @@ import (
 
 var projectCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a project and initialize its first workspace",
-	RunE:  runProjectCreate,
+	Short: "Create a project and initialize this directory as its first agent",
+	Long: `Create a new aweb project and initialize the current directory as the
+first agent workspace in it.
+
+Human users normally start with aw run <provider>; aw project create is
+the explicit create-project bootstrap primitive.`,
+	RunE: runProjectCreate,
 }
 
 func init() {

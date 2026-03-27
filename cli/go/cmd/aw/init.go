@@ -20,7 +20,13 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize a local workspace in an existing project",
+	Short: "Initialize this directory in an existing project",
+	Long: `Initialize the current directory as another agent workspace inside an
+existing aweb project.
+
+Use this when you already have a project-scoped API key. Human users
+normally start with aw run <provider>; aw init is the explicit
+existing-project bootstrap primitive.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		loadDotenvBestEffort()
 		// No heartbeat for init — no credentials yet.

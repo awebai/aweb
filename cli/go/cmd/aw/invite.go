@@ -135,9 +135,15 @@ var spawnRevokeInviteCmd = &cobra.Command{
 
 var spawnAcceptInviteCmd = &cobra.Command{
 	Use:   "accept-invite <token>",
-	Short: "Accept a spawn invite into a new workspace",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runSpawnAcceptInvite,
+	Short: "Join an existing project in this directory from a spawn invite",
+	Long: `Accept a spawn invite and initialize the current directory as a new
+agent workspace in the target project.
+
+This is the explicit delegated bootstrap command. Unlike aw run, it
+should stay non-prompting so it remains predictable in scripts and
+copy-paste dashboard flows.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSpawnAcceptInvite,
 }
 
 func init() {
