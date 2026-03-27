@@ -82,6 +82,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
 	oldWorkspaceState := runWorkspaceStateForDir
+	oldResolveClaimedTaskRef := runResolveClaimedTaskRef
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -92,6 +93,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
 		runWorkspaceStateForDir = oldWorkspaceState
+		runResolveClaimedTaskRef = oldResolveClaimedTaskRef
 		initRunCommandVars()
 	})
 
@@ -125,7 +127,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 		if !strings.HasSuffix(dir, "testdata") {
 			t.Fatalf("expected selection dir to match working dir, got %q", dir)
 		}
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose", IdentityID: "ws-1"}, nil
 	}
 	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) {
 		return runWorkspaceStateInitialized, nil
@@ -135,6 +137,12 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 			t.Fatal("expected client for event bus")
 		}
 		return nil
+	}
+	runResolveClaimedTaskRef = func(ctx context.Context, client *aweb.Client, workspaceID string) (string, error) {
+		if workspaceID == "" {
+			t.Fatal("expected workspace id for claim lookup")
+		}
+		return "aweb-aaag", nil
 	}
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
 
@@ -198,6 +206,9 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	}
 	if capturedOpts.MaxRuns != 3 || capturedOpts.AllowedTools != "Read,Write" || capturedOpts.Model != "sonnet" {
 		t.Fatalf("unexpected opts: %+v", capturedOpts)
+	}
+	if capturedOpts.ClaimedTaskRef != "aweb-aaag" {
+		t.Fatalf("expected claimed task ref in opts, got %+v", capturedOpts)
 	}
 	if capturedOpts.ProviderPTY {
 		t.Fatalf("expected ProviderPTY=false when no interactive screen is available, got %+v", capturedOpts)

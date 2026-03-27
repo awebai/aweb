@@ -156,6 +156,7 @@ type LoopOptions struct {
 	WorkingDir      string
 	AllowedTools    string
 	Model           string
+	ClaimedTaskRef  string
 	ProviderArgs    []string
 	ProviderPTY     bool
 	Services        []ServiceConfig

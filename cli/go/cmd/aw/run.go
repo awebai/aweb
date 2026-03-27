@@ -49,14 +49,15 @@ var (
 			Stream: awrun.NewEventStreamOpener(client.Client),
 		})
 	}
-	runNewScreenController  = awrun.NewScreenController
-	runResolveClientForDir  = resolveClientSelectionForDir
-	runExecuteInitFlow      = executeInit
-	runWorkspaceStateForDir = resolveRunWorkspaceStateForDir
-	runPrintInitSummary     = printInitSummary
-	runGetwd                = os.Getwd
-	runInjectDocs           = InjectAgentDocs
-	runSetupHooks           = SetupClaudeHooks
+	runNewScreenController   = awrun.NewScreenController
+	runResolveClientForDir   = resolveClientSelectionForDir
+	runExecuteInitFlow       = executeInit
+	runWorkspaceStateForDir  = resolveRunWorkspaceStateForDir
+	runPrintInitSummary      = printInitSummary
+	runGetwd                 = os.Getwd
+	runInjectDocs            = InjectAgentDocs
+	runSetupHooks            = SetupClaudeHooks
+	runResolveClaimedTaskRef = resolveRunClaimedTaskRef
 )
 
 var runCmd = &cobra.Command{
@@ -156,6 +157,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	repoSlug := runDetectRepoSlug(workingDir)
 	statusIdentity := awrun.StatusIdentity(providerName, sel.NamespaceSlug, repoSlug, sel.IdentityHandle)
+	claimedTaskRef := ""
+	if taskRef, taskErr := runResolveClaimedTaskRef(cmd.Context(), client, sel.IdentityID); taskErr == nil {
+		claimedTaskRef = taskRef
+	}
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
@@ -206,6 +211,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		WorkingDir:      workingDir,
 		AllowedTools:    runAllowedTools,
 		Model:           runModel,
+		ClaimedTaskRef:  claimedTaskRef,
 		ProviderArgs:    providerArgs,
 		ProviderPTY:     effectiveProviderPTY(cmd, screen != nil),
 		Services:        settings.Services,
@@ -407,6 +413,23 @@ func shellQuote(arg string) string {
 		return arg
 	}
 	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
+}
+
+func resolveRunClaimedTaskRef(ctx context.Context, client *aweb.Client, workspaceID string) (string, error) {
+	if client == nil || strings.TrimSpace(workspaceID) == "" {
+		return "", nil
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := client.ClaimsList(statusCtx, strings.TrimSpace(workspaceID), 1)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || len(resp.Claims) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(resp.Claims[0].BeadID), nil
 }
 
 type runWorkspaceState int

@@ -499,6 +499,15 @@ func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 	}
 }
 
+func TestFormatWaitStatusShowsClaimedTaskRef(t *testing.T) {
+	st := &state{ClaimedTaskRef: "aweb-aaag"}
+	got := formatWaitStatus("waiting for prompt", st)
+	want := "waiting for prompt · task aweb-aaag"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 	st := &state{
 		RunLabel:          "run 1",
@@ -508,6 +517,19 @@ func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 	}
 	got := formatRunStatus(st)
 	want := "$0.05 · autofeed · streaming"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestFormatRunStatusShowsClaimedTaskRef(t *testing.T) {
+	st := &state{
+		RunLabel:       "run 1",
+		ClaimedTaskRef: "aweb-aaag",
+		ConnState:      ConnStreaming,
+	}
+	got := formatRunStatus(st)
+	want := "task aweb-aaag · streaming"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

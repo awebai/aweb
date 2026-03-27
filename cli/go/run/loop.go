@@ -59,6 +59,7 @@ type state struct {
 	HasRunUsage        bool
 	ConnState          ConnectionState
 	ProviderInput      *providerInputState
+	ClaimedTaskRef     string
 }
 
 type providerInputState struct {
@@ -154,7 +155,10 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		return fmt.Errorf("prompt cannot be empty when dispatch is unavailable")
 	}
 
-	state := &state{Autofeed: opts.Autofeed}
+	state := &state{
+		Autofeed:       opts.Autofeed,
+		ClaimedTaskRef: strings.TrimSpace(opts.ClaimedTaskRef),
+	}
 	if l.Control != nil {
 		if err := l.Control.Start(); err != nil {
 			return err
