@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections import OrderedDict
@@ -42,6 +43,19 @@ class _WorkspaceIDsCacheEntry:
 _WORKSPACE_IDS_CACHE: OrderedDict[
     tuple[int, str], _WorkspaceIDsCacheEntry
 ] = OrderedDict()
+
+
+def _reservation_metadata(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict):
+            return decoded
+    return {}
 
 
 def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, project_id: str) -> tuple[int, str]:
@@ -318,85 +332,192 @@ async def status(
             "workspace_count": len(workspace_ids),
         }
 
-    # Agent presences from Redis (filtered by workspace_ids from database)
-    # Always use workspace_ids for filtering - the database is the authoritative source
-    # for which workspaces exist. Empty workspace_ids = empty presences (fail closed).
+    now = datetime.now(timezone.utc)
+
+    if not workspace_ids:
+        return {
+            "workspace": workspace_info,
+            "agents": [],
+            "claims": [],
+            "locks": [],
+            "conflicts": [],
+            "timestamp": now.isoformat(),
+        }
+
+    # Agent presences from Redis (filtered by workspace_ids from database).
     all_presences: List[Dict[str, str]] = []
     if workspace_ids:
         all_presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+    presence_by_workspace = {
+        p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
+    }
 
-    # Convert workspace_ids to UUIDs for database queries
     uuid_workspace_ids = [uuid.UUID(ws_id) for ws_id in workspace_ids] if workspace_ids else []
 
-    # Claims - active task claims with claimant count for conflict detection
-    if uuid_workspace_ids:
-        placeholders = ", ".join(f"${i}" for i in range(1, len(uuid_workspace_ids) + 1))
-        where_clause = f"WHERE c.workspace_id IN ({placeholders})"
-        params = uuid_workspace_ids
-    else:
-        where_clause = ""
-        params = []
+    workspace_rows = await server_db.fetch_all(
+        f"""
+        SELECT
+            w.workspace_id,
+            w.alias,
+            w.human_name,
+            w.role,
+            w.current_branch,
+            w.hostname,
+            w.workspace_path,
+            w.timezone,
+            w.focus_task_ref,
+            w.focus_updated_at,
+            w.last_seen_at,
+            r.canonical_origin AS repo,
+            focus_info.title AS focus_task_title,
+            focus_info.issue_type AS focus_task_type
+        FROM {{{{tables.workspaces}}}} w
+        LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+        {_title_join("focus_info", "w.project_id", "w.focus_task_ref", include_type=True, guard_col="w.focus_task_ref")}
+        WHERE w.project_id = $1
+          AND w.deleted_at IS NULL
+          AND w.workspace_id = ANY($2::uuid[])
+        ORDER BY w.updated_at DESC, w.alias ASC
+        """,
+        project_uuid,
+        uuid_workspace_ids,
+    )
+    workspace_rows_by_id = {str(row["workspace_id"]): row for row in workspace_rows}
+    ordered_workspace_ids = [
+        ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id
+    ] or [str(row["workspace_id"]) for row in workspace_rows]
 
-    # Query claims with a count of how many workspaces have claimed each task.
-    # Title resolved from native tasks.
     claim_rows = await server_db.fetch_all(
         f"""
-        SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.project_id,
-               counts.claimant_count, bi.title
+        SELECT
+            c.task_ref,
+            c.workspace_id,
+            c.alias,
+            c.human_name,
+            c.claimed_at,
+            c.project_id,
+            c.apex_task_ref,
+            counts.claimant_count,
+            claim_info.title AS title,
+            apex_info.title AS apex_title,
+            apex_info.issue_type AS apex_type
         FROM {{{{tables.task_claims}}}} c
         JOIN (
-            SELECT project_id, task_ref, COUNT(*) as claimant_count
+            SELECT project_id, task_ref, COUNT(*) AS claimant_count
             FROM {{{{tables.task_claims}}}}
+            WHERE project_id = $1
             GROUP BY project_id, task_ref
         ) counts ON c.project_id = counts.project_id AND c.task_ref = counts.task_ref
-        {_title_join("bi", "c.project_id", "c.task_ref")}
-        {where_clause}
+        {_title_join("claim_info", "c.project_id", "c.task_ref")}
+        {_title_join("apex_info", "c.project_id", "c.apex_task_ref", include_type=True, guard_col="c.apex_task_ref")}
+        WHERE c.project_id = $1
+          AND c.workspace_id = ANY($2::uuid[])
         ORDER BY c.claimed_at DESC
         """,
-        *params,
+        project_uuid,
+        uuid_workspace_ids,
     )
-    claims = [
-        {
-            "task_ref": r["task_ref"],
-            "workspace_id": str(r["workspace_id"]),
-            "alias": r["alias"],
-            "human_name": None if public_reader else r["human_name"],
-            "claimed_at": r["claimed_at"].isoformat(),
-            "claimant_count": r["claimant_count"],
-            "title": r["title"],
-            "project_id": str(r["project_id"]),
+
+    claims: List[Dict[str, Any]] = []
+    claims_by_workspace: Dict[str, List[Dict[str, Any]]] = {}
+    current_task_by_workspace: Dict[str, str] = {}
+    apex_by_workspace: Dict[str, Dict[str, Any]] = {}
+    for row in claim_rows:
+        ws_id = str(row["workspace_id"])
+        claim = {
+            "task_ref": row["task_ref"],
+            "workspace_id": ws_id,
+            "alias": row["alias"],
+            "human_name": None if public_reader else row["human_name"],
+            "claimed_at": row["claimed_at"].isoformat(),
+            "claimant_count": row["claimant_count"],
+            "title": row["title"],
+            "project_id": str(row["project_id"]),
+            "apex_task_ref": row["apex_task_ref"],
+            "apex_title": row["apex_title"],
+            "apex_type": row["apex_type"],
         }
-        for r in claim_rows
-    ]
-
-    # Build claims lookup map for populating current_task_ref in agents
-    # Note: A workspace may have multiple claims; use the most recent (first in list due to ORDER BY)
-    claims_by_workspace: Dict[str, str] = {}
-    for r in claim_rows:
-        ws_id = str(r["workspace_id"])
-        if ws_id not in claims_by_workspace:
-            claims_by_workspace[ws_id] = r["task_ref"]
-
-    # Build agent info for all agents, enriched with current_task_ref from claims
-    agents: List[Dict[str, Any]] = []
-    for presence in all_presences:
-        ws_id = presence.get("workspace_id", "")
-        agents.append(
+        claims.append(claim)
+        claims_by_workspace.setdefault(ws_id, []).append(claim)
+        current_task_by_workspace.setdefault(ws_id, row["task_ref"])
+        apex_by_workspace.setdefault(
+            ws_id,
             {
-                "workspace_id": ws_id,
-                "alias": presence.get("alias", ""),
-                "member": None if public_reader else (presence.get("member_email") or None),
-                "human_name": None if public_reader else (presence.get("human_name") or None),
-                "program": presence.get("program") or None,
-                "role": None if public_reader else (presence.get("role") or None),
-                "status": presence.get("status") or "unknown",
-                "current_branch": presence.get("current_branch") or None,
-                "canonical_origin": presence.get("canonical_origin") or None,
-                "timezone": presence.get("timezone") or None,
-                "current_task_ref": claims_by_workspace.get(ws_id),
-                "last_seen": presence.get("last_seen"),
-            }
+                "apex_task_ref": row["apex_task_ref"],
+                "apex_title": row["apex_title"],
+                "apex_type": row["apex_type"],
+            },
         )
+
+    reservation_rows = await server_db.fetch_all(
+        """
+        SELECT project_id, resource_key, holder_agent_id, holder_alias,
+               acquired_at, expires_at, metadata_json
+        FROM {{tables.reservations}}
+        WHERE project_id = $1
+          AND expires_at > NOW()
+          AND holder_agent_id = ANY($2::uuid[])
+        ORDER BY resource_key ASC
+        """,
+        project_uuid,
+        uuid_workspace_ids,
+    )
+    reservations: List[Dict[str, Any]] = []
+    reservations_by_workspace: Dict[str, List[Dict[str, Any]]] = {}
+    for row in reservation_rows:
+        metadata = _reservation_metadata(row["metadata_json"])
+        reason = metadata.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            reason = None
+        reservation = {
+            "project_id": str(row["project_id"]),
+            "resource_key": row["resource_key"],
+            "holder_agent_id": str(row["holder_agent_id"]),
+            "holder_alias": row["holder_alias"],
+            "acquired_at": row["acquired_at"].isoformat(),
+            "expires_at": row["expires_at"].isoformat(),
+            "ttl_remaining_seconds": max(int((row["expires_at"] - now).total_seconds()), 0),
+            "reason": reason,
+            "metadata": metadata,
+        }
+        reservations.append(reservation)
+        reservations_by_workspace.setdefault(str(row["holder_agent_id"]), []).append(reservation)
+
+    agents: List[Dict[str, Any]] = []
+    for ws_id in ordered_workspace_ids:
+        row = workspace_rows_by_id.get(ws_id)
+        if row is None:
+            continue
+        presence = presence_by_workspace.get(ws_id, {})
+        agent_role = (presence.get("role") or row["role"] or None) if not public_reader else None
+        agent_timezone = presence.get("timezone") or row["timezone"] or None
+        agent = {
+            "workspace_id": ws_id,
+            "alias": presence.get("alias") or row["alias"],
+            "member": None if public_reader else (presence.get("member_email") or None),
+            "human_name": None if public_reader else (presence.get("human_name") or row["human_name"] or None),
+            "program": presence.get("program") or None,
+            "role": agent_role,
+            "status": presence.get("status") or "offline",
+            "current_branch": presence.get("current_branch") or row["current_branch"] or None,
+            "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
+            "hostname": None if public_reader else (row["hostname"] or None),
+            "workspace_path": None if public_reader else (row["workspace_path"] or None),
+            "timezone": agent_timezone,
+            "current_task_ref": current_task_by_workspace.get(ws_id),
+            "focus_task_ref": row["focus_task_ref"],
+            "focus_task_title": row["focus_task_title"],
+            "focus_task_type": row["focus_task_type"],
+            "focus_updated_at": row["focus_updated_at"].isoformat() if row["focus_updated_at"] else None,
+            "apex_task_ref": apex_by_workspace.get(ws_id, {}).get("apex_task_ref"),
+            "apex_title": apex_by_workspace.get(ws_id, {}).get("apex_title"),
+            "apex_type": apex_by_workspace.get(ws_id, {}).get("apex_type"),
+            "claims": claims_by_workspace.get(ws_id, []),
+            "reservations": reservations_by_workspace.get(ws_id, []),
+            "last_seen": presence.get("last_seen")
+            or (row["last_seen_at"].isoformat() if row["last_seen_at"] else None),
+        }
+        agents.append(agent)
 
     # Identify conflicts: tasks with multiple claimants
     conflicts = []
@@ -425,8 +546,9 @@ async def status(
         "workspace": workspace_info,
         "agents": agents,
         "claims": claims,
+        "locks": reservations,
         "conflicts": conflicts,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
     }
 
 

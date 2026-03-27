@@ -42,43 +42,41 @@ type WorkspaceAttachResponse struct {
 }
 
 type WorkspaceClaim struct {
-	BeadID    string  `json:"bead_id"`
-	Title     *string `json:"title,omitempty"`
-	ClaimedAt string  `json:"claimed_at"`
-	ApexID    *string `json:"apex_id,omitempty"`
-	ApexTitle *string `json:"apex_title,omitempty"`
-	ApexType  *string `json:"apex_type,omitempty"`
+	TaskRef     string  `json:"task_ref"`
+	Title       *string `json:"title,omitempty"`
+	ClaimedAt   string  `json:"claimed_at"`
+	ApexTaskRef *string `json:"apex_task_ref,omitempty"`
+	ApexTitle   *string `json:"apex_title,omitempty"`
+	ApexType    *string `json:"apex_type,omitempty"`
 }
 
 type WorkspaceInfo struct {
-	WorkspaceID       string           `json:"workspace_id"`
-	Alias             string           `json:"alias"`
-	HumanName         *string          `json:"human_name,omitempty"`
-	ContextKind       *string          `json:"context_kind,omitempty"`
-	ProjectID         *string          `json:"project_id,omitempty"`
-	ProjectSlug       *string          `json:"project_slug,omitempty"`
-	NamespaceSlug     *string          `json:"namespace_slug,omitempty"`
-	Program           *string          `json:"program,omitempty"`
-	Model             *string          `json:"model,omitempty"`
-	Repo              *string          `json:"repo,omitempty"`
-	Branch            *string          `json:"branch,omitempty"`
-	MemberEmail       *string          `json:"member_email,omitempty"`
-	Role              *string          `json:"role,omitempty"`
-	Hostname          *string          `json:"hostname,omitempty"`
-	WorkspacePath     *string          `json:"workspace_path,omitempty"`
-	ApexID            *string          `json:"apex_id,omitempty"`
-	ApexTitle         *string          `json:"apex_title,omitempty"`
-	ApexType          *string          `json:"apex_type,omitempty"`
-	FocusApexID       *string          `json:"focus_apex_id,omitempty"`
-	FocusApexTitle    *string          `json:"focus_apex_title,omitempty"`
-	FocusApexType     *string          `json:"focus_apex_type,omitempty"`
-	FocusApexRepoName *string          `json:"focus_apex_repo_name,omitempty"`
-	FocusApexBranch   *string          `json:"focus_apex_branch,omitempty"`
-	FocusUpdatedAt    *string          `json:"focus_updated_at,omitempty"`
-	Status            string           `json:"status"`
-	LastSeen          *string          `json:"last_seen,omitempty"`
-	DeletedAt         *string          `json:"deleted_at,omitempty"`
-	Claims            []WorkspaceClaim `json:"claims,omitempty"`
+	WorkspaceID    string           `json:"workspace_id"`
+	Alias          string           `json:"alias"`
+	HumanName      *string          `json:"human_name,omitempty"`
+	ContextKind    *string          `json:"context_kind,omitempty"`
+	ProjectID      *string          `json:"project_id,omitempty"`
+	ProjectSlug    *string          `json:"project_slug,omitempty"`
+	NamespaceSlug  *string          `json:"namespace_slug,omitempty"`
+	Program        *string          `json:"program,omitempty"`
+	Model          *string          `json:"model,omitempty"`
+	Repo           *string          `json:"repo,omitempty"`
+	Branch         *string          `json:"branch,omitempty"`
+	MemberEmail    *string          `json:"member_email,omitempty"`
+	Role           *string          `json:"role,omitempty"`
+	Hostname       *string          `json:"hostname,omitempty"`
+	WorkspacePath  *string          `json:"workspace_path,omitempty"`
+	ApexTaskRef    *string          `json:"apex_task_ref,omitempty"`
+	ApexTitle      *string          `json:"apex_title,omitempty"`
+	ApexType       *string          `json:"apex_type,omitempty"`
+	FocusTaskRef   *string          `json:"focus_task_ref,omitempty"`
+	FocusTaskTitle *string          `json:"focus_task_title,omitempty"`
+	FocusTaskType  *string          `json:"focus_task_type,omitempty"`
+	FocusUpdatedAt *string          `json:"focus_updated_at,omitempty"`
+	Status         string           `json:"status"`
+	LastSeen       *string          `json:"last_seen,omitempty"`
+	DeletedAt      *string          `json:"deleted_at,omitempty"`
+	Claims         []WorkspaceClaim `json:"claims,omitempty"`
 }
 
 type WorkspaceListResponse struct {
