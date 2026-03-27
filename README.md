@@ -25,7 +25,31 @@ stateless relay: it routes and stores messages but never interprets them.
 - Task coordination: claims, reservations, policies, workspaces
 - MCP server for tool-based agent integration
 
-Quick start:
+OSS quick start (Docker-first):
+
+```bash
+npm install -g @awebai/aw
+
+cd server
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/health
+
+# In the directory you want to turn into an aw workspace:
+export AWEB_URL=http://localhost:8000
+aw run codex
+```
+
+`aw run` is the primary human entrypoint. In a TTY it guides you through new
+project creation, or existing-project init when `AWEB_API_KEY` is already set,
+then starts the provider you requested. Invite acceptance and identity-key
+import remain explicit commands.
+
+Only the aweb API port is published to the host in the default Docker setup.
+If `8000` is already in use, change `AWEB_PORT` in `server/.env` before
+starting the stack.
+
+Alternative server run mode:
 
 ```bash
 cd server
@@ -33,23 +57,15 @@ uv sync
 uv run aweb serve
 ```
 
-Or with containers:
+Explicit bootstrap primitives with the current `aw` client:
 
 ```bash
-cd server
-cp .env.example .env
-docker compose up --build
-```
+# Point aw at your self-hosted server before using the explicit commands.
+export AWEB_URL=http://localhost:8000
 
-Bootstrap flow with the current `aw` client:
-
-```bash
 # Primary human entrypoint: start the provider you want to use.
-# If this directory is not initialized yet, aw run will guide you through create/join/connect.
 aw run codex
 aw run claude --prompt "review this repo and propose the next task"
-
-# Explicit bootstrap primitives remain available underneath the wizard.
 
 # Create a project and first workspace directly (unauthenticated)
 aw project create --server-url http://localhost:8000 --project myteam
@@ -60,7 +76,8 @@ export AWEB_API_KEY=aw_sk_...
 aw init --server-url http://localhost:8000 --alias second-workspace
 
 # Delegate child workspace creation from an existing identity
-aw spawn create-invite --server-url http://localhost:8000
+# (uses the current workspace's saved server/account context)
+aw spawn create-invite
 aw spawn accept-invite <token> --server-url http://localhost:8000
 
 # Import an already-issued identity-bound key into this directory

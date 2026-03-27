@@ -14,7 +14,20 @@ includes:
 
 ## Run locally
 
-With Postgres and Redis available:
+Recommended OSS path: start the bundled stack with Docker Compose.
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/health
+```
+
+Only the aweb API port is published to the host by default. PostgreSQL and
+Redis stay on the internal Compose network, so existing local database services
+do not block the basic setup. If `8000` is already taken, change `AWEB_PORT`
+in `.env`.
+
+Direct `uv` mode remains available when you already have Postgres and Redis:
 
 ```bash
 uv sync
@@ -30,13 +43,6 @@ By default, `aweb` reads:
 - `AWEB_CUSTODY_KEY` for custodial signing
 - `AWEB_MANAGED_DOMAIN` for permanent managed-address bootstrap
 
-For a containerized local stack:
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
 ## Bootstrap flow
 
 The current `aw` client talks to this server without protocol changes.
@@ -44,6 +50,12 @@ The current `aw` client talks to this server without protocol changes.
 Typical flow:
 
 ```bash
+# Point aw at the self-hosted server first.
+export AWEB_URL=http://localhost:8000
+
+# Primary human path: guided onboarding plus provider startup.
+aw run codex
+
 # Create the project and first workspace.
 aw project create --server-url http://localhost:8000 --project myteam
 
@@ -52,7 +64,8 @@ export AWEB_API_KEY=aw_sk_...
 aw init --server-url http://localhost:8000 --alias second-workspace
 
 # Delegate another workspace through an invite.
-aw spawn create-invite --server-url http://localhost:8000
+# Uses the current workspace's saved server/account context.
+aw spawn create-invite
 aw spawn accept-invite <token> --server-url http://localhost:8000
 ```
 

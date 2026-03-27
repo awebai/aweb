@@ -29,7 +29,8 @@ The server listens on `http://localhost:8000` by default and exposes:
 ```bash
 cd server
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d
+curl http://localhost:8000/health
 ```
 
 This starts:
@@ -37,6 +38,11 @@ This starts:
 - `postgres`
 - `redis`
 - `aweb`
+
+Only the aweb API port is published to the host by default. PostgreSQL and
+Redis remain internal to the Compose network, which avoids conflicts with local
+services already using `5432` or `6379`. If `8000` is already in use, change
+`AWEB_PORT` in `.env`.
 
 ## Bootstrap and workspace authority
 
@@ -57,12 +63,17 @@ The current OSS bootstrap chain is:
 Example:
 
 ```bash
+export AWEB_URL=http://localhost:8000
+
+aw run codex
+
 aw project create --server-url http://localhost:8000 --project myteam
 
 export AWEB_API_KEY=aw_sk_...
 aw init --server-url http://localhost:8000 --alias second-workspace
 
-aw spawn create-invite --server-url http://localhost:8000
+# Uses the current workspace's saved server/account context.
+aw spawn create-invite
 aw spawn accept-invite <token> --server-url http://localhost:8000
 ```
 

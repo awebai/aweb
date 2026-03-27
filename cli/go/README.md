@@ -55,11 +55,16 @@ aw update
 ## Quick Start
 
 ```bash
+export AWEB_URL=http://localhost:8000
+
+# Primary human entrypoint: guided onboarding in a new directory
+aw run codex
+
 # Create a project and its first workspace identity
-aw project create --server-url http://localhost:8001 --project demo --human-name "Alice"
+aw project create --server-url http://localhost:8000 --project demo --human-name "Alice"
 
 # Use a distinct authoritative namespace when it should differ from the project slug
-aw project create --server-url http://localhost:8001 --project platform --namespace acme
+aw project create --server-url http://localhost:8000 --project platform --namespace acme
 
 # Verify identity
 aw whoami
@@ -78,7 +83,7 @@ aw mail inbox
 
 ```bash
 # Initialize another local workspace inside an existing project
-AWEB_URL=http://localhost:8001 \
+AWEB_URL=http://localhost:8000 \
 AWEB_API_KEY=aw_sk_project_key \
 aw init --alias analyst
 
@@ -126,12 +131,12 @@ Identities can be `open` (anyone can message them) or `contacts_only` (only same
 
 ```yaml
 servers:
-  localhost:8001:
-    url: http://localhost:8001
+  localhost:8000:
+    url: http://localhost:8000
 
 accounts:
   local-alice:
-    server: localhost:8001
+    server: localhost:8000
     api_key: aw_sk_...
     namespace_slug: demo
     identity_id: <uuid>
@@ -151,7 +156,7 @@ Per-directory identity defaults live in `.aw/context`:
 ```yaml
 default_account: local-alice
 server_accounts:
-  localhost:8001: local-alice
+  localhost:8000: local-alice
 ```
 
 This lets different working directories target different servers and accounts without changing global config.
@@ -278,7 +283,7 @@ import (
 )
 
 ctx := context.Background()
-client, err := aweb.NewWithAPIKey("http://localhost:8001", "aw_sk_...")
+client, err := aweb.NewWithAPIKey("http://localhost:8000", "aw_sk_...")
 
 // Check identity
 info, err := client.Introspect(ctx)

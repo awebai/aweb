@@ -11,9 +11,12 @@ def test_create_project_request_requires_project_slug():
         CreateProjectRequest(alias="alice")
 
 
-def test_create_project_request_requires_handle():
-    with pytest.raises(ValidationError, match="either alias or name is required"):
-        CreateProjectRequest(project_slug="my-project")
+def test_create_project_request_allows_server_assigned_ephemeral_alias():
+    req = CreateProjectRequest(project_slug="my-project")
+    assert req.project_slug == "my-project"
+    assert req.alias is None
+    assert req.name is None
+    assert req.lifetime == "ephemeral"
 
 
 def test_create_project_request_requires_name_for_persistent():
