@@ -3,6 +3,8 @@ package run
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestAppendScreenTextTracksCompleteAndPartialLines(t *testing.T) {
@@ -34,6 +36,8 @@ func TestStyleScreenLineCategories(t *testing.T) {
 		{line: `   1. PTY default-off`, want: "plain"},
 		{line: "• from dave (mail): please review this", want: "comms"},
 		{line: "• to henry (chat)", want: "comms"},
+		{line: "provider stderr: approval required", want: "provider_stderr"},
+		{line: "provider stdout: Allow? [y/N]", want: "provider_stdout"},
 		{line: "  = ok", want: "result"},
 		{line: "done  2.1s", want: "done"},
 		{line: "info: session", want: "info"},
@@ -82,6 +86,15 @@ func TestStyleScreenLineStylesCommLabel(t *testing.T) {
 	want := styles.commsBullet.Render(`•`) + styles.comms.Render(` from dave (mail)`) + `: merged to main`
 	if got != want {
 		t.Fatalf("unexpected styled comm line %q", got)
+	}
+}
+
+func TestStyleScreenLineStylesProviderStderrLabel(t *testing.T) {
+	styles := newScreenStyles()
+	got := styleScreenLine(`provider stderr: approval required`, styles)
+	want := styles.streamLabel.Render(`provider stderr:`) + styles.streamError.Render(` approval required`)
+	if got != want {
+		t.Fatalf("unexpected provider stderr line %q", got)
 	}
 }
 
@@ -185,9 +198,22 @@ func TestWrapScreenLineUsesHangingIndentForCommLines(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped lines, got %#v", lines)
 	}
+	indent := strings.Repeat(" ", lipgloss.Width("• from dave (mail): "))
 	for _, line := range lines[1:] {
-		if !strings.HasPrefix(line, strings.Repeat(" ", len("• from "))) {
-			t.Fatalf("expected hanging indent under alias start, got %#v", lines)
+		if !strings.HasPrefix(line, indent) {
+			t.Fatalf("expected hanging indent under message body, got %#v", lines)
+		}
+	}
+}
+
+func TestWrapScreenLineUsesHangingIndentForProviderStderr(t *testing.T) {
+	lines := wrapScreenLine(`provider stderr: approval required because sandbox escalation was denied`, 34)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped lines, got %#v", lines)
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, strings.Repeat(" ", len("provider stderr: "))) {
+			t.Fatalf("expected stderr continuation to align under message body, got %#v", lines)
 		}
 	}
 }

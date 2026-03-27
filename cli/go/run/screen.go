@@ -61,6 +61,8 @@ type screenStyles struct {
 	toolMuted   lipgloss.Style
 	commsBullet lipgloss.Style
 	comms       lipgloss.Style
+	streamLabel lipgloss.Style
+	streamError lipgloss.Style
 	result      lipgloss.Style
 	done        lipgloss.Style
 	info        lipgloss.Style
@@ -924,6 +926,8 @@ func newScreenStyles() screenStyles {
 		toolMuted:   lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "244"}),
 		commsBullet: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "34", Dark: "42"}),
 		comms:       lipgloss.NewStyle().Bold(true),
+		streamLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "244"}),
+		streamError: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"}),
 		result:      lipgloss.NewStyle(),
 		done:        lipgloss.NewStyle(),
 		info:        lipgloss.NewStyle(),
@@ -1084,6 +1088,7 @@ func wrapScreenLine(line string, width int) []string {
 		return []string{line}
 	}
 
+	firstIndent := leadingWhitespace(line)
 	indent := continuationIndent(line)
 	tokens := splitWrapTokens(line)
 	if len(tokens) == 0 {
@@ -1098,9 +1103,9 @@ func wrapScreenLine(line string, width int) []string {
 		if current == "" {
 			trimmed := strings.TrimLeft(token, " ")
 			if trimmed == "" {
-				current = indent
-			} else if indent != "" {
-				current = indent + trimmed
+				current = firstIndent
+			} else if firstIndent != "" {
+				current = firstIndent + trimmed
 			} else {
 				current = trimmed
 			}
@@ -1178,7 +1183,10 @@ func leadingWhitespace(s string) string {
 func continuationIndent(line string) string {
 	trimmed := strings.TrimLeft(line, " \t")
 	if isCommLine(trimmed) {
-		return screenCommContinuationIndent(line)
+		return labeledBodyContinuationIndent(line)
+	}
+	if isProviderStreamLine(trimmed) {
+		return labeledBodyContinuationIndent(line)
 	}
 	if strings.HasPrefix(trimmed, ">_ ") {
 		return leadingWhitespace(line) + "   "
@@ -1212,6 +1220,10 @@ func styleWrappedScreenLine(line string, kind string, wrapIndex int, styles scre
 		return styles.toolMuted.Render(line)
 	case "comms":
 		return styleScreenCommLine(line, styles)
+	case "provider_stdout":
+		return styleScreenProviderLine(line, styles, false)
+	case "provider_stderr":
+		return styleScreenProviderLine(line, styles, true)
 	case "result":
 		return styles.result.Render(line)
 	case "done":
@@ -1279,6 +1291,24 @@ func styleScreenCommLine(line string, styles screenStyles) string {
 	return indent + styles.comms.Render(head) + tail
 }
 
+func styleScreenProviderLine(line string, styles screenStyles, isError bool) string {
+	indent := leadingWhitespace(line)
+	trimmed := strings.TrimPrefix(line, indent)
+	label, tail, ok := splitLabeledLine(trimmed)
+	if !ok {
+		if isError {
+			return styles.streamError.Render(line)
+		}
+		return line
+	}
+
+	bodyStyle := lipgloss.NewStyle()
+	if isError {
+		bodyStyle = styles.streamError
+	}
+	return indent + styles.streamLabel.Render(label) + bodyStyle.Render(tail)
+}
+
 func screenLineStyleKind(line string) string {
 	trimmed := strings.TrimSpace(line)
 	switch {
@@ -1292,6 +1322,10 @@ func screenLineStyleKind(line string) string {
 		return "result"
 	case isCommLine(trimmed):
 		return "comms"
+	case strings.HasPrefix(trimmed, "provider stderr:"):
+		return "provider_stderr"
+	case strings.HasPrefix(trimmed, "provider stdout:"):
+		return "provider_stdout"
 	case strings.HasPrefix(trimmed, "->"):
 		return "result"
 	case isToolDetailLine(line):
@@ -1311,9 +1345,17 @@ func isCommLine(trimmed string) bool {
 	return strings.HasPrefix(trimmed, "• from ") || strings.HasPrefix(trimmed, "• to ")
 }
 
-func screenCommContinuationIndent(line string) string {
+func isProviderStreamLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "provider stderr:") || strings.HasPrefix(trimmed, "provider stdout:")
+}
+
+func labeledBodyContinuationIndent(line string) string {
 	indent := leadingWhitespace(line)
 	trimmed := strings.TrimPrefix(line, indent)
+	label, tail, ok := splitLabeledLine(trimmed)
+	if ok && strings.TrimSpace(tail) != "" {
+		return indent + strings.Repeat(" ", lipgloss.Width(label+leadingBodySpacing(tail)))
+	}
 	switch {
 	case strings.HasPrefix(trimmed, "• from "):
 		return indent + strings.Repeat(" ", len("• from "))
@@ -1333,8 +1375,24 @@ func isToolDetailLine(line string) bool {
 	if trimmed == "" {
 		return false
 	}
-	if strings.HasPrefix(trimmed, ">") || strings.HasPrefix(trimmed, "<-") || strings.HasPrefix(trimmed, "->") || isCommLine(trimmed) {
+	if strings.HasPrefix(trimmed, ">") || strings.HasPrefix(trimmed, "<-") || strings.HasPrefix(trimmed, "->") || isCommLine(trimmed) || isProviderStreamLine(trimmed) {
 		return false
 	}
 	return strings.Contains(trimmed, "=")
+}
+
+func splitLabeledLine(line string) (string, string, bool) {
+	idx := strings.Index(line, ":")
+	if idx < 0 {
+		return "", "", false
+	}
+	return line[:idx+1], line[idx+1:], true
+}
+
+func leadingBodySpacing(text string) string {
+	idx := 0
+	for idx < len(text) && text[idx] == ' ' {
+		idx++
+	}
+	return text[:idx]
 }

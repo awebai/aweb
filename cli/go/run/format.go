@@ -58,11 +58,7 @@ func formatToolResultLines(text string) []string {
 			formatted = append(formatted, fmt.Sprintf("    ... +%d lines", len(lines)-maxLines))
 			break
 		}
-		prefix := "    "
-		if i == 0 {
-			prefix = "  = "
-		}
-		formatted = append(formatted, prefix+truncateLine(line, 150))
+		formatted = append(formatted, "    "+truncateLine(line, 150))
 	}
 	return formatted
 }

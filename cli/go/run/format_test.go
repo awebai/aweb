@@ -67,7 +67,7 @@ func TestFormatToolResultLinesPreservesLineBreaks(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 result lines, got %#v", lines)
 	}
-	if lines[0] != "  = 1\talpha" || lines[1] != "    2\tbeta" || lines[2] != "    3\tgamma" {
+	if lines[0] != "    1\talpha" || lines[1] != "    2\tbeta" || lines[2] != "    3\tgamma" {
 		t.Fatalf("unexpected result lines %#v", lines)
 	}
 }
