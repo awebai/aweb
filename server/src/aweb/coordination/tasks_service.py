@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from ..claims import _claim_focus_task_ref, resolve_task_claim_apex
 from ..service_errors import ConflictError, NotFoundError, ValidationError
 
 _UNSET = object()
@@ -580,6 +581,7 @@ async def update_task(
         if status is not None:
             if status == "in_progress":
                 task_ref = format_task_ref(slug, current["task_ref_suffix"])
+                apex_task_ref = await resolve_task_claim_apex(db, project_id, task_ref)
                 workspace = await tx.fetch_one(
                     """
                     SELECT workspace_id, alias, human_name
@@ -623,7 +625,7 @@ async def update_task(
                         workspace["alias"],
                         workspace["human_name"] or "",
                         task_ref,
-                        task_ref,
+                        apex_task_ref,
                         now,
                     )
 
@@ -635,7 +637,7 @@ async def update_task(
                             updated_at = $2
                         WHERE project_id = $3 AND workspace_id = $4
                         """,
-                        task_ref,
+                        _claim_focus_task_ref(task_ref, apex_task_ref),
                         now,
                         UUID(project_id),
                         UUID(actor_agent_id),
