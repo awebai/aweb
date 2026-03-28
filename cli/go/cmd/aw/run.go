@@ -170,7 +170,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	var lastBuildOptions awrun.BuildOptions
 	loop.EventBus = runNewEventBus(client)
 	loop.Control = screen
-	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client))
+	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, sel.IdentityHandle))
 	loop.StatusIdentity = statusIdentity
 	loop.OnSessionID = func(sessionID string) {
 		lastSessionID = strings.TrimSpace(sessionID)
