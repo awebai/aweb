@@ -18,11 +18,13 @@ func (ClaudeProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, 
 	command := []string{
 		"claude",
 		"-p",
-		"--dangerously-skip-permissions",
 		"--output-format",
 		"stream-json",
 		"--verbose",
 		"--include-partial-messages",
+	}
+	if !opts.TripOnDanger {
+		command = append(command, "--dangerously-skip-permissions")
 	}
 
 	if opts.ContinueSession {
@@ -60,6 +62,9 @@ func (ClaudeProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
 	}
 
 	command := []string{"claude", "--resume", sessionID}
+	if !opts.TripOnDanger {
+		command = append(command, "--dangerously-skip-permissions")
+	}
 	if strings.TrimSpace(opts.Model) != "" {
 		command = append(command, "--model", opts.Model)
 	}

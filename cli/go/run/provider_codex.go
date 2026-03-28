@@ -37,7 +37,10 @@ func (CodexProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, e
 		return nil, fmt.Errorf("provider codex does not support --allowed-tools")
 	}
 
-	command := []string{"codex", "exec", "--skip-git-repo-check", "--full-auto"}
+	command := []string{"codex", "exec", "--skip-git-repo-check"}
+	if !opts.TripOnDanger {
+		command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+	}
 	isResume := strings.TrimSpace(opts.SessionID) != "" || opts.ContinueSession
 	if !isResume {
 		for _, dir := range opts.AddDirs {
@@ -77,7 +80,10 @@ func (CodexProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
 		return nil, fmt.Errorf("session id is required")
 	}
 
-	command := []string{"codex", "exec", "resume", "--skip-git-repo-check", "--full-auto"}
+	command := []string{"codex", "exec", "resume", "--skip-git-repo-check"}
+	if !opts.TripOnDanger {
+		command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+	}
 	if strings.TrimSpace(opts.Model) != "" {
 		command = append(command, "-m", opts.Model)
 	}

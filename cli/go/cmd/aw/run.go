@@ -33,6 +33,7 @@ var (
 	runAllowedTools  string
 	runModel         string
 	runProviderPTY   bool
+	runTripOnDanger  bool
 	runAutofeedWork  bool
 	runInitConfig    bool
 )
@@ -97,6 +98,7 @@ func init() {
 	runCmd.Flags().StringVar(&runAllowedTools, "allowed-tools", "", "Provider-specific allowed tools string")
 	runCmd.Flags().StringVar(&runModel, "model", "", "Provider-specific model override")
 	runCmd.Flags().BoolVar(&runProviderPTY, "provider-pty", false, "Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available")
+	runCmd.Flags().BoolVar(&runTripOnDanger, "trip-on-danger", false, "Remove provider bypass flags and use native provider safety checks")
 	runCmd.Flags().BoolVar(&runAutofeedWork, "autofeed-work", false, "Wake for work-related events in addition to incoming mail/chat")
 	runCmd.Flags().BoolVar(&runInitConfig, "init", false, "Prompt for ~/.config/aw/run.json values and write them")
 
@@ -211,6 +213,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		WorkingDir:      workingDir,
 		AllowedTools:    runAllowedTools,
 		Model:           runModel,
+		TripOnDanger:    runTripOnDanger,
 		ClaimedTaskRef:  claimedTaskRef,
 		ProviderArgs:    providerArgs,
 		ProviderPTY:     effectiveProviderPTY(cmd, screen != nil),

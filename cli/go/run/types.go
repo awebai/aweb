@@ -36,6 +36,7 @@ type BuildOptions struct {
 	ContinueSession bool
 	AllowedTools    string
 	Model           string
+	TripOnDanger    bool
 	AddDirs         []string
 	ImagePaths      []string
 	PromptTransport PromptTransport
@@ -201,6 +202,7 @@ type LoopOptions struct {
 	WorkingDir      string
 	AllowedTools    string
 	Model           string
+	TripOnDanger    bool
 	ClaimedTaskRef  string
 	ProviderArgs    []string
 	ProviderPTY     bool

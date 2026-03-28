@@ -311,6 +311,7 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	buildOpts := BuildOptions{
 		AllowedTools:    opts.AllowedTools,
 		Model:           opts.Model,
+		TripOnDanger:    opts.TripOnDanger,
 		ImagePaths:      append([]string(nil), imagePaths...),
 		PromptTransport: PromptTransportStdin,
 		ProviderArgs:    append([]string(nil), opts.ProviderArgs...),

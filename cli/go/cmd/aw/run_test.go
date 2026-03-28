@@ -167,6 +167,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	runAllowedTools = "Read,Write"
 	runModel = "sonnet"
 	runProviderPTY = true
+	runTripOnDanger = true
 	runAutofeedWork = true
 	runBasePrompt = "flag base"
 	runInitialPrompt = "finish the migration"
@@ -206,6 +207,9 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	}
 	if capturedOpts.MaxRuns != 3 || capturedOpts.AllowedTools != "Read,Write" || capturedOpts.Model != "sonnet" {
 		t.Fatalf("unexpected opts: %+v", capturedOpts)
+	}
+	if !capturedOpts.TripOnDanger {
+		t.Fatalf("expected trip-on-danger in opts, got %+v", capturedOpts)
 	}
 	if capturedOpts.ClaimedTaskRef != "aweb-aaag" {
 		t.Fatalf("expected claimed task ref in opts, got %+v", capturedOpts)

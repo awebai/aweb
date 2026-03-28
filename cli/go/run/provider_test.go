@@ -20,7 +20,7 @@ func TestClaudeProviderBuildCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "claude -p --dangerously-skip-permissions") {
+	if !strings.Contains(joined, "claude -p") {
 		t.Fatalf("expected base command, got: %q", joined)
 	}
 	if strings.Contains(joined, "fix the bug") {
@@ -46,6 +46,22 @@ func TestClaudeProviderBuildCommand(t *testing.T) {
 	}
 }
 
+func TestClaudeProviderBuildCommandTripOnDangerRemovesBypassFlag(t *testing.T) {
+	provider := ClaudeProvider{}
+
+	command, err := provider.BuildCommand("fix the bug", BuildOptions{
+		TripOnDanger: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if strings.Contains(joined, "--dangerously-skip-permissions") {
+		t.Fatalf("did not expect skip permissions flag, got: %q", joined)
+	}
+}
+
 func TestClaudeProviderBuildResumeCommand(t *testing.T) {
 	provider := ClaudeProvider{}
 
@@ -60,7 +76,7 @@ func TestClaudeProviderBuildResumeCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "claude --resume sess-42") {
+	if !strings.Contains(joined, "claude --resume sess-42 --dangerously-skip-permissions") {
 		t.Fatalf("expected resume command, got: %q", joined)
 	}
 	if !strings.Contains(joined, "--model claude-sonnet-4") {
@@ -71,6 +87,24 @@ func TestClaudeProviderBuildResumeCommand(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--debug") {
 		t.Fatalf("expected forwarded provider args, got: %q", joined)
+	}
+}
+
+func TestClaudeProviderBuildResumeCommandTripOnDangerRemovesBypassFlag(t *testing.T) {
+	provider := ClaudeProvider{}
+
+	command, err := provider.BuildResumeCommand(BuildOptions{
+		SessionID:    "sess-42",
+		TripOnDanger: true,
+		ProviderArgs: []string{"--debug"},
+	})
+	if err != nil {
+		t.Fatalf("BuildResumeCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if strings.Contains(joined, "--dangerously-skip-permissions") {
+		t.Fatalf("did not expect skip permissions flag, got: %q", joined)
 	}
 }
 
@@ -109,8 +143,8 @@ func TestCodexProviderBuildCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --add-dir /tmp/gitdir --json") {
-		t.Fatalf("expected --add-dir before --json in non-resume mode: %q", joined)
+	if !strings.Contains(joined, "codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --add-dir /tmp/gitdir --json") {
+		t.Fatalf("expected bypass + add-dir before --json in non-resume mode: %q", joined)
 	}
 	if strings.Contains(joined, "resume") {
 		t.Fatalf("did not expect resume mode by default: %q", joined)
@@ -145,6 +179,22 @@ func TestCodexProviderBuildCommand(t *testing.T) {
 	}
 }
 
+func TestCodexProviderBuildCommandTripOnDangerRemovesBypassFlag(t *testing.T) {
+	provider := CodexProvider{}
+
+	command, err := provider.BuildCommand("fix the bug", BuildOptions{
+		TripOnDanger: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if strings.Contains(joined, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("did not expect dangerous bypass flag, got: %q", joined)
+	}
+}
+
 func TestCodexProviderBuildResumeCommand(t *testing.T) {
 	provider := CodexProvider{}
 
@@ -159,7 +209,7 @@ func TestCodexProviderBuildResumeCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "codex exec resume --skip-git-repo-check --full-auto") {
+	if !strings.Contains(joined, "codex exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("expected codex exec base command, got: %q", joined)
 	}
 	if !strings.Contains(joined, "sess-42") {
@@ -173,6 +223,23 @@ func TestCodexProviderBuildResumeCommand(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--profile ci") {
 		t.Fatalf("expected forwarded provider args, got: %q", joined)
+	}
+}
+
+func TestCodexProviderBuildResumeCommandTripOnDangerRemovesBypassFlag(t *testing.T) {
+	provider := CodexProvider{}
+
+	command, err := provider.BuildResumeCommand(BuildOptions{
+		SessionID:    "sess-42",
+		TripOnDanger: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildResumeCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if strings.Contains(joined, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("did not expect dangerous bypass flag, got: %q", joined)
 	}
 }
 
