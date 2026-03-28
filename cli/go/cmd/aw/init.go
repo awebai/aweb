@@ -579,7 +579,7 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		AccountName:               strings.TrimSpace(input.AccountName),
 		WorkspaceRole:             role,
 		PromptAliasAfterBootstrap: input.DeferAliasPrompt,
-		PromptRoleAfterBootstrap:  input.DeferRolePrompt && requiresWorkspaceRole,
+		PromptRoleAfterBootstrap:  input.DeferRolePrompt,
 		Lifetime:                  resolveInitLifetime(input.Permanent),
 	}, nil
 }
