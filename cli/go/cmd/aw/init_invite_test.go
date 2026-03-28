@@ -531,3 +531,79 @@ func TestAwInitInviteTextOutputSaysJoined(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
+
+func TestAwInitInviteDefaultsToEphemeralWithoutLifetimePrompt(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/spawn/accept-invite":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_id":     "proj-1",
+				"project_slug":   "myteam",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-1",
+				"alias":          "reviewer",
+				"address":        "myteam.aweb.ai/reviewer",
+				"api_key":        "aw_sk_invited",
+				"server_url":     "https://app.aweb.ai/api",
+				"did":            "did:key:z6MkInvite",
+				"stable_id":      "did:aw:invite",
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+				"access_mode":    "open",
+				"created":        true,
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/register", "/v1/workspaces/attach":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	run := exec.CommandContext(ctx, bin, "spawn", "accept-invite", "aw_inv_test",
+		"--alias", "reviewer",
+		"--role", "developer",
+		"--server", server.URL,
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	run.Stdin = strings.NewReader("")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if strings.Contains(text, "Identity type number") {
+		t.Fatalf("did not expect identity-type prompt:\n%s", text)
+	}
+	if !strings.Contains(text, "Accepted spawn invite") {
+		t.Fatalf("unexpected output:\n%s", text)
+	}
+}
