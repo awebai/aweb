@@ -157,13 +157,16 @@ var lockRevokeCmd = &cobra.Command{
 
 // lock list
 
-var lockListPrefix string
+var (
+	lockListPrefix string
+	lockListMine   bool
+)
 
 var lockListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List active locks",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := resolveClient()
+		c, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}
@@ -174,6 +177,15 @@ var lockListCmd = &cobra.Command{
 		resp, err := c.ReservationList(ctx, lockListPrefix)
 		if err != nil {
 			return err
+		}
+		if lockListMine {
+			filtered := make([]aweb.ReservationView, 0, len(resp.Reservations))
+			for _, reservation := range resp.Reservations {
+				if reservation.HolderAlias == sel.IdentityHandle {
+					filtered = append(filtered, reservation)
+				}
+			}
+			resp.Reservations = filtered
 		}
 		printOutput(resp, formatLockList)
 		return nil
@@ -192,6 +204,7 @@ func init() {
 	lockRevokeCmd.Flags().StringVar(&lockRevokePrefix, "prefix", "", "Optional prefix filter")
 
 	lockListCmd.Flags().StringVar(&lockListPrefix, "prefix", "", "Prefix filter")
+	lockListCmd.Flags().BoolVar(&lockListMine, "mine", false, "Show only locks held by the current workspace alias")
 
 	lockCmd.AddCommand(lockAcquireCmd, lockRenewCmd, lockReleaseCmd, lockRevokeCmd, lockListCmd)
 	rootCmd.AddCommand(lockCmd)

@@ -951,6 +951,9 @@ func formatWorkspaceStatus(v any) string {
 				line += ", seen " + formatTimeAgo(lastSeen)
 			}
 			sb.WriteString(line + "\n")
+			if hostPathLine := formatWorkspaceHostPath(workspace); hostPathLine != "" {
+				sb.WriteString(fmt.Sprintf("  %s\n", hostPathLine))
+			}
 			if repoLine := formatWorkspaceRepoBranch(workspace); repoLine != "" {
 				sb.WriteString(fmt.Sprintf("  %s\n", repoLine))
 			}
@@ -965,6 +968,24 @@ func formatWorkspaceStatus(v any) string {
 		sb.WriteString(fmt.Sprintf("Claim conflicts: %d\n", out.ConflictCount))
 	}
 	return sb.String()
+}
+
+func formatWorkspaceHostPath(workspace aweb.WorkspaceInfo) string {
+	hostname := strings.TrimSpace(derefString(workspace.Hostname))
+	path := strings.TrimSpace(derefString(workspace.WorkspacePath))
+	if path != "" {
+		path = abbreviateUserHome(path)
+	}
+	switch {
+	case hostname != "" && path != "":
+		return fmt.Sprintf("Host: %s  Path: %s", hostname, path)
+	case hostname != "":
+		return fmt.Sprintf("Host: %s", hostname)
+	case path != "":
+		return fmt.Sprintf("Path: %s", path)
+	default:
+		return ""
+	}
 }
 
 func formatWorkspaceRepoBranch(workspace aweb.WorkspaceInfo) string {
@@ -1020,9 +1041,22 @@ func formatWorkspaceLocksSummary(locks []aweb.ReservationView, now time.Time) st
 	}
 	parts := make([]string, 0, len(locks))
 	for _, lock := range locks {
-		parts = append(parts, fmt.Sprintf("%s (TTL: %s)", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now))))
+		part := fmt.Sprintf("%s (TTL: %s", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now)))
+		if reason := formatWorkspaceLockReason(lock.Metadata); reason != "" {
+			part += fmt.Sprintf(", reason: %s", reason)
+		}
+		part += ")"
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ", ")
+}
+
+func formatWorkspaceLockReason(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	reason, _ := metadata["reason"].(string)
+	return strings.TrimSpace(reason)
 }
 
 func derefString(v *string) string {
