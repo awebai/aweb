@@ -88,7 +88,7 @@ func init() {
 	runCmd.GroupID = groupCoordination
 	lockCmd.GroupID = groupCoordination
 	notifyCmd.GroupID = groupCoordination
-	policyCmd.GroupID = groupCoordination
+	rolesCmd.GroupID = groupCoordination
 
 	versionCmd.GroupID = groupUtility
 	upgradeCmd.GroupID = groupUtility

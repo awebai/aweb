@@ -62,7 +62,7 @@ func (e AgentEvent) IsInterruptWake() bool {
 }
 
 // AgentEventStream decodes typed events from GET /v1/events/stream.
-// It is intentionally low-level: EOF and reconnect/backoff policy are left to callers.
+// It is intentionally low-level: EOF and reconnect/backoff strategy are left to callers.
 type AgentEventStream struct {
 	sse *SSEStream
 }

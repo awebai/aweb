@@ -20,7 +20,7 @@ This project uses ` + "`aw`" + ` for agent coordination.
 ## Start Here
 
 ` + "```bash" + `
-aw policy show
+aw roles show
 aw workspace status
 aw work ready
 aw mail inbox

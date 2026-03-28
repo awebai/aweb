@@ -88,7 +88,7 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -249,7 +249,7 @@ func TestAwInitAutoAttachesRepoContext(t *testing.T) {
 			})
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1276,7 +1276,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1484,7 +1484,7 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},
@@ -1562,7 +1562,7 @@ func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1676,7 +1676,7 @@ func TestAwWorkspaceAddWorktreeExplicitAliasCreatesSiblingWorktree(t *testing.T)
 			})
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1765,7 +1765,7 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1876,7 +1876,7 @@ func TestAwWorkspaceAddWorktreeRetriesAliasTakenSuggestion(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},

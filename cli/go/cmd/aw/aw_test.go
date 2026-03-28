@@ -2583,7 +2583,7 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 			})
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},
@@ -2654,7 +2654,7 @@ func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testin
 			})
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},
@@ -2727,7 +2727,7 @@ func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing
 			})
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id": "pol-1",
+				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},

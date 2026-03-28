@@ -8,7 +8,7 @@ import (
 
 // Client provides both protocol and coordination operations.
 // Protocol operations are available via the embedded awid.Client.
-// Coordination operations (workspaces, policies, tasks, reservations,
+// Coordination operations (workspaces, project roles, tasks, reservations,
 // claims) are defined as methods on this type.
 type Client struct {
 	*awid.Client

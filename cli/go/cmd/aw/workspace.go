@@ -455,7 +455,7 @@ func registerWorkspaceForRoot(root string, client *aweb.Client, roleOverride str
 	if role == "" && existingState != nil {
 		role = strings.TrimSpace(existingState.Role)
 	}
-	// Only resolve from policy if we don't already have a role.
+	// Only resolve from project roles if we don't already have a role.
 	// Callers that pre-validate the role (init, project create,
 	// add-worktree, roles set) pass it here already validated.
 	if role == "" {
@@ -704,15 +704,15 @@ func isValidWorkspaceRole(role string) bool {
 	return true
 }
 
-// fetchAvailableRoles returns the available roles from the project policy.
+// fetchAvailableRoles returns the available roles from the project roles bundle.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActivePolicy(ctx, aweb.ActivePolicyParams{OnlySelected: false})
+	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
 	if err != nil {
-		return nil, fmt.Errorf("fetching policy roles: %w", err)
+		return nil, fmt.Errorf("fetching project roles: %w", err)
 	}
 
 	roles := make([]string, 0, len(resp.Roles))
@@ -723,18 +723,18 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	return roles, nil
 }
 
-// resolveRole fetches available roles from the project policy, validates
+// resolveRole fetches available roles from the project roles bundle, validates
 // the requested role against them, and optionally prompts the user to
 // choose. This is the single entry point for role resolution.
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
 	roles, err := fetchAvailableRoles(client)
 	if err != nil {
-		// Policy endpoint unavailable — accept the requested role as-is.
+		// Roles endpoint unavailable — accept the requested role as-is.
 		debugLog("fetch roles: %v", err)
 		return normalizeWorkspaceRole(requested), nil
 	}
 	if len(roles) == 0 {
-		// No policy defined — accept the requested role as-is.
+		// No project roles defined — accept the requested role as-is.
 		return normalizeWorkspaceRole(requested), nil
 	}
 	return selectRoleFromAvailableRoles(requested, roles, allowPrompt, in, out)
@@ -742,7 +742,7 @@ func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.
 
 func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
 	if len(roles) == 0 {
-		return "", usageError("no roles defined in the active project policy")
+		return "", usageError("no roles defined in the active project roles")
 	}
 
 	normalizedRoles := make(map[string]string, len(roles))

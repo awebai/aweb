@@ -363,7 +363,7 @@ func TestLoopDoesNotSuppressBdhSpecificEchoText(t *testing.T) {
 	if !strings.Contains(got, "AGENTS.md instructions") {
 		t.Fatalf("expected echoed prompt text to be preserved, got %q", got)
 	}
-	if strings.Contains(got, "[suppressed prompt/policy echo]") {
+	if strings.Contains(got, "[suppressed prompt echo]") {
 		t.Fatalf("unexpected suppression marker in output: %q", got)
 	}
 }

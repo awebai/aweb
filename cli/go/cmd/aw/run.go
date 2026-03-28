@@ -77,7 +77,7 @@ Current implementation includes:
   - aw event-stream wakeups for mail, chat, and optional work events
   - optional background services declared in aw run config
 
-This aw-first command intentionally excludes bead-specific dispatch and policy glue.`,
+This aw-first command intentionally excludes bead-specific dispatch.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runRun,
 }

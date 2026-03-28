@@ -20,7 +20,7 @@ func TestInjectAgentDocsCreatesAgentsWhenNoFilesExist(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{awDocsMarkerStart, "aw policy show", "aw chat send-and-wait"} {
+	for _, want := range []string{awDocsMarkerStart, "aw roles show", "aw chat send-and-wait"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in AGENTS.md:\n%s", want, text)
 		}

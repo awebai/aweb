@@ -771,7 +771,7 @@ Notable help/usage details:
 
 - `aw lock`: distributed locks
 - `aw notify`: check for pending chat notifications for Claude Code hooks
-- `aw policy`: read project policy and role playbooks
+- `aw roles`: read project roles and role playbooks
 - `aw run <provider>`: run an AI coding agent in a loop
 - `aw task`: manage tasks
 - `aw work`: discover coordination-aware work
@@ -783,8 +783,8 @@ Subcommands:
 - `aw lock release`: release a lock
 - `aw lock renew`: renew a lock
 - `aw lock revoke`: revoke locks
-- `aw policy roles`: list roles defined in the active policy
-- `aw policy show`: show active policy invariants and role guidance
+- `aw roles list`: list roles defined in the active project roles
+- `aw roles show`: show active project roles and role guidance
 - `aw task close`: close one or more tasks
 - `aw task comment`: manage task comments
 - `aw task comment add`: add a comment to a task
@@ -807,7 +807,7 @@ Subcommands:
 Notable help/usage details:
 
 - `aw notify` is designed for Claude Code `PostToolUse` hook integration
-- `aw run` is intentionally aw-first and excludes bead-specific dispatch/policy glue
+- `aw run` is intentionally aw-first and excludes bead-specific dispatch
 - `aw run` is the primary human entrypoint; when the current directory is not initialized and a TTY is available, it offers guided onboarding before starting the requested provider
 - `aw run` takes the provider as a positional argument and uses `--prompt` for the first prompt
 - `aw run` supports `--init`, `--continue`, provider/model selection, wake-stream options, and prompt overrides
