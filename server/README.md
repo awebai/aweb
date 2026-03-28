@@ -9,7 +9,7 @@ includes:
 - the `aweb` CLI entrypoint for local server operation
 - the stable identity system under `aweb.awid`
 - database migrations
-- default project roles bundles
+- default coordination project roles bundles
 - MCP integration
 
 ## Run locally

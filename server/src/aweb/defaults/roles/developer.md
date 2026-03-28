@@ -21,7 +21,7 @@ You write code and implement features.
 aw workspace status
 aw mail inbox --unread-only
 aw work ready
-aw policy show
+aw roles show
 ```
 
 ### Work Patterns
@@ -30,7 +30,7 @@ aw policy show
 ```bash
 aw work ready
 aw work active
-aw policy show
+aw roles show
 ```
 
 **If work is already claimed:**

@@ -336,7 +336,7 @@ class RegisterAttachmentRequest(BaseModel):
     role: Optional[str] = Field(
         None,
         max_length=ROLE_MAX_LENGTH,
-        description="Role used for policy and coordination",
+        description="Role used for project roles selection and coordination",
     )
     role_name: Optional[str] = Field(
         None,

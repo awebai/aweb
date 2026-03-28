@@ -34,7 +34,7 @@ from .routes.reservations import router as reservations_router
 from .routes.scopes import router as scopes_router
 from .routes.spawn import router as spawn_router
 from .routes.status import router as status_router
-from .coordination.routes.policies import policies_router, roles_router
+from .coordination.routes.project_roles import roles_router
 from .coordination.routes.repos import router as repos_router
 from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
@@ -281,7 +281,6 @@ def create_app(
     app.include_router(scopes_router)
     app.include_router(status_router)
     app.include_router(roles_router)
-    app.include_router(policies_router)
     app.include_router(tasks_router)
     app.include_router(workspaces_router)
     app.include_router(repos_router)

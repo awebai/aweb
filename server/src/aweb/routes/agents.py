@@ -35,7 +35,7 @@ from ..db import DatabaseInfra, get_db_infra
 from ..input_validation import is_valid_alias
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 from ..redis_client import get_redis
-from ..coordination.routes.policies import get_active_policy
+from ..coordination.routes.project_roles import get_active_project_roles
 from ..coordination.roles import ROLE_MAX_LENGTH
 from ..role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.namespace_registry import list_namespace_addresses
@@ -463,8 +463,10 @@ async def suggest_alias_prefix(
 
     project_id = str(row["project_id"])
     server_db = db_infra.get_manager("server")
-    policy = await get_active_policy(server_db, project_id, bootstrap_if_missing=False)
-    roles = list(policy.bundle.roles.keys()) if policy else []
+    project_roles_version = await get_active_project_roles(
+        server_db, project_id, bootstrap_if_missing=False
+    )
+    roles = list(project_roles_version.bundle.roles.keys()) if project_roles_version else []
     aliases = await aweb_db.fetch_all(
         """
         SELECT alias
@@ -1497,17 +1499,21 @@ def _coordination_summary(event_type: str, details: dict | None) -> str:
             repo = details.get("canonical_origin") or details.get("repo") or "repo"
             return f"Attached to repo context: {repo}"
         return f"Attached to {context_kind} context"
-    if event_type == "policy_created":
-        version = details.get("version")
-        return f"Policy version {version} created" if version is not None else "Policy created"
-    if event_type == "policy_activated":
-        return "Policy activated"
-    if event_type == "policy_reset_to_default":
+    if event_type == "project_roles_created":
         version = details.get("version")
         return (
-            f"Policy reset to default (v{version})"
+            f"Project roles version {version} created"
             if version is not None
-            else "Policy reset to default"
+            else "Project roles created"
+        )
+    if event_type == "project_roles_activated":
+        return "Project roles activated"
+    if event_type == "project_roles_reset_to_default":
+        version = details.get("version")
+        return (
+            f"Project roles reset to default (v{version})"
+            if version is not None
+            else "Project roles reset to default"
         )
     return event_type.replace("_", " ").replace(".", " ")
 

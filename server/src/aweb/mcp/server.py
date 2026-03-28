@@ -31,8 +31,8 @@ from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
-from aweb.mcp.tools.policies import policy_show as _policy_show_impl
-from aweb.mcp.tools.policies import roles_list as _roles_list_impl
+from aweb.mcp.tools.project_roles import roles_show as _roles_show_impl
+from aweb.mcp.tools.project_roles import roles_list as _roles_list_impl
 from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
 from aweb.mcp.tools.tasks import task_close as _task_close_impl
 from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
@@ -387,18 +387,18 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
     async def task_comment_list(ref: str) -> str:
         return await _task_comment_list_impl(db_infra, ref=ref)
 
-    # -- Policies --
+    # -- Roles --
 
     @mcp.tool(
-        name="policy_show",
-        description="Show the active project policy and the current agent's selected role guidance.",
+        name="roles_show",
+        description="Show the active project roles bundle and the current agent's selected role guidance.",
     )
-    async def policy_show(only_selected: bool = False) -> str:
-        return await _policy_show_impl(db_infra, only_selected=only_selected)
+    async def roles_show(only_selected: bool = False) -> str:
+        return await _roles_show_impl(db_infra, only_selected=only_selected)
 
     @mcp.tool(
         name="roles_list",
-        description="List available roles from the active project policy.",
+        description="List available roles from the active project roles bundle.",
     )
     async def roles_list() -> str:
         return await _roles_list_impl(db_infra)

@@ -1,7 +1,7 @@
-"""Load default policy bundle from markdown files.
+"""Load the default project roles bundle from markdown files.
 
 Default invariants and roles are stored as markdown files with YAML frontmatter
-in the `defaults/` directory. This module loads and parses them into a policy
+in the `defaults/` directory. This module loads and parses them into a project roles
 bundle structure at server startup.
 
 File structure:
@@ -168,14 +168,14 @@ def load_role(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
 
 def load_default_bundle(defaults_dir: Path) -> Dict[str, Any]:
-    """Load the complete default policy bundle from a directory.
+    """Load the complete default project roles bundle from a directory.
 
     Args:
         defaults_dir: Path to the defaults directory containing
             invariants/ and roles/ subdirectories.
 
     Returns:
-        Policy bundle dict with invariants, roles, and adapters keys.
+        Project roles bundle dict with invariants, roles, and adapters keys.
 
     Raises:
         ValueError: If required directories are missing or duplicate IDs found.
@@ -218,7 +218,7 @@ def load_default_bundle(defaults_dir: Path) -> Dict[str, Any]:
         roles[role_id] = role_data
 
     logger.info(
-        "Loaded default policy bundle: %d invariants, %d roles",
+        "Loaded default project roles bundle: %d invariants, %d roles",
         len(invariants),
         len(roles),
     )
@@ -231,7 +231,7 @@ def load_default_bundle(defaults_dir: Path) -> Dict[str, Any]:
 
 
 def get_default_bundle(force_reload: bool = False) -> Dict[str, Any]:
-    """Get the default policy bundle, loading from disk if not cached.
+    """Get the default project roles bundle, loading from disk if not cached.
 
     Returns a deep copy to prevent callers from modifying the cached bundle.
 
@@ -240,7 +240,7 @@ def get_default_bundle(force_reload: bool = False) -> Dict[str, Any]:
             is atomic (protected by lock) so concurrent calls are safe.
 
     Returns:
-        The default policy bundle dict.
+        The default project roles bundle dict.
     """
     global _DEFAULT_BUNDLE_CACHE
 

@@ -1,16 +1,16 @@
-"""MCP tools for project policy inspection."""
+"""MCP tools for project roles inspection."""
 
 from __future__ import annotations
 
 import json
 from uuid import UUID
 
-from aweb.coordination.routes.policies import get_active_policy
+from aweb.coordination.routes.project_roles import get_active_project_roles
 from aweb.mcp.auth import get_auth
 
 
-async def policy_show(db_infra, *, only_selected: bool = False) -> str:
-    """Show the active policy for the authenticated project and current agent role."""
+async def roles_show(db_infra, *, only_selected: bool = False) -> str:
+    """Show the active project roles for the authenticated project and current agent role."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
     server_db = db_infra.get_manager("server")
@@ -26,13 +26,15 @@ async def policy_show(db_infra, *, only_selected: bool = False) -> str:
     )
     agent_role = (agent.get("role") or "").strip() if agent else ""
 
-    policy = await get_active_policy(server_db, auth.project_id, bootstrap_if_missing=True)
-    if policy is None:
-        return json.dumps({"error": "Policy not found"})
+    project_roles_version = await get_active_project_roles(
+        server_db, auth.project_id, bootstrap_if_missing=True
+    )
+    if project_roles_version is None:
+        return json.dumps({"error": "Project roles not found"})
 
     selected_role = None
-    if agent_role and agent_role in policy.bundle.roles:
-        role_info = policy.bundle.roles[agent_role]
+    if agent_role and agent_role in project_roles_version.bundle.roles:
+        role_info = project_roles_version.bundle.roles[agent_role]
         selected_role = {
             "role": agent_role,
             "role_name": agent_role,
@@ -46,34 +48,34 @@ async def policy_show(db_infra, *, only_selected: bool = False) -> str:
             "title": inv.get("title", ""),
             "body_md": inv.get("body_md", ""),
         }
-        for inv in policy.bundle.invariants
+        for inv in project_roles_version.bundle.invariants
     ]
     roles = (
-        {agent_role: policy.bundle.roles[agent_role]}
+        {agent_role: project_roles_version.bundle.roles[agent_role]}
         if only_selected and selected_role is not None
-        else ({} if only_selected else policy.bundle.roles)
+        else ({} if only_selected else project_roles_version.bundle.roles)
     )
 
     return json.dumps(
         {
-            "policy_id": policy.policy_id,
-            "project_id": policy.project_id,
-            "version": policy.version,
-            "updated_at": policy.updated_at.isoformat(),
+            "project_roles_id": project_roles_version.project_roles_id,
+            "project_id": project_roles_version.project_id,
+            "version": project_roles_version.version,
+            "updated_at": project_roles_version.updated_at.isoformat(),
             "agent_id": auth.agent_id,
             "agent_role": agent_role or None,
             "agent_role_name": agent_role or None,
             "selected_role": selected_role,
             "invariants": invariants,
             "roles": roles,
-            "available_roles": sorted(policy.bundle.roles.keys()),
-            "adapters": policy.bundle.adapters,
+            "available_roles": sorted(project_roles_version.bundle.roles.keys()),
+            "adapters": project_roles_version.bundle.adapters,
         }
     )
 
 
 async def roles_list(db_infra) -> str:
-    """List available roles from the active project policy plus the agent's current role."""
+    """List available roles from the active project roles bundle plus the agent's current role."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
     server_db = db_infra.get_manager("server")
@@ -89,8 +91,12 @@ async def roles_list(db_infra) -> str:
     )
     current_role = (agent.get("role") or "").strip() if agent else ""
 
-    policy = await get_active_policy(server_db, auth.project_id, bootstrap_if_missing=True)
-    available_roles = sorted(policy.bundle.roles.keys()) if policy else []
+    project_roles_version = await get_active_project_roles(
+        server_db, auth.project_id, bootstrap_if_missing=True
+    )
+    available_roles = (
+        sorted(project_roles_version.bundle.roles.keys()) if project_roles_version else []
+    )
 
     return json.dumps(
         {
