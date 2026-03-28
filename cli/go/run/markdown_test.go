@@ -6,7 +6,7 @@ import (
 )
 
 func TestRenderCodexAssistantTextFormatsMarkdownAndAddsBulletLane(t *testing.T) {
-	rendered := renderCodexAssistantText("## Title\n\n- first item\n- second item\n\nUse `code` here.\n", 60)
+	rendered := renderCodexAssistantText("## Title\n\n- first item\n- second item\n\nUse `code` here.\n")
 	plain := stripANSIEscapeCodes(rendered)
 
 	if strings.Contains(plain, "## Title") {
@@ -33,7 +33,7 @@ func TestRenderCodexAssistantTextFormatsMarkdownAndAddsBulletLane(t *testing.T) 
 }
 
 func TestRenderCodexAssistantTextFallsBackToAssistantDisplayText(t *testing.T) {
-	rendered := renderCodexAssistantText("", 60)
+	rendered := renderCodexAssistantText("")
 	if rendered != "" {
 		t.Fatalf("expected empty output for empty input, got %q", rendered)
 	}
@@ -54,5 +54,16 @@ func TestPrefixAssistantDisplayTextOnlyPrefixesLineStarts(t *testing.T) {
 	}
 	if second != "world\n  next line" {
 		t.Fatalf("unexpected second chunk %q", second)
+	}
+}
+
+func TestRenderCodexAssistantTextDoesNotPreWrapParagraphs(t *testing.T) {
+	rendered := renderCodexAssistantText("The docs set is not written yet.")
+	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected markdown stage to leave paragraph wrapping alone, got %#v", lines)
+	}
+	if lines[0] != "● The docs set is not written yet." {
+		t.Fatalf("unexpected rendered paragraph %q", lines[0])
 	}
 }

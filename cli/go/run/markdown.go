@@ -10,15 +10,11 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
-	"github.com/muesli/termenv"
 	"golang.org/x/term"
 )
 
 const (
-	displayLeftMargin      = 2
-	defaultDisplayWidth    = 80
-	minMarkdownRenderWidth = 24
-	assistantBulletPrefix  = primaryBulletPrefix
+	assistantBulletPrefix = primaryBulletPrefix
 )
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -30,7 +26,7 @@ func renderAssistantText(providerName string, text string, out io.Writer, starts
 
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case "codex":
-		rendered := renderCodexAssistantTextWithOptions(text, displayWidth(out), outputSupportsANSI(out), out)
+		rendered := renderCodexAssistantTextWithOptions(text, outputSupportsANSI(out), out)
 		return prefixAssistantDisplayText(rendered, startsAtLine)
 	case "claude":
 		return prefixAssistantDisplayText(text, startsAtLine)
@@ -39,20 +35,18 @@ func renderAssistantText(providerName string, text string, out io.Writer, starts
 	}
 }
 
-func renderCodexAssistantText(text string, width int) string {
-	return prefixAssistantDisplayText(renderCodexAssistantTextWithOptions(text, width, false, nil), true)
+func renderCodexAssistantText(text string) string {
+	return prefixAssistantDisplayText(renderCodexAssistantTextWithOptions(text, false, nil), true)
 }
 
-func renderCodexAssistantTextWithOptions(text string, width int, supportsANSI bool, out io.Writer) string {
+func renderCodexAssistantTextWithOptions(text string, supportsANSI bool, out io.Writer) string {
 	if text == "" {
 		return ""
 	}
 
-	wrapWidth := max(minMarkdownRenderWidth, width-displayLeftMargin)
 	style := codexMarkdownStyle(supportsANSI, out)
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(style),
-		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
@@ -97,18 +91,6 @@ func prefixAssistantDisplayText(text string, startsAtLine bool) string {
 	return out.String()
 }
 
-func displayWidth(out io.Writer) int {
-	file, ok := out.(*os.File)
-	if !ok {
-		return defaultDisplayWidth
-	}
-	width, _, err := term.GetSize(int(file.Fd()))
-	if err != nil || width <= 0 {
-		return defaultDisplayWidth
-	}
-	return width
-}
-
 func outputSupportsANSI(out io.Writer) bool {
 	file, ok := out.(*os.File)
 	if !ok {
@@ -138,14 +120,6 @@ func codexMarkdownStyle(supportsANSI bool, out io.Writer) ansi.StyleConfig {
 	style.H5.Prefix = ""
 	style.H6.Prefix = ""
 	return style
-}
-
-func hasDarkBackground(out io.Writer) bool {
-	file, ok := out.(*os.File)
-	if !ok {
-		return true
-	}
-	return termenv.NewOutput(file).HasDarkBackground()
 }
 
 var trailingWhitespacePattern = regexp.MustCompile(`([ \t]+)((?:\x1b\[[0-9;]*m)*)$`)
