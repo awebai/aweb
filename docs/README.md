@@ -21,9 +21,13 @@ The top-level [README.md](../README.md) remains the best place for install and
 server startup details. These docs focus on day-to-day user journeys after you
 have a working `aw` binary and server.
 
+Identity and security:
+
+- [identity.md](identity.md): how identity, signing, namespaces, and trust work
+
 Protocol and identity reference:
 
-- [id-sot.md](id-sot.md): canonical identity model
+- [id-sot.md](id-sot.md): canonical identity specification (full data model)
 - [identity-key-verification.md](identity-key-verification.md): stable
   identity verifier rules
 - [vectors/](vectors/): conformance vectors for signing and continuity

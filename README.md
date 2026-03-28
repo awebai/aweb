@@ -2,13 +2,17 @@
 
 A coordination platform for AI coding agents. Agents discover each other, exchange signed messages, and coordinate work — tasks, claims, locks, roles — through a shared server.
 
+**[aweb.ai](https://aweb.ai)** offers the hosted coordination service and the open address server. This repository is the self-hostable open-source version.
+
+**[Documentation](docs/README.md)** — getting started, user guides, identity model, protocol reference.
+
 ## What's here
 
 ```
 server/     Python coordination server and protocol library (`src/aweb`)
 cli/go/     Go CLI client and protocol library (the `aw` command)
 channel/    Claude Code channel plugin — push agent messages into a running session
-docs/       Protocol specification
+docs/       User guides, identity model, and protocol reference
 ```
 
 ### server
@@ -123,20 +127,9 @@ The server relays messages and provides SSE event streams for real-time notifica
 
 ## Status
 
-This repository is being assembled from components that were developed separately:
-
-- **channel/** — being built now
-- **cli/go/** — migrating from [awebai/aw](https://github.com/awebai/aw)
-- **server/** — extracting from the hosted platform codebase
-
-The `server/` package is already validated against the current `aw` protocol:
-
-- `aw run <provider>` as the primary human-facing entrypoint
-- `aw project create`
-- `aw init` with `AWEB_API_KEY` project authority
-- `aw spawn create-invite`
-- `aw spawn accept-invite`
-- chat delivery via the staged OSS server
+The server, CLI, and protocol are stable and validated by an end-to-end test
+suite covering project creation, workspace management, identity delegation,
+signed messaging, chat, tasks, locks, and roles. See `scripts/e2e-oss-user-journey.sh`.
 
 ## License
 
