@@ -83,7 +83,7 @@ type workspaceAddWorktreeOutput struct {
 }
 
 func init() {
-	addWorkspaceRoleFlags(workspaceInitCmd, &workspaceInitRole, "Coordination role name for this workspace")
+	workspaceInitCmd.Flags().StringVar(&workspaceInitRole, "role", "", "Coordination role for this workspace")
 	workspaceInitCmd.Flags().StringVar(&workspaceInitRepoOrigin, "repo-origin", "", "Override git remote origin URL")
 
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
@@ -704,15 +704,15 @@ func isValidWorkspaceRole(role string) bool {
 	return true
 }
 
-// fetchAvailableRoles returns the available roles from the active project roles bundle.
+// fetchAvailableRoles returns the available roles from the project policy.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
+	resp, err := client.ActivePolicy(ctx, aweb.ActivePolicyParams{OnlySelected: false})
 	if err != nil {
-		return nil, fmt.Errorf("fetching project roles: %w", err)
+		return nil, fmt.Errorf("fetching policy roles: %w", err)
 	}
 
 	roles := make([]string, 0, len(resp.Roles))
@@ -723,7 +723,7 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	return roles, nil
 }
 
-// resolveRole fetches available roles from the active project roles bundle, validates
+// resolveRole fetches available roles from the project policy, validates
 // the requested role against them, and optionally prompts the user to
 // choose. This is the single entry point for role resolution.
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
@@ -914,7 +914,7 @@ func formatWorkspaceStatus(v any) string {
 	var sb strings.Builder
 	now := time.Now()
 
-	sb.WriteString("## You\n")
+	sb.WriteString("## Self\n")
 	sb.WriteString(fmt.Sprintf("- Alias: %s\n", out.Workspace.Alias))
 	sb.WriteString(fmt.Sprintf("- Context: %s\n", out.ContextKind))
 	if out.Workspace.Role != nil && strings.TrimSpace(*out.Workspace.Role) != "" {
@@ -930,84 +930,99 @@ func formatWorkspaceStatus(v any) string {
 	if out.Workspace.Repo != nil && strings.TrimSpace(*out.Workspace.Repo) != "" {
 		sb.WriteString(fmt.Sprintf("- Repo: %s\n", strings.TrimSpace(*out.Workspace.Repo)))
 	}
-	if out.Workspace.Branch != nil && strings.TrimSpace(*out.Workspace.Branch) != "" && strings.TrimSpace(*out.Workspace.Branch) != "main" && strings.TrimSpace(*out.Workspace.Branch) != "master" {
+	if out.Workspace.Branch != nil && strings.TrimSpace(*out.Workspace.Branch) != "" {
 		sb.WriteString(fmt.Sprintf("- Branch: %s\n", strings.TrimSpace(*out.Workspace.Branch)))
 	}
-	if focus := formatFocusLine(out.Workspace.FocusTaskRef, out.Workspace.FocusTaskTitle); focus != "" {
-		sb.WriteString(fmt.Sprintf("- Focus: %s\n", focus))
-	}
-	if apex := formatApexLine(out.Workspace.ApexTaskRef, out.Workspace.ApexTitle, out.Workspace.ApexType); apex != "" {
-		sb.WriteString(fmt.Sprintf("- %s\n", apex))
-	}
-
-	if len(out.Workspace.Claims) > 0 {
-		sb.WriteString("\n## Your Claims\n")
-		for _, claim := range out.Workspace.Claims {
-			sb.WriteString("- " + formatWorkspaceClaim(claim) + "\n")
-		}
-	}
-
-	if len(out.Locks) > 0 {
-		sb.WriteString("\n## Your Reservations\n")
-		for _, lock := range out.Locks {
-			sb.WriteString("- " + formatReservation(lock, now) + "\n")
-		}
-	}
+	sb.WriteString(fmt.Sprintf("- Focus: %s\n", formatWorkspaceFocus(out.Workspace)))
+	sb.WriteString(fmt.Sprintf("- Claims: %s\n", formatWorkspaceClaimsSummary(out.Workspace.Claims)))
+	sb.WriteString(fmt.Sprintf("- Locks: %s\n", formatWorkspaceLocksSummary(out.Locks, now)))
 
 	sb.WriteString("\n## Team\n")
 	if len(out.Team) == 0 {
-		sb.WriteString("No other team members.\n")
+		sb.WriteString("No other workspaces.\n")
 	} else {
 		for _, workspace := range out.Team {
-			sb.WriteString("- **" + workspace.Alias + "**")
-			if role := derefString(workspace.Role); role != "" {
-				sb.WriteString(" — " + role)
+			line := workspace.Alias
+			if workspace.Role != nil && strings.TrimSpace(*workspace.Role) != "" {
+				line += " (" + strings.TrimSpace(*workspace.Role) + ")"
 			}
-			sb.WriteString(" — " + workspace.Status)
+			line += " — " + workspace.Status
 			if lastSeen := derefString(workspace.LastSeen); lastSeen != "" {
-				sb.WriteString(" — " + formatTimeAgo(lastSeen))
+				line += ", seen " + formatTimeAgo(lastSeen)
 			}
-			sb.WriteString("\n")
-			if host := derefString(workspace.Hostname); host != "" {
-				sb.WriteString(fmt.Sprintf("  Hostname: %s\n", host))
+			sb.WriteString(line + "\n")
+			if repoLine := formatWorkspaceRepoBranch(workspace); repoLine != "" {
+				sb.WriteString(fmt.Sprintf("  %s\n", repoLine))
 			}
-			if path := derefString(workspace.WorkspacePath); path != "" {
-				sb.WriteString(fmt.Sprintf("  Path: %s\n", abbreviateUserHome(path)))
-			}
-			if repo := derefString(workspace.Repo); repo != "" {
-				sb.WriteString(fmt.Sprintf("  Repo: %s\n", repo))
-			}
-			if branch := derefString(workspace.Branch); branch != "" && branch != "main" && branch != "master" {
-				sb.WriteString(fmt.Sprintf("  Branch: %s\n", branch))
-			}
-			if focus := formatFocusLine(workspace.FocusTaskRef, workspace.FocusTaskTitle); focus != "" {
-				sb.WriteString(fmt.Sprintf("  Focus: %s\n", focus))
-			}
-			if apex := formatApexLine(workspace.ApexTaskRef, workspace.ApexTitle, workspace.ApexType); apex != "" {
-				sb.WriteString(fmt.Sprintf("  %s\n", apex))
-			}
-			if len(workspace.Claims) > 0 {
-				sb.WriteString("  Claims:\n")
-			}
-			for _, claim := range workspace.Claims {
-				sb.WriteString("    " + formatWorkspaceClaim(claim) + "\n")
-			}
-			if len(out.TeamLocks[workspace.WorkspaceID]) > 0 {
-				sb.WriteString("  Reservations:\n")
-			}
-			for _, lock := range out.TeamLocks[workspace.WorkspaceID] {
-				sb.WriteString("    " + formatReservation(lock, now) + "\n")
-			}
+			sb.WriteString(fmt.Sprintf("  Focus: %s\n", formatWorkspaceFocus(workspace)))
+			sb.WriteString(fmt.Sprintf("  Claims: %s\n", formatWorkspaceClaimsSummary(workspace.Claims)))
+			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now)))
 		}
 	}
 
-	if out.EscalationsPending > 0 {
-		sb.WriteString(fmt.Sprintf("\n## Escalations\nYou have %d pending escalation(s) to review.\n", out.EscalationsPending))
-	}
+	sb.WriteString(fmt.Sprintf("\nEscalations pending: %d\n", out.EscalationsPending))
 	if out.ConflictCount > 0 {
 		sb.WriteString(fmt.Sprintf("Claim conflicts: %d\n", out.ConflictCount))
 	}
 	return sb.String()
+}
+
+func formatWorkspaceRepoBranch(workspace aweb.WorkspaceInfo) string {
+	repo := strings.TrimSpace(derefString(workspace.Repo))
+	branch := strings.TrimSpace(derefString(workspace.Branch))
+	switch {
+	case repo != "" && branch != "":
+		return fmt.Sprintf("Repo: %s  Branch: %s", repo, branch)
+	case repo != "":
+		return fmt.Sprintf("Repo: %s", repo)
+	case branch != "":
+		return fmt.Sprintf("Branch: %s", branch)
+	default:
+		return ""
+	}
+}
+
+func formatWorkspaceFocus(workspace aweb.WorkspaceInfo) string {
+	focusRef := strings.TrimSpace(derefString(workspace.FocusTaskRef))
+	if focusRef == "" {
+		return "none"
+	}
+	if focusTitle := strings.TrimSpace(derefString(workspace.FocusTaskTitle)); focusTitle != "" {
+		return fmt.Sprintf("%s (%s)", focusRef, focusTitle)
+	}
+	return focusRef
+}
+
+func formatWorkspaceClaimsSummary(claims []aweb.WorkspaceClaim) string {
+	if len(claims) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		part := claim.BeadID
+		if title := strings.TrimSpace(derefString(claim.Title)); title != "" {
+			part += fmt.Sprintf(" \"%s\"", title)
+		}
+		if strings.TrimSpace(claim.ClaimedAt) != "" {
+			part += fmt.Sprintf(" (%s)", formatTimeAgo(claim.ClaimedAt))
+			if isClaimStale(claim.ClaimedAt) {
+				part += " [stale]"
+			}
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatWorkspaceLocksSummary(locks []aweb.ReservationView, now time.Time) string {
+	if len(locks) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(locks))
+	for _, lock := range locks {
+		parts = append(parts, fmt.Sprintf("%s (TTL: %s)", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now))))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func derefString(v *string) string {
@@ -1015,63 +1030,6 @@ func derefString(v *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*v)
-}
-
-func formatWorkspaceClaim(claim aweb.WorkspaceClaim) string {
-	label := claim.TaskRef
-	if title := derefString(claim.Title); title != "" {
-		label += fmt.Sprintf(" \"%s\"", title)
-	}
-	label += " — " + formatTimeAgo(claim.ClaimedAt)
-	if isClaimStale(claim.ClaimedAt) {
-		label += " [stale]"
-	}
-	return label
-}
-
-func formatReservation(lock aweb.ReservationView, now time.Time) string {
-	line := fmt.Sprintf("%s — expires in %s", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now)))
-	if reason := reservationReason(lock.Metadata); reason != "" {
-		line += fmt.Sprintf(" \"%s\"", reason)
-	}
-	return line
-}
-
-func reservationReason(metadata map[string]any) string {
-	if metadata == nil {
-		return ""
-	}
-	reason, ok := metadata["reason"].(string)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(reason)
-}
-
-func formatFocusLine(ref *string, title *string) string {
-	taskRef := derefString(ref)
-	if taskRef == "" {
-		return ""
-	}
-	if taskTitle := derefString(title); taskTitle != "" {
-		return fmt.Sprintf("%s \"%s\"", taskRef, taskTitle)
-	}
-	return taskRef
-}
-
-func formatApexLine(ref *string, title *string, taskType *string) string {
-	taskRef := derefString(ref)
-	if taskRef == "" {
-		return ""
-	}
-	prefix := "Working on: " + taskRef
-	if strings.EqualFold(derefString(taskType), "epic") {
-		prefix = "Epic: " + taskRef
-	}
-	if taskTitle := derefString(title); taskTitle != "" {
-		return fmt.Sprintf("%s \"%s\"", prefix, taskTitle)
-	}
-	return prefix
 }
 
 func abbreviateUserHome(path string) string {

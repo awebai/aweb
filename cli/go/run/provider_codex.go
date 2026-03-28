@@ -47,7 +47,29 @@ func (CodexProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, e
 	if strings.TrimSpace(opts.Model) != "" {
 		command = append(command, "-m", opts.Model)
 	}
+	for _, dir := range opts.AddDirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		command = append(command, "--add-dir", dir)
+	}
+	command = append(command, opts.ProviderArgs...)
 	command = append(command, prompt)
+	return command, nil
+}
+
+func (CodexProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+
+	command := []string{"codex", "exec", "resume", "--skip-git-repo-check", "--full-auto"}
+	if strings.TrimSpace(opts.Model) != "" {
+		command = append(command, "-m", opts.Model)
+	}
+	command = append(command, opts.ProviderArgs...)
+	command = append(command, sessionID)
 	return command, nil
 }
 

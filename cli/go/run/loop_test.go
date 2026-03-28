@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -140,6 +142,10 @@ func (fakeProvider) Name() string { return "fake" }
 
 func (fakeProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, error) {
 	return []string{"fake-provider", prompt}, nil
+}
+
+func (fakeProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
 }
 
 func (f fakeProvider) ParseOutput(line string) (*Event, error) {
@@ -493,6 +499,15 @@ func TestFormatWaitStatusShowsConnectionStateAndAutofeed(t *testing.T) {
 	}
 }
 
+func TestFormatWaitStatusShowsClaimedTaskRef(t *testing.T) {
+	st := &state{ClaimedTaskRef: "aweb-aaag"}
+	got := formatWaitStatus("waiting for prompt", st)
+	want := "waiting for prompt · task aweb-aaag"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 	st := &state{
 		RunLabel:          "run 1",
@@ -502,6 +517,19 @@ func TestFormatRunStatusShowsCostAndAutofeed(t *testing.T) {
 	}
 	got := formatRunStatus(st)
 	want := "$0.05 · autofeed · streaming"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestFormatRunStatusShowsClaimedTaskRef(t *testing.T) {
+	st := &state{
+		RunLabel:       "run 1",
+		ClaimedTaskRef: "aweb-aaag",
+		ConnState:      ConnStreaming,
+	}
+	got := formatRunStatus(st)
+	want := "task aweb-aaag · streaming"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -1532,6 +1560,55 @@ func TestRunOnceRendersIncomingCycleWithoutPromptMarker(t *testing.T) {
 	}
 	if !strings.Contains(got, "\n• from architect (chat): can you review the retry path?\n") {
 		t.Fatalf("expected inbound cycle line, got %q", got)
+	}
+}
+
+type buildOptionsProvider struct {
+	builds []BuildOptions
+}
+
+func (p *buildOptionsProvider) Name() string { return "capture" }
+
+func (p *buildOptionsProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, error) {
+	p.builds = append(p.builds, opts)
+	return []string{"fake-provider", prompt}, nil
+}
+
+func (*buildOptionsProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
+}
+
+func (*buildOptionsProvider) ParseOutput(string) (*Event, error) {
+	return &Event{Type: EventDone}, nil
+}
+
+func (*buildOptionsProvider) SessionID(*Event) string { return "" }
+
+func TestRunOnceAddsWorktreeGitDirToBuildOptions(t *testing.T) {
+	worktree := t.TempDir()
+	gitDir := filepath.Join(t.TempDir(), "repo", ".git", "worktrees", "grace")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatalf("mkdir gitdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write .git: %v", err)
+	}
+
+	provider := &buildOptionsProvider{}
+	loop := NewLoop(provider, &bytes.Buffer{})
+	loop.Runner = func(ctx context.Context, dir string, argv []string, onLine func(string), stderrSink any) error {
+		onLine("done")
+		return nil
+	}
+
+	if err := loop.runOnce(context.Background(), LoopOptions{WorkingDir: worktree}, &state{}, "review", "review", "review"); err != nil {
+		t.Fatalf("runOnce returned error: %v", err)
+	}
+	if len(provider.builds) != 1 {
+		t.Fatalf("expected one BuildCommand call, got %d", len(provider.builds))
+	}
+	if len(provider.builds[0].AddDirs) != 1 || provider.builds[0].AddDirs[0] != gitDir {
+		t.Fatalf("expected worktree gitdir in AddDirs, got %#v", provider.builds[0].AddDirs)
 	}
 }
 

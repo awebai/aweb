@@ -22,7 +22,6 @@ func TestInitNextStepLinesHostedGitRepoPromoteRunAndDashboard(t *testing.T) {
 		"aw run codex",
 		"aw run claude",
 		"aw workspace add-worktree <role>",
-		"aw init",
 		"aw claim-human --email you@example.com",
 		"aw init --inject-docs",
 		"aw init --setup-hooks",
@@ -40,15 +39,15 @@ func TestInitNextStepLinesLocalDirStayFocused(t *testing.T) {
 	}, t.TempDir(), true, true)
 	text := strings.Join(lines, "\n")
 
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 next-step lines, got %d:\n%s", len(lines), text)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 next-step lines, got %d:\n%s", len(lines), text)
 	}
-	for _, want := range []string{"aw run codex", "aw run claude", "aw init"} {
+	for _, want := range []string{"aw run codex", "aw run claude"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"aw workspace add-worktree <role>", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks"} {
+	for _, unwanted := range []string{"aw workspace add-worktree <role>", "aw init", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}

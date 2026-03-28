@@ -335,10 +335,10 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"workspace_path":   "/tmp/repo",
 						"repo":             "github.com/acme/repo",
 						"branch":           "main",
-						"focus_task_ref":   "TASK-001",
-						"focus_task_title": "Own task",
+						"focus_task_ref":   "aweb-aaaa",
+						"focus_task_title": "Restore rich coordination status",
 						"claims": []map[string]any{
-							{"task_ref": "TASK-001", "title": "Own task", "claimed_at": "2026-03-10T10:00:00Z"},
+							{"bead_id": "TASK-001", "title": "Own task", "claimed_at": "2026-03-10T10:00:00Z"},
 						},
 					},
 					{
@@ -347,14 +347,12 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"role":             "reviewer",
 						"status":           "idle",
 						"last_seen":        "2026-03-10T10:05:00Z",
-						"hostname":         "peerbox",
-						"workspace_path":   "/tmp/review",
-						"repo":             "github.com/acme/repo",
-						"branch":           "feature/review",
-						"focus_task_ref":   "TASK-900",
-						"focus_task_title": "Review queue",
+						"repo":             "github.com/acme/other",
+						"branch":           "review-branch",
+						"focus_task_ref":   "TASK-002",
+						"focus_task_title": "Peer task",
 						"claims": []map[string]any{
-							{"task_ref": "TASK-002", "title": "Peer task", "claimed_at": "2026-03-10T10:01:00Z"},
+							{"bead_id": "TASK-002", "title": "Peer task", "claimed_at": "2026-03-10T10:01:00Z"},
 						},
 					},
 				},
@@ -370,7 +368,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"holder_alias":    "alice",
 						"acquired_at":     "2026-03-10T10:00:00Z",
 						"expires_at":      "2099-03-10T10:00:00Z",
-						"metadata":        map[string]any{"reason": "editing own task"},
+						"metadata":        map[string]any{},
 					},
 					{
 						"project_id":      "proj-1",
@@ -379,7 +377,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"holder_alias":    "bob",
 						"acquired_at":     "2026-03-10T10:00:00Z",
 						"expires_at":      "2099-03-10T10:00:00Z",
-						"metadata":        map[string]any{"reason": "peer review"},
+						"metadata":        map[string]any{},
 					},
 				},
 			})
@@ -388,7 +386,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
-				"conflicts":           []map[string]any{{"task_ref": "TASK-002", "claimants": []map[string]any{{"alias": "bob", "workspace_id": peerID}}}},
+				"conflicts":           []map[string]any{{"bead_id": "TASK-002", "claimants": []map[string]any{{"alias": "bob", "workspace_id": peerID}}}},
 				"escalations_pending": 2,
 				"timestamp":           "2026-03-10T10:10:00Z",
 			})
@@ -455,28 +453,22 @@ default_account: acct
 	}
 	text := string(out)
 	for _, want := range []string{
-		"## You",
+		"## Self",
 		"- Alias: alice",
 		"- Context: repo_worktree",
-		"- Focus: TASK-001 \"Own task\"",
-		"## Your Claims",
-		"TASK-001",
-		"## Your Reservations",
-		"src/main.go — expires in",
-		"editing own task",
+		"- Repo: github.com/acme/repo",
+		"- Branch: main",
+		"- Focus: aweb-aaaa (Restore rich coordination status)",
+		"- Claims: TASK-001 \"Own task\" (",
+		"[stale]",
+		"- Locks: src/main.go (TTL:",
 		"## Team",
-		"**bob** — reviewer — idle",
-		"Hostname: peerbox",
-		"Path: /tmp/review",
-		"Branch: feature/review",
-		"Focus: TASK-900 \"Review queue\"",
-		"Claims:",
-		"TASK-002 \"Peer task\"",
-		"Reservations:",
-		"src/review.go — expires in",
-		"peer review",
-		"## Escalations",
-		"You have 2 pending escalation(s) to review.",
+		"bob (reviewer) — idle, seen ",
+		"Repo: github.com/acme/other  Branch: review-branch",
+		"Focus: TASK-002 (Peer task)",
+		"Claims: TASK-002 \"Peer task\" (",
+		"Locks: src/review.go (TTL:",
+		"Escalations pending: 2",
 		"Claim conflicts: 1",
 	} {
 		if !strings.Contains(text, want) {
@@ -507,9 +499,17 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 						"alias":        "reviewer-jane",
 						"role":         "coordinator",
 						"status":       "active",
+						"repo":         "github.com/acme/ac",
+						"branch":       "main",
 						"claims": []map[string]any{
-							{"task_ref": "TASK-100", "title": "Coordinate release", "claimed_at": "2026-03-10T10:01:00Z"},
+							{"bead_id": "TASK-100", "title": "Coordinate release", "claimed_at": "2026-03-10T10:01:00Z"},
 						},
+					},
+					{
+						"workspace_id": "55555555-5555-5555-5555-555555555555",
+						"alias":        "floating",
+						"status":       "idle",
+						"claims":       []map[string]any{},
 					},
 				},
 				"has_more": false,
@@ -573,20 +573,28 @@ default_account: acct
 	}
 	text := string(out)
 	for _, want := range []string{
-		"## You",
+		"## Self",
 		"- Alias: coordinator",
 		"- Context: none",
 		"- Status: offline",
+		"- Focus: none",
+		"- Claims: none",
+		"- Locks: none",
 		"## Team",
-		"**reviewer-jane** — coordinator — active",
-		"Claims:",
-		"TASK-100",
-		"## Escalations",
-		"You have 1 pending escalation(s) to review.",
+		"reviewer-jane (coordinator) — active",
+		"Repo: github.com/acme/ac  Branch: main",
+		"Focus: none",
+		"Claims: TASK-100 \"Coordinate release\" (",
+		"Locks: none",
+		"floating — idle",
+		"Escalations pending: 1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "floating — idle\n  Repo:") {
+		t.Fatalf("expected repo line to be omitted when repo/branch are empty:\n%s", text)
 	}
 }
 

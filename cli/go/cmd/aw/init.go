@@ -527,13 +527,13 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 	} else {
 		if input.Interactive && !input.JSONOutput && !aliasExplicit && !deferAliasPrompt {
 			if inviteAliasOptional {
-				v, err := promptStringWithIO("Alias (optional)", alias, input.PromptIn, input.PromptOut)
+				v, err := promptStringWithIO("Agent alias (optional)", alias, input.PromptIn, input.PromptOut)
 				if err != nil {
 					return initOptions{}, err
 				}
 				alias = strings.TrimSpace(v)
 			} else {
-				v, err := promptRequiredStringWithIO("Alias", alias, input.PromptIn, input.PromptOut)
+				v, err := promptRequiredStringWithIO("Agent alias", alias, input.PromptIn, input.PromptOut)
 				if err != nil {
 					return initOptions{}, err
 				}
@@ -860,7 +860,7 @@ func maybeReplaceInitialCreateProjectIdentity(
 
 	currentDefault := defaultAlias
 	for {
-		alias, err := promptRequiredStringWithIO("Alias", currentDefault, in, out)
+		alias, err := promptRequiredStringWithIO("Agent alias", currentDefault, in, out)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -1033,7 +1033,6 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	if _, err := currentGitWorktreeRootFromDir(workingDir); err == nil {
 		lines = append(lines, formatInitNextStep("aw workspace add-worktree <role>", "Create another agent in this same git repo"))
 	}
-	lines = append(lines, formatInitNextStep("aw init", "Initialize another repo or plain directory as another agent"))
 
 	if shouldSuggestClaimHuman(result) {
 		lines = append(lines, formatInitNextStep("aw claim-human --email you@example.com", "Attach your human account for dashboard access"))

@@ -37,7 +37,34 @@ func (ClaudeProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, 
 	if strings.TrimSpace(opts.Model) != "" {
 		command = append(command, "--model", opts.Model)
 	}
+	for _, dir := range opts.AddDirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		command = append(command, "--add-dir", dir)
+	}
+	command = append(command, opts.ProviderArgs...)
 
+	return command, nil
+}
+
+func (ClaudeProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+
+	command := []string{"claude", "--resume", sessionID}
+	if strings.TrimSpace(opts.Model) != "" {
+		command = append(command, "--model", opts.Model)
+	}
+	for _, dir := range opts.AddDirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		command = append(command, "--add-dir", dir)
+	}
+	command = append(command, opts.ProviderArgs...)
 	return command, nil
 }
 

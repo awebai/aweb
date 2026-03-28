@@ -175,7 +175,10 @@ func TestCollectInviteInitOptionsInteractiveRequiresAliasPrompt(t *testing.T) {
 	if !opts.PromptRoleAfterBootstrap {
 		t.Fatalf("expected role selection to stay deferred until after bootstrap, got %+v", opts)
 	}
-	if !strings.Contains(promptOut.String(), "Alias is required.") {
+	if !strings.Contains(promptOut.String(), "Agent alias:") {
+		t.Fatalf("expected agent alias prompt label, got %q", promptOut.String())
+	}
+	if !strings.Contains(promptOut.String(), "Agent alias is required.") {
 		t.Fatalf("expected blank interactive alias to reprompt, got %q", promptOut.String())
 	}
 }

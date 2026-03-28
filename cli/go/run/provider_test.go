@@ -11,6 +11,8 @@ func TestClaudeProviderBuildCommand(t *testing.T) {
 	command, err := provider.BuildCommand("fix the bug", BuildOptions{
 		AllowedTools: "exec_command,apply_patch",
 		Model:        "claude-sonnet-4",
+		AddDirs:      []string{"/tmp/gitdir", "/tmp/extra"},
+		ProviderArgs: []string{"--debug"},
 	})
 	if err != nil {
 		t.Fatalf("BuildCommand returned error: %v", err)
@@ -31,6 +33,40 @@ func TestClaudeProviderBuildCommand(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--model claude-sonnet-4") {
 		t.Fatalf("expected model flag, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--add-dir /tmp/gitdir") || !strings.Contains(joined, "--add-dir /tmp/extra") {
+		t.Fatalf("expected add-dir flags, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--debug") {
+		t.Fatalf("expected forwarded provider args, got: %q", joined)
+	}
+}
+
+func TestClaudeProviderBuildResumeCommand(t *testing.T) {
+	provider := ClaudeProvider{}
+
+	command, err := provider.BuildResumeCommand(BuildOptions{
+		SessionID:    "sess-42",
+		Model:        "claude-sonnet-4",
+		AddDirs:      []string{"/tmp/gitdir"},
+		ProviderArgs: []string{"--debug"},
+	})
+	if err != nil {
+		t.Fatalf("BuildResumeCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if !strings.Contains(joined, "claude --resume sess-42") {
+		t.Fatalf("expected resume command, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--model claude-sonnet-4") {
+		t.Fatalf("expected model flag, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--add-dir /tmp/gitdir") {
+		t.Fatalf("expected add-dir flag, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--debug") {
+		t.Fatalf("expected forwarded provider args, got: %q", joined)
 	}
 }
 
@@ -57,17 +93,64 @@ func TestClaudeProviderParseOutput(t *testing.T) {
 func TestCodexProviderBuildCommand(t *testing.T) {
 	provider := CodexProvider{}
 
-	command, err := provider.BuildCommand("fix the bug", BuildOptions{Model: "gpt-5-codex"})
+	command, err := provider.BuildCommand("fix the bug", BuildOptions{
+		Model:        "gpt-5-codex",
+		AddDirs:      []string{"/tmp/gitdir"},
+		ProviderArgs: []string{"--profile", "ci"},
+	})
 	if err != nil {
 		t.Fatalf("BuildCommand returned error: %v", err)
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --json -m gpt-5-codex fix the bug") {
+	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --json") {
 		t.Fatalf("unexpected codex command: %q", joined)
 	}
 	if strings.Contains(joined, "resume --last") {
 		t.Fatalf("did not expect resume mode by default: %q", joined)
+	}
+	if !strings.Contains(joined, "-m gpt-5-codex") {
+		t.Fatalf("expected model flag, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--add-dir /tmp/gitdir") {
+		t.Fatalf("expected add-dir flag, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--profile ci") {
+		t.Fatalf("expected forwarded provider args, got: %q", joined)
+	}
+	if !strings.HasSuffix(joined, "fix the bug") {
+		t.Fatalf("expected prompt at end of command, got: %q", joined)
+	}
+}
+
+func TestCodexProviderBuildResumeCommand(t *testing.T) {
+	provider := CodexProvider{}
+
+	command, err := provider.BuildResumeCommand(BuildOptions{
+		SessionID:    "sess-42",
+		Model:        "gpt-5-codex",
+		AddDirs:      []string{"/tmp/gitdir"},
+		ProviderArgs: []string{"--profile", "ci"},
+	})
+	if err != nil {
+		t.Fatalf("BuildResumeCommand returned error: %v", err)
+	}
+
+	joined := strings.Join(command, " ")
+	if !strings.Contains(joined, "codex exec resume --skip-git-repo-check --full-auto") {
+		t.Fatalf("expected codex exec base command, got: %q", joined)
+	}
+	if !strings.Contains(joined, "sess-42") {
+		t.Fatalf("expected resume session id, got: %q", joined)
+	}
+	if !strings.Contains(joined, "-m gpt-5-codex") {
+		t.Fatalf("expected model flag, got: %q", joined)
+	}
+	if strings.Contains(joined, "--add-dir /tmp/gitdir") {
+		t.Fatalf("did not expect add-dir flag on codex resume command, got: %q", joined)
+	}
+	if !strings.Contains(joined, "--profile ci") {
+		t.Fatalf("expected forwarded provider args, got: %q", joined)
 	}
 }
 

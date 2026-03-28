@@ -30,6 +30,8 @@ type Loop struct {
 	StatusIdentity    string
 	OnUserPrompt      func(string)
 	OnRunComplete     func(RunSummary)
+	OnSessionID       func(string)
+	OnBuildCommand    func([]string, BuildOptions)
 
 	writeMu sync.Mutex
 }
@@ -57,6 +59,7 @@ type state struct {
 	HasRunUsage        bool
 	ConnState          ConnectionState
 	ProviderInput      *providerInputState
+	ClaimedTaskRef     string
 }
 
 type providerInputState struct {
@@ -152,7 +155,10 @@ func (l *Loop) Run(ctx context.Context, opts LoopOptions) error {
 		return fmt.Errorf("prompt cannot be empty when dispatch is unavailable")
 	}
 
-	state := &state{Autofeed: opts.Autofeed}
+	state := &state{
+		Autofeed:       opts.Autofeed,
+		ClaimedTaskRef: strings.TrimSpace(opts.ClaimedTaskRef),
+	}
 	if l.Control != nil {
 		if err := l.Control.Start(); err != nil {
 			return err
@@ -293,6 +299,14 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	buildOpts := BuildOptions{
 		AllowedTools: opts.AllowedTools,
 		Model:        opts.Model,
+		ProviderArgs: append([]string(nil), opts.ProviderArgs...),
+	}
+	worktreeGitDir, err := detectWorktreeGitDir(opts.WorkingDir)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(worktreeGitDir) != "" {
+		buildOpts.AddDirs = append(buildOpts.AddDirs, worktreeGitDir)
 	}
 	if followUpRun {
 		if expectedSessionID == "" {
@@ -307,6 +321,12 @@ func (l *Loop) runOnce(ctx context.Context, opts LoopOptions, st *state, prompt 
 	argv, err := l.Provider.BuildCommand(prompt, buildOpts)
 	if err != nil {
 		return err
+	}
+	if l.OnBuildCommand != nil {
+		buildCopy := buildOpts
+		buildCopy.AddDirs = append([]string(nil), buildOpts.AddDirs...)
+		buildCopy.ProviderArgs = append([]string(nil), buildOpts.ProviderArgs...)
+		l.OnBuildCommand(append([]string(nil), argv...), buildCopy)
 	}
 
 	st.RunLabel = "active"
@@ -464,6 +484,9 @@ func (l *Loop) handleOutputLine(line string, presenter *presenterState, st *stat
 		return
 	}
 	if sid := l.Provider.SessionID(event); sid != "" {
+		if sid != st.SessionID && l.OnSessionID != nil {
+			l.OnSessionID(sid)
+		}
 		st.SessionID = sid
 		if observedSessionID != nil {
 			*observedSessionID = sid

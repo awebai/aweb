@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,14 +49,15 @@ var (
 			Stream: awrun.NewEventStreamOpener(client.Client),
 		})
 	}
-	runNewScreenController  = awrun.NewScreenController
-	runResolveClientForDir  = resolveClientSelectionForDir
-	runExecuteInitFlow      = executeInit
-	runWorkspaceStateForDir = resolveRunWorkspaceStateForDir
-	runPrintInitSummary     = printInitSummary
-	runGetwd                = os.Getwd
-	runInjectDocs           = InjectAgentDocs
-	runSetupHooks           = SetupClaudeHooks
+	runNewScreenController   = awrun.NewScreenController
+	runResolveClientForDir   = resolveClientSelectionForDir
+	runExecuteInitFlow       = executeInit
+	runWorkspaceStateForDir  = resolveRunWorkspaceStateForDir
+	runPrintInitSummary      = printInitSummary
+	runGetwd                 = os.Getwd
+	runInjectDocs            = InjectAgentDocs
+	runSetupHooks            = SetupClaudeHooks
+	runResolveClaimedTaskRef = resolveRunClaimedTaskRef
 )
 
 var runCmd = &cobra.Command{
@@ -76,7 +78,7 @@ Current implementation includes:
   - optional background services declared in aw run config
 
 This aw-first command intentionally excludes bead-specific dispatch and policy glue.`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: runRun,
 }
 
@@ -132,7 +134,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	screen := runNewScreenController(cmd.InOrStdin(), cmd.OutOrStdout())
 	promptInput := bufferedPromptReader(cmd.InOrStdin())
-	providerName, initialPrompt, err := resolveRunInvocation(cmd, args, screen != nil, promptInput)
+	providerName, initialPrompt, providerArgs, err := resolveRunInvocation(cmd, args, screen != nil, promptInput)
 	if err != nil {
 		return err
 	}
@@ -155,15 +157,27 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	repoSlug := runDetectRepoSlug(workingDir)
 	statusIdentity := awrun.StatusIdentity(providerName, sel.NamespaceSlug, repoSlug, sel.IdentityHandle)
+	claimedTaskRef := ""
+	if taskRef, taskErr := runResolveClaimedTaskRef(cmd.Context(), client, sel.IdentityID); taskErr == nil {
+		claimedTaskRef = taskRef
+	}
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
 	loop := runNewLoop(provider, cmd.OutOrStdout())
+	lastSessionID := ""
+	var lastBuildOptions awrun.BuildOptions
 	loop.EventBus = runNewEventBus(client)
 	loop.Control = screen
 	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client))
 	loop.StatusIdentity = statusIdentity
+	loop.OnSessionID = func(sessionID string) {
+		lastSessionID = strings.TrimSpace(sessionID)
+	}
+	loop.OnBuildCommand = func(_ []string, opts awrun.BuildOptions) {
+		lastBuildOptions = opts
+	}
 	loop.OnUserPrompt = func(text string) {
 		appendInteractionLogForDir(workingDir, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -197,11 +211,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 		WorkingDir:      workingDir,
 		AllowedTools:    runAllowedTools,
 		Model:           runModel,
+		ClaimedTaskRef:  claimedTaskRef,
+		ProviderArgs:    providerArgs,
 		ProviderPTY:     effectiveProviderPTY(cmd, screen != nil),
 		Services:        settings.Services,
 	}
 
 	err = runExecuteLoop(loop, ctx, opts)
+	printRunExitCommands(cmd.OutOrStdout(), providerName, workingDir, provider, lastSessionID, lastBuildOptions)
 	if err == nil || err == context.Canceled {
 		return nil
 	}
@@ -302,22 +319,117 @@ func setRunCommandIO(cmd *cobra.Command, in io.Reader, out io.Writer, errOut io.
 	cmd.SetErr(errOut)
 }
 
-func resolveRunInvocation(cmd *cobra.Command, args []string, interactive bool, promptInput io.Reader) (string, string, error) {
+func resolveRunInvocation(cmd *cobra.Command, args []string, interactive bool, promptInput io.Reader) (string, string, []string, error) {
+	positionalArgs, providerArgs, err := splitRunInvocationArgs(args, argsLenAtDash(cmd))
+	if err != nil {
+		return "", "", nil, err
+	}
 	providerName := ""
-	if len(args) > 0 {
-		providerName = strings.TrimSpace(args[0])
+	if len(positionalArgs) > 0 {
+		providerName = strings.TrimSpace(positionalArgs[0])
 	}
 	if providerName == "" {
 		if !interactive {
-			return "", "", usageError("missing provider (use `aw run <provider>`)")
+			return "", "", nil, usageError("missing provider (use `aw run <provider>`)")
 		}
 		selected, err := promptIndexedChoice("Provider", []string{"claude", "codex"}, 0, promptInput, cmd.ErrOrStderr())
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		providerName = strings.TrimSpace(selected)
 	}
-	return providerName, strings.TrimSpace(runInitialPrompt), nil
+	return providerName, strings.TrimSpace(runInitialPrompt), providerArgs, nil
+}
+
+func splitRunInvocationArgs(args []string, argsLenAtDash int) ([]string, []string, error) {
+	parts := slices.Clone(args)
+	if argsLenAtDash < 0 {
+		if len(parts) > 1 {
+			return nil, nil, usageError("unexpected arguments after provider; use `--` to pass flags through to the provider")
+		}
+		return parts, nil, nil
+	}
+	if argsLenAtDash > len(parts) {
+		argsLenAtDash = len(parts)
+	}
+	positional := slices.Clone(parts[:argsLenAtDash])
+	if len(positional) > 1 {
+		return nil, nil, usageError("unexpected arguments before `--`; expected only the provider name")
+	}
+	return positional, slices.Clone(parts[argsLenAtDash:]), nil
+}
+
+func argsLenAtDash(cmd *cobra.Command) int {
+	if cmd == nil {
+		return -1
+	}
+	return cmd.ArgsLenAtDash()
+}
+
+func printRunExitCommands(out io.Writer, providerName string, workingDir string, provider awrun.Provider, sessionID string, buildOpts awrun.BuildOptions) {
+	sessionID = strings.TrimSpace(sessionID)
+	if out == nil || provider == nil || sessionID == "" {
+		return
+	}
+
+	resumeOpts := buildOpts
+	resumeOpts.SessionID = sessionID
+	resumeOpts.ContinueSession = false
+	resumeOpts.AddDirs = append([]string(nil), buildOpts.AddDirs...)
+	resumeOpts.ProviderArgs = append([]string(nil), buildOpts.ProviderArgs...)
+
+	providerCommand, err := provider.BuildResumeCommand(resumeOpts)
+	if err != nil {
+		return
+	}
+
+	awCommand := []string{"aw", "run"}
+	if dir := strings.TrimSpace(workingDir); dir != "" {
+		awCommand = append(awCommand, "--dir", dir)
+	}
+	if name := strings.TrimSpace(providerName); name != "" {
+		awCommand = append(awCommand, name)
+	}
+	awCommand = append(awCommand, "--continue")
+
+	fmt.Fprintf(out, "\nSession %s\n", sessionID)
+	fmt.Fprintf(out, "Continue with aw:\n  %s\n\n", formatShellCommand(awCommand))
+	fmt.Fprintf(out, "Run %s directly:\n  %s\n", provider.Name(), formatShellCommand(providerCommand))
+}
+
+func formatShellCommand(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(arg, " \t\n'\"\\$`()[]{}*?<>|&;!") {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
+}
+
+func resolveRunClaimedTaskRef(ctx context.Context, client *aweb.Client, workspaceID string) (string, error) {
+	if client == nil || strings.TrimSpace(workspaceID) == "" {
+		return "", nil
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := client.ClaimsList(statusCtx, strings.TrimSpace(workspaceID), 1)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || len(resp.Claims) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(resp.Claims[0].BeadID), nil
 }
 
 type runWorkspaceState int
