@@ -38,6 +38,15 @@ func (CodexProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, e
 	}
 
 	command := []string{"codex", "exec", "--skip-git-repo-check", "--full-auto"}
+	isResume := strings.TrimSpace(opts.SessionID) != "" || opts.ContinueSession
+	if !isResume {
+		for _, dir := range opts.AddDirs {
+			if strings.TrimSpace(dir) == "" {
+				continue
+			}
+			command = append(command, "--add-dir", dir)
+		}
+	}
 	if strings.TrimSpace(opts.SessionID) != "" {
 		command = append(command, "resume", opts.SessionID)
 	} else if opts.ContinueSession {
@@ -46,12 +55,6 @@ func (CodexProvider) BuildCommand(prompt string, opts BuildOptions) ([]string, e
 	command = append(command, "--json")
 	if strings.TrimSpace(opts.Model) != "" {
 		command = append(command, "-m", opts.Model)
-	}
-	for _, dir := range opts.AddDirs {
-		if strings.TrimSpace(dir) == "" {
-			continue
-		}
-		command = append(command, "--add-dir", dir)
 	}
 	command = append(command, opts.ProviderArgs...)
 	command = append(command, prompt)

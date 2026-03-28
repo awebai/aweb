@@ -103,23 +103,36 @@ func TestCodexProviderBuildCommand(t *testing.T) {
 	}
 
 	joined := strings.Join(command, " ")
-	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --json") {
-		t.Fatalf("unexpected codex command: %q", joined)
+	if !strings.Contains(joined, "codex exec --skip-git-repo-check --full-auto --add-dir /tmp/gitdir --json") {
+		t.Fatalf("expected --add-dir before --json in non-resume mode: %q", joined)
 	}
-	if strings.Contains(joined, "resume --last") {
+	if strings.Contains(joined, "resume") {
 		t.Fatalf("did not expect resume mode by default: %q", joined)
 	}
 	if !strings.Contains(joined, "-m gpt-5-codex") {
 		t.Fatalf("expected model flag, got: %q", joined)
-	}
-	if !strings.Contains(joined, "--add-dir /tmp/gitdir") {
-		t.Fatalf("expected add-dir flag, got: %q", joined)
 	}
 	if !strings.Contains(joined, "--profile ci") {
 		t.Fatalf("expected forwarded provider args, got: %q", joined)
 	}
 	if !strings.HasSuffix(joined, "fix the bug") {
 		t.Fatalf("expected prompt at end of command, got: %q", joined)
+	}
+
+	// Resume mode must NOT include --add-dir (codex exec resume doesn't accept it)
+	resumeCmd, err := provider.BuildCommand("continue working", BuildOptions{
+		ContinueSession: true,
+		AddDirs:         []string{"/tmp/gitdir"},
+	})
+	if err != nil {
+		t.Fatalf("BuildCommand resume returned error: %v", err)
+	}
+	resumeJoined := strings.Join(resumeCmd, " ")
+	if !strings.Contains(resumeJoined, "resume --last") {
+		t.Fatalf("expected resume --last in continue mode: %q", resumeJoined)
+	}
+	if strings.Contains(resumeJoined, "--add-dir") {
+		t.Fatalf("--add-dir must not appear in codex resume command: %q", resumeJoined)
 	}
 }
 
