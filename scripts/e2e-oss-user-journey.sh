@@ -27,7 +27,19 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+canonicalize_dir() {
+  local dir="$1"
+  bash -c 'cd "$1" && pwd -P' _ "$dir"
+}
+
+make_temp_dir() {
+  local prefix="$1"
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")"
+  canonicalize_dir "$dir"
+}
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SERVER_DIR="$REPO_ROOT/server"
 CLI_DIR="$REPO_ROOT/cli/go"
 
@@ -37,8 +49,15 @@ PG_PORT="${AWEB_E2E_PG:-5452}"
 SERVER_URL="http://localhost:$AWEB_PORT"
 
 # Isolated home so aw config doesn't interfere with the user's real config.
-E2E_HOME="$(mktemp -d "${TMPDIR:-/tmp}/aw-e2e-home.XXXXXX")"
-E2E_CWD="$(mktemp -d "${TMPDIR:-/tmp}/aw-e2e-cwd.XXXXXX")"
+E2E_HOME="$(make_temp_dir aw-e2e-home)"
+E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
+ALICE_DIR="$E2E_CWD/alice"
+BOB_DIR="$E2E_CWD/bob"
+REVIEWER_DIR="$E2E_CWD/reviewer"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$REVIEWER_DIR"
+ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
+BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
+REVIEWER_DIR="$(canonicalize_dir "$REVIEWER_DIR")"
 
 pass=0
 fail=0
@@ -176,12 +195,10 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 2: Create project (unauthenticated) ==="
 
-create_out="$(run_aw project create \
+create_out="$(run_aw_in "$ALICE_DIR" project create \
   --server-url "$SERVER_URL" \
   --project e2e-journey \
   --alias alice \
-  --save-config=false \
-  --write-context=false \
   --json 2>/dev/null)"
 
 PROJECT_ID="$(echo "$create_out" | jq_field project_id)"
@@ -202,7 +219,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 3: Init second workspace (project authority via AWEB_API_KEY) ==="
 
-init_out="$(AWEB_API_KEY="$ALICE_KEY" run_aw init \
+init_out="$(AWEB_API_KEY="$ALICE_KEY" run_aw_in "$BOB_DIR" init \
   --server-url "$SERVER_URL" \
   --alias bob \
   --json 2>/dev/null)"
@@ -234,7 +251,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 5: Spawn create-invite (identity authority) ==="
 
-invite_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw spawn create-invite \
+invite_out="$(run_aw_in "$ALICE_DIR" spawn create-invite \
   --alias reviewer \
   --json 2>/dev/null)"
 
@@ -250,15 +267,10 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 6: Spawn accept-invite (token authority, no API key) ==="
 
-accept_out="$(run_aw spawn accept-invite "$INVITE_TOKEN" \
+accept_out="$(run_aw_in "$REVIEWER_DIR" spawn accept-invite "$INVITE_TOKEN" \
   --server "$SERVER_URL" \
   --alias reviewer \
-  --save-config=false \
   --json 2>/dev/null)"
-
-# accept-invite may write .aw/context in CWD even with --save-config=false.
-# Remove it to prevent contaminating subsequent commands.
-rm -f "$E2E_CWD/.aw/context"
 
 REVIEWER_KEY="$(echo "$accept_out" | jq_field api_key)"
 REVIEWER_PROJECT="$(echo "$accept_out" | jq_field project_id)"
@@ -278,6 +290,7 @@ REPO_DIR="$E2E_CWD/repo"
 CHILD_ALIAS="reviewer-wt"
 CHILD_DIR="$E2E_CWD/repo-$CHILD_ALIAS"
 mkdir -p "$REPO_DIR"
+REPO_DIR="$(canonicalize_dir "$REPO_DIR")"
 git -C "$REPO_DIR" init >/dev/null 2>&1
 git -C "$REPO_DIR" config user.email e2e@example.com
 git -C "$REPO_DIR" config user.name "E2E User"
@@ -285,6 +298,7 @@ git -C "$REPO_DIR" remote add origin https://github.com/awebai/e2e-journey.git
 printf "# e2e repo\n" > "$REPO_DIR/README.md"
 git -C "$REPO_DIR" add README.md
 git -C "$REPO_DIR" commit -m "Initial commit" >/dev/null 2>&1
+CHILD_DIR_EXPECTED="$(canonicalize_dir "$(dirname "$REPO_DIR")")/$(basename "$REPO_DIR")-$CHILD_ALIAS"
 
 AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw_in "$REPO_DIR" connect 2>/dev/null
 ((pass++))
@@ -293,10 +307,10 @@ echo "  PASS: repo workspace connected"
 worktree_out="$(run_aw_in "$REPO_DIR" workspace add-worktree developer --alias "$CHILD_ALIAS" --json 2>/dev/null)"
 worktree_path="$(echo "$worktree_out" | jq_field worktree_path)"
 worktree_role="$(echo "$worktree_out" | jq_field role)"
-assert_eq "add-worktree path" "$CHILD_DIR" "$worktree_path"
+assert_eq "add-worktree path" "$CHILD_DIR_EXPECTED" "$worktree_path"
 assert_eq "add-worktree role" "developer" "$worktree_role"
 
-child_status="$(run_aw_in "$CHILD_DIR" workspace status 2>/dev/null)"
+child_status="$(run_aw_in "$CHILD_DIR_EXPECTED" workspace status 2>/dev/null)"
 if echo "$child_status" | grep -q "$CHILD_ALIAS"; then
   echo "  PASS: child workspace registered"
   ((pass++))
@@ -305,7 +319,7 @@ else
   ((fail++))
 fi
 
-git -C "$REPO_DIR" worktree remove --force "$CHILD_DIR" >/dev/null 2>&1 || true
+git -C "$REPO_DIR" worktree remove --force "$CHILD_DIR_EXPECTED" >/dev/null 2>&1 || true
 git -C "$REPO_DIR" branch -D "$CHILD_ALIAS" >/dev/null 2>&1 || true
 echo ""
 
@@ -314,7 +328,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 8: Alice sends mail to bob ==="
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw mail send \
+run_aw_in "$ALICE_DIR" mail send \
   --to bob \
   --subject "E2E test" \
   --body "Hello from alice" 2>/dev/null
@@ -324,7 +338,7 @@ echo "  PASS: mail sent"
 echo ""
 echo "=== Phase 8: Bob reads inbox ==="
 
-bob_inbox="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw mail inbox --json 2>/dev/null)"
+bob_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json 2>/dev/null)"
 bob_msg_count="$(echo "$bob_inbox" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('messages',[])))" 2>/dev/null || echo "")"
 bob_msg_body="$(echo "$bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(msgs[0].get('body','') if msgs else '')" 2>/dev/null || echo "")"
 bob_msg_verified="$(echo "$bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(msgs[0].get('verification_status','') if msgs else '')" 2>/dev/null || echo "")"
@@ -340,11 +354,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 9: Bob acks the message ==="
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw mail ack --message-id "$BOB_MSG_ID" 2>/dev/null
+run_aw_in "$BOB_DIR" mail ack --message-id "$BOB_MSG_ID" 2>/dev/null
 ((pass++))
 echo "  PASS: message acked"
 
-bob_unread="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw mail inbox --unread-only --json 2>/dev/null)"
+bob_unread="$(run_aw_in "$BOB_DIR" mail inbox --unread-only --json 2>/dev/null)"
 bob_unread_count="$(echo "$bob_unread" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('messages',[])))" 2>/dev/null || echo "0")"
 assert_eq "bob unread inbox empty" "0" "$bob_unread_count"
 echo ""
@@ -354,13 +368,13 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 10: Reviewer (from spawn) sends mail to alice ==="
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$REVIEWER_KEY" run_aw mail send \
+run_aw_in "$REVIEWER_DIR" mail send \
   --to alice \
   --body "Hello from reviewer (spawned identity)" 2>/dev/null
 ((pass++))
 echo "  PASS: cross-identity mail sent"
 
-alice_inbox="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw mail inbox --json 2>/dev/null)"
+alice_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json 2>/dev/null)"
 alice_msg_from="$(echo "$alice_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(msgs[0].get('from_alias','') if msgs else '')" 2>/dev/null || echo "")"
 assert_eq "message from reviewer" "reviewer" "$alice_msg_from"
 echo ""
@@ -370,7 +384,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 11: Bob replies to alice ==="
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw mail send \
+run_aw_in "$BOB_DIR" mail send \
   --to alice \
   --subject "Re: E2E test" \
   --body "Got it, reply from bob" 2>/dev/null
@@ -383,7 +397,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12: whoami ==="
 
-whoami_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw whoami --json 2>/dev/null)"
+whoami_out="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
 whoami_alias="$(echo "$whoami_out" | jq_field alias)"
 whoami_project="$(echo "$whoami_out" | jq_field project_id)"
 assert_eq "whoami alias" "alice" "$whoami_alias"
@@ -395,7 +409,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 13: workspace status ==="
 
-ws_status_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw workspace status 2>/dev/null)"
+ws_status_out="$(run_aw_in "$ALICE_DIR" workspace status 2>/dev/null)"
 ws_status_exit=$?
 if [[ $ws_status_exit -eq 0 && -n "$ws_status_out" ]]; then
   echo "  PASS: workspace status"
@@ -411,12 +425,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 14: chat ==="
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw chat send-and-wait bob \
+run_aw_in "$ALICE_DIR" chat send-and-wait bob \
   "E2E chat from alice" --start-conversation --wait 3 2>/dev/null
 ((pass++))
 echo "  PASS: alice→bob chat sent"
 
-bob_pending="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw chat pending 2>/dev/null)"
+bob_pending="$(run_aw_in "$BOB_DIR" chat pending 2>/dev/null)"
 if echo "$bob_pending" | grep -qi "alice"; then
   echo "  PASS: bob sees pending chat from alice"
   ((pass++))
@@ -425,7 +439,7 @@ else
   ((fail++))
 fi
 
-bob_open="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw chat open alice 2>/dev/null)"
+bob_open="$(run_aw_in "$BOB_DIR" chat open alice 2>/dev/null)"
 if echo "$bob_open" | grep -q "E2E chat from alice"; then
   echo "  PASS: bob reads alice's chat message"
   ((pass++))
@@ -434,12 +448,12 @@ else
   ((fail++))
 fi
 
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$BOB_KEY" run_aw chat send-and-leave alice \
+run_aw_in "$BOB_DIR" chat send-and-leave alice \
   "Chat reply from bob" 2>/dev/null
 ((pass++))
 echo "  PASS: bob→alice chat reply"
 
-alice_history="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw chat history bob 2>/dev/null)"
+alice_history="$(run_aw_in "$ALICE_DIR" chat history bob 2>/dev/null)"
 if echo "$alice_history" | grep -q "Chat reply from bob"; then
   echo "  PASS: alice sees bob's reply in history"
   ((pass++))
@@ -454,12 +468,12 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 15: tasks ==="
 
-task_create_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw task create \
+task_create_out="$(run_aw_in "$ALICE_DIR" task create \
   --title "E2E test task" --json 2>/dev/null)"
 TASK_ID="$(echo "$task_create_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_id') or d.get('id',''))" 2>/dev/null || echo "")"
 assert_not_empty "task created" "$TASK_ID"
 
-task_list_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw task list 2>/dev/null)"
+task_list_out="$(run_aw_in "$ALICE_DIR" task list 2>/dev/null)"
 if echo "$task_list_out" | grep -q "E2E test task"; then
   echo "  PASS: task list shows our task"
   ((pass++))
@@ -469,7 +483,7 @@ else
 fi
 
 if [[ -n "$TASK_ID" ]]; then
-  AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw task close "$TASK_ID" 2>/dev/null
+  run_aw_in "$ALICE_DIR" task close "$TASK_ID" 2>/dev/null
   ((pass++))
   echo "  PASS: task closed"
 fi
@@ -480,7 +494,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 16: roles + work ==="
 
-roles_show_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw roles show --json 2>/dev/null)"
+roles_show_out="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
 if [[ $? -eq 0 && -n "$roles_show_out" ]]; then
   echo "  PASS: roles show"
   ((pass++))
@@ -490,7 +504,7 @@ else
 fi
 
 work_ready_exit=0
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw work ready --json 2>/dev/null || work_ready_exit=$?
+run_aw_in "$ALICE_DIR" work ready --json 2>/dev/null || work_ready_exit=$?
 if [[ $work_ready_exit -eq 0 ]]; then
   echo "  PASS: work ready"
   ((pass++))
@@ -500,7 +514,7 @@ else
 fi
 
 work_active_exit=0
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw work active --json 2>/dev/null || work_active_exit=$?
+run_aw_in "$ALICE_DIR" work active --json 2>/dev/null || work_active_exit=$?
 if [[ $work_active_exit -eq 0 ]]; then
   echo "  PASS: work active"
   ((pass++))
@@ -516,7 +530,7 @@ echo ""
 echo "=== Phase 17: contacts + heartbeat ==="
 
 contacts_exit=0
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw contacts list --json 2>/dev/null || contacts_exit=$?
+run_aw_in "$ALICE_DIR" contacts list --json 2>/dev/null || contacts_exit=$?
 if [[ $contacts_exit -eq 0 ]]; then
   echo "  PASS: contacts list"
   ((pass++))
@@ -526,7 +540,7 @@ else
 fi
 
 hb_exit=0
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw heartbeat 2>/dev/null || hb_exit=$?
+run_aw_in "$ALICE_DIR" heartbeat 2>/dev/null || hb_exit=$?
 if [[ $hb_exit -eq 0 ]]; then
   echo "  PASS: heartbeat"
   ((pass++))
@@ -541,8 +555,8 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 18: roles + identities ==="
 
-roles_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw roles list 2>/dev/null)"
-if [[ $? -eq 0 && -n "$roles_out" ]]; then
+roles_out="$(run_aw_in "$ALICE_DIR" roles list 2>/dev/null)"
+if [[ $? -eq 0 ]]; then
   echo "  PASS: roles list"
   ((pass++))
 else
@@ -550,7 +564,7 @@ else
   ((fail++))
 fi
 
-identities_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw identities --json 2>/dev/null)"
+identities_out="$(run_aw_in "$ALICE_DIR" identities --json 2>/dev/null)"
 alice_found="$(echo "$identities_out" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -582,7 +596,7 @@ echo ""
 echo "=== Phase 19: lock list ==="
 
 lock_exit=0
-AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw lock list 2>/dev/null || lock_exit=$?
+run_aw_in "$ALICE_DIR" lock list 2>/dev/null || lock_exit=$?
 if [[ $lock_exit -eq 0 ]]; then
   echo "  PASS: lock list"
   ((pass++))
