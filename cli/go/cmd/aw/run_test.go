@@ -1051,6 +1051,9 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 			onLine("done")
 			return nil
 		}
+		loop.Sleep = func(ctx context.Context, d time.Duration) error {
+			return context.Canceled
+		}
 		return loop
 	}
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
