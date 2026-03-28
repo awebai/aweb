@@ -15,6 +15,7 @@ from aweb.aweb_introspection import get_identity_from_auth
 from aweb.aweb_introspection import get_project_from_auth
 
 from ..db import DatabaseInfra, get_db_infra
+from ._reservation_utils import reservation_metadata, reservation_prefix_like
 from .agents import _require_human_owner_or_admin_for_lifecycle_action
 
 router = APIRouter(prefix="/v1", tags=["reservations"])
@@ -98,19 +99,6 @@ class ReservationRevokeResponse(BaseModel):
     revoked_keys: list[str]
 
 
-def _reservation_metadata(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return dict(raw)
-    if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(decoded, dict):
-            return decoded
-    return {}
-
-
 def _reservation_reason(metadata: dict[str, Any]) -> Optional[str]:
     reason = metadata.get("reason")
     if not isinstance(reason, str):
@@ -132,7 +120,7 @@ def _reservation_conflict_response(*, holder_agent_id: str, holder_alias: str, e
 
 
 def _reservation_view(row, *, now: datetime) -> ReservationView:
-    metadata = _reservation_metadata(row["metadata_json"])
+    metadata = reservation_metadata(row["metadata_json"])
     return ReservationView(
         project_id=str(row["project_id"]),
         resource_key=row["resource_key"],
@@ -214,8 +202,8 @@ async def list_reservations(
     params: list[object] = [UUID(project_id)]
 
     if prefix:
-        conditions.append(f"resource_key LIKE ${len(params) + 1}")
-        params.append(f"{prefix}%")
+        conditions.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
+        params.append(reservation_prefix_like(prefix))
 
     where_clause = " AND ".join(conditions)
     rows = await server_db.fetch_all(
@@ -271,7 +259,9 @@ async def acquire_reservation(
                 expires_at=row["expires_at"].isoformat(),
             )
 
-        metadata = payload.metadata or (_reservation_metadata(row["metadata_json"]) if row else {})
+        # An empty metadata object means "preserve existing metadata" so the
+        # current CLI acquire path does not silently clear reason/context fields.
+        metadata = payload.metadata or (reservation_metadata(row["metadata_json"]) if row else {})
         if row:
             await tx.execute(
                 """
@@ -432,8 +422,8 @@ async def revoke_reservations(
     params: list[object] = [UUID(project_id)]
     where = ["project_id = $1", "expires_at > NOW()"]
     if payload.prefix:
-        where.append(f"resource_key LIKE ${len(params) + 1}")
-        params.append(f"{payload.prefix}%")
+        where.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
+        params.append(reservation_prefix_like(payload.prefix))
 
     rows = await server_db.fetch_all(
         f"""

@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.coordination.routes.workspaces import router as workspaces_router
 from aweb.db import get_db_infra
 from aweb.redis_client import get_redis
+from aweb.routes._reservation_utils import reservation_prefix_like
 from aweb.routes.init import bootstrap_router, router as init_router
 from aweb.routes.reservations import router as reservations_router
 from aweb.routes.status import router as status_router
@@ -65,6 +66,18 @@ def _build_reservations_test_app(*, aweb_db, server_db) -> FastAPI:
 
 def _auth_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
+
+
+@pytest.mark.parametrize(
+    ("prefix", "want"),
+    [
+        ("src/foo_bar/", r"src/foo\_bar/%"),
+        ("src/foo%bar/", r"src/foo\%bar/%"),
+        (r"src/foo\bar/", r"src/foo\\bar/%"),
+    ],
+)
+def test_reservation_prefix_like_escapes_wildcards(prefix: str, want: str):
+    assert reservation_prefix_like(prefix) == want
 
 
 async def _create_registered_workspace(
@@ -335,6 +348,51 @@ async def test_reservation_revoke_requires_coordinator_and_applies_prefix(aweb_c
             UUID(coordinator["project_id"]),
         )
         assert [row["resource_key"] for row in remaining] == ["docs/readme.md"]
+
+
+@pytest.mark.asyncio
+async def test_reservation_revoke_prefix_treats_underscore_literally(aweb_cloud_db):
+    app = _build_reservations_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        suffix = uuid.uuid4().hex[:8]
+        project_slug = f"reservations-escape-{suffix}"
+        repo_origin = f"https://github.com/example/{project_slug}.git"
+        coordinator = await _create_registered_workspace(
+            client,
+            project_slug=project_slug,
+            alias="coord-bot",
+            role="coordinator",
+            repo_origin=repo_origin,
+        )
+
+        for resource_key in ("src/foo_bar/held.py", "src/fooXbar/held.py"):
+            acquired = await client.post(
+                "/v1/reservations",
+                headers=_auth_headers(coordinator["api_key"]),
+                json={"resource_key": resource_key, "ttl_seconds": 60},
+            )
+            assert acquired.status_code == 200, acquired.text
+
+        revoked = await client.post(
+            "/v1/reservations/revoke",
+            headers=_auth_headers(coordinator["api_key"]),
+            json={"prefix": "src/foo_bar/"},
+        )
+        assert revoked.status_code == 200, revoked.text
+        assert revoked.json() == {
+            "revoked_count": 1,
+            "revoked_keys": ["src/foo_bar/held.py"],
+        }
+
+        remaining = await client.get(
+            "/v1/reservations",
+            headers=_auth_headers(coordinator["api_key"]),
+        )
+        assert remaining.status_code == 200, remaining.text
+        assert [row["resource_key"] for row in remaining.json()["reservations"]] == [
+            "src/fooXbar/held.py"
+        ]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections import OrderedDict
@@ -18,6 +17,7 @@ from aweb.aweb_introspection import get_project_from_auth
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
 from ..internal_auth import is_public_reader
+from ._reservation_utils import reservation_metadata
 from ..presence import (
     list_agent_presences_by_workspace_ids,
 )
@@ -43,19 +43,6 @@ class _WorkspaceIDsCacheEntry:
 _WORKSPACE_IDS_CACHE: OrderedDict[
     tuple[int, str], _WorkspaceIDsCacheEntry
 ] = OrderedDict()
-
-
-def _reservation_metadata(raw: Any) -> Dict[str, Any]:
-    if isinstance(raw, dict):
-        return dict(raw)
-    if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(decoded, dict):
-            return decoded
-    return {}
 
 
 def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, project_id: str) -> tuple[int, str]:
@@ -465,7 +452,7 @@ async def status(
     reservations: List[Dict[str, Any]] = []
     reservations_by_workspace: Dict[str, List[Dict[str, Any]]] = {}
     for row in reservation_rows:
-        metadata = _reservation_metadata(row["metadata_json"])
+        metadata = reservation_metadata(row["metadata_json"])
         reason = metadata.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             reason = None
