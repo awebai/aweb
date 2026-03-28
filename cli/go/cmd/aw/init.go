@@ -154,10 +154,15 @@ func init() {
 	initCmd.Flags().BoolVar(&initSetDefault, "set-default", false, "Set this account as default_account in ~/.config/aw/config.yaml")
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Write/update .aw/context in the current directory (non-secret pointer)")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
-	initCmd.Flags().StringVar(&initRole, "role", "", "Workspace role (must match a role in the active project policy)")
+	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
 	initCmd.Flags().BoolVar(&initPermanent, "permanent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
 
 	rootCmd.AddCommand(initCmd)
+}
+
+func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description string) {
+	cmd.Flags().StringVar(target, "role-name", "", description)
+	cmd.Flags().StringVar(target, "role", "", "Compatibility alias for --role-name")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -366,6 +371,9 @@ func resolveAliasValue(explicit string) string {
 
 func resolveRequestedRole(explicit string) string {
 	if v := strings.TrimSpace(explicit); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("AWEB_ROLE_NAME")); v != "" {
 		return v
 	}
 	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))

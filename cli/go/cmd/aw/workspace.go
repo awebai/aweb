@@ -83,7 +83,7 @@ type workspaceAddWorktreeOutput struct {
 }
 
 func init() {
-	workspaceInitCmd.Flags().StringVar(&workspaceInitRole, "role", "", "Coordination role for this workspace")
+	addWorkspaceRoleFlags(workspaceInitCmd, &workspaceInitRole, "Coordination role name for this workspace")
 	workspaceInitCmd.Flags().StringVar(&workspaceInitRepoOrigin, "repo-origin", "", "Override git remote origin URL")
 
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
@@ -704,15 +704,15 @@ func isValidWorkspaceRole(role string) bool {
 	return true
 }
 
-// fetchAvailableRoles returns the available roles from the project policy.
+// fetchAvailableRoles returns the available roles from the active project roles bundle.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActivePolicy(ctx, aweb.ActivePolicyParams{OnlySelected: false})
+	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
 	if err != nil {
-		return nil, fmt.Errorf("fetching policy roles: %w", err)
+		return nil, fmt.Errorf("fetching project roles: %w", err)
 	}
 
 	roles := make([]string, 0, len(resp.Roles))
@@ -723,7 +723,7 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	return roles, nil
 }
 
-// resolveRole fetches available roles from the project policy, validates
+// resolveRole fetches available roles from the active project roles bundle, validates
 // the requested role against them, and optionally prompts the user to
 // choose. This is the single entry point for role resolution.
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {

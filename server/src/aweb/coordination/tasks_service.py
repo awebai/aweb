@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from ..claims import claim_focus_task_ref, resolve_task_claim_apex
 from ..service_errors import ConflictError, NotFoundError, ValidationError
 
 _UNSET = object()
@@ -404,6 +405,182 @@ async def list_tasks(
     ]
 
 
+async def list_active_work(db, *, project_id: str) -> list[dict[str, Any]]:
+    slug = await _get_project_slug(db, project_id=project_id)
+    server_db = db.get_manager("server")
+    aweb_db = db.get_manager("aweb")
+
+    task_rows = await server_db.fetch_all(
+        """
+        SELECT task_id, task_number, task_ref_suffix, title, status, priority, task_type,
+               assignee_agent_id, created_by_agent_id, parent_task_id, labels,
+               created_at, updated_at
+        FROM {{tables.tasks}}
+        WHERE project_id = $1
+          AND status = 'in_progress'
+          AND deleted_at IS NULL
+        ORDER BY priority ASC, task_number ASC
+        """,
+        UUID(project_id),
+    )
+    if not task_rows:
+        return []
+
+    task_refs = {format_task_ref(slug, row["task_ref_suffix"]) for row in task_rows}
+
+    claim_rows = await server_db.fetch_all(
+        """
+        SELECT task_ref, workspace_id, alias, claimed_at
+        FROM {{tables.task_claims}}
+        WHERE project_id = $1
+        ORDER BY claimed_at DESC
+        """,
+        UUID(project_id),
+    )
+
+    latest_claim_by_ref: dict[str, dict[str, Any]] = {}
+    for row in claim_rows:
+        task_ref = row["task_ref"]
+        if task_ref not in task_refs or task_ref in latest_claim_by_ref:
+            continue
+        latest_claim_by_ref[task_ref] = {
+            "workspace_id": str(row["workspace_id"]),
+            "alias": row["alias"],
+            "claimed_at": row["claimed_at"].isoformat(),
+        }
+
+    claim_workspace_ids: list[str] = []
+    seen_claim_workspace_ids: set[str] = set()
+    assignee_agent_ids: list[str] = []
+    seen_agent_ids: set[str] = set()
+    for row in task_rows:
+        task_ref = format_task_ref(slug, row["task_ref_suffix"])
+        claim = latest_claim_by_ref.get(task_ref)
+        if claim is not None:
+            workspace_id = claim["workspace_id"]
+            if workspace_id not in seen_claim_workspace_ids:
+                seen_claim_workspace_ids.add(workspace_id)
+                claim_workspace_ids.append(workspace_id)
+            continue
+        assignee_agent_id = str(row["assignee_agent_id"]) if row["assignee_agent_id"] else ""
+        if assignee_agent_id and assignee_agent_id not in seen_agent_ids:
+            seen_agent_ids.add(assignee_agent_id)
+            assignee_agent_ids.append(assignee_agent_id)
+
+    workspace_ids = list(claim_workspace_ids)
+    seen_workspace_ids = set(claim_workspace_ids)
+    for agent_id in assignee_agent_ids:
+        if agent_id not in seen_workspace_ids:
+            seen_workspace_ids.add(agent_id)
+            workspace_ids.append(agent_id)
+
+    workspace_meta_by_id: dict[str, dict[str, Any]] = {}
+    if workspace_ids:
+        workspace_params: list[Any] = [UUID(project_id)]
+        workspace_placeholders: list[str] = []
+        for raw_id in workspace_ids:
+            workspace_params.append(UUID(raw_id))
+            workspace_placeholders.append(f"${len(workspace_params)}")
+        workspace_rows = await server_db.fetch_all(
+            f"""
+            SELECT w.workspace_id, w.alias, w.current_branch, r.canonical_origin
+            FROM {{{{tables.workspaces}}}} w
+            LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+            WHERE w.project_id = $1
+              AND w.deleted_at IS NULL
+              AND w.workspace_id IN ({", ".join(workspace_placeholders)})
+            """,
+            *workspace_params,
+        )
+        workspace_meta_by_id = {
+            str(row["workspace_id"]): {
+                "alias": row["alias"],
+                "branch": row["current_branch"],
+                "canonical_origin": row["canonical_origin"],
+            }
+            for row in workspace_rows
+        }
+
+    assignee_alias_by_id: dict[str, str] = {}
+    if assignee_agent_ids:
+        agent_params: list[Any] = [UUID(project_id)]
+        agent_placeholders: list[str] = []
+        for raw_id in assignee_agent_ids:
+            agent_params.append(UUID(raw_id))
+            agent_placeholders.append(f"${len(agent_params)}")
+        agent_rows = await aweb_db.fetch_all(
+            f"""
+            SELECT agent_id, alias
+            FROM {{{{tables.agents}}}}
+            WHERE project_id = $1
+              AND deleted_at IS NULL
+              AND agent_id IN ({", ".join(agent_placeholders)})
+            """,
+            *agent_params,
+        )
+        assignee_alias_by_id = {str(row["agent_id"]): row["alias"] for row in agent_rows}
+
+    items: list[dict[str, Any]] = []
+    for row in task_rows:
+        task_ref = format_task_ref(slug, row["task_ref_suffix"])
+        claim = latest_claim_by_ref.get(task_ref)
+        owner_workspace_id = None
+        owner_alias = None
+        claimed_at = None
+
+        if claim is not None:
+            owner_workspace_id = claim["workspace_id"]
+            owner_alias = claim["alias"]
+            claimed_at = claim["claimed_at"]
+        elif row["assignee_agent_id"]:
+            owner_workspace_id = str(row["assignee_agent_id"])
+            owner_alias = assignee_alias_by_id.get(owner_workspace_id)
+
+        workspace_meta = (
+            workspace_meta_by_id.get(owner_workspace_id or "")
+            if owner_workspace_id
+            else None
+        ) or {}
+        if owner_alias is None:
+            owner_alias = workspace_meta.get("alias")
+
+        items.append(
+            {
+                "task_id": str(row["task_id"]),
+                "task_ref": task_ref,
+                "task_number": row["task_number"],
+                "title": row["title"],
+                "status": row["status"],
+                "priority": row["priority"],
+                "task_type": row["task_type"],
+                "assignee_agent_id": (
+                    str(row["assignee_agent_id"]) if row["assignee_agent_id"] else None
+                ),
+                "created_by_agent_id": (
+                    str(row["created_by_agent_id"]) if row["created_by_agent_id"] else None
+                ),
+                "parent_task_id": str(row["parent_task_id"]) if row["parent_task_id"] else None,
+                "labels": list(row["labels"]) if row["labels"] else [],
+                "created_at": row["created_at"].isoformat(),
+                "updated_at": row["updated_at"].isoformat(),
+                "workspace_id": owner_workspace_id,
+                "owner_alias": owner_alias,
+                "claimed_at": claimed_at,
+                "canonical_origin": workspace_meta.get("canonical_origin"),
+                "branch": workspace_meta.get("branch"),
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            item.get("canonical_origin") or "~",
+            item["priority"],
+            item["task_ref"],
+        )
+    )
+    return items
+
+
 async def list_ready_tasks(db, *, project_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
     slug = await _get_project_slug(db, project_id=project_id)
     server_db = db.get_manager("server")
@@ -580,6 +757,7 @@ async def update_task(
         if status is not None:
             if status == "in_progress":
                 task_ref = format_task_ref(slug, current["task_ref_suffix"])
+                apex_task_ref = await resolve_task_claim_apex(db, project_id, task_ref)
                 workspace = await tx.fetch_one(
                     """
                     SELECT workspace_id, alias, human_name
@@ -623,7 +801,7 @@ async def update_task(
                         workspace["alias"],
                         workspace["human_name"] or "",
                         task_ref,
-                        task_ref,
+                        apex_task_ref,
                         now,
                     )
 
@@ -635,7 +813,7 @@ async def update_task(
                             updated_at = $2
                         WHERE project_id = $3 AND workspace_id = $4
                         """,
-                        task_ref,
+                        claim_focus_task_ref(task_ref, apex_task_ref),
                         now,
                         UUID(project_id),
                         UUID(actor_agent_id),

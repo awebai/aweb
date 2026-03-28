@@ -36,7 +36,8 @@ from ..input_validation import is_valid_alias
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 from ..redis_client import get_redis
 from ..coordination.routes.policies import get_active_policy
-from ..coordination.roles import ROLE_ERROR_MESSAGE, ROLE_MAX_LENGTH, is_valid_role, normalize_role
+from ..coordination.roles import ROLE_MAX_LENGTH
+from ..role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.namespace_registry import list_namespace_addresses
 from aweb.projection import ensure_aweb_project_and_agent
 from aweb.scope_agents import get_scope_agent, list_scope_agents
@@ -122,6 +123,11 @@ class RegisterAgentRequest(BaseModel):
         max_length=ROLE_MAX_LENGTH,
         description="Brief description of workspace purpose",
     )
+    role_name: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Canonical selector name for the workspace role",
+    )
     ttl_seconds: Optional[int] = Field(
         None, gt=0, le=86400, description="Presence TTL in seconds (default 300, max 86400)"
     )
@@ -136,14 +142,17 @@ class RegisterAgentRequest(BaseModel):
     def validate_alias(cls, v: str) -> str:
         return _validate_alias_field(v)
 
-    @field_validator("role")
+    @field_validator("role", "role_name")
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if not is_valid_role(v):
-            raise ValueError(ROLE_ERROR_MESSAGE)
-        return normalize_role(v)
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class AgentInfo(BaseModel):
@@ -156,7 +165,15 @@ class AgentInfo(BaseModel):
     repo: Optional[str] = None
     branch: Optional[str] = None
     role: Optional[str] = None
+    role_name: Optional[str] = None
     registered_at: str
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class WorkspaceInfo(BaseModel):
@@ -176,6 +193,7 @@ class AgentView(BaseModel):
     agent_type: Optional[str] = None
     workspace_type: Optional[str] = None
     role: Optional[str] = None
+    role_name: Optional[str] = None
     context_kind: Optional[str] = None
     hostname: Optional[str] = None
     workspace_path: Optional[str] = None
@@ -191,6 +209,13 @@ class AgentView(BaseModel):
     access_mode: str = "open"
     address: Optional[str] = None
     address_reachability: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class ListAgentsResponse(BaseModel):
@@ -238,6 +263,7 @@ class ResetIdentityResponse(BaseModel):
 class PatchAgentRequest(BaseModel):
     access_mode: str | None = None
     role: str | None = None
+    role_name: str | None = None
     program: str | None = None
     context: dict | None = None
 
@@ -246,13 +272,33 @@ class PatchAgentRequest(BaseModel):
     def _validate_access_mode(cls, v: str | None) -> str | None:
         return validate_access_mode(v) if v is not None else None
 
+    @field_validator("role", "role_name")
+    @classmethod
+    def _validate_role(cls, v: str | None) -> str | None:
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
+
 
 class PatchAgentResponse(BaseModel):
     agent_id: str
     access_mode: str
     role: str | None = None
+    role_name: str | None = None
     program: str | None = None
     context: dict | None = None
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 async def _patch_agent_row(
@@ -1831,6 +1877,7 @@ async def register_agent(
         repo=payload.repo,
         branch=payload.branch,
         role=role,
+        role_name=role,
         registered_at=registered_at,
     )
     workspace = WorkspaceInfo(workspace_id=payload.workspace_id)

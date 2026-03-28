@@ -1,32 +1,44 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"context"
+	"sort"
 	"strings"
+	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
 )
 
 var rolesCmd = &cobra.Command{
 	Use:   "roles",
-	Short: "Manage workspace roles",
+	Short: "Read project roles bundles and role definitions",
+}
+
+var rolesShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Show active project roles invariants and selected role guidance",
+	RunE:  runPolicyShow,
 }
 
 var rolesListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List available roles from the project policy",
+	Short: "List roles defined in the active project roles bundle",
 	RunE:  runRolesList,
 }
 
 var rolesSetCmd = &cobra.Command{
-	Use:   "set [role]",
-	Short: "Set the current workspace's role",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runRolesSet,
+	Use:    "set [role-name]",
+	Short:  "Compatibility alias for 'aw role-name set'",
+	Args:   cobra.MaximumNArgs(1),
+	RunE:   runRoleNameSet,
+	Hidden: true,
 }
 
 func init() {
+	addProjectRolesShowFlags(rolesShowCmd)
+
+	rolesCmd.AddCommand(rolesShowCmd)
 	rolesCmd.AddCommand(rolesListCmd)
 	rolesCmd.AddCommand(rolesSetCmd)
 	rootCmd.AddCommand(rolesCmd)
@@ -38,49 +50,33 @@ func runRolesList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	roles, err := fetchAvailableRoles(client)
+	roles, err := fetchAvailableRoleItems(client)
 	if err != nil {
 		return err
 	}
-
-	if len(roles) == 0 {
-		fmt.Println("No roles defined in the active project policy.")
-		return nil
-	}
-
-	if jsonFlag {
-		printJSON(roles)
-		return nil
-	}
-
-	for i, role := range roles {
-		fmt.Printf("  %d. %s\n", i+1, role)
-	}
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
+	printOutput(policyRolesOutput{Roles: roles}, formatPolicyRoles)
 	return nil
 }
 
-func runRolesSet(cmd *cobra.Command, args []string) error {
-	client, _, err := resolveClientSelection()
+func fetchAvailableRoleItems(client *aweb.Client) ([]policyRoleItem, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{
+		OnlySelected: false,
+	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	requested := ""
-	if len(args) > 0 {
-		requested = strings.TrimSpace(args[0])
+	roles := make([]policyRoleItem, 0, len(resp.Roles))
+	for name, info := range resp.Roles {
+		title := strings.TrimSpace(info.Title)
+		if title == "" {
+			title = name
+		}
+		roles = append(roles, policyRoleItem{Name: name, Title: title})
 	}
-
-	role, err := resolveRole(client, requested, isTTY() && requested == "", os.Stdin, os.Stderr)
-	if err != nil {
-		return err
-	}
-
-	wd, _ := os.Getwd()
-	_, err = autoAttachContext(wd, client, role)
-	if err != nil {
-		return fmt.Errorf("setting role: %w", err)
-	}
-	fmt.Printf("Role set to %s\n", role)
-	return nil
+	return roles, nil
 }

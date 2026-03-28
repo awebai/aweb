@@ -165,7 +165,7 @@ func init() {
 	spawnAcceptInviteCmd.Flags().BoolVar(&initSetDefault, "set-default", false, "Set this account as default_account in ~/.config/aw/config.yaml")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Write/update .aw/context in the current directory (non-secret pointer)")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
-	spawnAcceptInviteCmd.Flags().StringVar(&initRole, "role", "", "Workspace role (must match a role in the active project policy)")
+	addWorkspaceRoleFlags(spawnAcceptInviteCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initPermanent, "permanent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
 
 	spawnCmd.AddCommand(spawnCreateInviteCmd)

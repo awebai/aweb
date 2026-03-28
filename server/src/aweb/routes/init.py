@@ -15,8 +15,6 @@ from aweb.bootstrap import AliasExhaustedError, BootstrapIdentityResult, bootstr
 from aweb.coordination.project_registry import ensure_server_project_row
 from aweb.coordination.roles import (
     ROLE_MAX_LENGTH,
-    is_valid_role,
-    normalize_role,
     role_to_alias_prefix,
 )
 from aweb.coordination.routes.repos import canonicalize_git_url, extract_repo_name
@@ -26,6 +24,7 @@ from aweb.names import CLASSIC_NAMES
 from aweb.namespace_registry import ensure_dns_namespace_registered, validate_subdomain_label
 from aweb.rate_limit import enforce_init_rate_limit
 from aweb.redis_client import get_redis
+from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 
 router = APIRouter(prefix="/v1/workspaces/init", tags=["workspaces"])
 bootstrap_router = APIRouter(prefix="/api/v1", tags=["bootstrap"])
@@ -179,7 +178,8 @@ class InitRequest(_BootstrapBaseModel):
 
     project_id: str | None = Field(default=None, max_length=36)
     repo_origin: str | None = Field(default=None, max_length=2048)
-    role: str = Field(default="agent", max_length=ROLE_MAX_LENGTH)
+    role: str | None = Field(default=None, max_length=ROLE_MAX_LENGTH)
+    role_name: str | None = Field(default=None, max_length=ROLE_MAX_LENGTH)
     hostname: str = Field(default="", max_length=255)
     workspace_path: str = Field(default="", max_length=4096)
 
@@ -214,13 +214,19 @@ class InitRequest(_BootstrapBaseModel):
             return None
         return validate_subdomain_label(v)
 
-    @field_validator("role")
+    @field_validator("role", "role_name")
     @classmethod
-    def _validate_role(cls, v: str) -> str:
-        v = normalize_role((v or "").strip()) or "agent"
-        if not is_valid_role(v):
-            raise ValueError("Invalid role format")
-        return v
+    def _validate_role(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def _sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name) or "agent"
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
     @field_validator("project_id")
     @classmethod

@@ -32,6 +32,7 @@ def _enrich_with_agent(result: dict, agent) -> None:
     result["agent_type"] = agent.get("agent_type") or "agent"
     result["access_mode"] = agent.get("access_mode") or "open"
     result["role"] = agent.get("role")
+    result["role_name"] = agent.get("role")
     result["program"] = agent.get("program")
     ctx = agent.get("context")
     result["context"] = _parse_json(ctx) if isinstance(ctx, str) else ctx

@@ -35,6 +35,7 @@ async def policy_show(db_infra, *, only_selected: bool = False) -> str:
         role_info = policy.bundle.roles[agent_role]
         selected_role = {
             "role": agent_role,
+            "role_name": agent_role,
             "title": role_info.get("title", agent_role),
             "playbook_md": role_info.get("playbook_md", ""),
         }
@@ -61,6 +62,7 @@ async def policy_show(db_infra, *, only_selected: bool = False) -> str:
             "updated_at": policy.updated_at.isoformat(),
             "agent_id": auth.agent_id,
             "agent_role": agent_role or None,
+            "agent_role_name": agent_role or None,
             "selected_role": selected_role,
             "invariants": invariants,
             "roles": roles,
@@ -95,6 +97,7 @@ async def roles_list(db_infra) -> str:
             "project_id": auth.project_id,
             "agent_id": auth.agent_id,
             "current_role": current_role or None,
+            "current_role_name": current_role or None,
             "roles": available_roles,
         }
     )

@@ -498,6 +498,7 @@ async def status(
             "human_name": None if public_reader else (presence.get("human_name") or row["human_name"] or None),
             "program": presence.get("program") or None,
             "role": agent_role,
+            "role_name": agent_role,
             "status": presence.get("status") or "offline",
             "current_branch": presence.get("current_branch") or row["current_branch"] or None,
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,

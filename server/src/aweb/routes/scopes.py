@@ -9,12 +9,13 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.bootstrap import AliasExhaustedError, bootstrap_identity
 from aweb.access_modes import validate_access_mode
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
+from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.routes.agents import parse_context
 
 router = APIRouter(prefix="/v1/scopes", tags=["scopes"])
@@ -55,6 +56,7 @@ class ScopeProvisionRequest(BaseModel):
     custody: Optional[Literal["self", "custodial"]] = None
     lifetime: Literal["persistent", "ephemeral"] = "ephemeral"
     role: Optional[str] = Field(default=None, max_length=64)
+    role_name: Optional[str] = Field(default=None, max_length=64)
     program: Optional[str] = Field(default=None, max_length=64)
     context: Optional[dict] = None
     access_mode: str = Field(default="open", max_length=64)
@@ -63,6 +65,18 @@ class ScopeProvisionRequest(BaseModel):
     @classmethod
     def validate_access_mode_field(cls, v: str) -> str:
         return validate_access_mode(v)
+
+    @field_validator("role", "role_name")
+    @classmethod
+    def validate_role_field(cls, v: str | None) -> str | None:
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class ScopeProvisionResponse(BaseModel):
@@ -74,6 +88,8 @@ class ScopeProvisionResponse(BaseModel):
     alias: str
     api_key: str
     created: bool
+    role: Optional[str] = None
+    role_name: Optional[str] = None
     did: Optional[str] = None
     stable_id: Optional[str] = None
     custody: Optional[str] = None
@@ -139,6 +155,8 @@ async def provision_scope(
         alias=result.alias,
         api_key=result.api_key,
         created=result.created,
+        role=payload.role,
+        role_name=payload.role,
         did=result.did,
         stable_id=result.stable_id,
         custody=result.custody,
@@ -183,6 +201,7 @@ class ScopeAgentBootstrapRequest(BaseModel):
     custody: Optional[Literal["self", "custodial"]] = None
     lifetime: Literal["persistent", "ephemeral"] = "ephemeral"
     role: Optional[str] = Field(default=None, max_length=64)
+    role_name: Optional[str] = Field(default=None, max_length=64)
     program: Optional[str] = Field(default=None, max_length=64)
     context: Optional[dict] = None
     access_mode: str = Field(default="open", max_length=64)
@@ -191,6 +210,18 @@ class ScopeAgentBootstrapRequest(BaseModel):
     @classmethod
     def validate_access_mode_field(cls, v: str) -> str:
         return validate_access_mode(v)
+
+    @field_validator("role", "role_name")
+    @classmethod
+    def validate_role_field(cls, v: str | None) -> str | None:
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class ScopeAgentBootstrapResponse(BaseModel):
@@ -282,8 +313,16 @@ class ScopeAgentView(BaseModel):
     lifetime: str = "ephemeral"
     status: str = "active"
     role: Optional[str] = None
+    role_name: Optional[str] = None
     program: Optional[str] = None
     context: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class ScopeAgentListResponse(BaseModel):

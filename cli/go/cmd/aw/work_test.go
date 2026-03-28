@@ -95,7 +95,7 @@ default_account: acct
 	}
 }
 
-func TestAwWorkActiveShowsOwnersFromClaimsAndAgents(t *testing.T) {
+func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,48 +103,30 @@ func TestAwWorkActiveShowsOwnersFromClaimsAndAgents(t *testing.T) {
 			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
-		case "/v1/tasks":
-			if r.URL.Query().Get("status") != "in_progress" {
-				t.Fatalf("status=%q", r.URL.Query().Get("status"))
-			}
+		case "/v1/tasks/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"tasks": []map[string]any{
 					{
-						"task_ref":          "TASK-010",
-						"title":             "Native task",
-						"priority":          1,
-						"task_type":         "task",
-						"status":            "in_progress",
-						"assignee_agent_id": "agent-native",
+						"task_ref":         "TASK-010",
+						"title":            "Native task",
+						"priority":         1,
+						"task_type":        "task",
+						"status":           "in_progress",
+						"owner_alias":      "alice",
+						"canonical_origin": "github.com/awebai/ac",
+						"branch":           "main",
 					},
 					{
-						"task_ref":  "TASK-020",
-						"title":     "Claim-backed task",
-						"priority":  2,
-						"task_type": "bug",
-						"status":    "in_progress",
+						"task_ref":         "TASK-020",
+						"title":            "Claim-backed task",
+						"priority":         2,
+						"task_type":        "bug",
+						"status":           "in_progress",
+						"owner_alias":      "bob",
+						"canonical_origin": "github.com/awebai/aweb",
+						"branch":           "feat/summary",
+						"claimed_at":       "2026-03-10T10:00:00Z",
 					},
-				},
-			})
-		case "/v1/claims":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"claims": []map[string]any{
-					{
-						"bead_id":      "TASK-020",
-						"workspace_id": "ws-2",
-						"alias":        "bob",
-						"human_name":   "Bob",
-						"claimed_at":   "2026-03-10T10:00:00Z",
-						"project_id":   "proj-1",
-					},
-				},
-				"has_more": false,
-			})
-		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_id": "proj-1",
-				"identities": []map[string]any{
-					{"identity_id": "agent-native", "alias": "alice", "online": true},
 				},
 			})
 		case "/v1/agents/heartbeat":
@@ -192,8 +174,10 @@ default_account: acct
 	text := string(out)
 	for _, want := range []string{
 		"Active work (2):",
-		"TASK-010: Native task — alice",
-		"TASK-020: Claim-backed task — bob",
+		"## github.com/awebai/ac",
+		"  TASK-010  P1  Native task  alice  main",
+		"## github.com/awebai/aweb",
+		"  TASK-020  P2  Claim-backed task  bob  feat/summary",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("active output missing %q:\n%s", want, text)

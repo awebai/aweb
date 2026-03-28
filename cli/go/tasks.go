@@ -96,6 +96,31 @@ type TaskListResponse struct {
 	Tasks []TaskSummary `json:"tasks"`
 }
 
+type ActiveTaskSummary struct {
+	TaskID           string   `json:"task_id"`
+	TaskRef          string   `json:"task_ref"`
+	TaskNumber       int      `json:"task_number"`
+	Title            string   `json:"title"`
+	Status           string   `json:"status"`
+	Priority         int      `json:"priority"`
+	TaskType         string   `json:"task_type"`
+	AssigneeAgentID  *string  `json:"assignee_agent_id"`
+	CreatedByAgentID *string  `json:"created_by_agent_id"`
+	ParentTaskID     *string  `json:"parent_task_id"`
+	Labels           []string `json:"labels,omitempty"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+	WorkspaceID      *string  `json:"workspace_id,omitempty"`
+	OwnerAlias       *string  `json:"owner_alias,omitempty"`
+	ClaimedAt        *string  `json:"claimed_at,omitempty"`
+	CanonicalOrigin  *string  `json:"canonical_origin,omitempty"`
+	Branch           *string  `json:"branch,omitempty"`
+}
+
+type ActiveTaskListResponse struct {
+	Tasks []ActiveTaskSummary `json:"tasks"`
+}
+
 // TaskUpdateResponse wraps a Task with the additional auto_closed array
 // returned when closing a parent task triggers cascade-close of children.
 type TaskUpdateResponse struct {
@@ -177,6 +202,14 @@ func (c *Client) TaskListBlocked(ctx context.Context) (*TaskListResponse, error)
 	return &out, nil
 }
 
+func (c *Client) TaskListActive(ctx context.Context) (*ActiveTaskListResponse, error) {
+	var out ActiveTaskListResponse
+	if err := c.Get(ctx, "/v1/tasks/active", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) TaskGet(ctx context.Context, ref string) (*Task, error) {
 	var out Task
 	if err := c.Get(ctx, "/v1/tasks/"+urlPathEscape(ref), &out); err != nil {
@@ -236,12 +269,12 @@ func (c *Client) TaskRemoveDep(ctx context.Context, ref string, depRef string) e
 // Comments
 
 type TaskComment struct {
-	CommentID      string  `json:"comment_id"`
-	TaskID         string  `json:"task_id"`
-	AuthorAgentID  *string `json:"author_agent_id"`
-	Body           string  `json:"body"`
-	ParentID       *string `json:"parent_id"`
-	CreatedAt      string  `json:"created_at"`
+	CommentID     string  `json:"comment_id"`
+	TaskID        string  `json:"task_id"`
+	AuthorAgentID *string `json:"author_agent_id"`
+	Body          string  `json:"body"`
+	ParentID      *string `json:"parent_id"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 type TaskCommentCreateRequest struct {

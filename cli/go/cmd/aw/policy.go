@@ -15,30 +15,32 @@ import (
 
 var policyCmd = &cobra.Command{
 	Use:   "policy",
-	Short: "Read project policy and role playbooks",
+	Short: "Compatibility alias for project roles commands",
 }
 
 var policyShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show active policy invariants and role guidance",
+	Short: "Show active project roles invariants and selected role guidance",
 	RunE:  runPolicyShow,
 }
 
 var policyRolesCmd = &cobra.Command{
 	Use:   "roles",
-	Short: "List roles defined in the active policy",
+	Short: "Compatibility alias for 'aw roles list'",
 	RunE:  runPolicyRoles,
 }
 
 var (
-	policyRoleFlag     string
+	policyRoleNameFlag string
 	policyAllRolesFlag bool
 )
 
 type policyShowOutput struct {
-	Role         string                     `json:"role"`
-	OnlySelected bool                       `json:"only_selected"`
-	Policy       *aweb.ActivePolicyResponse `json:"policy"`
+	RoleName     string                           `json:"role_name,omitempty"`
+	Role         string                           `json:"role,omitempty"`
+	OnlySelected bool                             `json:"only_selected"`
+	ProjectRoles *aweb.ActiveProjectRolesResponse `json:"project_roles"`
+	Policy       *aweb.ActiveProjectRolesResponse `json:"policy,omitempty"`
 }
 
 type policyRolesOutput struct {
@@ -51,12 +53,17 @@ type policyRoleItem struct {
 }
 
 func init() {
-	policyShowCmd.Flags().StringVar(&policyRoleFlag, "role", "", "Preview a specific role")
-	policyShowCmd.Flags().BoolVar(&policyAllRolesFlag, "all-roles", false, "Include all role playbooks instead of only the selected role")
+	addProjectRolesShowFlags(policyShowCmd)
 
 	policyCmd.AddCommand(policyShowCmd)
 	policyCmd.AddCommand(policyRolesCmd)
 	rootCmd.AddCommand(policyCmd)
+}
+
+func addProjectRolesShowFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&policyRoleNameFlag, "role-name", "", "Preview a specific role name")
+	cmd.Flags().StringVar(&policyRoleNameFlag, "role", "", "Compatibility alias for --role-name")
+	cmd.Flags().BoolVar(&policyAllRolesFlag, "all-roles", false, "Include all role playbooks instead of only the selected role")
 }
 
 func runPolicyShow(cmd *cobra.Command, args []string) error {
@@ -65,12 +72,12 @@ func runPolicyShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	role := resolvePolicyRole(sel, policyRoleFlag)
+	roleName := resolvePolicyRoleName(sel, policyRoleNameFlag)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActivePolicy(ctx, aweb.ActivePolicyParams{
-		Role:         role,
+	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{
+		RoleName:     roleName,
 		OnlySelected: !policyAllRolesFlag,
 	})
 	if err != nil {
@@ -78,8 +85,10 @@ func runPolicyShow(cmd *cobra.Command, args []string) error {
 	}
 
 	printOutput(policyShowOutput{
-		Role:         role,
+		RoleName:     roleName,
+		Role:         roleName,
 		OnlySelected: !policyAllRolesFlag,
+		ProjectRoles: resp,
 		Policy:       resp,
 	}, formatPolicyShow)
 	return nil
@@ -94,7 +103,7 @@ func runPolicyRoles(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActivePolicy(ctx, aweb.ActivePolicyParams{
+	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{
 		OnlySelected: false,
 	})
 	if err != nil {
@@ -114,12 +123,15 @@ func runPolicyRoles(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func resolvePolicyRole(sel *awconfig.Selection, explicit string) string {
-	if role := strings.TrimSpace(explicit); role != "" {
-		return role
+func resolvePolicyRoleName(sel *awconfig.Selection, explicit string) string {
+	if roleName := strings.TrimSpace(explicit); roleName != "" {
+		return roleName
 	}
 	wd, _ := os.Getwd()
 	if state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(wd); err == nil {
+		if roleName := strings.TrimSpace(state.RoleName); roleName != "" {
+			return roleName
+		}
 		if role := strings.TrimSpace(state.Role); role != "" {
 			return role
 		}
@@ -130,19 +142,19 @@ func resolvePolicyRole(sel *awconfig.Selection, explicit string) string {
 
 func formatPolicyShow(v any) string {
 	out := v.(policyShowOutput)
-	if out.Policy == nil {
+	if out.ProjectRoles == nil {
 		return "No active policy.\n"
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Policy v%d\n", out.Policy.Version))
-	if out.Role != "" {
-		sb.WriteString(fmt.Sprintf("Role: %s\n", out.Role))
+	sb.WriteString(fmt.Sprintf("Project Roles v%d\n", out.ProjectRoles.Version))
+	if out.RoleName != "" {
+		sb.WriteString(fmt.Sprintf("Role: %s\n", out.RoleName))
 	}
 
-	if len(out.Policy.Invariants) > 0 {
+	if len(out.ProjectRoles.Invariants) > 0 {
 		sb.WriteString("\n## Invariants\n")
-		for _, inv := range out.Policy.Invariants {
+		for _, inv := range out.ProjectRoles.Invariants {
 			title := strings.TrimSpace(inv.Title)
 			if title == "" {
 				title = strings.TrimSpace(inv.ID)
@@ -161,9 +173,9 @@ func formatPolicyShow(v any) string {
 		}
 	}
 
-	if out.Policy.SelectedRole != nil {
-		sb.WriteString(fmt.Sprintf("\n## Role: %s\n", out.Policy.SelectedRole.Title))
-		for _, line := range strings.Split(strings.TrimSpace(out.Policy.SelectedRole.PlaybookMD), "\n") {
+	if out.ProjectRoles.SelectedRole != nil {
+		sb.WriteString(fmt.Sprintf("\n## Role: %s\n", out.ProjectRoles.SelectedRole.Title))
+		for _, line := range strings.Split(strings.TrimSpace(out.ProjectRoles.SelectedRole.PlaybookMD), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -173,15 +185,15 @@ func formatPolicyShow(v any) string {
 		return sb.String()
 	}
 
-	if len(out.Policy.Roles) > 0 {
-		names := make([]string, 0, len(out.Policy.Roles))
-		for name := range out.Policy.Roles {
+	if len(out.ProjectRoles.Roles) > 0 {
+		names := make([]string, 0, len(out.ProjectRoles.Roles))
+		for name := range out.ProjectRoles.Roles {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		sb.WriteString("\n## Roles\n")
 		for _, name := range names {
-			role := out.Policy.Roles[name]
+			role := out.ProjectRoles.Roles[name]
 			title := strings.TrimSpace(role.Title)
 			if title == "" {
 				title = name

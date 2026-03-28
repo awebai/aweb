@@ -163,6 +163,55 @@ func TestTaskListBlocked(t *testing.T) {
 	}
 }
 
+func TestTaskListActive(t *testing.T) {
+	t.Parallel()
+
+	ownerAlias := "eve"
+	canonicalOrigin := "github.com/awebai/aweb"
+	branch := "feat/summary"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/active" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(ActiveTaskListResponse{
+			Tasks: []ActiveTaskSummary{
+				{
+					TaskID:          "task-020",
+					TaskRef:         "aw-020",
+					Title:           "Active task",
+					Status:          "in_progress",
+					Priority:        1,
+					TaskType:        "task",
+					OwnerAlias:      &ownerAlias,
+					CanonicalOrigin: &canonicalOrigin,
+					Branch:          &branch,
+				},
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.TaskListActive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Tasks) != 1 {
+		t.Fatalf("tasks=%d", len(resp.Tasks))
+	}
+	if got := *resp.Tasks[0].CanonicalOrigin; got != "github.com/awebai/aweb" {
+		t.Fatalf("canonical_origin=%s", got)
+	}
+	if got := *resp.Tasks[0].Branch; got != "feat/summary" {
+		t.Fatalf("branch=%s", got)
+	}
+}
+
 func TestTaskGet(t *testing.T) {
 	t.Parallel()
 

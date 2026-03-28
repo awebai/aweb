@@ -17,10 +17,79 @@ type WorktreeWorkspace struct {
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
 	Alias           string `yaml:"alias,omitempty"`
 	HumanName       string `yaml:"human_name,omitempty"`
+	RoleName        string `yaml:"role_name,omitempty"`
+	Role            string `yaml:"-"`
+	Hostname        string `yaml:"hostname,omitempty"`
+	WorkspacePath   string `yaml:"workspace_path,omitempty"`
+	UpdatedAt       string `yaml:"updated_at,omitempty"`
+}
+
+type worktreeWorkspaceYAML struct {
+	WorkspaceID     string `yaml:"workspace_id"`
+	ProjectID       string `yaml:"project_id,omitempty"`
+	ProjectSlug     string `yaml:"project_slug,omitempty"`
+	RepoID          string `yaml:"repo_id,omitempty"`
+	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
+	Alias           string `yaml:"alias,omitempty"`
+	HumanName       string `yaml:"human_name,omitempty"`
+	RoleName        string `yaml:"role_name,omitempty"`
 	Role            string `yaml:"role,omitempty"`
 	Hostname        string `yaml:"hostname,omitempty"`
 	WorkspacePath   string `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
+}
+
+func (w *WorktreeWorkspace) syncRoleFields() {
+	if w == nil {
+		return
+	}
+	resolved := strings.TrimSpace(w.RoleName)
+	if resolved == "" {
+		resolved = strings.TrimSpace(w.Role)
+	}
+	w.RoleName = resolved
+	w.Role = resolved
+}
+
+func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
+	var raw worktreeWorkspaceYAML
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	*w = WorktreeWorkspace{
+		WorkspaceID:     raw.WorkspaceID,
+		ProjectID:       raw.ProjectID,
+		ProjectSlug:     raw.ProjectSlug,
+		RepoID:          raw.RepoID,
+		CanonicalOrigin: raw.CanonicalOrigin,
+		Alias:           raw.Alias,
+		HumanName:       raw.HumanName,
+		RoleName:        raw.RoleName,
+		Role:            raw.Role,
+		Hostname:        raw.Hostname,
+		WorkspacePath:   raw.WorkspacePath,
+		UpdatedAt:       raw.UpdatedAt,
+	}
+	w.syncRoleFields()
+	return nil
+}
+
+func (w WorktreeWorkspace) MarshalYAML() (any, error) {
+	w.syncRoleFields()
+	return worktreeWorkspaceYAML{
+		WorkspaceID:     w.WorkspaceID,
+		ProjectID:       w.ProjectID,
+		ProjectSlug:     w.ProjectSlug,
+		RepoID:          w.RepoID,
+		CanonicalOrigin: w.CanonicalOrigin,
+		Alias:           w.Alias,
+		HumanName:       w.HumanName,
+		RoleName:        w.RoleName,
+		Hostname:        w.Hostname,
+		WorkspacePath:   w.WorkspacePath,
+		UpdatedAt:       w.UpdatedAt,
+	}, nil
 }
 
 func DefaultWorktreeWorkspaceRelativePath() string {
@@ -63,6 +132,7 @@ func SaveWorktreeWorkspaceTo(path string, state *WorktreeWorkspace) error {
 	if state == nil {
 		return errors.New("nil workspace state")
 	}
+	state.syncRoleFields()
 
 	data, err := yaml.Marshal(state)
 	if err != nil {

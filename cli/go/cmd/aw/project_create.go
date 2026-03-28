@@ -32,7 +32,7 @@ func init() {
 	projectCreateCmd.Flags().BoolVar(&initSetDefault, "set-default", false, "Set this account as default_account in ~/.config/aw/config.yaml")
 	projectCreateCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Write/update .aw/context in the current directory (non-secret pointer)")
 	projectCreateCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
-	projectCreateCmd.Flags().StringVar(&initRole, "role", "", "Workspace role (must match a role in the active project policy)")
+	addWorkspaceRoleFlags(projectCreateCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
 	projectCreateCmd.Flags().BoolVar(&initPermanent, "permanent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
 	projectCmd.AddCommand(projectCreateCmd)
 }

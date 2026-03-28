@@ -20,17 +20,21 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pgdbm import AsyncDatabaseManager
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from aweb.auth import enforce_actor_binding, validate_workspace_id
 from aweb.aweb_introspection import get_identity_from_auth, get_project_from_auth
 
 from ...db import DatabaseInfra, get_db_infra
+from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..defaults import get_default_bundle
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/policies", tags=["policies"])
+roles_router = APIRouter(prefix="/v1/roles", tags=["roles"])
+policies_router = APIRouter(prefix="/v1/policies", tags=["policies"])
+router = roles_router
+compat_router = policies_router
 
 
 # Default policy bundle for new projects.
@@ -39,24 +43,65 @@ router = APIRouter(prefix="/v1/policies", tags=["policies"])
 DEFAULT_POLICY_BUNDLE: Dict[str, Any] = get_default_bundle()
 
 
-class PolicyBundle(BaseModel):
-    """Policy bundle containing invariants, roles, and adapters."""
+def _resolve_alias_pair(
+    *,
+    canonical: Optional[str],
+    legacy: Optional[str],
+    canonical_name: str,
+    legacy_name: str,
+) -> Optional[str]:
+    if canonical is not None and legacy is not None and canonical != legacy:
+        raise ValueError(f"{canonical_name} and {legacy_name} must match when both are provided")
+    return canonical if canonical is not None else legacy
+
+
+def _resolve_selected_role_name(
+    *,
+    role: Optional[str],
+    role_name: Optional[str],
+) -> Optional[str]:
+    normalized_role = normalize_optional_role_name(role)
+    normalized_role_name = normalize_optional_role_name(role_name)
+    return resolve_role_name_aliases(role=normalized_role, role_name=normalized_role_name)
+
+
+class ProjectRolesBundle(BaseModel):
+    """Versioned project roles bundle containing invariants, roles, and adapters."""
 
     invariants: List[Dict[str, Any]] = Field(default_factory=list)
     roles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     adapters: Dict[str, Any] = Field(default_factory=dict)
 
 
-class PolicyVersion(BaseModel):
-    """A versioned policy record."""
+class ProjectRolesVersion(BaseModel):
+    """A versioned project roles record."""
 
+    project_roles_id: str
     policy_id: str
     project_id: str
     version: int
-    bundle: PolicyBundle
+    bundle: ProjectRolesBundle
     created_by_workspace_id: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def sync_project_roles_id(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.project_roles_id,
+            legacy=self.policy_id,
+            canonical_name="project_roles_id",
+            legacy_name="policy_id",
+        )
+        if resolved is None:
+            raise ValueError("project_roles_id or policy_id is required")
+        self.project_roles_id = resolved
+        self.policy_id = resolved
+        return self
+
+
+PolicyBundle = ProjectRolesBundle
+PolicyVersion = ProjectRolesVersion
 
 
 async def get_active_policy(
@@ -98,6 +143,7 @@ async def get_active_policy(
             bundle_data = json.loads(bundle_data)
 
         return PolicyVersion(
+            project_roles_id=str(result["policy_id"]),
             policy_id=str(result["policy_id"]),
             project_id=str(result["project_id"]),
             version=result["version"],
@@ -235,6 +281,7 @@ async def create_policy_version(
         bundle_data = json.loads(bundle_data)
 
     return PolicyVersion(
+        project_roles_id=str(result["policy_id"]),
         policy_id=str(result["policy_id"]),
         project_id=str(result["project_id"]),
         version=result["version"],
@@ -318,41 +365,241 @@ class Invariant(BaseModel):
     body_md: str
 
 
-class RolePlaybook(BaseModel):
-    """A role playbook."""
+class RoleDefinition(BaseModel):
+    """A single named role definition."""
 
     title: str
     playbook_md: str
 
 
-class SelectedRole(BaseModel):
+class SelectedRoleInfo(BaseModel):
     """Selected role information."""
 
-    role: str
+    role_name: str
+    role: Optional[str] = None
     title: str
     playbook_md: str
 
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.role_name,
+            legacy=self.role,
+            canonical_name="role_name",
+            legacy_name="role",
+        )
+        if resolved is None:
+            raise ValueError("role_name or role is required")
+        self.role_name = resolved
+        self.role = resolved
+        return self
 
-class ActivePolicyResponse(BaseModel):
-    """Response for GET /v1/policies/active."""
 
+class ActiveProjectRolesResponse(BaseModel):
+    """Response for GET /v1/roles/active and compatibility aliases."""
+
+    project_roles_id: str
     policy_id: str
+    active_project_roles_id: Optional[str] = None
+    active_policy_id: Optional[str] = None
     project_id: str
     version: int
     updated_at: datetime
     invariants: List[Invariant]
-    roles: Dict[str, RolePlaybook]
-    selected_role: Optional[SelectedRole] = None
+    roles: Dict[str, RoleDefinition]
+    selected_role: Optional[SelectedRoleInfo] = None
     adapters: Dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def sync_project_roles_aliases(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.project_roles_id,
+            legacy=self.policy_id,
+            canonical_name="project_roles_id",
+            legacy_name="policy_id",
+        )
+        if resolved is None:
+            raise ValueError("project_roles_id or policy_id is required")
+        self.project_roles_id = resolved
+        self.policy_id = resolved
 
-@router.get("/active")
+        active_resolved = _resolve_alias_pair(
+            canonical=self.active_project_roles_id,
+            legacy=self.active_policy_id,
+            canonical_name="active_project_roles_id",
+            legacy_name="active_policy_id",
+        )
+        self.active_project_roles_id = active_resolved
+        self.active_policy_id = active_resolved
+        return self
+
+
+class CreateProjectRolesRequest(BaseModel):
+    """Request body for POST /v1/roles and compatibility aliases."""
+
+    bundle: ProjectRolesBundle = Field(
+        ...,
+        description="Project roles bundle containing invariants, roles, and adapters.",
+    )
+    base_project_roles_id: Optional[str] = Field(
+        None,
+        description="Optional canonical ID of the bundle this version is based on.",
+    )
+    base_policy_id: Optional[str] = Field(
+        None,
+        description="Legacy alias for base_project_roles_id.",
+    )
+    created_by_workspace_id: Optional[str] = Field(
+        None,
+        description="Optional: workspace_id of the creator (for audit trail).",
+    )
+
+    @model_validator(mode="after")
+    def sync_base_ids(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.base_project_roles_id,
+            legacy=self.base_policy_id,
+            canonical_name="base_project_roles_id",
+            legacy_name="base_policy_id",
+        )
+        self.base_project_roles_id = resolved
+        self.base_policy_id = resolved
+        return self
+
+
+class CreateProjectRolesResponse(BaseModel):
+    """Response for POST /v1/roles and compatibility aliases."""
+
+    project_roles_id: str
+    policy_id: str
+    project_id: str
+    version: int
+    created: bool = True
+
+    @model_validator(mode="after")
+    def sync_project_roles_aliases(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.project_roles_id,
+            legacy=self.policy_id,
+            canonical_name="project_roles_id",
+            legacy_name="policy_id",
+        )
+        if resolved is None:
+            raise ValueError("project_roles_id or policy_id is required")
+        self.project_roles_id = resolved
+        self.policy_id = resolved
+        return self
+
+
+class ActivateProjectRolesResponse(BaseModel):
+    """Response for POST /v1/roles/{id}/activate and compatibility aliases."""
+
+    activated: bool
+    active_project_roles_id: str
+    active_policy_id: str
+
+    @model_validator(mode="after")
+    def sync_active_ids(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.active_project_roles_id,
+            legacy=self.active_policy_id,
+            canonical_name="active_project_roles_id",
+            legacy_name="active_policy_id",
+        )
+        if resolved is None:
+            raise ValueError("active_project_roles_id or active_policy_id is required")
+        self.active_project_roles_id = resolved
+        self.active_policy_id = resolved
+        return self
+
+
+class ResetProjectRolesResponse(BaseModel):
+    """Response for POST /v1/roles/reset and compatibility aliases."""
+
+    reset: bool
+    active_project_roles_id: str
+    active_policy_id: str
+    version: int
+
+    @model_validator(mode="after")
+    def sync_active_ids(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.active_project_roles_id,
+            legacy=self.active_policy_id,
+            canonical_name="active_project_roles_id",
+            legacy_name="active_policy_id",
+        )
+        if resolved is None:
+            raise ValueError("active_project_roles_id or active_policy_id is required")
+        self.active_project_roles_id = resolved
+        self.active_policy_id = resolved
+        return self
+
+
+class ProjectRolesHistoryItem(BaseModel):
+    """A project roles version in the history list."""
+
+    project_roles_id: str
+    policy_id: str
+    version: int
+    created_at: datetime
+    created_by_workspace_id: Optional[str]
+    is_active: bool
+
+    @model_validator(mode="after")
+    def sync_project_roles_aliases(self):
+        resolved = _resolve_alias_pair(
+            canonical=self.project_roles_id,
+            legacy=self.policy_id,
+            canonical_name="project_roles_id",
+            legacy_name="policy_id",
+        )
+        if resolved is None:
+            raise ValueError("project_roles_id or policy_id is required")
+        self.project_roles_id = resolved
+        self.policy_id = resolved
+        return self
+
+
+class ProjectRolesHistoryResponse(BaseModel):
+    """Response for GET /v1/roles/history and compatibility aliases."""
+
+    project_roles_versions: Optional[List[ProjectRolesHistoryItem]] = None
+    policies: Optional[List[ProjectRolesHistoryItem]] = None
+
+    @model_validator(mode="after")
+    def sync_history_lists(self):
+        project_roles_versions = self.project_roles_versions or self.policies
+        if project_roles_versions is None:
+            raise ValueError("project_roles_versions or policies is required")
+        self.project_roles_versions = project_roles_versions
+        self.policies = project_roles_versions
+        return self
+
+
+RolePlaybook = RoleDefinition
+SelectedRole = SelectedRoleInfo
+ActivePolicyResponse = ActiveProjectRolesResponse
+CreatePolicyRequest = CreateProjectRolesRequest
+CreatePolicyResponse = CreateProjectRolesResponse
+ActivatePolicyResponse = ActivateProjectRolesResponse
+ResetPolicyResponse = ResetProjectRolesResponse
+PolicyHistoryItem = ProjectRolesHistoryItem
+PolicyHistoryResponse = ProjectRolesHistoryResponse
+
+
+@roles_router.get("/active")
+@policies_router.get("/active")
 async def get_active_policy_endpoint(
     request: Request,
     response: Response,
     role: Optional[str] = Query(
         None,
-        description="Role to select. If provided, includes selected_role in response.",
+        description="Legacy selector alias. If provided, includes selected_role in response.",
+    ),
+    role_name: Optional[str] = Query(
+        None,
+        description="Canonical selector name. If provided, includes selected_role in response.",
     ),
     only_selected: bool = Query(
         False,
@@ -360,7 +607,7 @@ async def get_active_policy_endpoint(
     ),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActivePolicyResponse:
+) -> ActiveProjectRolesResponse:
     """
     Get the active policy for the project.
 
@@ -391,24 +638,29 @@ async def get_active_policy_endpoint(
     # Validate role selection
     available_roles = list(policy.bundle.roles.keys())
     selected_role_data = None
+    try:
+        selected_role_name = _resolve_selected_role_name(role=role, role_name=role_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if role:
-        if role not in policy.bundle.roles:
+    if selected_role_name:
+        if selected_role_name not in policy.bundle.roles:
             raise HTTPException(
                 status_code=400,
-                detail=f"Role '{role}' not found. Available roles: {available_roles}",
+                detail=f"Role '{selected_role_name}' not found. Available roles: {available_roles}",
             )
-        role_info = policy.bundle.roles[role]
-        selected_role_data = SelectedRole(
-            role=role,
-            title=role_info.get("title", role),
+        role_info = policy.bundle.roles[selected_role_name]
+        selected_role_data = SelectedRoleInfo(
+            role_name=selected_role_name,
+            role=selected_role_name,
+            title=role_info.get("title", selected_role_name),
             playbook_md=role_info.get("playbook_md", ""),
         )
 
-    if only_selected and not role:
+    if only_selected and not selected_role_name:
         raise HTTPException(
             status_code=400,
-            detail="only_selected=true requires a role parameter",
+            detail="only_selected=true requires a role or role_name parameter",
         )
 
     # Build response
@@ -423,20 +675,22 @@ async def get_active_policy_endpoint(
 
     if only_selected:
         # Return only invariants + selected role
-        # Type narrowing: role is guaranteed non-None here (validated at line 370-374)
-        assert role is not None
-        roles = {role: RolePlaybook(**policy.bundle.roles[role])}
+        assert selected_role_name is not None
+        roles = {selected_role_name: RoleDefinition(**policy.bundle.roles[selected_role_name])}
     else:
         roles = {
-            k: RolePlaybook(
+            k: RoleDefinition(
                 title=v.get("title", k),
                 playbook_md=v.get("playbook_md", ""),
             )
             for k, v in policy.bundle.roles.items()
         }
 
-    return ActivePolicyResponse(
+    return ActiveProjectRolesResponse(
+        project_roles_id=policy.project_roles_id,
         policy_id=policy.policy_id,
+        active_project_roles_id=policy.project_roles_id,
+        active_policy_id=policy.policy_id,
         project_id=policy.project_id,
         version=policy.version,
         updated_at=policy.updated_at,
@@ -450,69 +704,13 @@ async def get_active_policy_endpoint(
 # Admin endpoints for policy management
 
 
-class CreatePolicyRequest(BaseModel):
-    """Request body for POST /v1/policies."""
-
-    bundle: PolicyBundle = Field(
-        ...,
-        description="Policy bundle containing invariants, roles, and adapters.",
-    )
-    base_policy_id: Optional[str] = Field(
-        None,
-        description="Optional: policy this version is based on (for audit trail).",
-    )
-    created_by_workspace_id: Optional[str] = Field(
-        None,
-        description="Optional: workspace_id of the creator (for audit trail).",
-    )
-
-
-class CreatePolicyResponse(BaseModel):
-    """Response for POST /v1/policies."""
-
-    policy_id: str
-    project_id: str
-    version: int
-    created: bool = True
-
-
-class ActivatePolicyResponse(BaseModel):
-    """Response for POST /v1/policies/{id}/activate."""
-
-    activated: bool
-    active_policy_id: str
-
-
-class ResetPolicyResponse(BaseModel):
-    """Response for POST /v1/policies/reset."""
-
-    reset: bool
-    active_policy_id: str
-    version: int
-
-
-class PolicyHistoryItem(BaseModel):
-    """A policy version in the history list."""
-
-    policy_id: str
-    version: int
-    created_at: datetime
-    created_by_workspace_id: Optional[str]
-    is_active: bool
-
-
-class PolicyHistoryResponse(BaseModel):
-    """Response for GET /v1/policies/history."""
-
-    policies: List[PolicyHistoryItem]
-
-
-@router.get("/history")
+@roles_router.get("/history")
+@policies_router.get("/history")
 async def list_policy_history(
     request: Request,
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
-) -> PolicyHistoryResponse:
+) -> ProjectRolesHistoryResponse:
     """
     List policy version history for the project.
 
@@ -553,7 +751,8 @@ async def list_policy_history(
     )
 
     policies = [
-        PolicyHistoryItem(
+        ProjectRolesHistoryItem(
+            project_roles_id=str(row["policy_id"]),
             policy_id=str(row["policy_id"]),
             version=row["version"],
             created_at=row["created_at"],
@@ -565,15 +764,16 @@ async def list_policy_history(
         for row in rows
     ]
 
-    return PolicyHistoryResponse(policies=policies)
+    return ProjectRolesHistoryResponse(project_roles_versions=policies, policies=policies)
 
 
-@router.post("")
+@roles_router.post("")
+@policies_router.post("")
 async def create_policy_endpoint(
     request: Request,
-    payload: CreatePolicyRequest,
+    payload: CreateProjectRolesRequest,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> CreatePolicyResponse:
+) -> CreateProjectRolesResponse:
     """
     Create a new policy version for the project.
 
@@ -620,7 +820,7 @@ async def create_policy_endpoint(
     policy = await create_policy_version(
         server_db,
         project_id=project_id,
-        base_policy_id=payload.base_policy_id,
+        base_policy_id=payload.base_project_roles_id,
         bundle=bundle_dict,
         created_by_workspace_id=created_by_workspace_id,
     )
@@ -651,20 +851,22 @@ async def create_policy_endpoint(
         policy.version,
     )
 
-    return CreatePolicyResponse(
+    return CreateProjectRolesResponse(
+        project_roles_id=policy.project_roles_id,
         policy_id=policy.policy_id,
         project_id=policy.project_id,
         version=policy.version,
     )
 
 
-@router.get("/{policy_id}")
+@roles_router.get("/{project_roles_id}")
+@policies_router.get("/{project_roles_id}")
 async def get_policy_by_id_endpoint(
     request: Request,
     response: Response,
-    policy_id: str,
+    project_roles_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActivePolicyResponse:
+) -> ActiveProjectRolesResponse:
     """
     Get a specific policy version by ID.
 
@@ -683,7 +885,7 @@ async def get_policy_by_id_endpoint(
         FROM {{tables.project_policies}} pp
         WHERE pp.policy_id = $1 AND pp.project_id = $2
         """,
-        policy_id,
+        project_roles_id,
         project_id,
     )
 
@@ -711,14 +913,15 @@ async def get_policy_by_id_endpoint(
     ]
 
     roles = {
-        k: RolePlaybook(
+        k: RoleDefinition(
             title=v.get("title", k),
             playbook_md=v.get("playbook_md", ""),
         )
         for k, v in bundle.roles.items()
     }
 
-    return ActivePolicyResponse(
+    return ActiveProjectRolesResponse(
+        project_roles_id=str(result["policy_id"]),
         policy_id=str(result["policy_id"]),
         project_id=str(result["project_id"]),
         version=result["version"],
@@ -730,12 +933,13 @@ async def get_policy_by_id_endpoint(
     )
 
 
-@router.post("/{policy_id}/activate")
+@roles_router.post("/{project_roles_id}/activate")
+@policies_router.post("/{project_roles_id}/activate")
 async def activate_policy_endpoint(
     request: Request,
-    policy_id: str,
+    project_roles_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActivatePolicyResponse:
+) -> ActivateProjectRolesResponse:
     """
     Set a policy as the active policy for the project.
 
@@ -759,7 +963,7 @@ async def activate_policy_endpoint(
     await activate_policy(
         server_db,
         project_id=project_id,
-        policy_id=policy_id,
+        policy_id=project_roles_id,
     )
 
     # Add audit log entry
@@ -773,7 +977,7 @@ async def activate_policy_endpoint(
         json.dumps(
             {
                 "project_id": project_id,
-                "policy_id": policy_id,
+                "policy_id": project_roles_id,
                 "previous_policy_id": previous_policy_id,
             }
         ),
@@ -782,21 +986,23 @@ async def activate_policy_endpoint(
     logger.info(
         "Policy activated via API: project=%s policy_id=%s (was: %s)",
         project_id,
-        policy_id,
+        project_roles_id,
         previous_policy_id,
     )
 
-    return ActivatePolicyResponse(
+    return ActivateProjectRolesResponse(
         activated=True,
-        active_policy_id=policy_id,
+        active_project_roles_id=project_roles_id,
+        active_policy_id=project_roles_id,
     )
 
 
-@router.post("/reset")
+@roles_router.post("/reset")
+@policies_router.post("/reset")
 async def reset_policy_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ResetPolicyResponse:
+) -> ResetProjectRolesResponse:
     """
     Reset the project's policy to the current default bundle.
 
@@ -862,8 +1068,9 @@ async def reset_policy_to_default_endpoint(
         previous_policy_id,
     )
 
-    return ResetPolicyResponse(
+    return ResetProjectRolesResponse(
         reset=True,
+        active_project_roles_id=policy.project_roles_id,
         active_policy_id=policy.policy_id,
         version=policy.version,
     )

@@ -16,6 +16,7 @@ from aweb.coordination.tasks_service import (
     add_dependency,
     create_task,
     get_task,
+    list_active_work,
     list_blocked_tasks,
     list_comments,
     list_ready_tasks,
@@ -66,6 +67,31 @@ class AddCommentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     body: str = Field(..., min_length=1, max_length=65536)
+
+
+class ActiveWorkTaskSummary(BaseModel):
+    task_id: str
+    task_ref: str
+    task_number: int
+    title: str
+    status: str
+    priority: int
+    task_type: str
+    assignee_agent_id: Optional[str] = None
+    created_by_agent_id: Optional[str] = None
+    parent_task_id: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+    workspace_id: Optional[str] = None
+    owner_alias: Optional[str] = None
+    claimed_at: Optional[str] = None
+    canonical_origin: Optional[str] = None
+    branch: Optional[str] = None
+
+
+class ActiveWorkResponse(BaseModel):
+    tasks: list[ActiveWorkTaskSummary]
 
 
 @router.post("")
@@ -152,6 +178,15 @@ async def list_blocked_tasks_route(
     project_id = await get_project_from_auth(request, db_infra)
     tasks = await list_blocked_tasks(db_infra, project_id=project_id)
     return {"tasks": tasks}
+
+
+@router.get("/active")
+async def list_active_work_route(
+    request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
+) -> ActiveWorkResponse:
+    project_id = await get_project_from_auth(request, db_infra)
+    tasks = await list_active_work(db_infra, project_id=project_id)
+    return ActiveWorkResponse(tasks=tasks)
 
 
 @router.get("/{ref}")

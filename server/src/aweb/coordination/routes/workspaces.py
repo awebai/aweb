@@ -12,7 +12,7 @@ from uuid import UUID
 import asyncpg.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pgdbm.errors import QueryError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
 from aweb.auth import validate_workspace_id
@@ -34,11 +34,9 @@ from ...presence import (
 )
 from ..project_registry import ensure_server_project_row
 from ...redis_client import get_redis
+from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..roles import (
-    ROLE_ERROR_MESSAGE,
     ROLE_MAX_LENGTH,
-    is_valid_role,
-    normalize_role,
 )
 from .repos import canonicalize_git_url, extract_repo_name
 from ..workspace_registry import (
@@ -255,6 +253,11 @@ class RegisterWorkspaceRequest(BaseModel):
         max_length=ROLE_MAX_LENGTH,
         description="Brief description of workspace purpose",
     )
+    role_name: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Canonical selector name for the workspace role",
+    )
     hostname: Optional[str] = Field(
         None,
         max_length=255,
@@ -275,14 +278,17 @@ class RegisterWorkspaceRequest(BaseModel):
             raise ValueError(f"Invalid repo_origin: {e}")
         return v
 
-    @field_validator("role")
+    @field_validator("role", "role_name")
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if not is_valid_role(v):
-            raise ValueError(ROLE_ERROR_MESSAGE)
-        return normalize_role(v)
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
     @field_validator("hostname")
     @classmethod
@@ -332,6 +338,11 @@ class RegisterAttachmentRequest(BaseModel):
         max_length=ROLE_MAX_LENGTH,
         description="Role used for policy and coordination",
     )
+    role_name: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Canonical selector name for the workspace role",
+    )
     hostname: Optional[str] = Field(
         None,
         max_length=255,
@@ -343,14 +354,17 @@ class RegisterAttachmentRequest(BaseModel):
         description="Directory path for runtime coordination",
     )
 
-    @field_validator("role")
+    @field_validator("role", "role_name")
     @classmethod
     def validate_attachment_role(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if not is_valid_role(v):
-            raise ValueError(ROLE_ERROR_MESSAGE)
-        return normalize_role(v)
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
     @field_validator("hostname")
     @classmethod
@@ -763,6 +777,11 @@ class WorkspaceHeartbeatRequest(BaseModel):
         max_length=ROLE_MAX_LENGTH,
         description="Brief description of workspace purpose",
     )
+    role_name: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Canonical selector name for the workspace role",
+    )
     current_branch: Optional[str] = Field(None, max_length=255)
     timezone: Optional[str] = Field(None, max_length=64)
     hostname: Optional[str] = Field(None, max_length=255)
@@ -795,14 +814,17 @@ class WorkspaceHeartbeatRequest(BaseModel):
             raise ValueError(f"Invalid repo_origin: {e}")
         return v
 
-    @field_validator("role")
+    @field_validator("role", "role_name")
     @classmethod
     def validate_role_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if not is_valid_role(v):
-            raise ValueError(ROLE_ERROR_MESSAGE)
-        return normalize_role(v)
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
     @field_validator("timezone")
     @classmethod
@@ -1146,6 +1168,7 @@ class WorkspaceInfo(BaseModel):
     branch: Optional[str] = None
     member_email: Optional[str] = None
     role: Optional[str] = None
+    role_name: Optional[str] = None
     hostname: Optional[str] = None  # For gone workspace detection
     workspace_path: Optional[str] = None  # For gone workspace detection
     apex_task_ref: Optional[str] = None  # Apex from first claim (root of parent chain)
@@ -1159,6 +1182,13 @@ class WorkspaceInfo(BaseModel):
     last_seen: Optional[str] = None
     deleted_at: Optional[str] = None  # ISO timestamp if soft-deleted
     claims: List[Claim] = []  # All active task claims for this workspace (with apex computed)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class ListWorkspacesResponse(BaseModel):
@@ -1373,6 +1403,7 @@ def _row_to_workspace_info(
         branch=branch,
         member_email=member_email_value,
         role=role_value,
+        role_name=role_value,
         hostname=hostname_value,
         workspace_path=workspace_path_value,
         apex_task_ref=first_apex_id,
@@ -1818,6 +1849,7 @@ async def list_online_workspaces(
                 branch=presence.get("current_branch"),
                 member_email=None if public_reader else presence.get("member_email"),
                 role=None if public_reader else (presence.get("role") or None),
+                role_name=None if public_reader else (presence.get("role") or None),
                 status=presence.get("status") or "unknown",
                 last_seen=presence.get("last_seen") or "",
             )

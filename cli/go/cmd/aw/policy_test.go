@@ -14,7 +14,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
-func TestAwPolicyShowUsesWorkspaceRole(t *testing.T) {
+func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,18 +22,21 @@ func TestAwPolicyShowUsesWorkspaceRole(t *testing.T) {
 			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
-		case "/v1/policies/active":
-			if r.URL.Query().Get("role") != "reviewer" {
-				t.Fatalf("role=%q", r.URL.Query().Get("role"))
+		case "/v1/roles/active":
+			if r.URL.Query().Get("role_name") != "reviewer" {
+				t.Fatalf("role_name=%q", r.URL.Query().Get("role_name"))
 			}
 			if r.URL.Query().Get("only_selected") != "true" {
 				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id":  "pol-1",
-				"project_id": "proj-1",
-				"version":    3,
-				"updated_at": "2026-03-10T10:00:00Z",
+				"project_roles_id":        "pol-1",
+				"policy_id":               "pol-1",
+				"active_project_roles_id": "pol-1",
+				"active_policy_id":        "pol-1",
+				"project_id":              "proj-1",
+				"version":                 3,
+				"updated_at":              "2026-03-10T10:00:00Z",
 				"invariants": []map[string]any{
 					{"id": "no-drift", "title": "No Drift", "body_md": "Keep the stack clean."},
 				},
@@ -41,6 +44,7 @@ func TestAwPolicyShowUsesWorkspaceRole(t *testing.T) {
 					"reviewer": map[string]any{"title": "Reviewer", "playbook_md": "Review before merge."},
 				},
 				"selected_role": map[string]any{
+					"role_name":   "reviewer",
 					"role":        "reviewer",
 					"title":       "Reviewer",
 					"playbook_md": "Review before merge.",
@@ -87,7 +91,7 @@ default_account: acct
 		t.Fatalf("save workspace state: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "policy", "show")
+	run := exec.CommandContext(ctx, bin, "roles", "show")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -100,7 +104,7 @@ default_account: acct
 	}
 	text := string(out)
 	for _, want := range []string{
-		"Policy v3",
+		"Project Roles v3",
 		"Role: reviewer",
 		"## Invariants",
 		"No Drift",
@@ -114,7 +118,7 @@ default_account: acct
 	}
 }
 
-func TestAwPolicyRolesListsSortedRoles(t *testing.T) {
+func TestAwRolesListListsSortedRoles(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,16 +126,17 @@ func TestAwPolicyRolesListsSortedRoles(t *testing.T) {
 			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
-		case "/v1/policies/active":
+		case "/v1/roles/active":
 			if r.URL.Query().Get("only_selected") != "false" {
 				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"policy_id":  "pol-1",
-				"project_id": "proj-1",
-				"version":    1,
-				"updated_at": "2026-03-10T10:00:00Z",
-				"invariants": []map[string]any{},
+				"project_roles_id": "pol-1",
+				"policy_id":        "pol-1",
+				"project_id":       "proj-1",
+				"version":          1,
+				"updated_at":       "2026-03-10T10:00:00Z",
+				"invariants":       []map[string]any{},
 				"roles": map[string]any{
 					"reviewer":  map[string]any{"title": "Reviewer", "playbook_md": ""},
 					"developer": map[string]any{"title": "Developer", "playbook_md": ""},
@@ -168,7 +173,7 @@ default_account: acct
 		t.Fatalf("write config: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "policy", "roles")
+	run := exec.CommandContext(ctx, bin, "roles", "list")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",

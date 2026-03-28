@@ -36,6 +36,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
+    """Prefer apex_task_ref for workspace focus, falling back to the claimed task."""
+    return apex_task_ref or task_ref
+
+
+def _claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
+    """Backward-compatible alias for claim_focus_task_ref."""
+    return claim_focus_task_ref(task_ref, apex_task_ref)
+
+
 async def resolve_task_claim_apex(
     db_infra: DatabaseInfra,
     project_id: str,
@@ -153,10 +163,7 @@ async def upsert_claim(
             apex_task_ref,
             _now(),
         )
-
-    # Update workspace focus fields for team status display
-    if apex_task_ref:
-        await server_db.execute(
+        await tx.execute(
             """
             UPDATE {{tables.workspaces}}
             SET focus_task_ref = $1,
@@ -164,7 +171,7 @@ async def upsert_claim(
                 updated_at = NOW()
             WHERE project_id = $2 AND workspace_id = $3
             """,
-            apex_task_ref,
+            claim_focus_task_ref(task_ref, apex_task_ref),
             UUID(project_id),
             UUID(workspace_id),
         )
@@ -219,7 +226,7 @@ async def release_task_claims(
         for ws_id in affected_ws_ids:
             next_claim = await tx.fetch_one(
                 """
-                SELECT apex_task_ref
+                SELECT task_ref, apex_task_ref
                 FROM {{tables.task_claims}}
                 WHERE project_id = $1 AND workspace_id = $2
                 ORDER BY claimed_at DESC
@@ -236,7 +243,11 @@ async def release_task_claims(
                     updated_at = NOW()
                 WHERE project_id = $2 AND workspace_id = $3
                 """,
-                next_claim["apex_task_ref"] if next_claim else None,
+                (
+                    claim_focus_task_ref(next_claim["task_ref"], next_claim["apex_task_ref"])
+                    if next_claim
+                    else None
+                ),
                 UUID(project_id),
                 ws_id,
             )

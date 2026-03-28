@@ -51,6 +51,7 @@ async def whoami(db_infra) -> str:
         result["custody"] = agent.get("custody") or ""
         result["lifetime"] = agent.get("lifetime") or "ephemeral"
         result["role"] = agent.get("role")
+        result["role_name"] = agent.get("role")
         result["program"] = agent.get("program")
         result["scope"] = {
             "project_id": scope.project_id,
