@@ -912,6 +912,7 @@ func apiStructuredErrorCode(err error) (string, bool) {
 func formatWorkspaceStatus(v any) string {
 	out := v.(workspaceStatusOutput)
 	var sb strings.Builder
+	now := time.Now()
 
 	sb.WriteString("## Self\n")
 	sb.WriteString(fmt.Sprintf("- Alias: %s\n", out.Workspace.Alias))
@@ -932,53 +933,28 @@ func formatWorkspaceStatus(v any) string {
 	if out.Workspace.Branch != nil && strings.TrimSpace(*out.Workspace.Branch) != "" {
 		sb.WriteString(fmt.Sprintf("- Branch: %s\n", strings.TrimSpace(*out.Workspace.Branch)))
 	}
-
-	if len(out.Workspace.Claims) > 0 {
-		sb.WriteString("\n## Claims\n")
-		for _, claim := range out.Workspace.Claims {
-			title := ""
-			if claim.Title != nil && strings.TrimSpace(*claim.Title) != "" {
-				title = fmt.Sprintf(" \"%s\"", strings.TrimSpace(*claim.Title))
-			}
-			sb.WriteString(fmt.Sprintf("- %s%s — %s\n", claim.BeadID, title, formatTimeAgo(claim.ClaimedAt)))
-		}
-	}
-
-	if len(out.Locks) > 0 {
-		sb.WriteString("\n## Locks\n")
-		now := time.Now()
-		for _, lock := range out.Locks {
-			sb.WriteString(fmt.Sprintf("- %s — expires in %s\n", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now))))
-		}
-	}
+	sb.WriteString(fmt.Sprintf("- Focus: %s\n", formatWorkspaceFocus(out.Workspace)))
+	sb.WriteString(fmt.Sprintf("- Claims: %s\n", formatWorkspaceClaimsSummary(out.Workspace.Claims)))
+	sb.WriteString(fmt.Sprintf("- Locks: %s\n", formatWorkspaceLocksSummary(out.Locks, now)))
 
 	sb.WriteString("\n## Team\n")
 	if len(out.Team) == 0 {
 		sb.WriteString("No other workspaces.\n")
 	} else {
 		for _, workspace := range out.Team {
-			line := fmt.Sprintf("- %s", workspace.Alias)
+			line := workspace.Alias
 			if workspace.Role != nil && strings.TrimSpace(*workspace.Role) != "" {
 				line += " (" + strings.TrimSpace(*workspace.Role) + ")"
 			}
 			line += " — " + workspace.Status
-			if len(workspace.Claims) > 0 {
-				line += fmt.Sprintf(", %d claim(s)", len(workspace.Claims))
-			}
 			if lastSeen := derefString(workspace.LastSeen); lastSeen != "" {
 				line += ", seen " + formatTimeAgo(lastSeen)
 			}
 			sb.WriteString(line + "\n")
-			for _, claim := range workspace.Claims {
-				title := ""
-				if claim.Title != nil && strings.TrimSpace(*claim.Title) != "" {
-					title = fmt.Sprintf(" \"%s\"", strings.TrimSpace(*claim.Title))
-				}
-				sb.WriteString(fmt.Sprintf("  %s%s\n", claim.BeadID, title))
-			}
-			for _, lock := range out.TeamLocks[workspace.WorkspaceID] {
-				sb.WriteString(fmt.Sprintf("  lock %s\n", lock.ResourceKey))
-			}
+			sb.WriteString(fmt.Sprintf("  %s\n", formatWorkspaceRepoBranch(workspace)))
+			sb.WriteString(fmt.Sprintf("  Focus: %s\n", formatWorkspaceFocus(workspace)))
+			sb.WriteString(fmt.Sprintf("  Claims: %s\n", formatWorkspaceClaimsSummary(workspace.Claims)))
+			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now)))
 		}
 	}
 
@@ -987,6 +963,58 @@ func formatWorkspaceStatus(v any) string {
 		sb.WriteString(fmt.Sprintf("Claim conflicts: %d\n", out.ConflictCount))
 	}
 	return sb.String()
+}
+
+func formatWorkspaceRepoBranch(workspace aweb.WorkspaceInfo) string {
+	repo := strings.TrimSpace(derefString(workspace.Repo))
+	branch := strings.TrimSpace(derefString(workspace.Branch))
+	switch {
+	case repo != "" && branch != "":
+		return fmt.Sprintf("Repo: %s  Branch: %s", repo, branch)
+	case repo != "":
+		return fmt.Sprintf("Repo: %s", repo)
+	case branch != "":
+		return fmt.Sprintf("Branch: %s", branch)
+	default:
+		return "Repo: none"
+	}
+}
+
+func formatWorkspaceFocus(workspace aweb.WorkspaceInfo) string {
+	focusID := strings.TrimSpace(derefString(workspace.FocusApexID))
+	if focusID == "" {
+		return "none"
+	}
+	if focusTitle := strings.TrimSpace(derefString(workspace.FocusApexTitle)); focusTitle != "" {
+		return fmt.Sprintf("%s (%s)", focusID, focusTitle)
+	}
+	return focusID
+}
+
+func formatWorkspaceClaimsSummary(claims []aweb.WorkspaceClaim) string {
+	if len(claims) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		part := claim.BeadID
+		if strings.TrimSpace(claim.ClaimedAt) != "" {
+			part += fmt.Sprintf(" (%s)", formatTimeAgo(claim.ClaimedAt))
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatWorkspaceLocksSummary(locks []aweb.ReservationView, now time.Time) string {
+	if len(locks) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(locks))
+	for _, lock := range locks {
+		parts = append(parts, fmt.Sprintf("%s (TTL: %s)", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now))))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func derefString(v *string) string {
