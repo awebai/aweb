@@ -35,12 +35,11 @@ func TestStyleWrappedScreenLineUsesDisplayKinds(t *testing.T) {
 		{kind: DisplayKindTool, line: `· go test ./... 2>&1`, want: "tool"},
 		{kind: DisplayKindToolDetail, line: `  file_path="/tmp/image.png"`, want: "tool_detail"},
 		{kind: DisplayKindPlain, line: `   1. PTY default-off`, want: "plain"},
-		{kind: DisplayKindCommunication, line: "• from dave (mail): please review this", want: "comms"},
-		{kind: DisplayKindCommunication, line: "• to henry (chat)", want: "comms"},
-		{kind: DisplayKindTaskActivity, line: "• task update aweb-aaat.1", want: "task"},
+		{kind: DisplayKindCommunication, line: "● from dave (mail): please review this", want: "comms"},
+		{kind: DisplayKindCommunication, line: "● to henry (chat)", want: "comms"},
+		{kind: DisplayKindTaskActivity, line: "● task update aweb-aaat.1", want: "task"},
 		{kind: DisplayKindProviderStderr, line: "provider stderr: approval required", want: "provider_stderr"},
 		{kind: DisplayKindProviderStdout, line: "provider stdout: Allow? [y/N]", want: "provider_stdout"},
-		{kind: DisplayKindResult, line: "  = ok", want: "result"},
 		{kind: DisplayKindDone, line: "done  2.1s", want: "done"},
 		{kind: DisplayKindInfo, line: "info: session", want: "info"},
 		{kind: DisplayKindHint, line: "type /wait, /autofeed off, /stop", want: "hint"},
@@ -65,8 +64,6 @@ func TestStyleWrappedScreenLineUsesDisplayKinds(t *testing.T) {
 			got = "provider_stderr"
 		case DisplayKindProviderStdout:
 			got = "provider_stdout"
-		case DisplayKindResult:
-			got = "result"
 		case DisplayKindDone:
 			got = "done"
 		case DisplayKindInfo:
@@ -93,8 +90,8 @@ func TestStyleScreenLineKeepsToolArgumentsNeutralOnFirstLine(t *testing.T) {
 
 func TestStyleScreenLineStylesAgentBulletLane(t *testing.T) {
 	styles := newScreenStyles()
-	got := styleScreenLine(screenOutputLine{kind: DisplayKindAgentText, text: `• first answer line`}, styles)
-	want := styles.agentBullet.Render(`•`) + styles.agentText.Render(` first answer line`)
+	got := styleScreenLine(screenOutputLine{kind: DisplayKindAgentText, text: `● first answer line`}, styles)
+	want := styles.agentText.Render(`● first answer line`)
 	if got != want {
 		t.Fatalf("unexpected styled agent line %q", got)
 	}
@@ -120,8 +117,8 @@ func TestStyleScreenLineColorsClosingParenOnContinuation(t *testing.T) {
 
 func TestStyleScreenLineStylesCommLabel(t *testing.T) {
 	styles := newScreenStyles()
-	got := styleScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `• from dave (mail): merged to main`}, styles)
-	want := styles.commsBullet.Render(`•`) + styles.comms.Render(` from dave (mail)`) + `: merged to main`
+	got := styleScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `● from dave (mail): merged to main`}, styles)
+	want := styles.commsBullet.Render(`●`) + styles.comms.Render(` from dave (mail)`) + `: merged to main`
 	if got != want {
 		t.Fatalf("unexpected styled comm line %q", got)
 	}
@@ -129,8 +126,8 @@ func TestStyleScreenLineStylesCommLabel(t *testing.T) {
 
 func TestStyleScreenLineStylesTaskLabel(t *testing.T) {
 	styles := newScreenStyles()
-	got := styleScreenLine(screenOutputLine{kind: DisplayKindTaskActivity, text: `• task update aweb-aaat.1`}, styles)
-	want := styles.taskBullet.Render(`•`) + styles.task.Render(` task update aweb-aaat.1`)
+	got := styleScreenLine(screenOutputLine{kind: DisplayKindTaskActivity, text: `● task update aweb-aaat.1`}, styles)
+	want := styles.taskBullet.Render(`●`) + styles.task.Render(` task update aweb-aaat.1`)
 	if got != want {
 		t.Fatalf("unexpected styled task line %q", got)
 	}
@@ -241,11 +238,11 @@ func TestWrapScreenLineKeepsToolArgIndent(t *testing.T) {
 }
 
 func TestWrapScreenLineUsesHangingIndentForCommLines(t *testing.T) {
-	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `• from dave (mail): this is a long coordination update that should wrap cleanly`}, 28)
+	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `● from dave (mail): this is a long coordination update that should wrap cleanly`}, 28)
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped lines, got %#v", lines)
 	}
-	indent := strings.Repeat(" ", lipgloss.Width("• from dave (mail): "))
+	indent := strings.Repeat(" ", lipgloss.Width("● from dave (mail): "))
 	for _, line := range lines[1:] {
 		if !strings.HasPrefix(line, indent) {
 			t.Fatalf("expected hanging indent under message body, got %#v", lines)
@@ -254,7 +251,7 @@ func TestWrapScreenLineUsesHangingIndentForCommLines(t *testing.T) {
 }
 
 func TestWrapScreenLineUsesHangingIndentForAgentText(t *testing.T) {
-	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindAgentText, text: `• this is a long assistant reply that should wrap under the bullet lane cleanly`}, 28)
+	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindAgentText, text: `● this is a long assistant reply that should wrap under the bullet lane cleanly`}, 28)
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped lines, got %#v", lines)
 	}
@@ -277,33 +274,29 @@ func TestWrapScreenLineUsesHangingIndentForProviderStderr(t *testing.T) {
 	}
 }
 
-func TestWrapScreenLineUsesHangingIndentForTopLevelToolLines(t *testing.T) {
-	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindTool, text: `· aw mail inbox --unread-only --format json 2>/dev/null | python3 -c "print(1)"`}, 34)
-	if len(lines) < 2 {
-		t.Fatalf("expected wrapped lines, got %#v", lines)
+func TestWrapScreenLineTruncatesTopLevelToolLines(t *testing.T) {
+	source := `· aw mail inbox --unread-only --format json 2>/dev/null | python3 -c "print(1)"`
+	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindTool, text: source}, 34)
+	if len(lines) != 1 {
+		t.Fatalf("expected single-line tool output, got %#v", lines)
 	}
-	for _, line := range lines[1:] {
-		if !strings.HasPrefix(line, "  ") {
-			t.Fatalf("expected wrapped tool continuation to align under the command, got %#v", lines)
-		}
+	if !strings.HasSuffix(lines[0], "…") {
+		t.Fatalf("expected truncated tool line with ellipsis, got %#v", lines)
+	}
+	if lipgloss.Width(lines[0]) > 34 {
+		t.Fatalf("expected truncated tool line to fit width, got %#v", lines)
 	}
 }
 
-func TestAppendWrappedStyledScreenLineDeemphasizesToolContinuations(t *testing.T) {
+func TestAppendWrappedStyledScreenLineKeepsTopLevelToolLinesSingleLine(t *testing.T) {
 	styles := newScreenStyles()
 	source := screenOutputLine{kind: DisplayKindTool, text: `· aw mail inbox --unread-only --format json 2>/dev/null | python3 -c "print(1)"`}
-	wrapped := wrapScreenLine(source, 34)
 	lines := appendWrappedStyledScreenLine(nil, source, 34, styles)
-	if len(lines) != len(wrapped) || len(lines) < 2 {
-		t.Fatalf("expected wrapped styled lines, got %#v", lines)
+	if len(lines) != 1 {
+		t.Fatalf("expected single styled tool line, got %#v", lines)
 	}
-	if !strings.Contains(lines[0], styles.toolMuted.Render(` --unread-only`)) {
-		t.Fatalf("expected first line arguments to be muted, got %#v", lines)
-	}
-	for i, line := range lines[1:] {
-		if line != styles.toolMuted.Render(wrapped[i+1]) {
-			t.Fatalf("expected continuation lines to be muted, got %#v", lines)
-		}
+	if !strings.Contains(lines[0], styles.toolMuted.Render(`…`)) {
+		t.Fatalf("expected truncated tool line to stay muted, got %#v", lines)
 	}
 }
 

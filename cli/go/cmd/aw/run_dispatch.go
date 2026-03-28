@@ -351,14 +351,14 @@ func formatWorkWakeDisplay(evt awid.AgentEvent) []awrun.DisplayLine {
 	var text string
 	switch evt.Type {
 	case awid.AgentEventWorkAvailable:
-		text = "• work available" + formatWakeTask(evt)
+		text = "● work available" + formatWakeTask(evt)
 	case awid.AgentEventClaimUpdate:
-		text = "• claim changed" + formatWakeTask(evt)
+		text = "● claim changed" + formatWakeTask(evt)
 		if status := strings.TrimSpace(evt.Status); status != "" {
 			text += " — " + status
 		}
 	case awid.AgentEventClaimRemoved:
-		text = "• claim removed" + formatWakeTask(evt)
+		text = "● claim removed" + formatWakeTask(evt)
 	default:
 		return nil
 	}

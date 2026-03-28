@@ -767,7 +767,7 @@ func TestNewRunDispatcherBuildsMailPrompt(t *testing.T) {
 		WorkPromptSuffix:  "work suffix",
 		CommsPromptSuffix: "comms suffix",
 	}, func(context.Context, awid.AgentEvent) (runWakeResolution, error) {
-		return runWakeResolution{CycleContext: "• from mia (mail): API review — please take a look"}, nil
+		return runWakeResolution{CycleContext: "● from mia (mail): API review — please take a look"}, nil
 	})
 
 	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
@@ -781,7 +781,7 @@ func TestNewRunDispatcherBuildsMailPrompt(t *testing.T) {
 	if decision.Skip {
 		t.Fatalf("expected mail wake to produce a prompt, got %+v", decision)
 	}
-	if !strings.Contains(decision.CycleContext, "• from mia (mail): API review — please take a look") {
+	if !strings.Contains(decision.CycleContext, "● from mia (mail): API review — please take a look") {
 		t.Fatalf("expected hydrated mail content, got %q", decision.CycleContext)
 	}
 	if len(decision.DisplayLines) == 0 || decision.DisplayLines[0].Kind != awrun.DisplayKindCommunication {
@@ -794,18 +794,18 @@ func TestNewRunDispatcherBuildsMailPrompt(t *testing.T) {
 
 func TestFormatIncomingMailContextIndentsMultiLineBodyUnderAlias(t *testing.T) {
 	got := formatIncomingMailContext("ivy", "Review request", "pass is complete.\n1. PTY default-off\n- cmd/aw/run.go")
-	want := "• from ivy (mail): Review request\n   pass is complete.\n   1. PTY default-off\n   - cmd/aw/run.go"
+	want := "● from ivy (mail): Review request\n   pass is complete.\n   1. PTY default-off\n   - cmd/aw/run.go"
 	if got != want {
 		t.Fatalf("unexpected mail context:\n%s", got)
 	}
-	if !strings.HasPrefix(got, "• from ivy (mail):") {
+	if !strings.HasPrefix(got, "● from ivy (mail):") {
 		t.Fatalf("expected mail label at the left edge, got %q", got)
 	}
 }
 
 func TestFormatIncomingChatContextIndentsMultiLineBodyUnderAlias(t *testing.T) {
 	got := formatIncomingChatContext("dave", "first line\nsecond line")
-	want := "• from dave (chat): first line\n   second line"
+	want := "● from dave (chat): first line\n   second line"
 	if got != want {
 		t.Fatalf("unexpected chat context:\n%s", got)
 	}
@@ -815,7 +815,7 @@ func TestNewRunDispatcherBuildsActionableChatPrompt(t *testing.T) {
 	dispatcher := newRunDispatcher(awrun.Settings{
 		CommsPromptSuffix: "comms suffix",
 	}, func(context.Context, awid.AgentEvent) (runWakeResolution, error) {
-		return runWakeResolution{CycleContext: "• from henry (chat): ping"}, nil
+		return runWakeResolution{CycleContext: "● from henry (chat): ping"}, nil
 	})
 
 	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
@@ -832,7 +832,7 @@ func TestNewRunDispatcherBuildsActionableChatPrompt(t *testing.T) {
 	if decision.Skip {
 		t.Fatalf("expected actionable chat wake to produce a prompt, got %+v", decision)
 	}
-	if !strings.Contains(decision.CycleContext, "• from henry (chat): ping") {
+	if !strings.Contains(decision.CycleContext, "● from henry (chat): ping") {
 		t.Fatalf("expected hydrated chat content, got %q", decision.CycleContext)
 	}
 	if len(decision.DisplayLines) == 0 || decision.DisplayLines[0].Kind != awrun.DisplayKindCommunication {
@@ -842,7 +842,7 @@ func TestNewRunDispatcherBuildsActionableChatPrompt(t *testing.T) {
 
 func TestNewRunDispatcherBuildsIdleActionableChatPrompt(t *testing.T) {
 	dispatcher := newRunDispatcher(awrun.Settings{}, func(context.Context, awid.AgentEvent) (runWakeResolution, error) {
-		return runWakeResolution{CycleContext: "• from rose (chat): when you have a moment"}, nil
+		return runWakeResolution{CycleContext: "● from rose (chat): when you have a moment"}, nil
 	})
 
 	decision, err := dispatcher.Next(context.Background(), false, &awid.AgentEvent{
@@ -858,7 +858,7 @@ func TestNewRunDispatcherBuildsIdleActionableChatPrompt(t *testing.T) {
 	if decision.Skip {
 		t.Fatalf("expected idle actionable chat wake to produce a prompt, got %+v", decision)
 	}
-	if !strings.Contains(decision.CycleContext, "• from rose (chat): when you have a moment") {
+	if !strings.Contains(decision.CycleContext, "● from rose (chat): when you have a moment") {
 		t.Fatalf("expected chat content, got %q", decision.CycleContext)
 	}
 	if len(decision.DisplayLines) == 0 || decision.DisplayLines[0].Kind != awrun.DisplayKindCommunication {
@@ -1113,7 +1113,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 	if !strings.Contains(prompts[1], "Primary mission:\npersistent mission") {
 		t.Fatalf("expected second prompt to preserve base mission, got %q", prompts[1])
 	}
-	if !strings.Contains(prompts[1], "• from mia (chat): can you review the retry path?") {
+	if !strings.Contains(prompts[1], "● from mia (chat): can you review the retry path?") {
 		t.Fatalf("expected second prompt to include unread chat content, got %q", prompts[1])
 	}
 	if len(builds) != 2 {
@@ -1221,7 +1221,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 	if len(prompts) != 2 {
 		t.Fatalf("expected 2 provider runs, got %d prompts: %#v", len(prompts), prompts)
 	}
-	if !strings.Contains(prompts[1], "• from henry (chat): ping") {
+	if !strings.Contains(prompts[1], "● from henry (chat): ping") {
 		t.Fatalf("expected actionable chat content, got %q", prompts[1])
 	}
 	if len(builds) != 2 || !builds[1].ContinueSession || builds[1].SessionID != "sess-42" {

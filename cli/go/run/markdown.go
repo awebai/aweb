@@ -18,7 +18,7 @@ const (
 	displayLeftMargin      = 2
 	defaultDisplayWidth    = 80
 	minMarkdownRenderWidth = 24
-	assistantBulletPrefix  = "• "
+	assistantBulletPrefix  = primaryBulletPrefix
 )
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)

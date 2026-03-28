@@ -248,7 +248,7 @@ func boldInteractionCommPrefix(line string, ansi bool) string {
 	}
 	indent := leadingInteractionWhitespace(line)
 	trimmed := strings.TrimPrefix(line, indent)
-	if !strings.HasPrefix(trimmed, "• from ") && !strings.HasPrefix(trimmed, "• to ") {
+	if !strings.HasPrefix(trimmed, "● from ") && !strings.HasPrefix(trimmed, "● to ") {
 		return line
 	}
 	headEnd := len(trimmed)
@@ -257,9 +257,9 @@ func boldInteractionCommPrefix(line string, ansi bool) string {
 	}
 	head := trimmed[:headEnd]
 	tail := trimmed[headEnd:]
-	bullet := "\x1b[32m•\x1b[0m"
-	if strings.HasPrefix(head, "•") {
-		head = bullet + "\x1b[1m" + strings.TrimPrefix(head, "•") + "\x1b[0m"
+	bullet := "\x1b[32m●\x1b[0m"
+	if strings.HasPrefix(head, "●") {
+		head = bullet + "\x1b[1m" + strings.TrimPrefix(head, "●") + "\x1b[0m"
 	}
 	return indent + head + tail
 }
@@ -311,10 +311,10 @@ func interactionCommContinuationIndent(line string) string {
 	indent := leadingInteractionWhitespace(line)
 	trimmed := strings.TrimPrefix(line, indent)
 	switch {
-	case strings.HasPrefix(trimmed, "• from "):
-		return indent + strings.Repeat(" ", len("• from "))
-	case strings.HasPrefix(trimmed, "• to "):
-		return indent + strings.Repeat(" ", len("• to "))
+	case strings.HasPrefix(trimmed, "● from "):
+		return indent + strings.Repeat(" ", utf8.RuneCountInString("● from "))
+	case strings.HasPrefix(trimmed, "● to "):
+		return indent + strings.Repeat(" ", utf8.RuneCountInString("● to "))
 	default:
 		return indent + "   "
 	}

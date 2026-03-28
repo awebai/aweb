@@ -52,10 +52,10 @@ func TestFormatInteractionRecapRendersConversationLikeSummary(t *testing.T) {
 	if !strings.Contains(recap, "I can do that with a small local recap.") {
 		t.Fatalf("expected agent line, got %q", recap)
 	}
-	if !strings.Contains(recap, "• from rose (chat): please keep it narrow") {
+	if !strings.Contains(recap, "● from rose (chat): please keep it narrow") {
 		t.Fatalf("expected chat line, got %q", recap)
 	}
-	if !strings.Contains(recap, "• to henry (mail): review — please take a look") {
+	if !strings.Contains(recap, "● to henry (mail): review — please take a look") {
 		t.Fatalf("expected outbound mail line, got %q", recap)
 	}
 }
@@ -71,7 +71,7 @@ func TestFormatInteractionRecapWrapsCommLinesWithHangingIndent(t *testing.T) {
 		},
 	}, 8, false, 44)
 
-	if !strings.Contains(recap, "• from dave (mail):") {
+	if !strings.Contains(recap, "● from dave (mail):") {
 		t.Fatalf("expected comm prefix, got %q", recap)
 	}
 	if !strings.Contains(recap, "\n   ") {

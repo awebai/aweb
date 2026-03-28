@@ -57,7 +57,6 @@ var _ UI = (*ScreenController)(nil)
 type screenStyles struct {
 	prompt      lipgloss.Style
 	separator   lipgloss.Style
-	agentBullet lipgloss.Style
 	agentText   lipgloss.Style
 	tool        lipgloss.Style
 	toolMuted   lipgloss.Style
@@ -67,7 +66,6 @@ type screenStyles struct {
 	task        lipgloss.Style
 	streamLabel lipgloss.Style
 	streamError lipgloss.Style
-	result      lipgloss.Style
 	done        lipgloss.Style
 	info        lipgloss.Style
 	status      lipgloss.Style
@@ -927,8 +925,7 @@ func newScreenStyles() screenStyles {
 	return screenStyles{
 		prompt:      lipgloss.NewStyle().Bold(true),
 		separator:   lipgloss.NewStyle(),
-		agentBullet: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "255", Dark: "255"}),
-		agentText:   lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "255"}),
+		agentText:   lipgloss.NewStyle(),
 		tool:        lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "244"}),
 		toolMuted:   lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "240"}),
 		commsBullet: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "34", Dark: "42"}),
@@ -937,7 +934,6 @@ func newScreenStyles() screenStyles {
 		task:        lipgloss.NewStyle().Bold(true),
 		streamLabel: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "244"}),
 		streamError: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"}),
-		result:      lipgloss.NewStyle(),
 		done:        lipgloss.NewStyle(),
 		info:        lipgloss.NewStyle(),
 		status: lipgloss.NewStyle().
@@ -1107,6 +1103,9 @@ func appendWrappedStyledScreenLine(lines []string, line screenOutputLine, width 
 }
 
 func wrapScreenLine(line screenOutputLine, width int) []string {
+	if line.kind == DisplayKindTool && width > 0 {
+		return []string{truncateDisplayWidth(line.text, width)}
+	}
 	if width <= 0 || lipgloss.Width(line.text) <= width {
 		return []string{line.text}
 	}
@@ -1195,6 +1194,30 @@ func splitWrapChunk(s string, width int) (string, string) {
 	return string(runes[:width]), strings.TrimLeft(string(runes[width:]), " ")
 }
 
+func truncateDisplayWidth(s string, width int) string {
+	const ellipsis = "…"
+	if width <= 0 || lipgloss.Width(s) <= width {
+		return s
+	}
+	if width <= lipgloss.Width(ellipsis) {
+		return ellipsis
+	}
+
+	target := width - lipgloss.Width(ellipsis)
+	var out strings.Builder
+	currentWidth := 0
+	for _, r := range s {
+		runeText := string(r)
+		runeWidth := lipgloss.Width(runeText)
+		if currentWidth+runeWidth > target {
+			break
+		}
+		out.WriteRune(r)
+		currentWidth += runeWidth
+	}
+	return strings.TrimRight(out.String(), " ") + ellipsis
+}
+
 func leadingWhitespace(s string) string {
 	idx := 0
 	for idx < len(s) && (s[idx] == ' ' || s[idx] == '\t') {
@@ -1256,8 +1279,6 @@ func styleWrappedScreenLine(line string, kind DisplayKind, wrapIndex int, styles
 		return styleScreenProviderLine(line, styles, false)
 	case DisplayKindProviderStderr:
 		return styleScreenProviderLine(line, styles, true)
-	case DisplayKindResult:
-		return styles.result.Render(line)
 	case DisplayKindDone:
 		return styles.done.Render(line)
 	case DisplayKindInfo:
@@ -1270,14 +1291,7 @@ func styleWrappedScreenLine(line string, kind DisplayKind, wrapIndex int, styles
 }
 
 func styleScreenAgentLine(line string, styles screenStyles) string {
-	indent := leadingWhitespace(line)
-	trimmed := strings.TrimPrefix(line, indent)
-	if strings.HasPrefix(trimmed, assistantBulletPrefix) {
-		bullet := strings.TrimRight(assistantBulletPrefix, " ")
-		rest := trimmed[len(bullet):]
-		return indent + styles.agentBullet.Render(bullet) + styles.agentText.Render(rest)
-	}
-	return indent + styles.agentText.Render(trimmed)
+	return styles.agentText.Render(line)
 }
 
 func styleScreenToolLine(line string, styles screenStyles) string {
@@ -1318,7 +1332,7 @@ func styleScreenToolClosingParen(line string, styles screenStyles) string {
 func styleScreenCommLine(line string, styles screenStyles) string {
 	indent := leadingWhitespace(line)
 	trimmed := strings.TrimPrefix(line, indent)
-	if !strings.HasPrefix(trimmed, "• from ") && !strings.HasPrefix(trimmed, "• to ") {
+	if !strings.HasPrefix(trimmed, primaryBulletPrefix+"from ") && !strings.HasPrefix(trimmed, primaryBulletPrefix+"to ") {
 		return line
 	}
 
@@ -1328,8 +1342,8 @@ func styleScreenCommLine(line string, styles screenStyles) string {
 	}
 	head := trimmed[:headEnd]
 	tail := trimmed[headEnd:]
-	if strings.HasPrefix(head, "•") {
-		return indent + styles.commsBullet.Render("•") + styles.comms.Render(strings.TrimPrefix(head, "•")) + tail
+	if strings.HasPrefix(head, primaryDisplayBullet) {
+		return indent + styles.commsBullet.Render(primaryDisplayBullet) + styles.comms.Render(strings.TrimPrefix(head, primaryDisplayBullet)) + tail
 	}
 	return indent + styles.comms.Render(head) + tail
 }
@@ -1337,7 +1351,7 @@ func styleScreenCommLine(line string, styles screenStyles) string {
 func styleScreenTaskLine(line string, styles screenStyles) string {
 	indent := leadingWhitespace(line)
 	trimmed := strings.TrimPrefix(line, indent)
-	if !strings.HasPrefix(trimmed, "•") {
+	if !strings.HasPrefix(trimmed, primaryDisplayBullet) {
 		return indent + styles.task.Render(trimmed)
 	}
 
@@ -1349,7 +1363,7 @@ func styleScreenTaskLine(line string, styles screenStyles) string {
 	}
 	head := trimmed[:headEnd]
 	tail := trimmed[headEnd:]
-	return indent + styles.taskBullet.Render("•") + styles.task.Render(strings.TrimPrefix(head, "•")) + tail
+	return indent + styles.taskBullet.Render(primaryDisplayBullet) + styles.task.Render(strings.TrimPrefix(head, primaryDisplayBullet)) + tail
 }
 
 func styleScreenProviderLine(line string, styles screenStyles, isError bool) string {
@@ -1378,12 +1392,12 @@ func labeledBodyContinuationIndent(line screenOutputLine) string {
 		return indent + strings.Repeat(" ", lipgloss.Width(label+leadingBodySpacing(tail)))
 	}
 	switch {
-	case strings.HasPrefix(trimmed, "• from "):
-		return indent + strings.Repeat(" ", len("• from "))
-	case strings.HasPrefix(trimmed, "• to "):
-		return indent + strings.Repeat(" ", len("• to "))
-	case strings.HasPrefix(trimmed, "• "):
-		return indent + strings.Repeat(" ", len("• "))
+	case strings.HasPrefix(trimmed, primaryBulletPrefix+"from "):
+		return indent + strings.Repeat(" ", lipgloss.Width(primaryBulletPrefix+"from "))
+	case strings.HasPrefix(trimmed, primaryBulletPrefix+"to "):
+		return indent + strings.Repeat(" ", lipgloss.Width(primaryBulletPrefix+"to "))
+	case strings.HasPrefix(trimmed, primaryBulletPrefix):
+		return indent + strings.Repeat(" ", lipgloss.Width(primaryBulletPrefix))
 	default:
 		return indent + "   "
 	}

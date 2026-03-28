@@ -41,22 +41,6 @@ func formatToolCallDisplay(call ToolCall) []DisplayLine {
 	return formatToolSummaryDisplay(call.Name, args, formatToolDescription(call.Input))
 }
 
-func formatToolResultDisplay(text string) []DisplayLine {
-	lines := trimOuterBlankLines(strings.Split(strings.ReplaceAll(text, "\r", ""), "\n"))
-	if len(lines) == 0 {
-		return nil
-	}
-	summary := truncateLine(strings.TrimSpace(lines[0]), 140)
-	if summary == "" {
-		summary = "(no output)"
-	}
-	textLine := "  = " + summary
-	if len(lines) > 1 {
-		textLine += fmt.Sprintf("  · +%d more", len(lines)-1)
-	}
-	return []DisplayLine{{Kind: DisplayKindResult, Text: textLine}}
-}
-
 func formatCoordinationToolCall(call ToolCall) (DisplayLine, bool) {
 	if !strings.EqualFold(strings.TrimSpace(call.Name), "Bash") {
 		return DisplayLine{}, false
@@ -82,13 +66,13 @@ func formatAWCoordinationCommand(command string) (DisplayLine, bool) {
 		action := strings.TrimSpace(fields[2])
 		switch action {
 		case "create":
-			return DisplayLine{Kind: DisplayKindTaskActivity, Text: "• task create"}, true
+			return DisplayLine{Kind: DisplayKindTaskActivity, Text: primaryBulletPrefix + "task create"}, true
 		case "update", "close":
 			ref := firstNonFlag(fields[3:])
 			if ref == "" {
 				return DisplayLine{}, false
 			}
-			return DisplayLine{Kind: DisplayKindTaskActivity, Text: fmt.Sprintf("• task %s %s", action, ref)}, true
+			return DisplayLine{Kind: DisplayKindTaskActivity, Text: fmt.Sprintf("%stask %s %s", primaryBulletPrefix, action, ref)}, true
 		default:
 			return DisplayLine{}, false
 		}
@@ -121,7 +105,7 @@ func FormatCommLabel(direction string, alias string, channel string) string {
 	alias = strings.TrimSpace(alias)
 	channel = strings.TrimSpace(channel)
 	direction = strings.TrimSpace(direction)
-	label := "•"
+	label := primaryDisplayBullet
 	if direction != "" {
 		label += " " + direction
 	}
@@ -149,7 +133,7 @@ func SplitDisplayText(kind DisplayKind, text string) []DisplayLine {
 }
 
 func isIncomingCommDisplay(display string) bool {
-	return strings.HasPrefix(strings.TrimSpace(display), "• from ")
+	return strings.HasPrefix(strings.TrimSpace(display), primaryBulletPrefix+"from ")
 }
 
 func findFlagValue(fields []string, flag string) string {

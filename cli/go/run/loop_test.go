@@ -380,7 +380,7 @@ func TestLoopRendersCodexMarkdownWithBulletLane(t *testing.T) {
 	if strings.Contains(got, "## Title") {
 		t.Fatalf("expected markdown heading to be rendered, got %q", got)
 	}
-	if !strings.Contains(got, "• Title") {
+	if !strings.Contains(got, "● Title") {
 		t.Fatalf("expected rendered text to start in the assistant bullet lane, got %q", got)
 	}
 	if !strings.Contains(got, "first item") {
@@ -398,7 +398,7 @@ func TestLoopAddsClaudeBulletLaneAcrossStreamingChunks(t *testing.T) {
 	loop.handleOutputLine(`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"world\n- item"}}}`, presenter, st, nil, nil)
 
 	got := out.String()
-	if !strings.Contains(got, "• Hello world") {
+	if !strings.Contains(got, "● Hello world") {
 		t.Fatalf("expected Claude text to start with the assistant bullet lane, got %q", got)
 	}
 	if !strings.Contains(got, "\n  - item") {
@@ -1551,15 +1551,15 @@ func TestRunOnceRendersIncomingCycleWithoutPromptMarker(t *testing.T) {
 		return nil
 	}
 
-	if err := loop.runOnce(context.Background(), LoopOptions{}, &state{}, "review", nil, []DisplayLine{{Kind: DisplayKindCommunication, Text: "• from architect (chat): can you review the retry path?"}}, ""); err != nil {
+	if err := loop.runOnce(context.Background(), LoopOptions{}, &state{}, "review", nil, []DisplayLine{{Kind: DisplayKindCommunication, Text: "● from architect (chat): can you review the retry path?"}}, ""); err != nil {
 		t.Fatalf("runOnce returned error: %v", err)
 	}
 
 	got := out.String()
-	if strings.Contains(got, "> • from architect (chat): can you review the retry path?") {
+	if strings.Contains(got, "> ● from architect (chat): can you review the retry path?") {
 		t.Fatalf("expected inbound cycle to avoid prompt marker, got %q", got)
 	}
-	if !strings.Contains(got, "\n• from architect (chat): can you review the retry path?\n") {
+	if !strings.Contains(got, "\n● from architect (chat): can you review the retry path?\n") {
 		t.Fatalf("expected inbound cycle line, got %q", got)
 	}
 }

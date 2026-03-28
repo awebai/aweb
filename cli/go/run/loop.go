@@ -548,12 +548,8 @@ func (l *Loop) handleOutputLine(line string, presenter *presenterState, st *stat
 		}
 		presenter.lastWasStructured = true
 	case EventToolResult:
-		st.StructuredOut = true
-		l.runPresenterEnsureStructuredSpacing(presenter)
-		for _, line := range formatToolResultDisplay(event.Text) {
-			l.displayLine(line.Kind, line.Text)
-		}
-		presenter.lastWasStructured = true
+		// Successful tool results stay out of the main transcript; the
+		// tool call itself is the only normal structured line we show.
 	case EventDone:
 		if event.IsError && strings.TrimSpace(event.Text) != "" {
 			st.LastRunError = strings.TrimSpace(event.Text)

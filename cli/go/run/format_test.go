@@ -65,7 +65,7 @@ func TestFormatToolCallLinesCompactsMailSendCommands(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected one line, got %#v", lines)
 	}
-	if lines[0].Kind != DisplayKindCommunication || lines[0].Text != "• to dave (mail)" {
+	if lines[0].Kind != DisplayKindCommunication || lines[0].Text != "● to dave (mail)" {
 		t.Fatalf("unexpected mail tool line %#v", lines[0])
 	}
 }
@@ -80,28 +80,8 @@ func TestFormatToolCallLinesCompactsChatSendCommands(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected one line, got %#v", lines)
 	}
-	if lines[0].Kind != DisplayKindCommunication || lines[0].Text != "• to henry (chat)" {
+	if lines[0].Kind != DisplayKindCommunication || lines[0].Text != "● to henry (chat)" {
 		t.Fatalf("unexpected chat tool line %#v", lines[0])
-	}
-}
-
-func TestFormatToolResultLinesPreservesLineBreaks(t *testing.T) {
-	lines := formatToolResultDisplay("1\talpha\n2\tbeta\n3\tgamma")
-	if len(lines) != 1 {
-		t.Fatalf("expected single summary line, got %#v", lines)
-	}
-	if lines[0].Text != "  = 1\talpha  · +2 more" {
-		t.Fatalf("unexpected result lines %#v", lines)
-	}
-}
-
-func TestFormatToolResultLinesSummarizesExtraLines(t *testing.T) {
-	lines := formatToolResultDisplay("1\n2\n3\n4\n5\n6\n7\n8")
-	if len(lines) != 1 {
-		t.Fatalf("expected one rendered line, got %#v", lines)
-	}
-	if lines[0].Text != "  = 1  · +7 more" {
-		t.Fatalf("unexpected overflow summary %#v", lines)
 	}
 }
 
@@ -115,7 +95,7 @@ func TestFormatToolCallLinesCompactsTaskUpdateCommands(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected one line, got %#v", lines)
 	}
-	if lines[0].Kind != DisplayKindTaskActivity || lines[0].Text != "• task update aweb-aaat.1" {
+	if lines[0].Kind != DisplayKindTaskActivity || lines[0].Text != "● task update aweb-aaat.1" {
 		t.Fatalf("unexpected task tool line %#v", lines[0])
 	}
 }

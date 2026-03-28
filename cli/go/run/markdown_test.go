@@ -19,7 +19,7 @@ func TestRenderCodexAssistantTextFormatsMarkdownAndAddsBulletLane(t *testing.T) 
 		t.Fatalf("expected inline code content to remain, got %q", plain)
 	}
 	lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "• ") {
+	if !strings.HasPrefix(lines[0], "● ") {
 		t.Fatalf("expected first rendered line to start with bullet lane, got %#v", lines)
 	}
 	for _, line := range lines[1:] {
@@ -40,7 +40,7 @@ func TestRenderCodexAssistantTextFallsBackToAssistantDisplayText(t *testing.T) {
 
 	plain := stripANSIEscapeCodes(prefixAssistantDisplayText("plain line\nsecond line", true))
 	lines := strings.Split(plain, "\n")
-	if lines[0] != "• plain line" || lines[1] != "  second line" {
+	if lines[0] != "● plain line" || lines[1] != "  second line" {
 		t.Fatalf("expected assistant bullet formatting, got %#v", lines)
 	}
 }
@@ -49,7 +49,7 @@ func TestPrefixAssistantDisplayTextOnlyPrefixesLineStarts(t *testing.T) {
 	first := prefixAssistantDisplayText("Hello ", true)
 	second := prefixAssistantDisplayText("world\nnext line", false)
 
-	if first != "• Hello " {
+	if first != "● Hello " {
 		t.Fatalf("unexpected first chunk %q", first)
 	}
 	if second != "world\n  next line" {
