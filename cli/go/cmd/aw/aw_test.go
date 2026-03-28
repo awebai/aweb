@@ -2631,13 +2631,13 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 	}
 }
 
-func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing.T) {
+func TestAwProjectCreateNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{"coordinator", "developer"}})
 		case "/api/v1/create-project":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status":         "ok",
@@ -2651,14 +2651,6 @@ func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testin
 				"did":            "did:key:z6MkTest",
 				"custody":        "self",
 				"lifetime":       "ephemeral",
-			})
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"coordinator": map[string]any{"title": "Coordinator"},
-					"developer":   map[string]any{"title": "Developer"},
-				},
 			})
 		case "/v1/workspaces/attach":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2695,18 +2687,15 @@ func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testin
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected missing-role error, got success:\n%s", string(out))
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "no role specified; available roles: coordinator, developer") {
-		t.Fatalf("unexpected error output:\n%s", string(out))
-	}
-	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
-		t.Fatalf("config should not be written on failure, statErr=%v", statErr)
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		t.Fatalf("config should be written on success, statErr=%v", statErr)
 	}
 }
 
-func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing.T) {
+func TestAwAcceptInviteNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2724,14 +2713,6 @@ func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing
 				"did":            "did:key:z6MkTest",
 				"custody":        "self",
 				"lifetime":       "ephemeral",
-			})
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"coordinator": map[string]any{"title": "Coordinator"},
-					"developer":   map[string]any{"title": "Developer"},
-				},
 			})
 		case "/v1/workspaces/attach":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2767,14 +2748,79 @@ func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected missing-role error, got success:\n%s", string(out))
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "no role specified; available roles: coordinator, developer") {
-		t.Fatalf("unexpected error output:\n%s", string(out))
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		t.Fatalf("config should be written on success, statErr=%v", statErr)
 	}
-	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
-		t.Fatalf("config should not be written on failure, statErr=%v", statErr)
+}
+
+func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/workspaces/init":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "demo",
+				"namespace_slug": "demo",
+				"identity_id":    "identity-new",
+				"alias":          "bob",
+				"api_key":        "aw_sk_new",
+				"created":        true,
+				"did":            "did:key:z6MkTest",
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+			})
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "coordinator", "roles": []string{"coordinator", "developer"}})
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "11111111-1111-1111-1111-111111111111",
+				"project_id":      "proj-1",
+				"project_slug":    "demo",
+				"alias":           "bob",
+				"human_name":      "Bob",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "init",
+		"--server-url", server.URL,
+		"--alias", "bob",
+		"--json",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=aw_sk_project",
+	)
+	run.Stdin = strings.NewReader("")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
+	}
+	if !json.Valid(extractJSON(t, out)) {
+		t.Fatalf("expected JSON output, got:\n%s", string(out))
+	}
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		t.Fatalf("config should be written on success, statErr=%v", statErr)
 	}
 }
 

@@ -428,16 +428,16 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 16: policy + work discovery
+# Phase 16: roles + work discovery
 # ---------------------------------------------------------------------------
-echo "=== Phase 16: policy + work ==="
+echo "=== Phase 16: roles + work ==="
 
-policy_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw policy show --json 2>/dev/null)"
-if [[ $? -eq 0 && -n "$policy_out" ]]; then
-  echo "  PASS: policy show"
+roles_out="$(AWEB_URL="$SERVER_URL" AWEB_API_KEY="$ALICE_KEY" run_aw roles show --json 2>/dev/null)"
+if [[ $? -eq 0 && -n "$roles_out" ]]; then
+  echo "  PASS: roles show"
   ((pass++))
 else
-  echo "  FAIL: policy show"
+  echo "  FAIL: roles show"
   ((fail++))
 fi
 

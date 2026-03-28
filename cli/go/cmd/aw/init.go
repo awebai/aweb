@@ -379,6 +379,14 @@ func resolveRequestedRole(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
 }
 
+func initRequiresWorkspaceRole(workingDir string, writeContext bool) bool {
+	if !writeContext {
+		return false
+	}
+	_, err := currentGitWorktreeRootFromDir(workingDir)
+	return err == nil
+}
+
 func resolveRoleInput(requested string, suggestedRoles []string, allowPrompt bool, promptFreeform bool, in io.Reader, out io.Writer) (string, error) {
 	requested = normalizeWorkspaceRole(requested)
 	if len(suggestedRoles) > 0 {
@@ -505,11 +513,12 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		suggestedRoles = suggestion.Roles
 	}
 	role := normalizeWorkspaceRole(input.Role)
+	requiresWorkspaceRole := initRequiresWorkspaceRole(input.WorkingDir, input.WriteContext)
 	if input.DeferRolePrompt {
 		if role != "" && !isValidWorkspaceRole(role) {
 			return initOptions{}, usageError("invalid role %q", role)
 		}
-	} else {
+	} else if role != "" || requiresWorkspaceRole {
 		role, err = resolveRoleInput(input.Role, suggestedRoles, input.Interactive && !input.JSONOutput, input.PromptRole, input.PromptIn, input.PromptOut)
 		if err != nil {
 			return initOptions{}, err
@@ -570,7 +579,7 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		AccountName:               strings.TrimSpace(input.AccountName),
 		WorkspaceRole:             role,
 		PromptAliasAfterBootstrap: input.DeferAliasPrompt,
-		PromptRoleAfterBootstrap:  input.DeferRolePrompt,
+		PromptRoleAfterBootstrap:  input.DeferRolePrompt && requiresWorkspaceRole,
 		Lifetime:                  resolveInitLifetime(input.Permanent),
 	}, nil
 }
@@ -712,7 +721,7 @@ func executeInit(opts initOptions) (*initResult, error) {
 	authClient, authClientErr := aweb.NewWithAPIKey(attachURL, resp.APIKey)
 
 	workspaceRole := strings.TrimSpace(opts.WorkspaceRole)
-	needsPostBootstrapRoleResolution := opts.WriteContext && (opts.PromptRoleAfterBootstrap || workspaceRole == "")
+	needsPostBootstrapRoleResolution := initRequiresWorkspaceRole(opts.WorkingDir, opts.WriteContext) && (opts.PromptRoleAfterBootstrap || workspaceRole == "")
 	if needsPostBootstrapRoleResolution && authClientErr == nil {
 		promptIn := opts.PromptIn
 		if promptIn == nil {
