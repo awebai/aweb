@@ -2581,7 +2581,7 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 				"custody":        "self",
 				"lifetime":       "ephemeral",
 			})
-		case "/v1/policies/active":
+		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"policy_id": "pol-1",
 				"roles": map[string]any{
@@ -2652,13 +2652,23 @@ func TestAwProjectCreateRequiresExplicitRoleInNonTTYWhenWritingContext(t *testin
 				"custody":        "self",
 				"lifetime":       "ephemeral",
 			})
-		case "/v1/policies/active":
+		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"policy_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},
 				},
+			})
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "11111111-1111-1111-1111-111111111111",
+				"project_id":      "proj-1",
+				"project_slug":    "demo",
+				"alias":           "alice",
+				"human_name":      "Alice",
+				"attachment_type": "local_dir",
+				"created":         true,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -2715,13 +2725,23 @@ func TestAwAcceptInviteRequiresExplicitRoleInNonTTYWhenWritingContext(t *testing
 				"custody":        "self",
 				"lifetime":       "ephemeral",
 			})
-		case "/v1/policies/active":
+		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"policy_id": "pol-1",
 				"roles": map[string]any{
 					"coordinator": map[string]any{"title": "Coordinator"},
 					"developer":   map[string]any{"title": "Developer"},
 				},
+			})
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "11111111-1111-1111-1111-111111111111",
+				"project_id":      "proj-1",
+				"project_slug":    "demo",
+				"alias":           "alice",
+				"human_name":      "Alice",
+				"attachment_type": "local_dir",
+				"created":         true,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -4204,7 +4224,7 @@ func TestInitWorkspaceAttachNonFatal(t *testing.T) {
 		case "/v1/workspaces/register":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		case "/v1/policies/active":
+		case "/v1/roles/active":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 		default:
