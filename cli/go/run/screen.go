@@ -79,6 +79,11 @@ type screenOutputLine struct {
 
 const screenFooterBaseLines = 3
 
+const (
+	maxReadableTranscriptWidth = 60
+	transcriptWidthMargin      = 5
+)
+
 var screenSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 func NewScreenController(in io.Reader, out io.Writer) *ScreenController {
@@ -648,6 +653,13 @@ func (s *ScreenController) clearFooterLocked() {
 	s.footerCursorCol = 0
 }
 
+func contentWidthForTerminalWidth(width int) int {
+	if width <= 0 {
+		return maxReadableTranscriptWidth
+	}
+	return max(1, min(maxReadableTranscriptWidth, width-transcriptWidthMargin))
+}
+
 func (s *ScreenController) renderFooterLocked() {
 	if !s.active {
 		return
@@ -676,7 +688,7 @@ func (s *ScreenController) renderFooterLinesLocked(width int) []string {
 }
 
 func (s *ScreenController) renderFooterLayoutLocked(width int) promptLayout {
-	currentLines := s.renderCurrentLinesLocked(width)
+	currentLines := s.renderCurrentLinesLocked(contentWidthForTerminalWidth(width))
 	lines := append([]string{}, currentLines...)
 	spacerLines := 0
 	if len(s.lines) > 0 || len(currentLines) > 0 {
@@ -716,7 +728,7 @@ func (s *ScreenController) renderStatusLineLocked(width int) string {
 }
 
 func (s *ScreenController) printOutputLineLocked(line screenOutputLine) {
-	lines := appendWrappedStyledScreenLine(nil, line, s.terminalWidthLocked(), s.styles)
+	lines := appendWrappedStyledScreenLine(nil, line, contentWidthForTerminalWidth(s.terminalWidthLocked()), s.styles)
 	lines = append(lines, "")
 	writeScreenLines(s.outputFile, lines)
 }
@@ -1295,29 +1307,7 @@ func styleScreenAgentLine(line string, styles screenStyles) string {
 }
 
 func styleScreenToolLine(line string, styles screenStyles) string {
-	const prefix = "· "
-	if !strings.HasPrefix(line, prefix) {
-		return styles.tool.Render(line)
-	}
-
-	rest := line[len(prefix):]
-	if rest == "" {
-		return styles.tool.Render(line)
-	}
-
-	headEnd := len(rest)
-	if idx := strings.Index(rest, "("); idx >= 0 {
-		headEnd = idx
-	} else if idx := strings.Index(rest, " "); idx >= 0 {
-		headEnd = idx
-	}
-	if headEnd <= 0 || headEnd >= len(rest) {
-		return styles.tool.Render(line)
-	}
-
-	head := prefix + rest[:headEnd]
-	tail := rest[headEnd:]
-	return styles.tool.Render(head) + styles.toolMuted.Render(tail)
+	return styles.toolMuted.Render(line)
 }
 
 func styleScreenToolClosingParen(line string, styles screenStyles) string {

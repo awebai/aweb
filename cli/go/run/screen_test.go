@@ -82,7 +82,7 @@ func TestStyleWrappedScreenLineUsesDisplayKinds(t *testing.T) {
 func TestStyleScreenLineKeepsToolArgumentsNeutralOnFirstLine(t *testing.T) {
 	styles := newScreenStyles()
 	got := styleScreenLine(screenOutputLine{kind: DisplayKindTool, text: `· View /tmp/image.png`}, styles)
-	want := styles.tool.Render(`· View`) + styles.toolMuted.Render(` /tmp/image.png`)
+	want := styles.toolMuted.Render(`· View /tmp/image.png`)
 	if got != want {
 		t.Fatalf("unexpected styled tool line %q", got)
 	}
@@ -100,7 +100,7 @@ func TestStyleScreenLineStylesAgentBulletLane(t *testing.T) {
 func TestStyleScreenLineDeemphasizesToolArgsAfterOpeningParen(t *testing.T) {
 	styles := newScreenStyles()
 	got := styleScreenLine(screenOutputLine{kind: DisplayKindTool, text: `· browser_click(ref="abc", element="Submit")`}, styles)
-	want := styles.tool.Render(`· browser_click`) + styles.toolMuted.Render(`(ref="abc", element="Submit")`)
+	want := styles.toolMuted.Render(`· browser_click(ref="abc", element="Submit")`)
 	if got != want {
 		t.Fatalf("unexpected styled tool line %q", got)
 	}
@@ -259,6 +259,15 @@ func TestWrapScreenLineUsesHangingIndentForAgentText(t *testing.T) {
 		if !strings.HasPrefix(line, "  ") {
 			t.Fatalf("expected assistant continuation indent, got %#v", lines)
 		}
+	}
+}
+
+func TestContentWidthForTerminalWidthCapsReadableColumn(t *testing.T) {
+	if got := contentWidthForTerminalWidth(120); got != 60 {
+		t.Fatalf("expected wide terminal to cap at 60, got %d", got)
+	}
+	if got := contentWidthForTerminalWidth(50); got != 45 {
+		t.Fatalf("expected terminal width 50 to leave a 5-column margin, got %d", got)
 	}
 }
 

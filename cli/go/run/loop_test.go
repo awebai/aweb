@@ -53,8 +53,15 @@ func (r *recordingUI) AppendText(text string) {
 	r.output += text
 }
 
+func (r *recordingUI) AppendDisplayText(_ DisplayKind, text string) {
+	r.AppendText(text)
+}
+
 func (r *recordingUI) AppendLine(text string) {
 	r.AppendText(text + "\n")
+}
+func (r *recordingUI) AppendDisplayLine(_ DisplayKind, text string) {
+	r.AppendLine(text)
 }
 func (r *recordingUI) SetInputLine(string)      {}
 func (r *recordingUI) ClearInputLine()          {}
@@ -406,6 +413,40 @@ func TestLoopAddsClaudeBulletLaneAcrossStreamingChunks(t *testing.T) {
 	}
 	if strings.Contains(got, "Hello   world") {
 		t.Fatalf("expected no extra indentation injected mid-line, got %q", got)
+	}
+}
+
+func TestLoopLeavesBlankLineAfterAgentTextBeforeToolOutput(t *testing.T) {
+	var out bytes.Buffer
+	loop := NewLoop(ClaudeProvider{}, &out)
+	st := &state{}
+	presenter := &presenterState{}
+
+	loop.handleOutputLine(`{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"I am checking the current diff."}}}`, presenter, st, nil, nil)
+	loop.handleOutputLine(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git status --short"}}]}}`, presenter, st, nil, nil)
+
+	got := out.String()
+	if !strings.Contains(got, "I am checking the current diff.\n\n· git status --short") {
+		t.Fatalf("expected a blank line between agent text and the next tool line, got %q", got)
+	}
+}
+
+func TestScreenModeDoesNotAddExtraSpacerAfterCompletedAgentLine(t *testing.T) {
+	ui := newRecordingUI()
+	loop := NewLoop(ClaudeProvider{}, io.Discard)
+	loop.Control = ui
+	presenter := &presenterState{
+		lastWasText:              true,
+		lastTextEndedWithNewline: true,
+		lastTextKind:             DisplayKindAgentText,
+	}
+
+	loop.runPresenterEnsureStructuredSpacing(presenter)
+
+	ui.outputMu.Lock()
+	defer ui.outputMu.Unlock()
+	if ui.output != "" {
+		t.Fatalf("expected no extra screen-mode spacer after a completed agent line, got %q", ui.output)
 	}
 }
 

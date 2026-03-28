@@ -10,6 +10,7 @@ type presenterState struct {
 	lastWasText              bool
 	lastWasStructured        bool
 	lastTextEndedWithNewline bool
+	lastTextKind             DisplayKind
 	rawLineOpen              bool
 	rawLineLabel             string
 }
