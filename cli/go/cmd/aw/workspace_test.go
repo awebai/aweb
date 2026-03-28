@@ -337,6 +337,9 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"branch":           "main",
 						"focus_task_ref":   "aweb-aaaa",
 						"focus_task_title": "Restore rich coordination status",
+						"apex_id":          "AWEB-AAAA",
+						"apex_title":       "Restore rich coordination status",
+						"apex_type":        "epic",
 						"claims": []map[string]any{
 							{"bead_id": "TASK-001", "title": "Own task", "claimed_at": "2026-03-10T10:00:00Z"},
 						},
@@ -351,6 +354,9 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"branch":           "review-branch",
 						"focus_task_ref":   "TASK-002",
 						"focus_task_title": "Peer task",
+						"apex_id":          "TASK-900",
+						"apex_title":       "Review release",
+						"apex_type":        "task",
 						"claims": []map[string]any{
 							{"bead_id": "TASK-002", "title": "Peer task", "claimed_at": "2026-03-10T10:01:00Z"},
 						},
@@ -459,6 +465,7 @@ default_account: acct
 		"- Repo: github.com/acme/repo",
 		"- Branch: main",
 		"- Focus: aweb-aaaa (Restore rich coordination status)",
+		"- Epic: AWEB-AAAA (Restore rich coordination status)",
 		"- Claims: TASK-001 \"Own task\" (",
 		"[stale]",
 		"- Locks: src/main.go (TTL:",
@@ -466,6 +473,7 @@ default_account: acct
 		"bob (reviewer) — idle, seen ",
 		"Repo: github.com/acme/other  Branch: review-branch",
 		"Focus: TASK-002 (Peer task)",
+		"Working on: TASK-900 (Review release)",
 		"Claims: TASK-002 \"Peer task\" (",
 		"Locks: src/review.go (TTL:",
 		"Escalations pending: 2",
@@ -501,6 +509,9 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 						"status":       "active",
 						"repo":         "github.com/acme/ac",
 						"branch":       "main",
+						"apex_id":      "EPIC-22",
+						"apex_title":   "Release coordination",
+						"apex_type":    "epic",
 						"claims": []map[string]any{
 							{"bead_id": "TASK-100", "title": "Coordinate release", "claimed_at": "2026-03-10T10:01:00Z"},
 						},
@@ -582,8 +593,9 @@ default_account: acct
 		"- Locks: none",
 		"## Team",
 		"reviewer-jane (coordinator) — active",
-		"Repo: github.com/acme/ac  Branch: main",
+		"Repo: github.com/acme/ac",
 		"Focus: none",
+		"Epic: EPIC-22 (Release coordination)",
 		"Claims: TASK-100 \"Coordinate release\" (",
 		"Locks: none",
 		"floating — idle",
@@ -595,6 +607,106 @@ default_account: acct
 	}
 	if strings.Contains(text, "floating — idle\n  Repo:") {
 		t.Fatalf("expected repo line to be omitted when repo/branch are empty:\n%s", text)
+	}
+	if strings.Contains(text, "Repo: github.com/acme/ac  Branch: main") {
+		t.Fatalf("expected main branch to be hidden for team workspaces:\n%s", text)
+	}
+}
+
+func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
+	t.Parallel()
+
+	const selfID = "11111111-1111-1111-1111-111111111111"
+	const peerID = "44444444-4444-4444-4444-444444444444"
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/workspaces/team":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{
+					{
+						"workspace_id": selfID,
+						"alias":        "alice",
+						"status":       "active",
+					},
+					{
+						"workspace_id": peerID,
+						"alias":        "bob",
+						"status":       "active",
+					},
+				},
+				"has_more": false,
+			})
+		case "/v1/reservations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"reservations": []map[string]any{
+					{"project_id": "proj-1", "resource_key": "src/1.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"project_id": "proj-1", "resource_key": "src/2.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"project_id": "proj-1", "resource_key": "src/3.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"project_id": "proj-1", "resource_key": "src/4.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+				},
+			})
+		case "/v1/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace": map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"agents":    []map[string]any{},
+				"claims":    []map[string]any{},
+				"conflicts": []map[string]any{},
+				"timestamp": "2026-03-10T10:10:00Z",
+			})
+		case "/v1/workspaces":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
+servers:
+  local:
+    url: `+server.URL+`
+accounts:
+  acct:
+    server: local
+    api_key: aw_sk_test
+    identity_id: `+selfID+`
+    identity_handle: alice
+    namespace_slug: demo
+default_account: acct
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "status")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "Locks: src/1.go (TTL:") || !strings.Contains(text, "...1 more") {
+		t.Fatalf("expected truncated team lock summary:\n%s", text)
+	}
+	if strings.Contains(text, "src/4.go") {
+		t.Fatalf("expected fourth lock to be hidden behind overflow indicator:\n%s", text)
 	}
 }
 

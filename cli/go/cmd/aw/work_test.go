@@ -175,12 +175,15 @@ default_account: acct
 	for _, want := range []string{
 		"Active work (2):",
 		"## github.com/awebai/ac",
-		"  TASK-010  P1  Native task  alice  main",
+		"  TASK-010  P1  [task] Native task  alice",
 		"## github.com/awebai/aweb",
-		"  TASK-020  P2  Claim-backed task  bob  feat/summary",
+		"  TASK-020  P2  [bug] Claim-backed task  bob  feat/summary",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("active output missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "alice  main") {
+		t.Fatalf("active output should hide main/master branches:\n%s", text)
 	}
 }

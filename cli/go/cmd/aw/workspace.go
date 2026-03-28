@@ -934,8 +934,11 @@ func formatWorkspaceStatus(v any) string {
 		sb.WriteString(fmt.Sprintf("- Branch: %s\n", strings.TrimSpace(*out.Workspace.Branch)))
 	}
 	sb.WriteString(fmt.Sprintf("- Focus: %s\n", formatWorkspaceFocus(out.Workspace)))
+	if apexLine := formatWorkspaceApexLine(out.Workspace); apexLine != "" {
+		sb.WriteString(fmt.Sprintf("- %s\n", apexLine))
+	}
 	sb.WriteString(fmt.Sprintf("- Claims: %s\n", formatWorkspaceClaimsSummary(out.Workspace.Claims)))
-	sb.WriteString(fmt.Sprintf("- Locks: %s\n", formatWorkspaceLocksSummary(out.Locks, now)))
+	sb.WriteString(fmt.Sprintf("- Locks: %s\n", formatWorkspaceLocksSummary(out.Locks, now, 0)))
 
 	sb.WriteString("\n## Team\n")
 	if len(out.Team) == 0 {
@@ -951,12 +954,15 @@ func formatWorkspaceStatus(v any) string {
 				line += ", seen " + formatTimeAgo(lastSeen)
 			}
 			sb.WriteString(line + "\n")
-			if repoLine := formatWorkspaceRepoBranch(workspace); repoLine != "" {
+			if repoLine := formatWorkspaceRepoBranch(workspace, true); repoLine != "" {
 				sb.WriteString(fmt.Sprintf("  %s\n", repoLine))
 			}
 			sb.WriteString(fmt.Sprintf("  Focus: %s\n", formatWorkspaceFocus(workspace)))
+			if apexLine := formatWorkspaceApexLine(workspace); apexLine != "" {
+				sb.WriteString(fmt.Sprintf("  %s\n", apexLine))
+			}
 			sb.WriteString(fmt.Sprintf("  Claims: %s\n", formatWorkspaceClaimsSummary(workspace.Claims)))
-			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now)))
+			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now, 3)))
 		}
 	}
 
@@ -967,9 +973,12 @@ func formatWorkspaceStatus(v any) string {
 	return sb.String()
 }
 
-func formatWorkspaceRepoBranch(workspace aweb.WorkspaceInfo) string {
+func formatWorkspaceRepoBranch(workspace aweb.WorkspaceInfo, hideDefaultBranch bool) string {
 	repo := strings.TrimSpace(derefString(workspace.Repo))
 	branch := strings.TrimSpace(derefString(workspace.Branch))
+	if hideDefaultBranch && isDefaultBranch(branch) {
+		branch = ""
+	}
 	switch {
 	case repo != "" && branch != "":
 		return fmt.Sprintf("Repo: %s  Branch: %s", repo, branch)
@@ -993,6 +1002,21 @@ func formatWorkspaceFocus(workspace aweb.WorkspaceInfo) string {
 	return focusRef
 }
 
+func formatWorkspaceApexLine(workspace aweb.WorkspaceInfo) string {
+	apexID := strings.TrimSpace(derefString(workspace.ApexID))
+	if apexID == "" {
+		return ""
+	}
+	prefix := "Working on"
+	if strings.EqualFold(derefString(workspace.ApexType), "epic") {
+		prefix = "Epic"
+	}
+	if apexTitle := strings.TrimSpace(derefString(workspace.ApexTitle)); apexTitle != "" {
+		return fmt.Sprintf("%s: %s (%s)", prefix, apexID, apexTitle)
+	}
+	return fmt.Sprintf("%s: %s", prefix, apexID)
+}
+
 func formatWorkspaceClaimsSummary(claims []aweb.WorkspaceClaim) string {
 	if len(claims) == 0 {
 		return "none"
@@ -1014,13 +1038,20 @@ func formatWorkspaceClaimsSummary(claims []aweb.WorkspaceClaim) string {
 	return strings.Join(parts, ", ")
 }
 
-func formatWorkspaceLocksSummary(locks []aweb.ReservationView, now time.Time) string {
+func formatWorkspaceLocksSummary(locks []aweb.ReservationView, now time.Time, limit int) string {
 	if len(locks) == 0 {
 		return "none"
 	}
-	parts := make([]string, 0, len(locks))
-	for _, lock := range locks {
+	display := locks
+	if limit > 0 && len(display) > limit {
+		display = display[:limit]
+	}
+	parts := make([]string, 0, len(display)+1)
+	for _, lock := range display {
 		parts = append(parts, fmt.Sprintf("%s (TTL: %s)", lock.ResourceKey, formatDuration(ttlRemainingSeconds(lock.ExpiresAt, now))))
+	}
+	if limit > 0 && len(locks) > limit {
+		parts = append(parts, fmt.Sprintf("...%d more", len(locks)-limit))
 	}
 	return strings.Join(parts, ", ")
 }

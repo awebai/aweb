@@ -225,20 +225,15 @@ func formatWorkList(v any) string {
 			if owner == "" {
 				owner = "-"
 			}
-			branch := strings.TrimSpace(valueOrEmpty(item.Branch))
-			if branch == "" {
-				branch = "-"
-			}
-			sb.WriteString(
-				fmt.Sprintf(
-					"  %s  P%d  %s  %s  %s\n",
-					item.TaskRef,
-					item.Priority,
-					item.Title,
-					owner,
-					branch,
-				),
+			line := fmt.Sprintf(
+				"  %s  P%d  %s  %s  %s",
+				item.TaskRef,
+				item.Priority,
+				formatWorkTaskTitle(item.TaskType, item.Title),
+				owner,
+				formatOptionalBranch(item.Branch),
 			)
+			sb.WriteString(strings.TrimRight(line, " ") + "\n")
 		}
 		return sb.String()
 	}
@@ -282,4 +277,29 @@ func isClaimStale(claimedAt string) bool {
 		return false
 	}
 	return time.Since(ts) > 24*time.Hour
+}
+
+func formatWorkTaskTitle(taskType, title string) string {
+	taskType = strings.TrimSpace(taskType)
+	if taskType == "" {
+		return title
+	}
+	return fmt.Sprintf("[%s] %s", taskType, title)
+}
+
+func formatOptionalBranch(branch *string) string {
+	value := strings.TrimSpace(valueOrEmpty(branch))
+	if value == "" || isDefaultBranch(value) {
+		return ""
+	}
+	return value
+}
+
+func isDefaultBranch(branch string) bool {
+	switch strings.TrimSpace(branch) {
+	case "main", "master":
+		return true
+	default:
+		return false
+	}
 }
