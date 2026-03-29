@@ -146,7 +146,7 @@ func init() {
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
-	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject the active aw project instructions into CLAUDE.md and AGENTS.md")
+	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
@@ -1047,7 +1047,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 		lines = append(lines, formatInitNextStep("aw claim-human --email you@example.com", "Attach your human account for dashboard access"))
 	}
 	if !didInjectDocs {
-		lines = append(lines, formatInitNextStep("aw init --inject-docs", "Add project instructions to CLAUDE.md / AGENTS.md"))
+		lines = append(lines, formatInitNextStep("aw init --inject-docs", "Add coordination instructions to CLAUDE.md / AGENTS.md"))
 	}
 	if !didSetupHooks {
 		lines = append(lines, formatInitNextStep("aw init --setup-hooks", "Set up Claude Code chat notification hook"))

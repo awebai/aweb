@@ -71,8 +71,8 @@ global default account for one repo.
 
 ## Injected Coordination Docs
 
-Several bootstrap commands can inject the active shared project instructions
-from the server into local agent-facing docs:
+Several bootstrap commands can inject coordination instructions into local
+agent-facing docs:
 
 - `aw project create --inject-docs`
 - `aw init --inject-docs`
@@ -85,14 +85,13 @@ The injector targets:
 
 If neither file exists, it creates `AGENTS.md`.
 
-The injected block wraps the active project instructions with local markers.
-The default shared instructions currently start with:
+The injected block includes the default coordination starter commands:
 
 ```bash
+aw roles show
 aw workspace status
 aw work ready
 aw mail inbox
-aw roles show
 ```
 
 ## Related Runtime Config

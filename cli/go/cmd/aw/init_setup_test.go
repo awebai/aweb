@@ -19,18 +19,6 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/agents/suggest-alias-prefix":
 			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "reviewer", "roles": []string{}})
-		case "/v1/instructions/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_instructions_id":        "instructions-1",
-				"active_project_instructions_id": "instructions-1",
-				"project_id":                     "proj-1",
-				"version":                        1,
-				"updated_at":                     "2026-03-10T10:00:00Z",
-				"document": map[string]any{
-					"body_md": "## Shared Rules\n\nUse `aw`.\n",
-					"format":  "markdown",
-				},
-			})
 		case "/api/v1/create-project":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-1",
@@ -94,7 +82,7 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"Created AGENTS.md with aw project instructions",
+		"Created AGENTS.md with aw coordination instructions",
 		"settings.json with notification hook",
 	} {
 		if !strings.Contains(text, want) {
@@ -106,7 +94,7 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(agentsData), awDocsMarkerStart) || !strings.Contains(string(agentsData), "## Shared Rules") {
+	if !strings.Contains(string(agentsData), awDocsMarkerStart) {
 		t.Fatalf("AGENTS.md missing injected docs:\n%s", string(agentsData))
 	}
 

@@ -153,11 +153,7 @@ func resolveClient() (*aweb.Client, error) {
 // to work even when the local signing key is missing or invalid.
 func resolveAPIKeyOnly() (*aweb.Client, *awconfig.Selection, error) {
 	wd, _ := os.Getwd()
-	return resolveAPIKeyOnlyForDir(wd)
-}
-
-func resolveAPIKeyOnlyForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionForDir(workingDir)
+	sel, err := resolveSelectionForDir(wd)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -19,7 +19,7 @@ Useful flags:
 - `--role-name`: initial workspace role name
 - `--alias`: explicit ephemeral alias
 - `--permanent`: opt into a durable self-custodial identity
-- `--inject-docs`: add the active shared project instructions to `CLAUDE.md` and `AGENTS.md`
+- `--inject-docs`: add coordination guidance to `CLAUDE.md` and `AGENTS.md`
 - `--setup-hooks`: install the Claude Code `aw notify` hook
 
 ## Join An Existing Project

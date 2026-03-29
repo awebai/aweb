@@ -158,7 +158,7 @@ func init() {
 	spawnAcceptInviteCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: invite or server-suggested)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
-	spawnAcceptInviteCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject the active aw project instructions into CLAUDE.md and AGENTS.md")
+	spawnAcceptInviteCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
 	spawnAcceptInviteCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
