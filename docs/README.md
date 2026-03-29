@@ -5,6 +5,8 @@ staged public `aweb` repo.
 
 User guides:
 
+- [agent-guide.txt](agent-guide.txt): canonical onboarding guide delivered to
+  agents by `aw run`
 - [getting-started.md](getting-started.md): Docker/source setup and first-project
   flow
 - [aw-run.md](aw-run.md): `aw run` wizard, providers, session continuity, and

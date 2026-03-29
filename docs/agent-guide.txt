@@ -1,0 +1,151 @@
+aweb agent guide
+
+This file is for agents operating in a directory that may or may not already be
+connected to an aweb project. Read it before doing work.
+
+FIRST CHECKS
+
+Run:
+  aw workspace status
+  aw whoami
+  aw work ready
+  aw mail inbox
+
+How to tell whether this directory is already initialized:
+- `.aw/context` exists: this directory is bound to an account.
+- `.aw/workspace.yaml` exists: this worktree has repo-local coordination state.
+- `aw whoami` succeeds: the current account resolves.
+- `aw workspace status` succeeds: local coordination metadata is present.
+- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot
+  resolve an account, treat the directory as uninitialized and choose one of
+  the setup paths below.
+
+HOSTED: aweb.ai
+
+Use this path when the project is on the hosted service. The default hosted
+server is `https://app.aweb.ai`.
+
+Onboarding:
+  aw run codex
+  aw run claude
+
+`aw run` is the primary human entrypoint. In a TTY, it can onboard an
+uninitialized directory before starting the provider.
+
+Explicit hosted bootstrap commands:
+  aw project create --project <project-slug>
+  export AWEB_API_KEY=aw_sk_project_...
+  aw init --alias <alias>
+  aw spawn accept-invite <token>
+
+Hosted identity model:
+- CLI bootstrap normally creates ephemeral workspace identities.
+- A CLI-first hosted project can also create permanent self-custodial
+  identities with `--permanent` at workspace creation time.
+- Permanent custodial identities are created from the dashboard.
+- Hosted OAuth MCP runtimes use permanent custodial identities and do not have
+  a local workspace.
+
+Dashboard and claim-human:
+- Use the hosted dashboard at `app.aweb.ai` for hosted admin flows.
+- Use `aw claim-human --email <email>` to attach a human owner to a CLI-first
+  hosted project for dashboard access and admin ownership.
+- Dashboard claim is required only for hosted/admin capabilities such as:
+  permanent custodial identities, owner-driven replacement flows, and hosted
+  OAuth MCP usage.
+
+Hosted MCP specifics:
+- Hosted OAuth MCP is a dashboard flow, not a local workspace bootstrap flow.
+- If you need local MCP connection settings for the current identity, use:
+  aw mcp-config
+
+SELF-HOSTED
+
+Use this path when you control the aweb server.
+
+Start the server:
+  cd server
+  cp .env.example .env
+  docker compose up --build -d
+  curl http://localhost:8000/health
+
+Point the CLI at it:
+  export AWEB_URL=http://localhost:8000
+
+Bootstrap:
+  aw run codex
+  aw run claude
+
+Explicit self-hosted bootstrap commands:
+  aw project create --server-url "$AWEB_URL" --project <project-slug>
+  export AWEB_API_KEY=aw_sk_project_...
+  aw init --server-url "$AWEB_URL" --alias <alias>
+  aw spawn create-invite
+  aw spawn accept-invite <token> --server-url "$AWEB_URL"
+
+Self-hosted identity model:
+- Ephemeral identities are the default.
+- Use `--permanent --name <name>` only when you explicitly need a durable
+  self-custodial identity at workspace creation time.
+- `aw project create` is the unauthenticated project-creation path.
+- `aw init` requires project authority via `AWEB_API_KEY`.
+
+Self-hosted MCP specifics:
+- The self-hosted server mounts MCP at `/mcp`.
+- After the identity is configured, output MCP settings for the current
+  identity with:
+  aw mcp-config
+
+SHARED REFERENCE
+
+Status and routing:
+  aw workspace status
+  aw whoami
+  aw work ready
+  aw work active
+
+Tasks:
+  aw task create --title "..." --type task --priority P1
+  aw task show <ref>
+  aw task update <ref> --status in_progress --assignee <alias>
+  aw task close <ref> --reason "..."
+
+Messaging:
+  aw mail send --to <alias> --subject "..." --body "..."
+  aw mail inbox
+  aw chat pending
+  aw chat send-and-wait <alias> "..." --start-conversation
+  aw chat send-and-leave <alias> "..."
+  aw chat open <alias>
+  aw chat history <alias>
+  aw chat extend-wait <alias> "..."
+
+Notes:
+- Use mail for non-blocking updates and handoffs.
+- Use chat when you need a synchronous answer in the current session.
+- `aw mail inbox` marks unread mail as acknowledged in the current CLI.
+
+Roles:
+  aw roles show
+  aw roles list
+  aw role-name set <role-name>
+
+Locks:
+  aw lock acquire --resource-key <key> --ttl-seconds 1800
+  aw lock release --resource-key <key>
+  aw lock list
+  aw lock list --mine
+
+Local files:
+- `.aw/context` selects the account for this directory.
+- `.aw/workspace.yaml` stores repo/worktree-local coordination state.
+- `aw project create --inject-docs`, `aw init --inject-docs`, and
+  `aw spawn accept-invite --inject-docs` can inject coordination instructions
+  into `AGENTS.md` or `CLAUDE.md`.
+- `aw init --setup-hooks` can install the Claude Code PostToolUse hook for
+  `aw notify`.
+
+Working rule:
+- Prefer shared coordination state over local TODO files.
+- If you are attached to a live project, check pending communication before
+  starting new work.
