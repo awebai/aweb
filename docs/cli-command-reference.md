@@ -607,10 +607,6 @@ Flags:
 
 In a TTY, if this directory is not initialized yet, aw run can guide you through new-project creation or existing-project init before starting the provider. The explicit bootstrap commands remain available for scripts and expert use: aw project create, aw init, aw spawn accept-invite, and aw connect.  Current implementation includes: - repeated provider invocations (currently Claude and Codex) - provider session continuity when --continue is requested - /stop, /wait, /resume, /autofeed on|off, /quit, and prompt override controls - aw event-stream wakeups for mail, chat, and optional work events - optional background services declared in aw run config  This aw-first command intentionally excludes bead-specific dispatch.
 
-Note: the current live CLI help on this branch does not expose a separate
-`--trip-on-danger` flag. Danger-handling remains provider-specific and is not
-documented as a top-level `aw run` flag today.
-
 Flags:
 - `--allowed-tools string         Provider-specific allowed tools string`
 - `--autofeed-work                Wake for work-related events in addition to incoming mail/chat`
