@@ -35,7 +35,7 @@ def _parse_context(raw):
     return dict(raw)
 
 
-async def bootstrap_scope_agent(*, aweb_db: DatabaseHandle, scope_id: str, payload: dict) -> dict:
+async def bootstrap_scope_agent(*, aweb_db: DatabaseHandle, scope_id: str, payload: dict, mint_api_key: bool = True) -> dict:
     project = await aweb_db.fetch_one(
         """
         SELECT project_id, slug, name
@@ -65,6 +65,7 @@ async def bootstrap_scope_agent(*, aweb_db: DatabaseHandle, scope_id: str, paylo
             program=payload.get("program"),
             context=payload.get("context"),
             access_mode=payload.get("access_mode") or "open",
+            mint_api_key=mint_api_key,
         )
     except asyncpg.exceptions.UniqueViolationError:
         result = await bootstrap_identity(
@@ -83,14 +84,14 @@ async def bootstrap_scope_agent(*, aweb_db: DatabaseHandle, scope_id: str, paylo
             program=payload.get("program"),
             context=payload.get("context"),
             access_mode=payload.get("access_mode") or "open",
+            mint_api_key=mint_api_key,
         )
 
-    return {
+    out = {
         "scope_id": scope_id,
         "agent_id": result.agent_id,
         "alias": result.alias,
         "agent_type": result.agent_type,
-        "api_key": result.api_key,
         "created": result.created,
         "did": result.did,
         "stable_id": result.stable_id,
@@ -99,6 +100,9 @@ async def bootstrap_scope_agent(*, aweb_db: DatabaseHandle, scope_id: str, paylo
         "namespace": result.namespace,
         "address": result.address,
     }
+    if result.api_key is not None:
+        out["api_key"] = result.api_key
+    return out
 
 
 async def list_scope_agents(*, aweb_db: DatabaseHandle, scope_id: str) -> list[dict]:
