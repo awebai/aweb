@@ -732,12 +732,10 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
 	roles, err := fetchAvailableRoles(client)
 	if err != nil {
-		// Roles endpoint unavailable — accept the requested role as-is.
 		debugLog("fetch roles: %v", err)
 		return normalizeWorkspaceRole(requested), nil
 	}
 	if len(roles) == 0 {
-		// No project roles defined — accept the requested role as-is.
 		return normalizeWorkspaceRole(requested), nil
 	}
 	return selectRoleFromAvailableRoles(requested, roles, allowPrompt, in, out)
