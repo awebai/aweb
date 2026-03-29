@@ -509,6 +509,10 @@ d=json.load(sys.stdin)
 print((d.get('project_instructions') or {}).get('project_instructions_id',''))
 " 2>/dev/null || echo "")"
 assert_not_empty "original instructions id" "$ORIGINAL_INSTRUCTIONS_ID"
+if [[ -z "$ORIGINAL_INSTRUCTIONS_ID" ]]; then
+  echo "  Aborting: missing original instructions id"
+  exit 1
+fi
 
 INSTRUCTIONS_BODY_FILE="$ALICE_DIR/instructions-v2.md"
 cat > "$INSTRUCTIONS_BODY_FILE" <<'EOF'
@@ -561,6 +565,14 @@ instructions_activated_flag="$(echo "$instructions_activate_out" | jq_field acti
 assert_eq "instructions activate id" "$ORIGINAL_INSTRUCTIONS_ID" "$instructions_activated_id"
 assert_eq "instructions activate flag" "True" "$instructions_activated_flag"
 
+instructions_show_reactivated="$(run_aw_in "$ALICE_DIR" instructions show --json 2>/dev/null)"
+instructions_show_reactivated_id="$(echo "$instructions_show_reactivated" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_instructions') or {}).get('project_instructions_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "instructions show active after activate" "$ORIGINAL_INSTRUCTIONS_ID" "$instructions_show_reactivated_id"
+
 instructions_reset_out="$(run_aw_in "$ALICE_DIR" instructions reset --json 2>/dev/null)"
 instructions_reset_flag="$(echo "$instructions_reset_out" | jq_field reset)"
 instructions_reset_id="$(echo "$instructions_reset_out" | jq_field active_project_instructions_id)"
@@ -588,6 +600,10 @@ d=json.load(sys.stdin)
 print((d.get('project_roles') or {}).get('project_roles_id',''))
 " 2>/dev/null || echo "")"
 assert_not_empty "original roles id" "$ORIGINAL_ROLES_ID"
+if [[ -z "$ORIGINAL_ROLES_ID" ]]; then
+  echo "  Aborting: missing original roles id"
+  exit 1
+fi
 
 ROLES_BUNDLE_FILE="$ALICE_DIR/roles-v2.json"
 cat > "$ROLES_BUNDLE_FILE" <<'EOF'
@@ -643,6 +659,14 @@ roles_activated_id="$(echo "$roles_activate_out" | jq_field project_roles_id)"
 roles_activated_flag="$(echo "$roles_activate_out" | jq_field activated)"
 assert_eq "roles activate id" "$ORIGINAL_ROLES_ID" "$roles_activated_id"
 assert_eq "roles activate flag" "True" "$roles_activated_flag"
+
+roles_show_reactivated="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
+roles_show_reactivated_id="$(echo "$roles_show_reactivated" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_roles') or {}).get('project_roles_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "roles show active after activate" "$ORIGINAL_ROLES_ID" "$roles_show_reactivated_id"
 
 roles_reset_out="$(run_aw_in "$ALICE_DIR" roles reset --json 2>/dev/null)"
 roles_reset_flag="$(echo "$roles_reset_out" | jq_field reset)"
