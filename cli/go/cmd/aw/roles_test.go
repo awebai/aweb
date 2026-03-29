@@ -35,9 +35,6 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 				"project_id":              "proj-1",
 				"version":                 3,
 				"updated_at":              "2026-03-10T10:00:00Z",
-				"invariants": []map[string]any{
-					{"id": "no-drift", "title": "No Drift", "body_md": "Keep the stack clean."},
-				},
 				"roles": map[string]any{
 					"reviewer": map[string]any{"title": "Reviewer", "playbook_md": "Review before merge."},
 				},
@@ -104,9 +101,6 @@ default_account: acct
 	for _, want := range []string{
 		"Project Roles v3",
 		"Role: reviewer",
-		"## Invariants",
-		"No Drift",
-		"Keep the stack clean.",
 		"## Role: Reviewer",
 		"Review before merge.",
 	} {
@@ -133,7 +127,6 @@ func TestAwRolesListListsSortedRoles(t *testing.T) {
 				"project_id":       "proj-1",
 				"version":          1,
 				"updated_at":       "2026-03-10T10:00:00Z",
-				"invariants":       []map[string]any{},
 				"roles": map[string]any{
 					"reviewer":  map[string]any{"title": "Reviewer", "playbook_md": ""},
 					"developer": map[string]any{"title": "Developer", "playbook_md": ""},

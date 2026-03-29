@@ -121,4 +121,3 @@ This is the main status view for:
 - claims
 - locks
 - peer workspaces in the same project
-

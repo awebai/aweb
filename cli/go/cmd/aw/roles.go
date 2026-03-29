@@ -20,7 +20,7 @@ var rolesCmd = &cobra.Command{
 
 var rolesShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show active project roles invariants and selected role guidance",
+	Short: "Show role guidance from the active project roles bundle",
 	RunE:  runProjectRolesShow,
 }
 
@@ -167,27 +167,6 @@ func formatProjectRolesShow(v any) string {
 		sb.WriteString(fmt.Sprintf("Role: %s\n", out.RoleName))
 	}
 
-	if len(out.ProjectRoles.Invariants) > 0 {
-		sb.WriteString("\n## Invariants\n")
-		for _, inv := range out.ProjectRoles.Invariants {
-			title := strings.TrimSpace(inv.Title)
-			if title == "" {
-				title = strings.TrimSpace(inv.ID)
-			}
-			sb.WriteString(fmt.Sprintf("- %s\n", title))
-			body := strings.TrimSpace(inv.BodyMD)
-			if body != "" {
-				for _, line := range strings.Split(body, "\n") {
-					line = strings.TrimSpace(line)
-					if line == "" {
-						continue
-					}
-					sb.WriteString("  " + line + "\n")
-				}
-			}
-		}
-	}
-
 	if out.ProjectRoles.SelectedRole != nil {
 		sb.WriteString(fmt.Sprintf("\n## Role: %s\n", out.ProjectRoles.SelectedRole.Title))
 		for _, line := range strings.Split(strings.TrimSpace(out.ProjectRoles.SelectedRole.PlaybookMD), "\n") {
@@ -213,7 +192,19 @@ func formatProjectRolesShow(v any) string {
 			if title == "" {
 				title = name
 			}
-			sb.WriteString(fmt.Sprintf("- %s\n", title))
+			sb.WriteString(fmt.Sprintf("\n### %s\n", title))
+			playbook := strings.TrimSpace(role.PlaybookMD)
+			if playbook == "" {
+				sb.WriteString("(no playbook)\n")
+				continue
+			}
+			for _, line := range strings.Split(playbook, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				sb.WriteString(line + "\n")
+			}
 		}
 	}
 

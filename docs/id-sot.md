@@ -770,6 +770,7 @@ Notable help/usage details:
 
 - `aw lock`: distributed locks
 - `aw notify`: check for pending chat notifications for Claude Code hooks
+- `aw instructions`: read and manage shared project instructions
 - `aw roles`: read project roles bundles and role definitions
 - `aw run <provider>`: run an AI coding agent in a loop
 - `aw task`: manage tasks
@@ -782,6 +783,11 @@ Subcommands:
 - `aw lock release`: release a lock
 - `aw lock renew`: renew a lock
 - `aw lock revoke`: revoke locks
+- `aw instructions activate`: activate a project instructions version
+- `aw instructions history`: list project instructions versions
+- `aw instructions reset`: reset project instructions to the default
+- `aw instructions set`: create and activate a new project instructions version
+- `aw instructions show`: show shared project instructions
 - `aw roles list`: list roles defined in the active project roles
 - `aw roles show`: show active project roles and role guidance
 - `aw task close`: close one or more tasks

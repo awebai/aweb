@@ -24,6 +24,7 @@ service, and non-coding agents with no repo context:
 - `aw whoami`
 - `aw chat ...`
 - `aw mail ...`
+- `aw instructions show`
 - `aw roles show`
 - `aw roles list`
 - `aw work ready`

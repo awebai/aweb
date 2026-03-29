@@ -6,12 +6,6 @@ import (
 	"strings"
 )
 
-type ProjectRolesInvariant struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	BodyMD string `json:"body_md"`
-}
-
 type RoleDefinition struct {
 	Title      string `json:"title"`
 	PlaybookMD string `json:"playbook_md"`
@@ -30,7 +24,6 @@ type ActiveProjectRolesResponse struct {
 	ProjectID            string                    `json:"project_id"`
 	Version              int                       `json:"version"`
 	UpdatedAt            string                    `json:"updated_at"`
-	Invariants           []ProjectRolesInvariant   `json:"invariants"`
 	Roles                map[string]RoleDefinition `json:"roles"`
 	SelectedRole         *SelectedRoleInfo         `json:"selected_role,omitempty"`
 }

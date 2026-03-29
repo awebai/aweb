@@ -1,0 +1,330 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestAwInstructionsShowDisplaysActiveInstructions(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_id":        "instructions-1",
+				"active_project_instructions_id": "instructions-1",
+				"project_id":                     "proj-1",
+				"version":                        4,
+				"updated_at":                     "2026-03-10T10:00:00Z",
+				"document": map[string]any{
+					"body_md": "## Shared Rules\n\nUse `aw`.\n",
+					"format":  "markdown",
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	writeTestConfig(t, cfgPath, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "instructions", "show")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	for _, want := range []string{
+		"Project Instructions v4 (active)",
+		"ID: instructions-1",
+		"## Shared Rules",
+		"Use `aw`.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions show output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_id":        "instructions-2",
+				"active_project_instructions_id": "instructions-2",
+				"project_id":                     "proj-1",
+				"version":                        2,
+				"updated_at":                     "2026-03-11T10:00:00Z",
+				"document": map[string]any{
+					"body_md": "## Active Body\n",
+					"format":  "markdown",
+				},
+			})
+		case "/v1/instructions/instructions-2":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_id": "instructions-2",
+				"project_id":              "proj-1",
+				"version":                 2,
+				"updated_at":              "2026-03-11T10:00:00Z",
+				"document": map[string]any{
+					"body_md": "## Active Body\n",
+					"format":  "markdown",
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	writeTestConfig(t, cfgPath, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "instructions", "show", "instructions-2")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	for _, want := range []string{
+		"Project Instructions v2 (active)",
+		"ID: instructions-2",
+		"## Active Body",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions show-by-id output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestAwInstructionsSetCreatesAndActivatesNewVersion(t *testing.T) {
+	t.Parallel()
+
+	var createBody map[string]any
+	var activatedPath string
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_id":        "instructions-1",
+				"active_project_instructions_id": "instructions-1",
+				"project_id":                     "proj-1",
+				"version":                        1,
+				"updated_at":                     "2026-03-10T10:00:00Z",
+				"document": map[string]any{
+					"body_md": "Old body",
+					"format":  "markdown",
+				},
+			})
+		case "/v1/instructions":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_id": "instructions-2",
+				"project_id":              "proj-1",
+				"version":                 2,
+				"created":                 true,
+			})
+		case "/v1/instructions/instructions-2/activate":
+			activatedPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"activated":                      true,
+				"active_project_instructions_id": "instructions-2",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	writeTestConfig(t, cfgPath, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "instructions", "set", "--body-file", "-")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	run.Stdin = strings.NewReader("## Shared Rules\n\nUse `aw`.\n")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if activatedPath != "/v1/instructions/instructions-2/activate" {
+		t.Fatalf("activate path=%q", activatedPath)
+	}
+
+	document, ok := createBody["document"].(map[string]any)
+	if !ok {
+		t.Fatalf("document=%#v", createBody["document"])
+	}
+	if createBody["base_project_instructions_id"] != "instructions-1" {
+		t.Fatalf("base_project_instructions_id=%v", createBody["base_project_instructions_id"])
+	}
+	if document["body_md"] != "## Shared Rules\n\nUse `aw`." {
+		t.Fatalf("body_md=%q", document["body_md"])
+	}
+	if document["format"] != "markdown" {
+		t.Fatalf("format=%v", document["format"])
+	}
+
+	text := string(out)
+	if !strings.Contains(text, "Activated project instructions v2 (instructions-2)") {
+		t.Fatalf("unexpected output:\n%s", text)
+	}
+}
+
+func TestAwInstructionsHistoryListsVersions(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/instructions/history":
+			if got := r.URL.Query().Get("limit"); got != "5" {
+				t.Fatalf("limit=%q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_instructions_versions": []map[string]any{
+					{
+						"project_instructions_id": "instructions-2",
+						"version":                 2,
+						"created_at":              "2026-03-11T10:00:00Z",
+						"created_by_workspace_id": "ivy",
+						"is_active":               true,
+					},
+					{
+						"project_instructions_id": "instructions-1",
+						"version":                 1,
+						"created_at":              "2026-03-10T10:00:00Z",
+						"created_by_workspace_id": "ivy",
+						"is_active":               false,
+					},
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	writeTestConfig(t, cfgPath, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "instructions", "history", "--limit", "5")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	for _, want := range []string{
+		"v2\tactive\t2026-03-11T10:00:00Z\tinstructions-2\tivy",
+		"v1\tinactive\t2026-03-10T10:00:00Z\tinstructions-1\tivy",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("instructions history output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func writeTestConfig(t *testing.T, path, serverURL string) {
+	t.Helper()
+
+	content := strings.TrimSpace(`
+servers:
+  local:
+    url: `+serverURL+`
+accounts:
+  acct:
+    server: local
+    api_key: aw_sk_test
+    identity_id: agent-1
+    identity_handle: alice
+    namespace_slug: demo
+default_account: acct
+`) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}

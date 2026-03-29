@@ -112,6 +112,18 @@ Preview a specific role:
 aw roles show --role-name reviewer
 ```
 
+Show the shared project instructions:
+
+```bash
+aw instructions show
+```
+
+List recent instructions versions:
+
+```bash
+aw instructions history
+```
+
 Set the current workspace role name:
 
 ```bash
@@ -150,4 +162,3 @@ aw lock list --mine
 ```
 
 `--mine` filters the list to locks held by the current workspace alias.
-

@@ -21,19 +21,19 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "reviewer", "roles": []string{}})
 		case "/api/v1/create-project":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_id":   "proj-1",
-				"project_slug": "default",
+				"project_id":     "proj-1",
+				"project_slug":   "default",
 				"namespace_slug": "myteam",
-				"namespace":    "myteam.aweb.ai",
-				"identity_id":  "identity-1",
-				"alias":        "reviewer",
-				"address":      "myteam.aweb.ai/reviewer",
-				"api_key":      "aw_sk_headless_test",
-				"did":          "did:key:z6MkTest",
-				"stable_id":    "stable-1",
-				"custody":      "self",
-				"lifetime":     "ephemeral",
-				"created":      true,
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-1",
+				"alias":          "reviewer",
+				"address":        "myteam.aweb.ai/reviewer",
+				"api_key":        "aw_sk_headless_test",
+				"did":            "did:key:z6MkTest",
+				"stable_id":      "stable-1",
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+				"created":        true,
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)

@@ -130,6 +130,11 @@ Roles:
   aw roles list
   aw role-name set <role-name>
 
+Project instructions:
+  aw instructions show
+  aw instructions history
+  aw instructions set --body-file <path>
+
 Locks:
   aw lock acquire --resource-key <key> --ttl-seconds 1800
   aw lock release --resource-key <key>
