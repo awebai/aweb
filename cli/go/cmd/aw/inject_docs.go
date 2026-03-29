@@ -1,67 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
 	awDocsMarkerStart = "<!-- AWEB:START -->"
 	awDocsMarkerEnd   = "<!-- AWEB:END -->"
 )
-
-const awInjectedDocs = awDocsMarkerStart + `
-## aWeb Coordination Rules
-
-This project uses ` + "`aw`" + ` for agent coordination.
-
-## Start Here
-
-` + "```bash" + `
-aw roles show
-aw workspace status
-aw work ready
-aw mail inbox
-` + "```" + `
-
-## Rules
-
-- Use ` + "`aw`" + ` for coordination work
-- Treat ` + "`.aw/workspace.yaml`" + ` as the repo-local coordination identity for this worktree
-- Default to mail for non-blocking coordination: ` + "`aw mail send --to <agent> --body \"...\"`" + `
-- Use chat when you need a synchronous answer: ` + "`aw chat pending`" + `, ` + "`aw chat send-and-wait <agent> \"...\"`" + `
-- Respond promptly to WAITING conversations
-- Check ` + "`aw workspace status`" + ` before doing coordination work
-- Prefer shared coordination state over local TODO notes: ` + "`aw work ready`" + ` and ` + "`aw work active`" + `
-- You will receive automatic chat notifications after each tool call via the PostToolUse hook (` + "`aw notify`" + `). Respond promptly when notified.
-
-## Using Mail
-
-` + "```bash" + `
-aw mail send --to <alias> --body "message"
-aw mail send --to <alias> --subject "API design" --body "message"
-aw mail inbox
-` + "```" + `
-
-## Using Chat
-
-` + "```bash" + `
-aw chat send-and-wait <alias> "question" --start-conversation
-aw chat send-and-wait <alias> "response"
-aw chat send-and-leave <alias> "thanks, got it"
-aw chat pending
-aw chat open <alias>
-aw chat history <alias>
-aw chat extend-wait <alias> "need more time"
-` + "```" + `
-` + awDocsMarkerEnd + `
-`
-
-const awAgentsTemplate = `# Agent Instructions
-
-` + awInjectedDocs
 
 type injectDocsResult struct {
 	Created  []string
@@ -70,9 +21,18 @@ type injectDocsResult struct {
 }
 
 func InjectAgentDocs(repoRoot string) *injectDocsResult {
+	body, err := loadProjectInstructionsBody(repoRoot)
+	if err != nil {
+		return &injectDocsResult{Errors: []string{err.Error()}}
+	}
+	return InjectProvidedAgentDocs(repoRoot, body)
+}
+
+func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 	result := &injectDocsResult{}
 	candidates := []string{"CLAUDE.md", "AGENTS.md"}
 	processed := map[string]bool{}
+	injectedDocs := renderInjectedDocs(body)
 
 	for _, name := range candidates {
 		path := filepath.Join(repoRoot, name)
@@ -106,9 +66,9 @@ func InjectAgentDocs(repoRoot string) *injectDocsResult {
 		mode := info.Mode().Perm()
 		updated := removeInjectedDocs(string(content))
 		if strings.TrimSpace(updated) != "" {
-			updated = strings.TrimRight(updated, "\n") + "\n\n" + awInjectedDocs
+			updated = strings.TrimRight(updated, "\n") + "\n\n" + injectedDocs
 		} else {
-			updated = awInjectedDocs
+			updated = injectedDocs
 		}
 		if err := os.WriteFile(resolved, []byte(updated), mode); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
@@ -119,7 +79,7 @@ func InjectAgentDocs(repoRoot string) *injectDocsResult {
 
 	if len(processed) == 0 {
 		path := filepath.Join(repoRoot, "AGENTS.md")
-		if err := os.WriteFile(path, []byte(awAgentsTemplate), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(renderAgentsTemplate(body)), 0o644); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("AGENTS.md: %v", err))
 		} else {
 			result.Created = append(result.Created, "AGENTS.md")
@@ -127,6 +87,34 @@ func InjectAgentDocs(repoRoot string) *injectDocsResult {
 	}
 
 	return result
+}
+
+func loadProjectInstructionsBody(workingDir string) (string, error) {
+	client, _, err := resolveAPIKeyOnlyForDir(workingDir)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.ActiveProjectInstructions(ctx)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resp.Document.BodyMD), nil
+}
+
+func renderInjectedDocs(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return awDocsMarkerStart + "\n" + awDocsMarkerEnd + "\n"
+	}
+	return awDocsMarkerStart + "\n" + body + "\n" + awDocsMarkerEnd + "\n"
+}
+
+func renderAgentsTemplate(body string) string {
+	return "# Agent Instructions\n\n" + renderInjectedDocs(body)
 }
 
 func removeInjectedDocs(content string) string {
@@ -153,10 +141,10 @@ func printInjectDocsResult(result *injectDocsResult) {
 		return
 	}
 	for _, name := range result.Created {
-		fmt.Printf("Created %s with aw coordination instructions\n", name)
+		fmt.Printf("Created %s with aw project instructions\n", name)
 	}
 	for _, name := range result.Injected {
-		fmt.Printf("Injected aw coordination instructions into %s\n", name)
+		fmt.Printf("Injected aw project instructions into %s\n", name)
 	}
 	for _, msg := range result.Errors {
 		fmt.Fprintf(os.Stderr, "Warning: could not inject docs: %s\n", msg)

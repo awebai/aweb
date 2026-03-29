@@ -11,7 +11,7 @@ func TestInjectAgentDocsCreatesAgentsWhenNoFilesExist(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	result := InjectAgentDocs(tmp)
+	result := InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
 	if len(result.Created) != 1 || result.Created[0] != "AGENTS.md" {
 		t.Fatalf("created=%v", result.Created)
 	}
@@ -20,7 +20,7 @@ func TestInjectAgentDocsCreatesAgentsWhenNoFilesExist(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{awDocsMarkerStart, "aw roles show", "aw chat send-and-wait"} {
+	for _, want := range []string{awDocsMarkerStart, "# Agent Instructions", "## Shared Rules", "Use `aw`."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in AGENTS.md:\n%s", want, text)
 		}
@@ -36,7 +36,7 @@ func TestInjectAgentDocsAppendsToExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := InjectAgentDocs(tmp)
+	result := InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
 	if len(result.Injected) != 1 || result.Injected[0] != "CLAUDE.md" {
 		t.Fatalf("injected=%v", result.Injected)
 	}
@@ -60,7 +60,7 @@ func TestInjectAgentDocsReplacesExistingInjectedSection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	InjectAgentDocs(tmp)
+	InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestInjectAgentDocsAvoidsDoubleWriteForSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	InjectAgentDocs(tmp)
+	InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatal(err)
