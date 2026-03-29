@@ -1515,6 +1515,22 @@ def _coordination_summary(event_type: str, details: dict | None) -> str:
             if version is not None
             else "Project roles reset to default"
         )
+    if event_type == "project_instructions_created":
+        version = details.get("version")
+        return (
+            f"Project instructions version {version} created"
+            if version is not None
+            else "Project instructions created"
+        )
+    if event_type == "project_instructions_activated":
+        return "Project instructions activated"
+    if event_type == "project_instructions_reset_to_default":
+        version = details.get("version")
+        return (
+            f"Project instructions reset to default (v{version})"
+            if version is not None
+            else "Project instructions reset to default"
+        )
     return event_type.replace("_", " ").replace(".", " ")
 
 

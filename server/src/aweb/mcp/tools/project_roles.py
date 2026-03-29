@@ -42,14 +42,6 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
             "playbook_md": role_info.get("playbook_md", ""),
         }
 
-    invariants = [
-        {
-            "id": inv.get("id", ""),
-            "title": inv.get("title", ""),
-            "body_md": inv.get("body_md", ""),
-        }
-        for inv in project_roles_version.bundle.invariants
-    ]
     roles = (
         {agent_role: project_roles_version.bundle.roles[agent_role]}
         if only_selected and selected_role is not None
@@ -66,7 +58,6 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
             "agent_role": agent_role or None,
             "agent_role_name": agent_role or None,
             "selected_role": selected_role,
-            "invariants": invariants,
             "roles": roles,
             "available_roles": sorted(project_roles_version.bundle.roles.keys()),
             "adapters": project_roles_version.bundle.adapters,

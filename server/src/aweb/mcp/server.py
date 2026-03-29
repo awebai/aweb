@@ -391,7 +391,7 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
 
     @mcp.tool(
         name="roles_show",
-        description="Show the active project roles bundle and the current agent's selected role guidance.",
+        description="Show the active project roles bundle and the current agent's selected role.",
     )
     async def roles_show(only_selected: bool = False) -> str:
         return await _roles_show_impl(db_infra, only_selected=only_selected)

@@ -1,14 +1,4 @@
-"""Aweb coordination project roles endpoints.
-
-Provides server-backed project roles bundles with versioned contents:
-- Global invariants (guidance for all workspaces)
-- Role playbooks (role-specific guidance)
-- Adapters (tool-specific templates)
-
-Security:
-- All reads are project-scoped via `get_project_from_auth`
-- Writes require an authenticated project context
-"""
+"""Aweb coordination project roles endpoints."""
 
 from __future__ import annotations
 
@@ -60,9 +50,8 @@ def _resolve_selected_role_name(
 
 
 class ProjectRolesBundle(BaseModel):
-    """Versioned project roles bundle containing invariants, roles, and adapters."""
+    """Versioned project roles bundle containing roles and adapters."""
 
-    invariants: List[Dict[str, Any]] = Field(default_factory=list)
     roles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     adapters: Dict[str, Any] = Field(default_factory=dict)
 
@@ -278,14 +267,6 @@ def _generate_etag(project_roles_id: str, updated_at: datetime) -> str:
     return f'"{hashlib.sha256(content.encode()).hexdigest()[:16]}"'
 
 
-class Invariant(BaseModel):
-    """A coordination invariant."""
-
-    id: str
-    title: str
-    body_md: str
-
-
 class RoleDefinition(BaseModel):
     """A single named role definition."""
 
@@ -324,7 +305,6 @@ class ActiveProjectRolesResponse(BaseModel):
     project_id: str
     version: int
     updated_at: datetime
-    invariants: List[Invariant]
     roles: Dict[str, RoleDefinition]
     selected_role: Optional[SelectedRoleInfo] = None
     adapters: Dict[str, Any] = Field(default_factory=dict)
@@ -335,7 +315,7 @@ class CreateProjectRolesRequest(BaseModel):
 
     bundle: ProjectRolesBundle = Field(
         ...,
-        description="Project roles bundle containing invariants, roles, and adapters.",
+        description="Project roles bundle containing roles and adapters.",
     )
     base_project_roles_id: Optional[str] = Field(
         None,
@@ -401,7 +381,7 @@ async def get_active_project_roles_endpoint(
     ),
     only_selected: bool = Query(
         False,
-        description="If true, return only invariants plus the selected role.",
+        description="If true, return only the selected role.",
     ),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
@@ -450,15 +430,6 @@ async def get_active_project_roles_endpoint(
             detail="only_selected=true requires a role or role_name parameter",
         )
 
-    invariants = [
-        Invariant(
-            id=inv.get("id", ""),
-            title=inv.get("title", ""),
-            body_md=inv.get("body_md", ""),
-        )
-        for inv in project_roles_version.bundle.invariants
-    ]
-
     if only_selected:
         assert selected_role_name is not None
         roles = {
@@ -481,7 +452,6 @@ async def get_active_project_roles_endpoint(
         project_id=project_roles_version.project_id,
         version=project_roles_version.version,
         updated_at=project_roles_version.updated_at,
-        invariants=invariants,
         roles=roles,
         selected_role=selected_role_data,
         adapters=project_roles_version.bundle.adapters,
@@ -655,15 +625,6 @@ async def get_project_roles_by_id_endpoint(
 
     bundle = ProjectRolesBundle(**bundle_data)
 
-    invariants = [
-        Invariant(
-            id=inv.get("id", ""),
-            title=inv.get("title", ""),
-            body_md=inv.get("body_md", ""),
-        )
-        for inv in bundle.invariants
-    ]
-
     roles = {
         name: RoleDefinition(
             title=info.get("title", name),
@@ -678,7 +639,6 @@ async def get_project_roles_by_id_endpoint(
         project_id=str(result["project_id"]),
         version=result["version"],
         updated_at=result["updated_at"],
-        invariants=invariants,
         roles=roles,
         selected_role=None,
         adapters=bundle.adapters,

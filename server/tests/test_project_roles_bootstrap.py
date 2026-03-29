@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from aweb.coordination.routes.project_instructions import instructions_router
 from aweb.coordination.routes.project_roles import roles_router
 from aweb.db import get_db_infra
 from aweb.redis_client import get_redis
@@ -31,6 +33,7 @@ def _build_roles_test_app(*, aweb_db, server_db) -> FastAPI:
 
     app = FastAPI(title="aweb roles bootstrap test")
     app.include_router(bootstrap_router)
+    app.include_router(instructions_router)
     app.include_router(roles_router)
     app.include_router(reservations_router)
     app.dependency_overrides[get_db_infra] = lambda: _DbInfra()
@@ -43,7 +46,7 @@ def _auth_headers(api_key: str) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_fresh_project_bootstraps_canonical_project_roles(aweb_cloud_db):
+async def test_fresh_project_bootstraps_canonical_project_roles_and_instructions(aweb_cloud_db):
     server_db = aweb_cloud_db.oss_db
 
     project_roles_exists = await server_db.fetch_value(
@@ -75,6 +78,26 @@ async def test_fresh_project_bootstraps_canonical_project_roles(aweb_cloud_db):
         )
         """
     )
+    project_instructions_exists = await server_db.fetch_value(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'server' AND table_name = 'project_instructions'
+        )
+        """
+    )
+    active_project_instructions_id_exists = await server_db.fetch_value(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'server'
+              AND table_name = 'projects'
+              AND column_name = 'active_project_instructions_id'
+        )
+        """
+    )
     active_policy_id_exists = await server_db.fetch_value(
         """
         SELECT EXISTS (
@@ -88,8 +111,10 @@ async def test_fresh_project_bootstraps_canonical_project_roles(aweb_cloud_db):
     )
 
     assert project_roles_exists is True
+    assert project_instructions_exists is True
     assert project_policies_exists is False
     assert active_project_roles_id_exists is True
+    assert active_project_instructions_id_exists is True
     assert active_policy_id_exists is False
 
     app = _build_roles_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=server_db)
@@ -121,6 +146,21 @@ async def test_fresh_project_bootstraps_canonical_project_roles(aweb_cloud_db):
         assert data["active_project_roles_id"] == data["project_roles_id"]
         assert data["roles"]
         assert "developer" in data["roles"]
+        assert "invariants" not in data
+
+        instructions = await client.get(
+            "/v1/instructions/active",
+            headers=_auth_headers(api_key),
+        )
+        assert instructions.status_code == 200, instructions.text
+        instructions_data = instructions.json()
+        assert instructions_data["project_instructions_id"]
+        assert (
+            instructions_data["active_project_instructions_id"]
+            == instructions_data["project_instructions_id"]
+        )
+        assert instructions_data["document"]["format"] == "markdown"
+        assert instructions_data["document"]["body_md"]
 
         acquired = await client.post(
             "/v1/reservations",
@@ -142,3 +182,80 @@ async def test_fresh_project_bootstraps_canonical_project_roles(aweb_cloud_db):
             json={"resource_key": "src/app.py"},
         )
         assert released.status_code == 200, released.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_invariants_backfill_active_project_instructions(aweb_cloud_db):
+    server_db = aweb_cloud_db.oss_db
+    app = _build_roles_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=server_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        slug = f"roles-legacy-{uuid.uuid4().hex[:8]}"
+        created = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": slug,
+                "namespace_slug": slug,
+                "alias": "alice",
+            },
+        )
+        assert created.status_code == 200, created.text
+        created_data = created.json()
+        api_key = created_data["api_key"]
+        project_id = created_data["project_id"]
+
+        await server_db.execute(
+            "DELETE FROM {{tables.project_instructions}} WHERE project_id = $1",
+            project_id,
+        )
+        await server_db.execute(
+            "UPDATE {{tables.projects}} SET active_project_instructions_id = NULL WHERE id = $1",
+            project_id,
+        )
+
+        legacy_bundle = {
+            "invariants": [
+                {
+                    "id": "communication.mail-first",
+                    "title": "Mail first",
+                    "body_md": "Use `aw mail` for non-blocking coordination.",
+                }
+            ],
+            "roles": {
+                "developer": {
+                    "title": "Developer",
+                    "playbook_md": "Ship code",
+                }
+            },
+            "adapters": {},
+        }
+        legacy_role = await server_db.fetch_one(
+            """
+            INSERT INTO {{tables.project_roles}} (
+                project_id,
+                version,
+                bundle_json,
+                created_by_workspace_id
+            )
+            VALUES ($1, $2, $3::jsonb, NULL)
+            RETURNING project_roles_id
+            """,
+            project_id,
+            99,
+            json.dumps(legacy_bundle),
+        )
+        await server_db.execute(
+            "UPDATE {{tables.projects}} SET active_project_roles_id = $2 WHERE id = $1",
+            project_id,
+            legacy_role["project_roles_id"],
+        )
+
+        instructions = await client.get(
+            "/v1/instructions/active",
+            headers=_auth_headers(api_key),
+        )
+        assert instructions.status_code == 200, instructions.text
+        data = instructions.json()
+        assert data["project_instructions_id"]
+        assert "Mail first" in data["document"]["body_md"]
+        assert "Use `aw mail` for non-blocking coordination." in data["document"]["body_md"]

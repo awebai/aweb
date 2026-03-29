@@ -8,11 +8,17 @@ from aweb.coordination.routes.project_roles import (
     SelectedRoleInfo,
     _resolve_selected_role_name,
 )
+from aweb.coordination.routes.project_instructions import (
+    ActiveProjectInstructionsResponse,
+    CreateProjectInstructionsRequest,
+    ProjectInstructionsHistoryItem,
+    ProjectInstructionsHistoryResponse,
+)
 
 
 def test_create_project_roles_request_uses_base_project_roles_id():
     req = CreateProjectRolesRequest(
-        bundle={"invariants": [], "roles": {}, "adapters": {}},
+        bundle={"roles": {}, "adapters": {}},
         base_project_roles_id="550e8400-e29b-41d4-a716-446655440000",
     )
     assert req.base_project_roles_id == "550e8400-e29b-41d4-a716-446655440000"
@@ -36,7 +42,6 @@ def test_active_project_roles_response_uses_project_roles_ids():
         project_id="660e8400-e29b-41d4-a716-446655440000",
         version=3,
         updated_at="2026-01-01T00:00:00Z",
-        invariants=[],
         roles={"developer": {"title": "Developer", "playbook_md": "Ship code"}},
         selected_role=SelectedRoleInfo(
             role_name="developer",
@@ -73,3 +78,44 @@ def test_resolve_selected_role_name_accepts_legacy_or_canonical_query():
 def test_resolve_selected_role_name_rejects_conflicts():
     with pytest.raises(ValueError, match="role and role_name must match"):
         _resolve_selected_role_name(role="developer", role_name="reviewer")
+
+
+def test_create_project_instructions_request_uses_base_project_instructions_id():
+    req = CreateProjectInstructionsRequest(
+        document={"body_md": "Use aw", "format": "markdown"},
+        base_project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
+    )
+    assert req.base_project_instructions_id == "770e8400-e29b-41d4-a716-446655440000"
+
+
+def test_active_project_instructions_response_uses_project_instruction_ids():
+    response = ActiveProjectInstructionsResponse(
+        project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
+        active_project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
+        project_id="660e8400-e29b-41d4-a716-446655440000",
+        version=2,
+        updated_at="2026-01-01T00:00:00Z",
+        document={"body_md": "Use aw", "format": "markdown"},
+    )
+    data = response.model_dump()
+    assert data["project_instructions_id"] == "770e8400-e29b-41d4-a716-446655440000"
+    assert (
+        data["active_project_instructions_id"] == "770e8400-e29b-41d4-a716-446655440000"
+    )
+    assert data["document"]["format"] == "markdown"
+
+
+def test_project_instructions_history_response_emits_instruction_versions():
+    item = ProjectInstructionsHistoryItem(
+        project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
+        version=2,
+        created_at="2026-01-01T00:00:00Z",
+        created_by_workspace_id=None,
+        is_active=True,
+    )
+    response = ProjectInstructionsHistoryResponse(project_instruction_versions=[item])
+    data = response.model_dump()
+    assert (
+        data["project_instruction_versions"][0]["project_instructions_id"]
+        == item.project_instructions_id
+    )

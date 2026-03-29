@@ -45,12 +45,17 @@ These are the shapes most developers usually need first.
     `server_url`
   - lifecycle markers: `created`, `workspace_created`
 
-### Roles, Tasks, and Workspaces
+### Instructions, Roles, Tasks, and Workspaces
+
+- `ActiveProjectInstructionsResponse`
+  - `project_instructions_id`, `active_project_instructions_id`, `project_id`,
+    `version`, `updated_at`
+  - `document`
 
 - `ActiveProjectRolesResponse`
   - `project_roles_id`, `active_project_roles_id`, `project_id`, `version`,
     `updated_at`
-  - `invariants`, `roles`, `selected_role`, `adapters`
+  - `roles`, `selected_role`, `adapters`
 - `CreateTaskRequest`
   - required: `title`
   - optional: `description`, `notes`, `priority`, `task_type`, `labels`,
@@ -252,6 +257,17 @@ These are the shapes most developers usually need first.
 | `GET` | `/v1/roles/{project_roles_id}` | `-` | `200: ActiveProjectRolesResponse, 422: HTTPValidationError` |
 | `POST` | `/v1/roles/{project_roles_id}/activate` | `-` | `200: ActivateProjectRolesResponse, 422: HTTPValidationError` |
 | `POST` | `/v1/roles/reset` | `-` | `200: ResetProjectRolesResponse` |
+
+## Instructions
+
+| Method | Path | Request | Responses |
+| --- | --- | --- | --- |
+| `GET` | `/v1/instructions/active` | `-` | `200: ActiveProjectInstructionsResponse, 422: HTTPValidationError` |
+| `GET` | `/v1/instructions/history` | `-` | `200: ProjectInstructionsHistoryResponse, 422: HTTPValidationError` |
+| `POST` | `/v1/instructions` | `CreateProjectInstructionsRequest` | `200: CreateProjectInstructionsResponse, 422: HTTPValidationError` |
+| `GET` | `/v1/instructions/{project_instructions_id}` | `-` | `200: ActiveProjectInstructionsResponse, 422: HTTPValidationError` |
+| `POST` | `/v1/instructions/{project_instructions_id}/activate` | `-` | `200: ActivateProjectInstructionsResponse, 422: HTTPValidationError` |
+| `POST` | `/v1/instructions/reset` | `-` | `200: ResetProjectInstructionsResponse` |
 
 ## Tasks
 
