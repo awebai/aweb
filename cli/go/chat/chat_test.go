@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,14 @@ func mustClient(t *testing.T, url string) *awid.Client {
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func deliveredIDsTestPath(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, ".aw", deliveredIDsFileName)
+	t.Setenv(deliveredIDsPathEnv, path)
+	return tmp
 }
 
 func TestPending(t *testing.T) {
@@ -152,7 +161,7 @@ func TestExtendWait(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	t.Parallel()
+	_ = deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
@@ -202,8 +211,114 @@ func TestOpen(t *testing.T) {
 	}
 }
 
+func TestOpenRetriesMarkReadOnce(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
+	var markReadCalls int
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "bob"}},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "m1", FromAgent: "bob", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
+			markReadCalls++
+			if markReadCalls == 1 {
+				http.Error(w, "try again", http.StatusInternalServerError)
+				return
+			}
+			var req awid.ChatMarkReadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.UpToMessageID != "m1" {
+				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
+			}
+			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markReadCalls != 2 {
+		t.Fatalf("mark_read_calls=%d, want 2", markReadCalls)
+	}
+	if result.MarkedRead != 1 {
+		t.Fatalf("marked_read=%d", result.MarkedRead)
+	}
+}
+
+func TestOpenCachesDeliveredIDsBeforeFailedMarkRead(t *testing.T) {
+	tmp := deliveredIDsTestPath(t)
+
+	var markReadCalls int
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "bob"}},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "m1", FromAgent: "bob", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
+					{MessageID: "m2", FromAgent: "bob", Body: "again", Timestamp: "2025-01-01T00:00:01Z"},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, _ *http.Request) {
+			markReadCalls++
+			http.Error(w, "still failing", http.StatusInternalServerError)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markReadCalls != 2 {
+		t.Fatalf("mark_read_calls=%d, want 2", markReadCalls)
+	}
+	if len(result.Messages) != 2 {
+		t.Fatalf("messages=%d, want 2", len(result.Messages))
+	}
+
+	delivered, err := LoadDeliveredIDsForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := delivered["m1"]; !ok {
+		t.Fatalf("missing delivered id m1: %#v", delivered)
+	}
+	if _, ok := delivered["m2"]; !ok {
+		t.Fatalf("missing delivered id m2: %#v", delivered)
+	}
+
+	again, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Messages) != 0 {
+		t.Fatalf("messages=%d, want 0 after cache filter", len(again.Messages))
+	}
+}
+
 func TestOpenFallbackToListSessions(t *testing.T) {
-	t.Parallel()
+	_ = deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
@@ -2207,6 +2322,66 @@ func TestListenMarksRead(t *testing.T) {
 	}
 	if markReadUpTo != "msg-1" {
 		t.Fatalf("mark_read up_to=%s, want msg-1", markReadUpTo)
+	}
+}
+
+func TestSendRetriesMarkReadOnceAfterReply(t *testing.T) {
+	sentMsgID := "msg-sent-1"
+	var markReadCalls int
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply-1", "from_agent": "bob", "body": "hi back!",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
+			markReadCalls++
+			if markReadCalls == 1 {
+				http.Error(w, "try again", http.StatusInternalServerError)
+				return
+			}
+			var req awid.ChatMarkReadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.UpToMessageID != "msg-reply-1" {
+				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
+			}
+			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	if markReadCalls != 2 {
+		t.Fatalf("mark_read_calls=%d, want 2", markReadCalls)
 	}
 }
 

@@ -876,6 +876,7 @@ func TestNewRunDispatcherBuildsIdleActionableChatPrompt(t *testing.T) {
 }
 
 func TestResolveChatWakeUsesExactUnreadMessageIDBeforePendingLastMessage(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/chat/sessions/s-1/messages":
