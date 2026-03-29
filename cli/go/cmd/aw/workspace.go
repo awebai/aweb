@@ -240,8 +240,11 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	role = normalizeWorkspaceRole(role)
+	if role == "" {
+		return usageError("role is required: aw workspace add-worktree <role>  (e.g. developer, reviewer, coordinator)")
+	}
 	if !isValidWorkspaceRole(role) {
-		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
+		return usageError("invalid role %q: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars", role)
 	}
 
 	alias := strings.TrimSpace(workspaceAddAlias)
