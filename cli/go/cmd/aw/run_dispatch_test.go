@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/chat"
 )
 
 func mustWebClient(t *testing.T, url string) *aweb.Client {
@@ -19,6 +22,24 @@ func mustWebClient(t *testing.T, url string) *aweb.Client {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func deliveredIDsTestPath(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	prev, hadPrev := os.LookupEnv(chat.DeliveredIDsPathEnv)
+	path := filepath.Join(tmp, ".aw", chat.DeliveredIDsFileName)
+	if err := os.Setenv(chat.DeliveredIDsPathEnv, path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadPrev {
+			_ = os.Setenv(chat.DeliveredIDsPathEnv, prev)
+			return
+		}
+		_ = os.Unsetenv(chat.DeliveredIDsPathEnv)
+	})
+	return tmp
 }
 
 // TestResolveMailWakeMarksRead verifies that resolveMailWake acks the message
@@ -83,7 +104,7 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
 			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
 				Messages: []awid.ChatMessage{
-					{MessageID: "chat-msg-1", FromAgent: "alice", Body: "hey"},
+					{MessageID: "markread-msg-1", FromAgent: "alice", Body: "hey"},
 				},
 			})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
@@ -115,8 +136,8 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 	if markedReadSessionID != "s1" {
 		t.Fatalf("expected mark-read for session s1, got %q", markedReadSessionID)
 	}
-	if markedReadUpTo != "chat-msg-1" {
-		t.Fatalf("expected mark-read up to chat-msg-1, got %q", markedReadUpTo)
+	if markedReadUpTo != "markread-msg-1" {
+		t.Fatalf("expected mark-read up to markread-msg-1, got %q", markedReadUpTo)
 	}
 }
 
@@ -190,5 +211,68 @@ func TestResolveChatWakeForAliasSkipsPendingFallbackWhenUnreadHistoryIsOnlySelfA
 	}
 	if !result.Skip {
 		t.Fatalf("expected pending self-echo to skip, got %+v", result)
+	}
+}
+
+func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
+	tmp := deliveredIDsTestPath(t)
+
+	var markedReadCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "dedup-msg-1", FromAgent: "alice", Body: "hey"},
+				},
+			})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			markedReadCalls++
+			http.Error(w, "still failing", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	first, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   "dedup-msg-1",
+		FromAlias:   "alice",
+		UnreadCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Skip {
+		t.Fatalf("first delivery unexpectedly skipped: %+v", first)
+	}
+	if markedReadCalls != 2 {
+		t.Fatalf("mark_read_calls=%d, want 2", markedReadCalls)
+	}
+
+	delivered, err := chat.LoadDeliveredIDsForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := delivered["dedup-msg-1"]; !ok {
+		t.Fatalf("missing delivered id dedup-msg-1: %#v", delivered)
+	}
+
+	second, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   "dedup-msg-1",
+		FromAlias:   "alice",
+		UnreadCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Skip {
+		t.Fatalf("expected duplicate wake to be skipped, got %+v", second)
 	}
 }

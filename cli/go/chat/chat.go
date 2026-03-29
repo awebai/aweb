@@ -328,6 +328,25 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 	return events
 }
 
+func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID, messageID string) bool {
+	if client == nil || sessionID == "" || strings.TrimSpace(messageID) == "" {
+		return false
+	}
+	req := &awid.ChatMarkReadRequest{UpToMessageID: messageID}
+	if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
+		return true
+	}
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+	}
+	_, err := client.ChatMarkRead(ctx, sessionID, req)
+	return err == nil
+}
+
 // markLastRead marks the last received message as read (best-effort).
 // This prevents the notify hook from showing messages that were already
 // delivered via SSE during send-and-wait or listen.
@@ -337,9 +356,7 @@ func markLastRead(ctx context.Context, client *awid.Client, sessionID string, ev
 	}
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Type == "message" && events[i].MessageID != "" {
-			_, _ = client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{
-				UpToMessageID: events[i].MessageID,
-			})
+			_ = markReadBestEffort(ctx, client, sessionID, events[i].MessageID)
 			return
 		}
 	}
@@ -682,7 +699,6 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 	result := &OpenResult{
 		SessionID:     sessionID,
 		TargetAgent:   targetAlias,
-		Messages:      buildMessages(messagesResp.Messages),
 		SenderWaiting: senderWaiting,
 	}
 
@@ -691,12 +707,19 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 		return result, nil
 	}
 
+	filteredMessages := FilterDeliveredMessages(messagesResp.Messages)
+	result.Messages = buildMessages(filteredMessages)
+
+	if ids := DeliveredMessageIDs(messagesResp.Messages); len(ids) > 0 {
+		_ = SaveDeliveredIDs(ids)
+	}
+
 	lastMessageID := messagesResp.Messages[len(messagesResp.Messages)-1].MessageID
-	_, err = client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{
-		UpToMessageID: lastMessageID,
-	})
-	if err == nil {
+	if markReadBestEffort(ctx, client, sessionID, lastMessageID) {
 		result.MarkedRead = len(messagesResp.Messages)
+	}
+	if len(result.Messages) == 0 {
+		result.UnreadWasEmpty = true
 	}
 
 	return result, nil
@@ -804,4 +827,3 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 
 	return nil, fmt.Errorf("no pending conversation with %s", targetAlias)
 }
-
