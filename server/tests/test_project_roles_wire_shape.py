@@ -78,6 +78,7 @@ def test_deactivate_project_roles_response_emits_active_project_roles_id():
         version=3,
     )
     data = response.model_dump()
+    assert data["deactivated"] is True
     assert data["active_project_roles_id"] == "550e8400-e29b-41d4-a716-446655440000"
     assert data["version"] == 3
 

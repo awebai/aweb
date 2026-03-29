@@ -828,11 +828,10 @@ async def deactivate_project_roles_endpoint(
 
     await server_db.execute(
         """
-        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, event_type, details)
-        VALUES ($1, $2, $3, $4::jsonb)
+        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
+        VALUES ($1, $2, $3::jsonb)
         """,
         project_id,
-        identity.agent_id,
         "project_roles_deactivated",
         json.dumps(
             {
