@@ -70,7 +70,7 @@ This reference is generated from the live MCP registration in
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `roles_show` | `only_selected=False` | Show the active roles bundle and the selected role guidance, without shared instructions/invariants. |
+| `roles_show` | `only_selected=False` | Show the active roles bundle and the selected role guidance. |
 | `roles_list` | none | List available roles from the active bundle. |
 
 ## Work Discovery
