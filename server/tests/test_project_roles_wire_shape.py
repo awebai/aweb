@@ -3,6 +3,7 @@ import pytest
 from aweb.coordination.routes.project_roles import (
     ActiveProjectRolesResponse,
     CreateProjectRolesRequest,
+    DeactivateProjectRolesResponse,
     ProjectRolesHistoryItem,
     ProjectRolesHistoryResponse,
     SelectedRoleInfo,
@@ -68,6 +69,17 @@ def test_project_roles_history_response_emits_project_roles_versions():
     response = ProjectRolesHistoryResponse(project_roles_versions=[item])
     data = response.model_dump()
     assert data["project_roles_versions"][0]["project_roles_id"] == item.project_roles_id
+
+
+def test_deactivate_project_roles_response_emits_active_project_roles_id():
+    response = DeactivateProjectRolesResponse(
+        deactivated=True,
+        active_project_roles_id="550e8400-e29b-41d4-a716-446655440000",
+        version=3,
+    )
+    data = response.model_dump()
+    assert data["active_project_roles_id"] == "550e8400-e29b-41d4-a716-446655440000"
+    assert data["version"] == 3
 
 
 def test_resolve_selected_role_name_accepts_legacy_or_canonical_query():

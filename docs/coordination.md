@@ -124,6 +124,12 @@ Create and activate a new role bundle version:
 aw roles set --bundle-file roles.json
 ```
 
+Deactivate project roles for the current project:
+
+```bash
+aw roles deactivate
+```
+
 Show the shared project instructions:
 
 ```bash

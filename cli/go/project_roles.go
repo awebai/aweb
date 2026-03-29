@@ -64,6 +64,12 @@ type ResetProjectRolesResponse struct {
 	Version              int    `json:"version"`
 }
 
+type DeactivateProjectRolesResponse struct {
+	Deactivated          bool   `json:"deactivated"`
+	ActiveProjectRolesID string `json:"active_project_roles_id"`
+	Version              int    `json:"version"`
+}
+
 type ProjectRolesHistoryItem struct {
 	ProjectRolesID       string  `json:"project_roles_id"`
 	Version              int     `json:"version"`
@@ -141,6 +147,14 @@ func (c *Client) ActivateProjectRoles(ctx context.Context, projectRolesID string
 func (c *Client) ResetProjectRoles(ctx context.Context) (*ResetProjectRolesResponse, error) {
 	var out ResetProjectRolesResponse
 	if err := c.Post(ctx, "/v1/roles/reset", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) DeactivateProjectRoles(ctx context.Context) (*DeactivateProjectRolesResponse, error) {
+	var out DeactivateProjectRolesResponse
+	if err := c.Post(ctx, "/v1/roles/deactivate", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

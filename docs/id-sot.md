@@ -789,6 +789,7 @@ Subcommands:
 - `aw instructions set`: create and activate a new project instructions version
 - `aw instructions show`: show shared project instructions
 - `aw roles activate`: activate a project roles version
+- `aw roles deactivate`: deactivate project roles by replacing the active bundle with an empty version
 - `aw roles history`: list project roles versions
 - `aw roles list`: list roles defined in the active project roles
 - `aw roles reset`: reset project roles to the default

@@ -504,3 +504,49 @@ func TestAwRolesResetResetsToDefault(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
+
+func TestAwRolesDeactivateDeactivatesToEmptyBundle(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
+			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/v1/roles/deactivate":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"deactivated":             true,
+				"active_project_roles_id": "roles-4",
+				"version":                 4,
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, cfgPath, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "deactivate")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Deactivated project roles (v4, roles-4)") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}

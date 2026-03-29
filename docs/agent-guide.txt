@@ -131,6 +131,7 @@ Roles:
   aw roles history
   aw roles set --bundle-file <path>
   aw roles activate <project-roles-id>
+  aw roles deactivate
   aw roles reset
   aw role-name set <role-name>
 

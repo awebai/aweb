@@ -57,6 +57,12 @@ var rolesResetCmd = &cobra.Command{
 	RunE:  runRolesReset,
 }
 
+var rolesDeactivateCmd = &cobra.Command{
+	Use:   "deactivate",
+	Short: "Deactivate project roles by replacing the active bundle with an empty bundle",
+	RunE:  runRolesDeactivate,
+}
+
 var (
 	rolesShowRoleNameFlag string
 	rolesShowAllFlag      bool
@@ -104,6 +110,7 @@ func init() {
 	rolesCmd.AddCommand(rolesSetCmd)
 	rolesCmd.AddCommand(rolesActivateCmd)
 	rolesCmd.AddCommand(rolesResetCmd)
+	rolesCmd.AddCommand(rolesDeactivateCmd)
 	rootCmd.AddCommand(rolesCmd)
 	rolesCmd.GroupID = groupCoordination
 }
@@ -246,6 +253,23 @@ func runRolesReset(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	printOutput(resp, formatProjectRolesReset)
+	return nil
+}
+
+func runRolesDeactivate(cmd *cobra.Command, args []string) error {
+	client, _, err := resolveClientSelection()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.DeactivateProjectRoles(ctx)
+	if err != nil {
+		return err
+	}
+	printOutput(resp, formatProjectRolesDeactivate)
 	return nil
 }
 
@@ -433,4 +457,12 @@ func formatProjectRolesReset(v any) string {
 		return "Project roles reset.\n"
 	}
 	return fmt.Sprintf("Reset project roles to default (v%d, %s)\n", out.Version, out.ActiveProjectRolesID)
+}
+
+func formatProjectRolesDeactivate(v any) string {
+	out := v.(*aweb.DeactivateProjectRolesResponse)
+	if out == nil {
+		return "Project roles deactivated.\n"
+	}
+	return fmt.Sprintf("Deactivated project roles (v%d, %s)\n", out.Version, out.ActiveProjectRolesID)
 }

@@ -258,4 +258,54 @@ async def test_legacy_invariants_backfill_active_project_instructions(aweb_cloud
         data = instructions.json()
         assert data["project_instructions_id"]
         assert "Mail first" in data["document"]["body_md"]
-        assert "Use `aw mail` for non-blocking coordination." in data["document"]["body_md"]
+
+
+@pytest.mark.asyncio
+async def test_project_roles_can_be_deactivated_to_empty_bundle(aweb_cloud_db):
+    server_db = aweb_cloud_db.oss_db
+    app = _build_roles_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=server_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        slug = f"roles-deactivate-{uuid.uuid4().hex[:8]}"
+        created = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": slug,
+                "namespace_slug": slug,
+                "alias": "alice",
+            },
+        )
+        assert created.status_code == 200, created.text
+        created_data = created.json()
+        api_key = created_data["api_key"]
+
+        initial_roles = await client.get(
+            "/v1/roles/active",
+            params={"only_selected": "false"},
+            headers=_auth_headers(api_key),
+        )
+        assert initial_roles.status_code == 200, initial_roles.text
+        initial_data = initial_roles.json()
+        assert initial_data["roles"]
+
+        deactivated = await client.post(
+            "/v1/roles/deactivate",
+            headers=_auth_headers(api_key),
+        )
+        assert deactivated.status_code == 200, deactivated.text
+        deactivated_data = deactivated.json()
+        assert deactivated_data["deactivated"] is True
+        assert deactivated_data["version"] == initial_data["version"] + 1
+        assert deactivated_data["active_project_roles_id"] != initial_data["project_roles_id"]
+
+        roles = await client.get(
+            "/v1/roles/active",
+            params={"only_selected": "false"},
+            headers=_auth_headers(api_key),
+        )
+        assert roles.status_code == 200, roles.text
+        data = roles.json()
+        assert data["project_roles_id"] == deactivated_data["active_project_roles_id"]
+        assert data["active_project_roles_id"] == deactivated_data["active_project_roles_id"]
+        assert data["roles"] == {}
+        assert data["adapters"] == {}

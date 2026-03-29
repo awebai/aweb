@@ -351,6 +351,14 @@ class ResetProjectRolesResponse(BaseModel):
     version: int
 
 
+class DeactivateProjectRolesResponse(BaseModel):
+    """Response for POST /v1/roles/deactivate."""
+
+    deactivated: bool
+    active_project_roles_id: str
+    version: int
+
+
 class ProjectRolesHistoryItem(BaseModel):
     """A project roles version in the history list."""
 
@@ -776,6 +784,76 @@ async def reset_project_roles_to_default_endpoint(
 
     return ResetProjectRolesResponse(
         reset=True,
+        active_project_roles_id=project_roles_version.project_roles_id,
+        version=project_roles_version.version,
+    )
+
+
+@roles_router.post("/deactivate")
+async def deactivate_project_roles_endpoint(
+    request: Request,
+    db: DatabaseInfra = Depends(get_db_infra),
+) -> DeactivateProjectRolesResponse:
+    """Deactivate project roles by replacing the active bundle with an empty bundle."""
+    identity = await get_identity_from_auth(request, db)
+    project_id = identity.project_id
+    server_db = db.get_manager("server")
+
+    current_active = await server_db.fetch_one(
+        """
+        SELECT active_project_roles_id
+        FROM {{tables.projects}}
+        WHERE id = $1 AND deleted_at IS NULL
+        """,
+        project_id,
+    )
+    previous_project_roles_id = (
+        str(current_active["active_project_roles_id"])
+        if current_active and current_active["active_project_roles_id"]
+        else None
+    )
+
+    project_roles_version = await create_project_roles_version(
+        server_db,
+        project_id=project_id,
+        base_project_roles_id=previous_project_roles_id,
+        bundle={"roles": {}, "adapters": {}},
+        created_by_workspace_id=identity.agent_id if identity.agent_id else None,
+    )
+    await activate_project_roles(
+        server_db,
+        project_id=project_id,
+        project_roles_id=project_roles_version.project_roles_id,
+    )
+
+    await server_db.execute(
+        """
+        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, event_type, details)
+        VALUES ($1, $2, $3, $4::jsonb)
+        """,
+        project_id,
+        identity.agent_id,
+        "project_roles_deactivated",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "project_roles_id": project_roles_version.project_roles_id,
+                "version": project_roles_version.version,
+                "previous_project_roles_id": previous_project_roles_id,
+            }
+        ),
+    )
+
+    logger.info(
+        "Project roles deactivated via API: project=%s project_roles_id=%s version=%d (was: %s)",
+        project_id,
+        project_roles_version.project_roles_id,
+        project_roles_version.version,
+        previous_project_roles_id,
+    )
+
+    return DeactivateProjectRolesResponse(
+        deactivated=True,
         active_project_roles_id=project_roles_version.project_roles_id,
         version=project_roles_version.version,
     )

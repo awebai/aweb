@@ -256,6 +256,7 @@ These are the shapes most developers usually need first.
 | `POST` | `/v1/roles` | `CreateProjectRolesRequest` | `200: CreateProjectRolesResponse, 422: HTTPValidationError` |
 | `GET` | `/v1/roles/{project_roles_id}` | `-` | `200: ActiveProjectRolesResponse, 422: HTTPValidationError` |
 | `POST` | `/v1/roles/{project_roles_id}/activate` | `-` | `200: ActivateProjectRolesResponse, 422: HTTPValidationError` |
+| `POST` | `/v1/roles/deactivate` | `-` | `200: DeactivateProjectRolesResponse, 422: HTTPValidationError` |
 | `POST` | `/v1/roles/reset` | `-` | `200: ResetProjectRolesResponse` |
 
 ## Instructions

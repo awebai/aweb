@@ -625,6 +625,7 @@ Flags:
 
 Subcommands:
 - `activate    Activate an existing project roles bundle version`
+- `deactivate  Deactivate project roles by replacing the active bundle with an empty bundle`
 - `history     List project roles history`
 - `list        List roles defined in the active project roles bundle`
 - `reset       Reset project roles to the server default bundle`
@@ -638,6 +639,11 @@ Flags:
 
 Flags:
 - `-h, --help   help for activate`
+
+### `roles deactivate`
+
+Flags:
+- `-h, --help   help for deactivate`
 
 ### `roles history`
 
