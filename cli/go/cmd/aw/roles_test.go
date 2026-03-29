@@ -378,7 +378,7 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 		"AWEB_API_KEY=",
 	)
 	run.Dir = tmp
-	run.Stdin = strings.NewReader(`{"roles":{"reviewer":{"title":"Reviewer","playbook_md":"Review carefully."}},"adapters":{"codex":{"prompt":"Use aw"}}}`)
+	run.Stdin = strings.NewReader(`{"roles":{"reviewer":{"title":"Reviewer","playbook_md":"Review carefully."}}}`)
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
@@ -405,12 +405,8 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 	if reviewer["title"] != "Reviewer" || reviewer["playbook_md"] != "Review carefully." {
 		t.Fatalf("reviewer=%#v", reviewer)
 	}
-	adapters, ok := bundle["adapters"].(map[string]any)
-	if !ok {
-		t.Fatalf("adapters=%#v", bundle["adapters"])
-	}
-	if _, ok := adapters["codex"].(map[string]any); !ok {
-		t.Fatalf("codex adapter missing: %#v", adapters)
+	if _, ok := bundle["adapters"]; ok {
+		t.Fatalf("adapters should be omitted when not provided: %#v", bundle["adapters"])
 	}
 
 	if !strings.Contains(string(out), "Activated project roles v2 (roles-2)") {

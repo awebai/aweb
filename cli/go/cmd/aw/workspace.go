@@ -457,7 +457,7 @@ func registerWorkspaceForRoot(root string, client *aweb.Client, roleOverride str
 	}
 	// Only resolve from project roles if we don't already have a role.
 	// Callers that pre-validate the role (init, project create,
-	// add-worktree, roles set) pass it here already validated.
+	// add-worktree, role-name set) pass it here already validated.
 	if role == "" {
 		role, err = resolveRole(client, "", isTTY(), os.Stdin, os.Stderr)
 		if err != nil {

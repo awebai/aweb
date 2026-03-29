@@ -38,7 +38,7 @@ var rolesHistoryCmd = &cobra.Command{
 	RunE:  runRolesHistory,
 }
 
-var rolesBundleSetCmd = &cobra.Command{
+var rolesSetCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Create and activate a new project roles bundle version",
 	RunE:  runRolesSet,
@@ -95,13 +95,13 @@ type projectRoleItem struct {
 func init() {
 	addRolesShowFlags(rolesShowCmd)
 	rolesHistoryCmd.Flags().IntVar(&rolesHistoryLimit, "limit", 20, "Max role bundle versions")
-	rolesBundleSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Project roles bundle JSON")
-	rolesBundleSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read project roles bundle JSON from file ('-' for stdin)")
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Project roles bundle JSON")
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read project roles bundle JSON from file ('-' for stdin)")
 
 	rolesCmd.AddCommand(rolesShowCmd)
 	rolesCmd.AddCommand(rolesListCmd)
 	rolesCmd.AddCommand(rolesHistoryCmd)
-	rolesCmd.AddCommand(rolesBundleSetCmd)
+	rolesCmd.AddCommand(rolesSetCmd)
 	rolesCmd.AddCommand(rolesActivateCmd)
 	rolesCmd.AddCommand(rolesResetCmd)
 	rootCmd.AddCommand(rolesCmd)
@@ -320,9 +320,6 @@ func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.Pr
 	}
 	if bundle.Roles == nil {
 		bundle.Roles = map[string]aweb.RoleDefinition{}
-	}
-	if bundle.Adapters == nil {
-		bundle.Adapters = map[string]any{}
 	}
 	return bundle, nil
 }

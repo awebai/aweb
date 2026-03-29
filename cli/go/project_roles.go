@@ -110,14 +110,6 @@ func (c *Client) ActiveProjectRoles(ctx context.Context, params ActiveProjectRol
 	return &out, nil
 }
 
-func (c *Client) GetProjectRoles(ctx context.Context, projectRolesID string) (*ActiveProjectRolesResponse, error) {
-	var out ActiveProjectRolesResponse
-	if err := c.Get(ctx, "/v1/roles/"+urlPathEscape(projectRolesID), &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 func (c *Client) ProjectRolesHistory(ctx context.Context, limit int) (*ProjectRolesHistoryResponse, error) {
 	path := "/v1/roles/history"
 	if limit > 0 {
