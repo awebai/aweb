@@ -31,6 +31,8 @@ from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
+from aweb.mcp.tools.project_instructions import instructions_history as _instructions_history_impl
+from aweb.mcp.tools.project_instructions import instructions_show as _instructions_show_impl
 from aweb.mcp.tools.project_roles import roles_show as _roles_show_impl
 from aweb.mcp.tools.project_roles import roles_list as _roles_list_impl
 from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
@@ -388,6 +390,22 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
         return await _task_comment_list_impl(db_infra, ref=ref)
 
     # -- Roles --
+
+    @mcp.tool(
+        name="instructions_show",
+        description="Show the active shared project instructions or a requested instructions version.",
+    )
+    async def instructions_show(project_instructions_id: str = "") -> str:
+        return await _instructions_show_impl(
+            db_infra, project_instructions_id=project_instructions_id
+        )
+
+    @mcp.tool(
+        name="instructions_history",
+        description="List recent shared project instructions versions.",
+    )
+    async def instructions_history(limit: int = 20) -> str:
+        return await _instructions_history_impl(db_infra, limit=limit)
 
     @mcp.tool(
         name="roles_show",

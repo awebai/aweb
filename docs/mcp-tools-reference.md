@@ -59,6 +59,13 @@ This reference is generated from the live MCP registration in
 | `task_comment_add` | `ref`, `body` | Add a task comment. |
 | `task_comment_list` | `ref` | List task comments. |
 
+## Instructions
+
+| Tool | Parameters | Purpose |
+| --- | --- | --- |
+| `instructions_show` | `project_instructions_id=""` | Show the active shared project instructions or a requested version. |
+| `instructions_history` | `limit=20` | List recent shared project instructions versions. |
+
 ## Roles
 
 | Tool | Parameters | Purpose |
