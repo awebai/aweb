@@ -128,6 +128,10 @@ Notes:
 Roles:
   aw roles show
   aw roles list
+  aw roles history
+  aw roles set --bundle-file <path>
+  aw roles activate <project-roles-id>
+  aw roles reset
   aw role-name set <role-name>
 
 Project instructions:

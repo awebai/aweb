@@ -788,8 +788,12 @@ Subcommands:
 - `aw instructions reset`: reset project instructions to the default
 - `aw instructions set`: create and activate a new project instructions version
 - `aw instructions show`: show shared project instructions
+- `aw roles activate`: activate a project roles version
+- `aw roles history`: list project roles versions
 - `aw roles list`: list roles defined in the active project roles
-- `aw roles show`: show active project roles and role guidance
+- `aw roles reset`: reset project roles to the default
+- `aw roles set`: create and activate a new project roles version
+- `aw roles show`: show role guidance from the active project roles bundle
 - `aw task close`: close one or more tasks
 - `aw task comment`: manage task comments
 - `aw task comment add`: add a comment to a task

@@ -624,16 +624,43 @@ Flags:
 ### `roles`
 
 Subcommands:
+- `activate    Activate an existing project roles bundle version`
+- `history     List project roles history`
 - `list        List roles defined in the active project roles bundle`
+- `reset       Reset project roles to the server default bundle`
+- `set         Create and activate a new project roles bundle version`
 - `show        Show role guidance from the active project roles bundle`
 
 Flags:
 - `-h, --help   help for roles`
 
+### `roles activate`
+
+Flags:
+- `-h, --help   help for activate`
+
+### `roles history`
+
+Flags:
+- `-h, --help        help for history`
+- `--limit int   Max role bundle versions (default 20)`
+
 ### `roles list`
 
 Flags:
 - `-h, --help   help for list`
+
+### `roles reset`
+
+Flags:
+- `-h, --help   help for reset`
+
+### `roles set`
+
+Flags:
+- `--bundle-file string   Read project roles bundle JSON from file ('-' for stdin)`
+- `--bundle-json string   Project roles bundle JSON`
+- `-h, --help                 help for set`
 
 ### `roles show`
 

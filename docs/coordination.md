@@ -112,6 +112,18 @@ Preview a specific role:
 aw roles show --role-name reviewer
 ```
 
+List recent role bundle versions:
+
+```bash
+aw roles history
+```
+
+Create and activate a new role bundle version:
+
+```bash
+aw roles set --bundle-file roles.json
+```
+
 Show the shared project instructions:
 
 ```bash
