@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,8 +57,18 @@ func jsonResponse(w http.ResponseWriter, v any) {
 func deliveredIDsTestPath(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
-	path := filepath.Join(tmp, ".aw", deliveredIDsFileName)
-	t.Setenv(deliveredIDsPathEnv, path)
+	path := filepath.Join(tmp, ".aw", DeliveredIDsFileName)
+	prev, hadPrev := os.LookupEnv(DeliveredIDsPathEnv)
+	if err := os.Setenv(DeliveredIDsPathEnv, path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadPrev {
+			_ = os.Setenv(DeliveredIDsPathEnv, prev)
+			return
+		}
+		_ = os.Unsetenv(DeliveredIDsPathEnv)
+	})
 	return tmp
 }
 
@@ -161,7 +172,7 @@ func TestExtendWait(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
@@ -212,7 +223,6 @@ func TestOpen(t *testing.T) {
 }
 
 func TestOpenRetriesMarkReadOnce(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
 	var markReadCalls int
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -226,7 +236,7 @@ func TestOpenRetriesMarkReadOnce(t *testing.T) {
 		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatHistoryResponse{
 				Messages: []awid.ChatMessage{
-					{MessageID: "m1", FromAgent: "bob", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
+					{MessageID: "retry-m1", FromAgent: "bob", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
 				},
 			})
 		},
@@ -238,7 +248,7 @@ func TestOpenRetriesMarkReadOnce(t *testing.T) {
 			}
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.UpToMessageID != "m1" {
+			if req.UpToMessageID != "retry-m1" {
 				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
@@ -318,7 +328,7 @@ func TestOpenCachesDeliveredIDsBeforeFailedMarkRead(t *testing.T) {
 }
 
 func TestOpenFallbackToListSessions(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {

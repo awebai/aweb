@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,7 +27,18 @@ func mustWebClient(t *testing.T, url string) *aweb.Client {
 func deliveredIDsTestPath(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
-	t.Setenv("AW_CHAT_DELIVERED_IDS_PATH", filepath.Join(tmp, ".aw", "chat-delivered-ids.json"))
+	prev, hadPrev := os.LookupEnv(chat.DeliveredIDsPathEnv)
+	path := filepath.Join(tmp, ".aw", chat.DeliveredIDsFileName)
+	if err := os.Setenv(chat.DeliveredIDsPathEnv, path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadPrev {
+			_ = os.Setenv(chat.DeliveredIDsPathEnv, prev)
+			return
+		}
+		_ = os.Unsetenv(chat.DeliveredIDsPathEnv)
+	})
 	return tmp
 }
 
@@ -76,7 +88,7 @@ func TestResolveMailWakeMarksRead(t *testing.T) {
 // TestResolveChatWakeMarksRead verifies that resolveChatWake marks messages
 // as read after fetching the pending conversation.
 func TestResolveChatWakeMarksRead(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+	t.Parallel()
 
 	var markedReadSessionID string
 	var markedReadUpTo string
@@ -92,7 +104,7 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
 			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
 				Messages: []awid.ChatMessage{
-					{MessageID: "chat-msg-1", FromAgent: "alice", Body: "hey"},
+					{MessageID: "markread-msg-1", FromAgent: "alice", Body: "hey"},
 				},
 			})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
@@ -124,13 +136,13 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 	if markedReadSessionID != "s1" {
 		t.Fatalf("expected mark-read for session s1, got %q", markedReadSessionID)
 	}
-	if markedReadUpTo != "chat-msg-1" {
-		t.Fatalf("expected mark-read up to chat-msg-1, got %q", markedReadUpTo)
+	if markedReadUpTo != "markread-msg-1" {
+		t.Fatalf("expected mark-read up to markread-msg-1, got %q", markedReadUpTo)
 	}
 }
 
 func TestResolveChatWakeForAliasSkipsSelfAuthoredExactMessage(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -164,7 +176,7 @@ func TestResolveChatWakeForAliasSkipsSelfAuthoredExactMessage(t *testing.T) {
 }
 
 func TestResolveChatWakeForAliasSkipsPendingFallbackWhenUnreadHistoryIsOnlySelfAuthored(t *testing.T) {
-	_ = deliveredIDsTestPath(t)
+	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -212,7 +224,7 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
 			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
 				Messages: []awid.ChatMessage{
-					{MessageID: "chat-msg-1", FromAgent: "alice", Body: "hey"},
+					{MessageID: "dedup-msg-1", FromAgent: "alice", Body: "hey"},
 				},
 			})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
@@ -228,7 +240,7 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	first, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
 		Type:        awid.AgentEventActionableChat,
 		SessionID:   "s1",
-		MessageID:   "chat-msg-1",
+		MessageID:   "dedup-msg-1",
 		FromAlias:   "alice",
 		UnreadCount: 1,
 	})
@@ -246,14 +258,14 @@ func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := delivered["chat-msg-1"]; !ok {
-		t.Fatalf("missing delivered id chat-msg-1: %#v", delivered)
+	if _, ok := delivered["dedup-msg-1"]; !ok {
+		t.Fatalf("missing delivered id dedup-msg-1: %#v", delivered)
 	}
 
 	second, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
 		Type:        awid.AgentEventActionableChat,
 		SessionID:   "s1",
-		MessageID:   "chat-msg-1",
+		MessageID:   "dedup-msg-1",
 		FromAlias:   "alice",
 		UnreadCount: 1,
 	})

@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	deliveredIDsFileName = "chat-delivered-ids.json"
+	DeliveredIDsFileName = "chat-delivered-ids.json"
 	deliveredIDsTTL      = 10 * time.Minute
-	deliveredIDsPathEnv  = "AW_CHAT_DELIVERED_IDS_PATH"
+	DeliveredIDsPathEnv  = "AW_CHAT_DELIVERED_IDS_PATH"
 )
 
 type deliveredIDsFile map[string]string
@@ -33,10 +33,10 @@ func deliveredIDsRoot(startDir string) string {
 }
 
 func deliveredIDsPath(startDir string) string {
-	if override := strings.TrimSpace(os.Getenv(deliveredIDsPathEnv)); override != "" {
+	if override := strings.TrimSpace(os.Getenv(DeliveredIDsPathEnv)); override != "" {
 		return filepath.Clean(override)
 	}
-	return filepath.Join(deliveredIDsRoot(startDir), ".aw", deliveredIDsFileName)
+	return filepath.Join(deliveredIDsRoot(startDir), ".aw", DeliveredIDsFileName)
 }
 
 func LoadDeliveredIDs() (map[string]struct{}, error) {
@@ -74,11 +74,8 @@ func SaveDeliveredIDsForDir(startDir string, ids []string) error {
 	now := time.Now()
 	path := deliveredIDsPath(startDir)
 	existing, err := loadDeliveredIDTimes(path, now)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return err
-	}
-	if existing == nil {
-		existing = make(map[string]time.Time)
 	}
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
