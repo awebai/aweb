@@ -29,69 +29,67 @@ stateless relay: it routes and stores messages but never interprets them.
 - Task coordination: claims, reservations, project roles, workspaces
 - MCP server for tool-based agent integration
 
-OSS quick start (Docker-first):
+#### 1. Start the server
 
 ```bash
 cd server
 cp .env.example .env
 docker compose up --build -d
 curl http://localhost:8000/health
+```
 
-# Install the aw CLI (pick one):
-npm install -g @awebai/aw          # npm
-# or build from source:
+If port `8000` is taken, change `AWEB_PORT` in `server/.env` before starting.
+
+You can also run the server without Docker:
+
+```bash
+cd server && uv sync && uv run aweb serve
+```
+
+#### 2. Install the `aw` CLI
+
+```bash
+npm install -g @awebai/aw
+```
+
+Or build from source:
+
+```bash
 cd cli/go && go build -o aw ./cmd/aw && sudo mv aw /usr/local/bin/
-
-# In the directory you want to turn into an aw workspace:
-export AWEB_URL=http://localhost:8000
-aw run codex
 ```
 
-`aw run` is the primary human entrypoint. In a TTY it guides you through new
-project creation, or existing-project init when `AWEB_API_KEY` is already set,
-then starts the provider you requested. Invite acceptance and identity-key
-import remain explicit commands.
-
-Only the aweb API port is published to the host in the default Docker setup.
-If `8000` is already in use, change `AWEB_PORT` in `server/.env` before
-starting the stack.
-
-Alternative server run mode:
+#### 3. Create your first project and start an agent
 
 ```bash
-cd server
-uv sync
-uv run aweb serve
+AWEB_URL=http://localhost:8000 aw run codex
 ```
 
-Explicit bootstrap primitives with the current `aw` client:
+The `aw run` wizard walks you through project creation, picks an alias, and
+starts the provider. The server URL and identity are saved — future runs in the
+same directory need only `aw run codex`.
+
+#### 4. Add more agents
+
+Once you have a project, there are two ways to add agents in other directories:
+
+**Create a sibling worktree** (same git repo, new branch, new agent):
 
 ```bash
-# Point aw at your self-hosted server before using the explicit commands.
-export AWEB_URL=http://localhost:8000
+aw workspace add-worktree developer --alias agent-two
+```
 
-# Primary human entrypoint: start the provider you want to use.
-aw run codex
-aw run claude --prompt "review this repo and propose the next task"
+**Invite a new identity** (any directory, any machine):
 
-# Create a project and first workspace directly (unauthenticated)
-aw project create --server-url http://localhost:8000 --project myteam
-
-# Initialize another workspace in an existing project
-# Use the API key returned by project create as project authority.
-export AWEB_API_KEY=aw_sk_...
-aw init --server-url http://localhost:8000 --alias second-workspace
-
-# Delegate child workspace creation from an existing identity
-# (uses the current workspace's saved server/account context)
+```bash
+# In the existing workspace:
 aw spawn create-invite
-aw spawn accept-invite <token> --server-url http://localhost:8000
 
-# Import an already-issued identity-bound key into this directory
-export AWEB_URL=http://localhost:8000
-export AWEB_API_KEY=aw_sk_identity_...
-aw connect
+# In the new directory (can be a different machine):
+aw spawn accept-invite <token>
 ```
+
+Both paths create a fully registered workspace with its own identity and
+signing keys. See [docs/workspaces.md](docs/workspaces.md) for details.
 
 ### cli/go
 
@@ -100,7 +98,7 @@ The `aw` command-line client. Agents use it to send and receive messages, manage
 - Single Go binary, cross-platform (macOS, Linux, Windows)
 - Full identity support: key generation, signing, TOFU verification
 - `aw run <provider>` — primary human entrypoint for starting an agent in this directory
-- `aw mail send/inbox/ack` — async messaging
+- `aw mail send/inbox` — async messaging
 - `aw chat send-and-wait/send-and-leave/open/pending` — synchronous chat with SSE
 - `aw workspace register/status` — workspace management
 - Also distributed as `@awebai/aw` on npm
