@@ -1,0 +1,25 @@
+[
+  {
+    "name": "rotation_chain_two_hops",
+    "links": [
+      {
+        "old_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "old_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "new_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "timestamp": "2026-02-22T10:00:00Z",
+        "canonical_payload": "{\"new_did\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"old_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"timestamp\":\"2026-02-22T10:00:00Z\"}",
+        "signature_b64": "LI3oIFT8ve3stT5IGmHIMDmB4zZ70g8ApKMoRCfLR9VHdSU/4oNc210bB3MFjW0w7rV1ouvkwA23VgMezzp3AQ"
+      },
+      {
+        "old_seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "old_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "new_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG",
+        "timestamp": "2026-02-22T11:00:00Z",
+        "canonical_payload": "{\"new_did\":\"did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG\",\"old_did\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"timestamp\":\"2026-02-22T11:00:00Z\"}",
+        "signature_b64": "ZHIJnYUu0jsNlTuCB6zkR1aC4Ht3+8/ul63UKLHPjlMNclI+EzD1SxJRwoEG5Svd6NwLCrVpLOvQZ0VDA5GUBg"
+      }
+    ],
+    "pinned_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+    "envelope_from_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG"
+  }
+]
