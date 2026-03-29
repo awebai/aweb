@@ -125,18 +125,14 @@ async def create_task(
 ) -> dict[str, Any]:
     slug = await _get_project_slug(db, project_id=project_id)
     server_db = db.get_manager("server")
-    aweb_db = db.get_manager("aweb")
     resolved_parent_task_id: UUID | None = None
     task_ref_suffix: str | None = None
 
     if assignee_agent_id:
-        agent_row = await aweb_db.fetch_one(
-            "SELECT agent_id FROM {{tables.agents}} WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL",
-            UUID(assignee_agent_id),
-            UUID(project_id),
+        resolved_assignee_uuid = await _resolve_assignee_agent_id(
+            db, project_id=project_id, assignee_ref=assignee_agent_id,
         )
-        if not agent_row:
-            raise ValidationError("Assignee agent not found in this project")
+        assignee_agent_id = str(resolved_assignee_uuid)
 
     async with server_db.transaction() as tx:
         task_number = await _allocate_task_number_on(tx, project_id=project_id)
@@ -356,8 +352,11 @@ async def list_tasks(
             params.append(statuses)
         idx += 1
     if assignee_agent_id is not None:
+        resolved_assignee_uuid = await _resolve_assignee_agent_id(
+            db, project_id=project_id, assignee_ref=assignee_agent_id,
+        )
         conditions.append(f"assignee_agent_id = ${idx}")
-        params.append(UUID(assignee_agent_id))
+        params.append(resolved_assignee_uuid)
         idx += 1
     if task_type is not None:
         conditions.append(f"task_type = ${idx}")
