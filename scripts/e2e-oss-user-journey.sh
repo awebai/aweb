@@ -591,9 +591,42 @@ assert_eq "reviewer in identities" "True" "$reviewer_found"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 19: lock list
+# Phase 19: roles deactivate
 # ---------------------------------------------------------------------------
-echo "=== Phase 19: lock list ==="
+echo "=== Phase 19: roles deactivate ==="
+
+roles_deactivate_out="$(run_aw_in "$ALICE_DIR" roles deactivate --json 2>/dev/null)"
+roles_deactivate_exit=$?
+if [[ $roles_deactivate_exit -eq 0 && -n "$roles_deactivate_out" ]]; then
+  echo "  PASS: roles deactivate"
+  ((pass++))
+else
+  echo "  FAIL: roles deactivate (exit=$roles_deactivate_exit)"
+  ((fail++))
+fi
+
+deactivated_roles_show_out="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
+deactivated_roles_count="$(echo "$deactivated_roles_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+project_roles = d.get('project_roles') or {}
+roles = project_roles.get('roles') or {}
+print(len(roles))
+" 2>/dev/null || echo "")"
+deactivated_roles_id="$(echo "$deactivated_roles_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+project_roles = d.get('project_roles') or {}
+print(project_roles.get('active_project_roles_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "roles deactivate clears active bundle" "0" "$deactivated_roles_count"
+assert_not_empty "roles deactivate keeps active bundle id" "$deactivated_roles_id"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 20: lock list
+# ---------------------------------------------------------------------------
+echo "=== Phase 20: lock list ==="
 
 lock_exit=0
 run_aw_in "$ALICE_DIR" lock list 2>/dev/null || lock_exit=$?
