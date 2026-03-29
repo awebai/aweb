@@ -85,51 +85,6 @@ func TestFormatNotifyOutputUrgentAndFallback(t *testing.T) {
 	}
 }
 
-func TestFormatNotifyOutputSkipsSelfEcho(t *testing.T) {
-	t.Parallel()
-
-	result := &chat.PendingResult{
-		Pending: []chat.PendingConversation{
-			{
-				SessionID:     "s1",
-				Participants:  []string{"dave", "eve"},
-				LastFrom:      "dave",
-				UnreadCount:   1,
-				SenderWaiting: false,
-			},
-		},
-	}
-
-	out := formatNotifyOutput(result, "dave")
-	if strings.Contains(out, "dave") {
-		t.Fatalf("self-echo: should not show notification from own alias:\n%s", out)
-	}
-	if strings.Contains(out, "PENDING") {
-		t.Fatalf("self-echo: should produce no notification when only self-authored messages pending:\n%s", out)
-	}
-}
-
-func TestFormatNotifyOutputSelfLastFromFallsBackToOtherParticipant(t *testing.T) {
-	t.Parallel()
-
-	result := &chat.PendingResult{
-		Pending: []chat.PendingConversation{
-			{
-				SessionID:     "s1",
-				Participants:  []string{"dave", "eve"},
-				LastFrom:      "dave",
-				UnreadCount:   2,
-				SenderWaiting: true,
-			},
-		},
-	}
-
-	out := formatNotifyOutput(result, "dave")
-	if !strings.Contains(out, "eve") {
-		t.Fatalf("expected fallback to other participant 'eve', got:\n%s", out)
-	}
-}
-
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 

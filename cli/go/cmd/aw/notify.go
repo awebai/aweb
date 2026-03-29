@@ -103,16 +103,10 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 	var regular []string
 	for _, pending := range result.Pending {
 		from := strings.TrimSpace(pending.LastFrom)
-		if strings.EqualFold(from, selfAlias) {
-			if !pending.SenderWaiting {
-				continue
-			}
-			from = ""
-		}
 		if from == "" {
 			for _, participant := range pending.Participants {
 				participant = strings.TrimSpace(participant)
-				if participant == "" || strings.EqualFold(participant, selfAlias) {
+				if participant == "" || participant == selfAlias {
 					continue
 				}
 				from = participant
