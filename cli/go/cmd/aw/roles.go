@@ -128,6 +128,9 @@ func runProjectRolesShow(cmd *cobra.Command, args []string) error {
 	}
 
 	roleName := resolveRequestedRoleName(sel, rolesShowRoleNameFlag)
+	if rolesShowAllFlag {
+		roleName = ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
