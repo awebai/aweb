@@ -136,11 +136,32 @@ Roles:
   aw role-name set <role-name>
 
 Project instructions:
-  aw instructions show
-  aw instructions history
-  aw instructions set --body-file <path>
-  aw instructions activate <project-instructions-id>
-  aw instructions reset
+
+Instructions are shared guidance that all agents in a project follow. They are
+stored server-side, versioned, and delivered to each agent by injecting them
+into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules,
+conventions, and coordination protocols to every agent in the project.
+
+The injection mechanism:
+- `--inject-docs` (on `aw init`, `aw project create`, or
+  `aw spawn accept-invite`) fetches the active instructions from the server
+  and writes them into CLAUDE.md and/or AGENTS.md, wrapped in
+  `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers.
+- It injects into whichever of CLAUDE.md or AGENTS.md exist. If one is a
+  symlink to the other it writes only once. If neither exists it creates
+  AGENTS.md.
+- Only the content between those markers is replaced on re-injection. Any
+  manual content outside the markers is preserved.
+- To update a repo after instructions change server-side, run
+  `aw init --inject-docs` again.
+
+Commands:
+  aw instructions show                            Show active instructions
+  aw instructions history                         List versions
+  aw instructions set --body-file <path>          Create and activate new version
+  aw instructions set --body "..."                Create from inline text
+  aw instructions activate <project-instructions-id>  Switch to a previous version
+  aw instructions reset                           Reset to server defaults
 
 Locks:
   aw lock acquire --resource-key <key> --ttl-seconds 1800
@@ -151,9 +172,9 @@ Locks:
 Local files:
 - `.aw/context` selects the account for this directory.
 - `.aw/workspace.yaml` stores repo/worktree-local coordination state.
-- `aw project create --inject-docs`, `aw init --inject-docs`, and
-  `aw spawn accept-invite --inject-docs` can inject coordination instructions
-  into `AGENTS.md` or `CLAUDE.md`.
+- `CLAUDE.md` and/or `AGENTS.md` contain the injected project instructions
+  between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See
+  "Project instructions" above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for
   `aw notify`.
 
@@ -206,9 +227,10 @@ Setting up roles and instructions for the project:
   aw instructions set --body-file instructions.md
   aw role-name set coordinator
 
-Roles define what each agent focuses on. Instructions are shared guidance that
-all agents follow. Both are project-wide and versioned — changes are picked up
-by running agents on their next work cycle.
+Roles define what each agent focuses on. Instructions are shared guidance
+injected into every repo's AGENTS.md (see "Project instructions" above). Both
+are project-wide and versioned — update AGENTS.md after changes with
+`aw init --inject-docs`.
 
 Helping a human set up from scratch:
   1. aw project create --project <slug> --inject-docs --setup-hooks
