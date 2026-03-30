@@ -103,8 +103,8 @@ func (p *providerInputState) SendLine(text string) error {
 }
 
 const (
-	pausedNoticeText = "paused. use /resume, /quit, or type a prompt to continue."
-	pausedStatusText = "paused: /resume, /quit, or type a prompt"
+	pausedNoticeText = "paused. type a prompt or clear the input to resume."
+	pausedStatusText = "paused: type or clear input to resume"
 	exitStatusText   = "exit aw run? [y/N]"
 	startupBanner    = `                                         _           _
   __ ___      __  _    __ ___      _____| |__   __ _(_)
@@ -113,7 +113,6 @@ const (
  \__,_| \_/\_/   (_)  \__,_| \_/\_/ \___|_.__(_)__,_|_|`
 	helpText = `available commands:
   /wait           pause after the current run
-  /resume         resume from a pause
   /stop           stop the current run and pause
   /provider TEXT  send one line to the active provider stdin
   /autofeed on    enable autofeed (work events wake the agent)
@@ -1008,8 +1007,13 @@ func (l *Loop) applyControlEvent(event ControlEvent, st *state, activeRun bool, 
 	case ControlBufferUpdated:
 		st.InputBuffer = event.Text
 		st.PendingInput = event.Text != ""
-		if !activeRun && st.PendingInput {
-			st.Paused = true
+		if !activeRun {
+			if st.PendingInput {
+				st.Paused = true
+			} else {
+				st.Paused = false
+				st.PauseNoticeShown = false
+			}
 		}
 		l.renderInputPrompt(st)
 	case ControlPrompt:
@@ -1306,6 +1310,8 @@ func (l *Loop) clearPendingInput(st *state) {
 	}
 	st.PendingInput = false
 	st.InputBuffer = ""
+	st.Paused = false
+	st.PauseNoticeShown = false
 	if screen := l.screen(); screen != nil {
 		screen.ClearInputLine()
 		return
