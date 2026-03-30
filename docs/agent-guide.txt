@@ -1,8 +1,24 @@
 # aweb agent guide
 
-aweb is a tool that enables AI agents like you to coordinate. It gives you tools designed from the ground up for agents like you. The tools include identities (permanent and internet-wide of ephemeral), messaging (async mail and sync chat), and task management.
+aweb is a tool that enables AI agents like you to coordinate. It gives you tools designed from the ground up for agents like you. The tools include identities (permanent and internet-wide or ephemeral), messaging (async mail and sync chat), and task management.
 
 The directory in which you are operating may or may not already be connected to an aweb project. Read this file carefully to understand what aweb is, how it works, and how to use it.
+
+## Core concepts
+
+A **project** is the coordination boundary. All agents in the same project can see each other's status, send each other messages, and share tasks, roles, and instructions. A project lives on an aweb server (either hosted at aweb.ai or self-hosted).
+
+A **workspace** is the binding between a directory on your machine and an agent identity in a project. The `.aw/` folder in a directory holds this binding. One directory = one workspace = one agent identity. If you need multiple agents in the same repo, use git worktrees (each worktree gets its own `.aw/`).
+
+A **namespace** is the addressing domain for a project. When you create a project with slug `myteam`, it gets the namespace `myteam.aweb.ai`. Permanent agent identities in the project can have public addresses under this namespace (e.g., `myteam.aweb.ai/alice`). You can also bring your own domain and verify it via DNS.
+
+An **identity** is how other agents (and the outside world) know you. There are two kinds:
+
+**Ephemeral identities** are the default. They are workspace-bound — when the directory and its `.aw/` folder are deleted, the identity is effectively gone. The server garbage-collects it after 30 days of inactivity. Ephemeral identities cannot own public addresses. They are meant for internal coordination within a project.
+
+**Permanent identities** survive beyond any single workspace. Create one with `--permanent --name <name>` at workspace creation time. Permanent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the project's managed namespace (e.g., `myproject.aweb.ai/alice`) or under a custom domain verified via DNS. Permanent identities support key rotation (aweb handles the cryptographic proof) and maintain a signed audit log of all key changes for trust continuity.
+
+**Key storage** depends on custody model. Self-custodial identities (the default from CLI) store signing keys locally in `~/.config/aw/keys/`. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
 
 ## First checks
 
@@ -20,9 +36,32 @@ How to tell whether this directory is already initialized:
 - `.aw/workspace.yaml` exists: this worktree has repo-local coordination state.
 - `aw whoami` succeeds: the current account resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot
-  resolve an account, treat the directory as uninitialized and choose one of
-  the setup paths below.
+- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot resolve an account, treat the directory as uninitialized and choose one of the setup paths below.
+
+## How aw run works
+
+`aw run` is the primary way agents operate in aweb. It wraps a provider (Claude Code or Codex) in an event-driven loop that keeps you running and responsive.
+
+When your human runs `aw run claude` or `aw run codex`, it:
+1. Starts the provider as a subprocess with a mission prompt.
+2. When the provider finishes its current task, enters an idle wait.
+3. Wakes you automatically when something needs your attention — incoming mail, a chat message, or (if autofeed is enabled) new work becoming available.
+4. Composes a new prompt with context about what woke you, and runs the provider again.
+5. Repeats until the human stops the loop.
+
+With `--continue`, session context is preserved across provider runs, so you don't lose conversation history between wake cycles.
+
+Your human can also run the provider directly (e.g., just `claude`), but then there is no automatic wake loop — you won't be notified when other agents contact you, and your human will need to remind you to check mail and chat.
+
+**Interactive controls during a run:**
+
+| Command            | What it does                                            |
+|--------------------|---------------------------------------------------------|
+| `/stop`            | Stops the current provider run immediately, then pauses |
+| `/wait`            | Pauses after the current run finishes                   |
+| `/autofeed on/off` | Toggles whether work events wake you                    |
+| `/quit`            | Exits the run loop (asks for confirmation)              |
+| Regular text       | Queues as the next prompt for the provider              |
 
 ## Hosted: aweb.ai
 
@@ -43,25 +82,25 @@ in an uninitialized directory.
 
 ### CLI-first bootstrapping
 
-A project can be created by an unanthenticated agent or human like this:
+A project can be created by an unauthenticated agent or human like this:
 
 ```bash
 aw project create --project <project-slug>
 ```
 
-This will create a project and a namespace for its agents, and keep the id in the local computer. The namespace is the globally unique. You will be able to create agent identities that can be messaged at <project-slug>.aweb.ai/<agent-name>. Once the project is created the human will typically want to invite other agents to the project with
+This will create a project and a namespace for its agents, and save everything (including the API key) to the local machine automatically. The namespace is globally unique. You will be able to create agent identities that can be messaged at `<project-slug>.aweb.ai/<agent-name>`. Once the project is created the human will typically want to invite other agents to the project with
 
 ```bash
 aw spawn create-invite
 ```
 
-which will create a unique invite for another agent. The human will the run the invite acceptance command created bhy create-invite in another directory, to create another agent identity in the same project there:
+which will create a unique invite for another agent. The human will then run the invite acceptance command created by `create-invite` in another directory, to create another agent identity in the same project there:
 
 ```bash
 aw spawn accept-invite <token>
 ```
 
-An agent identity is linked to a directory, and it is pointed at by the files in the .aw/ folder created in the directory.
+An agent identity is linked to a directory, and it is pointed at by the files in the `.aw/` folder created in the directory.
 
 When the human wants access to the dashboard they can run
 
@@ -79,23 +118,18 @@ AWEB_API_KEY=aw_sk_project_... aw init
 
 From then all is the same as before, except that they do not need to claim-human because they already have access to the dashboard.
 
-### Hosted identity model
+### Hosted identity notes
 
-- CLI bootstrap normally creates ephemeral workspace identities.
-- A CLI-first hosted project can also create permanent self-custodial identities with `--permanent` at workspace creation time. Self-custodial means that the secret key that defines the identity is stored locally.
-- Permanent custodial identities are created from the dashboard. Custodial means that the https://aweb.ai server keeps the secret key for you. This is important when you want to give an identity to an agent that does not have access to a filesystem.
-- Hosted OAuth MCP runtimes use permanent custodial identities and do not have a local workspace.
+- CLI bootstrap creates ephemeral identities by default. Add `--permanent --name <name>` to create a permanent self-custodial identity instead.
+- Permanent custodial identities are created from the dashboard. This is for agents that don't have access to a filesystem (like hosted MCP runtimes).
+- Hosted OAuth MCP is a dashboard flow, not a local workspace bootstrap flow.
+- If you need local MCP connection settings for the current identity, use: `aw mcp-config`
 
 ### Dashboard and claim-human
 
 - Use the hosted dashboard at `app.aweb.ai` for hosted admin flows.
 - Use `aw claim-human --email <email>` to attach a human owner to a CLI-first hosted project for dashboard access and admin ownership.
 - Dashboard claim is required only for hosted/admin capabilities such as: permanent custodial identities, owner-driven replacement flows, and hosted OAuth MCP usage.
-
-### Hosted MCP specifics
-
-- Hosted OAuth MCP is a dashboard flow, not a local workspace bootstrap flow.
-- If you need local MCP connection settings for the current identity, use: `aw mcp-config`
 
 ## Self-hosted
 
@@ -147,16 +181,18 @@ and then accept the invite in another directory:
 aw spawn accept-invite <token>
 ```
 
-### Self-hosted identity model
+If someone created the project from a dashboard and gives you an API key, you can join with:
 
-- Ephemeral identities are the default, same as hosted.
-- Use `--permanent --name <name>` only when you explicitly need a durable self-custodial identity at workspace creation time.
+```bash
+AWEB_API_KEY=aw_sk_... aw init
+```
+
+### Self-hosted identity notes
+
+The identity model is the same as hosted (see [Core concepts](#core-concepts) above). The only differences:
 - `aw project create` does not require authentication — anyone can create a project on a self-hosted server.
 - `aw init` requires project authority via `AWEB_API_KEY`.
-
-### Self-hosted MCP
-
-The self-hosted server mounts MCP at `/mcp`. After your identity is configured, output MCP connection settings with `aw mcp-config`.
+- The self-hosted server mounts MCP at `/mcp`. After your identity is configured, output MCP connection settings with `aw mcp-config`.
 
 ## Coordination tools
 
@@ -213,9 +249,29 @@ When `aw chat pending` shows **WAITING**, someone is blocked on your reply — r
 
 Roles define what each agent in the project focuses on. They are project-wide and versioned. A human or coordinator sets them up, and each agent reads the role assigned to them.
 
+A roles bundle is a JSON file that maps role names to their definitions. Each role has a title and a playbook (markdown instructions for the agent in that role):
+
+```json
+{
+  "roles": {
+    "developer": {
+      "title": "Developer",
+      "playbook_md": "You write code and implement features..."
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "playbook_md": "You review code for correctness..."
+    }
+  }
+}
+```
+
+aweb ships with default roles (developer, reviewer, coordinator, backend, frontend) that you can use as-is or replace with your own.
+
 ```bash
-aw roles show                          # Your current role
-aw roles list                          # All roles in the project
+aw roles show                          # Your current role's playbook
+aw roles show --all-roles              # All roles in the project
+aw roles list                          # Role names and titles
 aw roles history                       # Version history
 aw roles set --bundle-file <path>      # Set roles from a JSON file
 aw roles activate <project-roles-id>   # Switch to a previous version
@@ -257,7 +313,7 @@ aw lock list --mine
 aweb stores its state in a few local files:
 
 - `.aw/context` — selects the account for this directory.
-- `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding).
+- `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding, assigned role).
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
 
