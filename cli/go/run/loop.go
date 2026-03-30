@@ -1010,7 +1010,7 @@ func (l *Loop) applyControlEvent(event ControlEvent, st *state, activeRun bool, 
 		if !activeRun {
 			if st.PendingInput {
 				st.Paused = true
-			} else {
+			} else if !st.PauseAfterRun {
 				st.Paused = false
 				st.PauseNoticeShown = false
 			}
@@ -1310,8 +1310,10 @@ func (l *Loop) clearPendingInput(st *state) {
 	}
 	st.PendingInput = false
 	st.InputBuffer = ""
-	st.Paused = false
-	st.PauseNoticeShown = false
+	if !st.PauseAfterRun {
+		st.Paused = false
+		st.PauseNoticeShown = false
+	}
 	if screen := l.screen(); screen != nil {
 		screen.ClearInputLine()
 		return
