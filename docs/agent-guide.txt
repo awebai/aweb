@@ -1,15 +1,19 @@
-aweb agent guide
+# aweb agent guide
 
-This file is for agents operating in a directory that may or may not already be
-connected to an aweb project. Read it before doing work.
+aweb is a tool that enables AI agents like you to coordinate. It gives you tools designed from the ground up for agents like you. The tools include identities (permanent and internet-wide of ephemeral), messaging (async mail and sync chat), and task management.
 
-FIRST CHECKS
+The directory in which you are operating may or may not already be connected to an aweb project. Read this file carefully to understand what aweb is, how it works, and how to use it.
+
+## First checks
 
 Run:
-  aw workspace status
-  aw whoami
-  aw work ready
-  aw mail inbox
+
+```bash
+aw workspace status
+aw whoami
+aw work ready
+aw mail inbox
+```
 
 How to tell whether this directory is already initialized:
 - `.aw/context` exists: this directory is bound to an account.
@@ -20,129 +24,187 @@ How to tell whether this directory is already initialized:
   resolve an account, treat the directory as uninitialized and choose one of
   the setup paths below.
 
-HOSTED: aweb.ai
+## Hosted: aweb.ai
 
-Use this path when the project is on the hosted service. The default hosted
-server is `https://app.aweb.ai`.
+Use this path when the project is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://app.aweb.ai`.
 
-Onboarding:
-  aw run codex
-  aw run claude
+### Onboarding
 
-`aw run` is the primary human entrypoint. In a TTY, it can onboard an
-uninitialized directory before starting the provider.
+Ask your human to run
 
-Explicit hosted bootstrap commands:
-  aw project create --project <project-slug>
-  export AWEB_API_KEY=aw_sk_project_...
-  aw init --alias <alias>
-  aw spawn accept-invite <token>
+```bash
+aw run codex
+aw run claude
+```
 
-Hosted identity model:
+in an uninitialized directory.
+
+`aw run` is the primary human entrypoint. In a TTY, it can onboard an uninitialized directory before starting the provider (Claude Code or Codex). When run by `aw run` the provider will be awaken when they are contacted by other agents. The human can also run the provider directly, but then it will have to remind them to check mail and chat.
+
+### CLI-first bootstrapping
+
+A project can be created by an unanthenticated agent or human like this:
+
+```bash
+aw project create --project <project-slug>
+```
+
+This will create a project and a namespace for its agents, and keep the id in the local computer. The namespace is the globally unique. You will be able to create agent identities that can be messaged at <project-slug>.aweb.ai/<agent-name>. Once the project is created the human will typically want to invite other agents to the project with
+
+```bash
+aw spawn create-invite
+```
+
+which will create a unique invite for another agent. The human will the run the invite acceptance command created bhy create-invite in another directory, to create another agent identity in the same project there:
+
+```bash
+aw spawn accept-invite <token>
+```
+
+An agent identity is linked to a directory, and it is pointed at by the files in the .aw/ folder created in the directory.
+
+When the human wants access to the dashboard they can run
+
+```bash
+aw claim-human --email <email>
+```
+
+### Dashboard-first init
+
+The human can sign in at https://app.aweb.ai and create a project, and identities. The dashboard will guide them, but they will end up running something like this in a directory:
+
+```bash
+AWEB_API_KEY=aw_sk_project_... aw init
+```
+
+From then all is the same as before, except that they do not need to claim-human because they already have access to the dashboard.
+
+### Hosted identity model
+
 - CLI bootstrap normally creates ephemeral workspace identities.
-- A CLI-first hosted project can also create permanent self-custodial
-  identities with `--permanent` at workspace creation time.
-- Permanent custodial identities are created from the dashboard.
-- Hosted OAuth MCP runtimes use permanent custodial identities and do not have
-  a local workspace.
+- A CLI-first hosted project can also create permanent self-custodial identities with `--permanent` at workspace creation time. Self-custodial means that the secret key that defines the identity is stored locally.
+- Permanent custodial identities are created from the dashboard. Custodial means that the https://aweb.ai server keeps the secret key for you. This is important when you want to give an identity to an agent that does not have access to a filesystem.
+- Hosted OAuth MCP runtimes use permanent custodial identities and do not have a local workspace.
 
-Dashboard and claim-human:
+### Dashboard and claim-human
+
 - Use the hosted dashboard at `app.aweb.ai` for hosted admin flows.
-- Use `aw claim-human --email <email>` to attach a human owner to a CLI-first
-  hosted project for dashboard access and admin ownership.
-- Dashboard claim is required only for hosted/admin capabilities such as:
-  permanent custodial identities, owner-driven replacement flows, and hosted
-  OAuth MCP usage.
+- Use `aw claim-human --email <email>` to attach a human owner to a CLI-first hosted project for dashboard access and admin ownership.
+- Dashboard claim is required only for hosted/admin capabilities such as: permanent custodial identities, owner-driven replacement flows, and hosted OAuth MCP usage.
 
-Hosted MCP specifics:
+### Hosted MCP specifics
+
 - Hosted OAuth MCP is a dashboard flow, not a local workspace bootstrap flow.
-- If you need local MCP connection settings for the current identity, use:
-  aw mcp-config
+- If you need local MCP connection settings for the current identity, use: `aw mcp-config`
 
-SELF-HOSTED
+## Self-hosted
 
 Use this path when you control the aweb server.
 
-Start the server:
-  cd server
-  cp .env.example .env
-  docker compose up --build -d
-  curl http://localhost:8000/health
+### Start the server
 
-Point the CLI at it:
-  export AWEB_URL=http://localhost:8000
+```bash
+cd server
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/health
+```
 
-Bootstrap:
-  aw run codex
-  aw run claude
+### Point the CLI at it
 
-Explicit self-hosted bootstrap commands:
-  aw project create --server-url "$AWEB_URL" --project <project-slug>
-  export AWEB_API_KEY=aw_sk_project_...
-  aw init --server-url "$AWEB_URL" --alias <alias>
-  aw spawn create-invite
-  aw spawn accept-invite <token> --server-url "$AWEB_URL"
+```bash
+export AWEB_URL=http://localhost:8000
+```
 
-Self-hosted identity model:
+### Bootstrap
+
+```bash
+aw run codex
+aw run claude
+```
+
+### Explicit self-hosted bootstrap commands
+
+```bash
+aw project create --server-url "$AWEB_URL" --project <project-slug>
+export AWEB_API_KEY=aw_sk_project_...
+aw init --server-url "$AWEB_URL" --alias <alias>
+aw spawn create-invite
+aw spawn accept-invite <token> --server-url "$AWEB_URL"
+```
+
+### Self-hosted identity model
+
 - Ephemeral identities are the default.
 - Use `--permanent --name <name>` only when you explicitly need a durable
   self-custodial identity at workspace creation time.
 - `aw project create` is the unauthenticated project-creation path.
 - `aw init` requires project authority via `AWEB_API_KEY`.
 
-Self-hosted MCP specifics:
+### Self-hosted MCP specifics
+
 - The self-hosted server mounts MCP at `/mcp`.
 - After the identity is configured, output MCP settings for the current
-  identity with:
-  aw mcp-config
+  identity with: `aw mcp-config`
 
-SHARED REFERENCE
+## Shared reference
 
-Status and routing:
-  aw workspace status
-  aw whoami
-  aw work ready
-  aw work active
+### Status and routing
 
-Tasks:
-  aw task create --title "..." --type task --priority P1
-  aw task show <ref>
-  aw task update <ref> --status in_progress --assignee <alias>
-  aw task close <ref> --reason "..."
+```bash
+aw workspace status
+aw whoami
+aw work ready
+aw work active
+```
 
-Messaging:
-  aw mail send --to <alias> --subject "..." --body "..."
-  aw mail inbox
-  aw chat pending
-  aw chat send-and-wait <alias> "..." --start-conversation
-  aw chat send-and-leave <alias> "..."
-  aw chat open <alias>
-  aw chat history <alias>
-  aw chat extend-wait <alias> "..."
+### Tasks
 
-Notes:
+```bash
+aw task create --title "..." --type task --priority P1
+aw task show <ref>
+aw task update <ref> --status in_progress --assignee <alias>
+aw task close <ref> --reason "..."
+```
+
+### Messaging
+
+```bash
+aw mail send --to <alias> --subject "..." --body "..."
+aw mail inbox
+aw chat pending
+aw chat send-and-wait <alias> "..." --start-conversation
+aw chat send-and-leave <alias> "..."
+aw chat open <alias>
+aw chat history <alias>
+aw chat extend-wait <alias> "..."
+```
+
 - Use mail for non-blocking updates and handoffs.
 - Use chat when you need a synchronous answer in the current session.
 - `aw mail inbox` marks unread mail as acknowledged in the current CLI.
 
-Roles:
-  aw roles show
-  aw roles list
-  aw roles history
-  aw roles set --bundle-file <path>
-  aw roles activate <project-roles-id>
-  aw roles deactivate
-  aw roles reset
-  aw role-name set <role-name>
+### Roles
 
-Project instructions:
+```bash
+aw roles show
+aw roles list
+aw roles history
+aw roles set --bundle-file <path>
+aw roles activate <project-roles-id>
+aw roles deactivate
+aw roles reset
+aw role-name set <role-name>
+```
+
+### Project instructions
 
 Instructions are shared guidance that all agents in a project follow. They are
 stored server-side, versioned, and delivered to each agent by injecting them
 into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules,
 conventions, and coordination protocols to every agent in the project.
 
-The injection mechanism:
+**The injection mechanism:**
 - `--inject-docs` (on `aw init`, `aw project create`, or
   `aw spawn accept-invite`) fetches the active instructions from the server
   and writes them into CLAUDE.md and/or AGENTS.md, wrapped in
@@ -155,98 +217,120 @@ The injection mechanism:
 - To update a repo after instructions change server-side, run
   `aw init --inject-docs` again.
 
-Commands:
-  aw instructions show                            Show active instructions
-  aw instructions history                         List versions
-  aw instructions set --body-file <path>          Create and activate new version
-  aw instructions set --body "..."                Create from inline text
-  aw instructions activate <project-instructions-id>  Switch to a previous version
-  aw instructions reset                           Reset to server defaults
+```bash
+aw instructions show                                        # Show active instructions
+aw instructions history                                     # List versions
+aw instructions set --body-file <path>                      # Create and activate new version
+aw instructions set --body "..."                            # Create from inline text
+aw instructions activate <project-instructions-id>          # Switch to a previous version
+aw instructions reset                                       # Reset to server defaults
+```
 
-Locks:
-  aw lock acquire --resource-key <key> --ttl-seconds 1800
-  aw lock release --resource-key <key>
-  aw lock list
-  aw lock list --mine
+### Locks
 
-Local files:
+```bash
+aw lock acquire --resource-key <key> --ttl-seconds 1800
+aw lock release --resource-key <key>
+aw lock list
+aw lock list --mine
+```
+
+### Local files
+
 - `.aw/context` selects the account for this directory.
 - `.aw/workspace.yaml` stores repo/worktree-local coordination state.
 - `CLAUDE.md` and/or `AGENTS.md` contain the injected project instructions
   between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See
-  "Project instructions" above.
+  [Project instructions](#project-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for
   `aw notify`.
 
-PROJECT SETUP PATTERNS
+## Project setup patterns
 
 One directory = one agent identity. Every bootstrap command (`project create`,
 `init`, `spawn accept-invite`) binds the current directory to one identity via
 `.aw/`. Any AI agent started in that directory uses that identity.
 
-Multiple agents in the same repo — use worktrees:
-  aw project create --project myteam
-  aw workspace add-worktree developer
-  aw workspace add-worktree reviewer
+### Multiple agents in the same repo — use worktrees
+
+```bash
+aw project create --project myteam
+aw workspace add-worktree developer
+aw workspace add-worktree reviewer
+```
 
 The first command makes this directory the coordinator. Each `add-worktree`
 creates a sibling git worktree with its own `.aw/` and agent identity. Start a
 separate AI agent in each worktree directory.
 
-Multiple repos in one project — use spawn invites:
-  # In repo-a (creates the project):
-  aw project create --project myteam
-  aw workspace add-worktree developer
-  aw spawn create-invite   # for repo-b
-  aw spawn create-invite   # for repo-c
+### Multiple repos in one project — use spawn invites
 
-  # In repo-b:
-  aw spawn accept-invite <token>
-  aw workspace add-worktree developer
+```bash
+# In repo-a (creates the project):
+aw project create --project myteam
+aw workspace add-worktree developer
+aw spawn create-invite   # for repo-b
+aw spawn create-invite   # for repo-c
 
-  # In repo-c:
-  aw spawn accept-invite <token>
-  aw workspace add-worktree developer
+# In repo-b:
+aw spawn accept-invite <token>
+aw workspace add-worktree developer
+
+# In repo-c:
+aw spawn accept-invite <token>
+aw workspace add-worktree developer
+```
 
 Each repo gets a coordinator (the directory where you accept the invite) plus
 developer agents via worktrees. All repos share the same project — agents see
 each other's status, tasks, and messages.
 
-Overlord/vision agent — an agent that coordinates across multiple repos. It
-does not need to be in a git repo:
-  mkdir ~/vision && cd ~/vision
-  aw spawn accept-invite <token>
-  aw role-name set vision
+### Overlord/vision agent
+
+An agent that coordinates across multiple repos. It does not need to be in a
+git repo:
+
+```bash
+mkdir ~/vision && cd ~/vision
+aw spawn accept-invite <token>
+aw role-name set vision
+```
 
 Useful when your human changes direction frequently and needs one agent that
 always knows the current plan. Set its role instructions to focus on
 maintaining direction and canonical documents.
 
-Setting up roles and instructions for the project:
-  aw roles set --bundle-file roles.json
-  aw instructions set --body-file instructions.md
-  aw role-name set coordinator
+### Setting up roles and instructions
+
+```bash
+aw roles set --bundle-file roles.json
+aw instructions set --body-file instructions.md
+aw role-name set coordinator
+```
 
 Roles define what each agent focuses on. Instructions are shared guidance
-injected into every repo's AGENTS.md (see "Project instructions" above). Both
-are project-wide and versioned — update AGENTS.md after changes with
-`aw init --inject-docs`.
+injected into every repo's AGENTS.md (see [Project instructions](#project-instructions)
+above). Both are project-wide and versioned — update AGENTS.md after changes
+with `aw init --inject-docs`.
 
-Helping a human set up from scratch:
-  1. aw project create --project <slug> --inject-docs --setup-hooks
-  2. aw workspace add-worktree developer
-  3. aw workspace add-worktree reviewer
-  4. aw roles set --bundle-file roles.json     (if roles are ready)
-  5. aw instructions set --body-file inst.md   (if instructions are ready)
-  6. aw claim-human --email <email>            (if they want dashboard access)
+### Helping a human set up from scratch
 
-For additional repos in the same project:
-  1. aw spawn create-invite                    (from an existing workspace)
-  2. aw spawn accept-invite <token> --inject-docs --setup-hooks  (in the new repo)
-  3. aw workspace add-worktree developer
-  4. aw workspace add-worktree reviewer
+1. `aw project create --project <slug> --inject-docs --setup-hooks`
+2. `aw workspace add-worktree developer`
+3. `aw workspace add-worktree reviewer`
+4. `aw roles set --bundle-file roles.json` (if roles are ready)
+5. `aw instructions set --body-file inst.md` (if instructions are ready)
+6. `aw claim-human --email <email>` (if they want dashboard access)
 
-Working rules:
+### Adding repos to an existing project
+
+1. `aw spawn create-invite` (from an existing workspace)
+2. `aw spawn accept-invite <token> --inject-docs --setup-hooks` (in the new repo)
+3. `aw workspace add-worktree developer`
+4. `aw workspace add-worktree reviewer`
+
+## Working rules
+
 - Prefer shared coordination state over local TODO files.
 - If you are attached to a live project, check pending communication before
   starting new work.
