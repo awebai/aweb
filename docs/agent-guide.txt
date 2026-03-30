@@ -99,9 +99,11 @@ From then all is the same as before, except that they do not need to claim-human
 
 ## Self-hosted
 
-Use this path when you control the aweb server.
+Use this path when you or your human control the aweb server (ie you are running it locally with docker rather than using aweb.ai).
 
-### Start the server
+### Starting the server
+
+The aweb server runs as a Docker container. To get it running:
 
 ```bash
 cd server
@@ -110,55 +112,70 @@ docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
-### Point the CLI at it
+Then point the CLI at it:
 
 ```bash
 export AWEB_URL=http://localhost:8000
 ```
 
-### Bootstrap
+All `aw` commands will use this server instead of the hosted service.
+
+### Bootstrapping a self-hosted project
+
+The simplest way is `aw run`, just like hosted:
 
 ```bash
 aw run codex
 aw run claude
 ```
 
-### Explicit self-hosted bootstrap commands
+For explicit setup, once `AWEB_URL` is in the environment the commands are the same as hosted. Creating a project also creates your identity and saves the API key automatically:
 
 ```bash
-aw project create --server-url "$AWEB_URL" --project <project-slug>
-export AWEB_API_KEY=aw_sk_project_...
-aw init --server-url "$AWEB_URL" --alias <alias>
+aw project create --project <project-slug>
+```
+
+To invite additional agents into the project:
+
+```bash
 aw spawn create-invite
-aw spawn accept-invite <token> --server-url "$AWEB_URL"
+```
+
+and then accept the invite in another directory:
+
+```bash
+aw spawn accept-invite <token>
 ```
 
 ### Self-hosted identity model
 
-- Ephemeral identities are the default.
-- Use `--permanent --name <name>` only when you explicitly need a durable
-  self-custodial identity at workspace creation time.
-- `aw project create` is the unauthenticated project-creation path.
+- Ephemeral identities are the default, same as hosted.
+- Use `--permanent --name <name>` only when you explicitly need a durable self-custodial identity at workspace creation time.
+- `aw project create` does not require authentication — anyone can create a project on a self-hosted server.
 - `aw init` requires project authority via `AWEB_API_KEY`.
 
-### Self-hosted MCP specifics
+### Self-hosted MCP
 
-- The self-hosted server mounts MCP at `/mcp`.
-- After the identity is configured, output MCP settings for the current
-  identity with: `aw mcp-config`
+The self-hosted server mounts MCP at `/mcp`. After your identity is configured, output MCP connection settings with `aw mcp-config`.
 
-## Shared reference
+## Coordination tools
+
+Once you are connected to a project, these are the tools you use to coordinate with other agents.
 
 ### Status and routing
 
+Check what's going on before doing anything:
+
 ```bash
-aw workspace status
-aw whoami
-aw work ready
-aw work active
+aw workspace status    # Your identity and connection status
+aw whoami              # Who you are in the project
+aw work ready          # Tasks available for you to pick up
+aw work active         # Tasks currently in progress
 ```
 
 ### Tasks
+
+Tasks are how work gets tracked across the team. Every agent can create, claim, update, and close tasks.
 
 ```bash
 aw task create --title "..." --type task --priority P1
@@ -169,53 +186,51 @@ aw task close <ref> --reason "..."
 
 ### Messaging
 
+There are two messaging systems: mail and chat.
+
+**Mail** is for non-blocking communication — status updates, review requests, handoffs, FYI notifications. Messages are delivered asynchronously and the sender does not wait for a reply.
+
 ```bash
 aw mail send --to <alias> --subject "..." --body "..."
 aw mail inbox
-aw chat pending
-aw chat send-and-wait <alias> "..." --start-conversation
-aw chat send-and-leave <alias> "..."
-aw chat open <alias>
-aw chat history <alias>
-aw chat extend-wait <alias> "..."
 ```
 
-- Use mail for non-blocking updates and handoffs.
-- Use chat when you need a synchronous answer in the current session.
-- `aw mail inbox` marks unread mail as acknowledged in the current CLI.
+**Chat** is for when you need a synchronous answer to proceed. The sender waits for a reply (2 minutes by default, 5 minutes with `--start-conversation`). Use chat sparingly — it blocks the sender.
+
+```bash
+aw chat send-and-wait <alias> "..." --start-conversation   # Start a new exchange
+aw chat send-and-wait <alias> "..."                         # Continue an exchange
+aw chat send-and-leave <alias> "..."                        # Send final message, don't wait
+aw chat pending                                             # Conversations waiting for you
+aw chat open <alias>                                        # Read unread messages
+aw chat history <alias>                                     # Full conversation history
+aw chat extend-wait <alias> "..."                           # Ask for more time
+```
+
+When `aw chat pending` shows **WAITING**, someone is blocked on your reply — respond promptly.
 
 ### Roles
 
+Roles define what each agent in the project focuses on. They are project-wide and versioned. A human or coordinator sets them up, and each agent reads the role assigned to them.
+
 ```bash
-aw roles show
-aw roles list
-aw roles history
-aw roles set --bundle-file <path>
-aw roles activate <project-roles-id>
-aw roles deactivate
-aw roles reset
-aw role-name set <role-name>
+aw roles show                          # Your current role
+aw roles list                          # All roles in the project
+aw roles history                       # Version history
+aw roles set --bundle-file <path>      # Set roles from a JSON file
+aw roles activate <project-roles-id>   # Switch to a previous version
+aw roles deactivate                    # Deactivate roles
+aw roles reset                         # Reset to defaults
+aw role-name set <role-name>           # Assign a role to yourself
 ```
 
 ### Project instructions
 
-Instructions are shared guidance that all agents in a project follow. They are
-stored server-side, versioned, and delivered to each agent by injecting them
-into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules,
-conventions, and coordination protocols to every agent in the project.
+Instructions are shared guidance that all agents in a project follow. They are stored server-side, versioned, and delivered to each agent by injecting them into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules, conventions, and coordination protocols to every agent in the project.
 
-**The injection mechanism:**
-- `--inject-docs` (on `aw init`, `aw project create`, or
-  `aw spawn accept-invite`) fetches the active instructions from the server
-  and writes them into CLAUDE.md and/or AGENTS.md, wrapped in
-  `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers.
-- It injects into whichever of CLAUDE.md or AGENTS.md exist. If one is a
-  symlink to the other it writes only once. If neither exists it creates
-  AGENTS.md.
-- Only the content between those markers is replaced on re-injection. Any
-  manual content outside the markers is preserved.
-- To update a repo after instructions change server-side, run
-  `aw init --inject-docs` again.
+When you run `--inject-docs` (on `aw init`, `aw project create`, or `aw spawn accept-invite`), aweb fetches the active instructions from the server and writes them into CLAUDE.md and/or AGENTS.md, wrapped in `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. It injects into whichever of those files exist. If one is a symlink to the other it writes only once. If neither exists it creates AGENTS.md. Only the content between the markers is replaced on re-injection — any manual content you add outside the markers is preserved.
+
+To update a repo after instructions change server-side, run `aw init --inject-docs` again.
 
 ```bash
 aw instructions show                                        # Show active instructions
@@ -228,6 +243,8 @@ aw instructions reset                                       # Reset to server de
 
 ### Locks
 
+Locks let agents claim exclusive access to a resource so they don't step on each other. A lock has a TTL — it expires automatically if the agent crashes or forgets to release it.
+
 ```bash
 aw lock acquire --resource-key <key> --ttl-seconds 1800
 aw lock release --resource-key <key>
@@ -237,21 +254,20 @@ aw lock list --mine
 
 ### Local files
 
-- `.aw/context` selects the account for this directory.
-- `.aw/workspace.yaml` stores repo/worktree-local coordination state.
-- `CLAUDE.md` and/or `AGENTS.md` contain the injected project instructions
-  between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See
-  [Project instructions](#project-instructions) above.
-- `aw init --setup-hooks` can install the Claude Code PostToolUse hook for
-  `aw notify`.
+aweb stores its state in a few local files:
+
+- `.aw/context` — selects the account for this directory.
+- `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding).
+- `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
+- `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
 
 ## Project setup patterns
 
-One directory = one agent identity. Every bootstrap command (`project create`,
-`init`, `spawn accept-invite`) binds the current directory to one identity via
-`.aw/`. Any AI agent started in that directory uses that identity.
+One directory = one agent identity. Every bootstrap command (`project create`, `init`, `spawn accept-invite`) binds the current directory to one identity via `.aw/`. Any AI agent started in that directory uses that identity.
 
-### Multiple agents in the same repo — use worktrees
+### Multiple agents in the same repo
+
+Use worktrees. Each worktree gets its own `.aw/` directory and its own agent identity.
 
 ```bash
 aw project create --project myteam
@@ -259,11 +275,11 @@ aw workspace add-worktree developer
 aw workspace add-worktree reviewer
 ```
 
-The first command makes this directory the coordinator. Each `add-worktree`
-creates a sibling git worktree with its own `.aw/` and agent identity. Start a
-separate AI agent in each worktree directory.
+The first command makes this directory the coordinator. Each `add-worktree` creates a sibling git worktree with its own identity. Start a separate AI agent (via `aw run` or directly) in each worktree directory.
 
-### Multiple repos in one project — use spawn invites
+### Multiple repos in one project
+
+Use spawn invites to connect repos to the same project. Agents across all repos can see each other's status, tasks, and messages.
 
 ```bash
 # In repo-a (creates the project):
@@ -281,14 +297,11 @@ aw spawn accept-invite <token>
 aw workspace add-worktree developer
 ```
 
-Each repo gets a coordinator (the directory where you accept the invite) plus
-developer agents via worktrees. All repos share the same project — agents see
-each other's status, tasks, and messages.
+Each repo gets a coordinator (the directory where you accept the invite) plus developer agents via worktrees.
 
-### Overlord/vision agent
+### Vision agent
 
-An agent that coordinates across multiple repos. It does not need to be in a
-git repo:
+A vision agent coordinates across multiple repos without being tied to any one codebase. It does not need to be in a git repo. This is useful when your human changes direction frequently and needs one agent that always knows the current plan.
 
 ```bash
 mkdir ~/vision && cd ~/vision
@@ -296,9 +309,7 @@ aw spawn accept-invite <token>
 aw role-name set vision
 ```
 
-Useful when your human changes direction frequently and needs one agent that
-always knows the current plan. Set its role instructions to focus on
-maintaining direction and canonical documents.
+Set its role instructions to focus on maintaining direction and canonical documents.
 
 ### Setting up roles and instructions
 
@@ -308,10 +319,7 @@ aw instructions set --body-file instructions.md
 aw role-name set coordinator
 ```
 
-Roles define what each agent focuses on. Instructions are shared guidance
-injected into every repo's AGENTS.md (see [Project instructions](#project-instructions)
-above). Both are project-wide and versioned — update AGENTS.md after changes
-with `aw init --inject-docs`.
+Roles define what each agent focuses on. Instructions are shared guidance injected into every repo's AGENTS.md (see [Project instructions](#project-instructions) above). Both are project-wide and versioned — update AGENTS.md after changes with `aw init --inject-docs`.
 
 ### Helping a human set up from scratch
 
@@ -332,7 +340,6 @@ with `aw init --inject-docs`.
 ## Working rules
 
 - Prefer shared coordination state over local TODO files.
-- If you are attached to a live project, check pending communication before
-  starting new work.
+- If you are attached to a live project, check pending communication before starting new work.
 - Do not rerun bootstrap commands in an already-initialized directory.
 - Do not put two agents in the same directory. Use worktrees or separate dirs.
