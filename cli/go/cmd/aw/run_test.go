@@ -995,6 +995,10 @@ func (p *recordingRunProvider) BuildResumeCommand(opts awrun.BuildOptions) ([]st
 	return []string{"fake-provider", "resume", opts.SessionID}, nil
 }
 
+func (p *recordingRunProvider) BuildResumeHint(opts awrun.BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
+}
+
 func (p *recordingRunProvider) ParseOutput(string) (*awrun.Event, error) {
 	return &awrun.Event{Type: awrun.EventDone, Session: "sess-42"}, nil
 }
@@ -1353,6 +1357,11 @@ func (p *exitCommandProvider) BuildResumeCommand(opts awrun.BuildOptions) ([]str
 	return []string{"claude", "--resume", opts.SessionID, "--add-dir", "/tmp/gitdir", "--debug"}, nil
 }
 
+func (p *exitCommandProvider) BuildResumeHint(opts awrun.BuildOptions) ([]string, error) {
+	p.resumeOpts = opts
+	return []string{"claude", "--resume", opts.SessionID}, nil
+}
+
 func (p *exitCommandProvider) ParseOutput(string) (*awrun.Event, error) {
 	return &awrun.Event{Type: awrun.EventDone}, nil
 }
@@ -1437,8 +1446,11 @@ func TestRunPrintsContinueAndProviderCommandsOnExit(t *testing.T) {
 	if !strings.Contains(out, "aw run --dir "+tmp+" claude --continue") {
 		t.Fatalf("expected aw continue command, got %q", out)
 	}
-	if !strings.Contains(out, "claude --resume sess-42 --add-dir /tmp/gitdir --debug") {
-		t.Fatalf("expected provider resume command, got %q", out)
+	if !strings.Contains(out, "claude --resume sess-42") {
+		t.Fatalf("expected provider resume hint, got %q", out)
+	}
+	if strings.Contains(out, "--add-dir") || strings.Contains(out, "--debug") {
+		t.Fatalf("resume hint should not include internal flags, got %q", out)
 	}
 	if provider.resumeOpts.SessionID != "sess-42" {
 		t.Fatalf("expected provider resume command to receive session id, got %+v", provider.resumeOpts)

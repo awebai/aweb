@@ -92,6 +92,20 @@ func (CodexProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
 	return command, nil
 }
 
+func (CodexProvider) BuildResumeHint(opts BuildOptions) ([]string, error) {
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+
+	command := []string{"codex", "resume"}
+	if strings.TrimSpace(opts.Model) != "" {
+		command = append(command, "-m", opts.Model)
+	}
+	command = append(command, sessionID)
+	return command, nil
+}
+
 func (CodexProvider) ParseOutput(line string) (*Event, error) {
 	var envelope codexEnvelope
 	if err := json.Unmarshal([]byte(line), &envelope); err != nil {

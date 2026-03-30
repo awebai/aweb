@@ -221,6 +221,10 @@ func (fakeProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
 	return []string{"fake-provider", "resume", opts.SessionID}, nil
 }
 
+func (fakeProvider) BuildResumeHint(opts BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
+}
+
 func (f fakeProvider) ParseOutput(line string) (*Event, error) {
 	return f.event, nil
 }
@@ -1874,6 +1878,10 @@ func (p *buildOptionsProvider) BuildCommand(prompt string, opts BuildOptions) ([
 }
 
 func (*buildOptionsProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
+}
+
+func (*buildOptionsProvider) BuildResumeHint(opts BuildOptions) ([]string, error) {
 	return []string{"fake-provider", "resume", opts.SessionID}, nil
 }
 

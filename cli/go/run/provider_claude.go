@@ -78,6 +78,19 @@ func (ClaudeProvider) BuildResumeCommand(opts BuildOptions) ([]string, error) {
 	return command, nil
 }
 
+func (ClaudeProvider) BuildResumeHint(opts BuildOptions) ([]string, error) {
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+
+	command := []string{"claude", "--resume", sessionID}
+	if strings.TrimSpace(opts.Model) != "" {
+		command = append(command, "--model", opts.Model)
+	}
+	return command, nil
+}
+
 func (ClaudeProvider) ParseOutput(line string) (*Event, error) {
 	var envelope ClaudeEnvelope
 	if err := json.Unmarshal([]byte(line), &envelope); err != nil {

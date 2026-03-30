@@ -74,7 +74,7 @@ expert use: aw project create, aw init, aw spawn accept-invite, and aw connect.
 Current implementation includes:
   - repeated provider invocations (currently Claude and Codex)
   - provider session continuity when --continue is requested
-  - /stop, /wait, /resume, /autofeed on|off, /quit, and prompt override controls
+  - /stop, /wait, /autofeed on|off, /quit, and prompt override controls
   - aw event-stream wakeups for mail, chat, and optional work events
   - optional background services declared in aw run config
 
@@ -381,7 +381,7 @@ func printRunExitCommands(out io.Writer, providerName string, workingDir string,
 	resumeOpts.AddDirs = append([]string(nil), buildOpts.AddDirs...)
 	resumeOpts.ProviderArgs = append([]string(nil), buildOpts.ProviderArgs...)
 
-	providerCommand, err := provider.BuildResumeCommand(resumeOpts)
+	providerCommand, err := provider.BuildResumeHint(resumeOpts)
 	if err != nil {
 		return
 	}
