@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -164,7 +165,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		claimedTaskRef = taskRef
 	}
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	loop := runNewLoop(provider, cmd.OutOrStdout())
