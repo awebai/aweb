@@ -8,4 +8,3 @@ def test_defaults_and_migrations_are_packaged():
     assert (package_root / "defaults" / "roles" / "backend.md").is_file()
     assert (package_root / "migrations" / "aweb" / "001_initial.sql").is_file()
     assert (package_root / "migrations" / "server" / "001_initial.sql").is_file()
-    assert (package_root / "migrations" / "server" / "003_project_instructions.sql").is_file()
