@@ -88,7 +88,7 @@ func TestResolveMailWakeMarksRead(t *testing.T) {
 // TestResolveChatWakeMarksRead verifies that resolveChatWake marks messages
 // as read after fetching the pending conversation.
 func TestResolveChatWakeMarksRead(t *testing.T) {
-	t.Parallel()
+	_ = deliveredIDsTestPath(t)
 
 	var markedReadSessionID string
 	var markedReadUpTo string

@@ -38,6 +38,7 @@ type ScreenController struct {
 	historyDraft  string
 	desiredColumn int
 	pasting       bool
+	lastWasCR     bool
 
 	events chan ControlEvent
 	doneCh chan error
@@ -429,6 +430,7 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 			}
 			if data[i+4] == '1' && data[i+5] == '~' {
 				s.pasting = false
+				s.lastWasCR = false
 				i += 6
 				continue
 			}
@@ -439,6 +441,17 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 		if s.pasting {
 			if b == '\r' {
 				if i+1 < len(data) && data[i+1] == '\n' {
+					i += 2
+				} else {
+					s.lastWasCR = true
+					i++
+				}
+				s.handleInlineRuneLocked('\n')
+				continue
+			}
+			if b == '\n' {
+				if s.lastWasCR {
+					s.lastWasCR = false
 					i++
 					continue
 				}
@@ -446,11 +459,7 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 				i++
 				continue
 			}
-			if b == '\n' {
-				s.handleInlineRuneLocked('\n')
-				i++
-				continue
-			}
+			s.lastWasCR = false
 			if b < 0x20 {
 				i++
 				continue

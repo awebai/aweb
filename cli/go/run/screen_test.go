@@ -646,6 +646,26 @@ func TestScreenControllerUnbracketedBulkPastePreservesNewlines(t *testing.T) {
 	}
 }
 
+func TestScreenControllerBracketedPasteCRLFSplitAcrossReads(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// First read: bracketed paste start + text ending with \r
+	screen.handleInlineInput([]byte("\x1b[200~hello\r"))
+	// Second read: \n (second half of \r\n) + more text + paste end
+	screen.handleInlineInput([]byte("\nworld\x1b[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld" {
+		t.Fatalf("expected split \\r\\n to produce single newline, got %q", value)
+	}
+}
+
 func TestScreenControllerNewlineStillSubmitsOutsidePaste(t *testing.T) {
 	screen := &ScreenController{
 		promptLabel:   ">> ",
