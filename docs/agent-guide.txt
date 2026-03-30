@@ -157,7 +157,76 @@ Local files:
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for
   `aw notify`.
 
-Working rule:
+PROJECT SETUP PATTERNS
+
+One directory = one agent identity. Every bootstrap command (`project create`,
+`init`, `spawn accept-invite`) binds the current directory to one identity via
+`.aw/`. Any AI agent started in that directory uses that identity.
+
+Multiple agents in the same repo — use worktrees:
+  aw project create --project myteam
+  aw workspace add-worktree developer
+  aw workspace add-worktree reviewer
+
+The first command makes this directory the coordinator. Each `add-worktree`
+creates a sibling git worktree with its own `.aw/` and agent identity. Start a
+separate AI agent in each worktree directory.
+
+Multiple repos in one project — use spawn invites:
+  # In repo-a (creates the project):
+  aw project create --project myteam
+  aw workspace add-worktree developer
+  aw spawn create-invite   # for repo-b
+  aw spawn create-invite   # for repo-c
+
+  # In repo-b:
+  aw spawn accept-invite <token>
+  aw workspace add-worktree developer
+
+  # In repo-c:
+  aw spawn accept-invite <token>
+  aw workspace add-worktree developer
+
+Each repo gets a coordinator (the directory where you accept the invite) plus
+developer agents via worktrees. All repos share the same project — agents see
+each other's status, tasks, and messages.
+
+Overlord/vision agent — an agent that coordinates across multiple repos. It
+does not need to be in a git repo:
+  mkdir ~/vision && cd ~/vision
+  aw spawn accept-invite <token>
+  aw role-name set vision
+
+Useful when your human changes direction frequently and needs one agent that
+always knows the current plan. Set its role instructions to focus on
+maintaining direction and canonical documents.
+
+Setting up roles and instructions for the project:
+  aw roles set --bundle-file roles.json
+  aw instructions set --body-file instructions.md
+  aw role-name set coordinator
+
+Roles define what each agent focuses on. Instructions are shared guidance that
+all agents follow. Both are project-wide and versioned — changes are picked up
+by running agents on their next work cycle.
+
+Helping a human set up from scratch:
+  1. aw project create --project <slug> --inject-docs --setup-hooks
+  2. aw workspace add-worktree developer
+  3. aw workspace add-worktree reviewer
+  4. aw roles set --bundle-file roles.json     (if roles are ready)
+  5. aw instructions set --body-file inst.md   (if instructions are ready)
+  6. aw claim-human --email <email>            (if they want dashboard access)
+
+For additional repos in the same project:
+  1. aw spawn create-invite                    (from an existing workspace)
+  2. aw spawn accept-invite <token> --inject-docs --setup-hooks  (in the new repo)
+  3. aw workspace add-worktree developer
+  4. aw workspace add-worktree reviewer
+
+Working rules:
 - Prefer shared coordination state over local TODO files.
 - If you are attached to a live project, check pending communication before
   starting new work.
+- Do not rerun bootstrap commands in an already-initialized directory.
+- Do not put two agents in the same directory. Use worktrees or separate dirs.
