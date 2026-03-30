@@ -532,9 +532,9 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	oldNewEventBus := runNewEventBus
 	oldWorkspaceState := runWorkspaceStateForDir
 	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldExecuteInitFlow := runExecuteInitFlow
 	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldPrintInitSummary := runPrintInitSummary
+	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
+	oldPrintInitSummary := guidedOnboardingPrintInitSummary
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -546,9 +546,9 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		runNewEventBus = oldNewEventBus
 		runWorkspaceStateForDir = oldWorkspaceState
 		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		runExecuteInitFlow = oldExecuteInitFlow
 		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		runPrintInitSummary = oldPrintInitSummary
+		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
+		guidedOnboardingPrintInitSummary = oldPrintInitSummary
 		initRunCommandVars()
 	})
 
@@ -587,7 +587,7 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	}
 
 	var capturedOpts initOptions
-	runExecuteInitFlow = func(opts initOptions) (*initResult, error) {
+	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
 		capturedOpts = opts
 		return &initResult{
 			Response:    &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Name: "Alice Example", NamespaceSlug: "team", ProjectSlug: "team", Lifetime: awid.LifetimePersistent},
@@ -595,7 +595,7 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 			ServerName:  "app.aweb.ai",
 		}, nil
 	}
-	runPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
+	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
 	}
 
 	cmd := &cobraCommandClone{Command: *runCmd}
@@ -637,11 +637,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	oldNewEventBus := runNewEventBus
 	oldWorkspaceState := runWorkspaceStateForDir
 	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldExecuteInitFlow := runExecuteInitFlow
 	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldInjectDocs := runInjectDocs
-	oldSetupHooks := runSetupHooks
-	oldPrintInitSummary := runPrintInitSummary
+	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
+	oldInjectDocs := guidedOnboardingInjectDocs
+	oldSetupHooks := guidedOnboardingSetupHooks
+	oldPrintInitSummary := guidedOnboardingPrintInitSummary
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -653,11 +653,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 		runNewEventBus = oldNewEventBus
 		runWorkspaceStateForDir = oldWorkspaceState
 		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		runExecuteInitFlow = oldExecuteInitFlow
 		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		runInjectDocs = oldInjectDocs
-		runSetupHooks = oldSetupHooks
-		runPrintInitSummary = oldPrintInitSummary
+		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
+		guidedOnboardingInjectDocs = oldInjectDocs
+		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingPrintInitSummary = oldPrintInitSummary
 		initRunCommandVars()
 	})
 
@@ -696,7 +696,7 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	}
 
 	var capturedOpts initOptions
-	runExecuteInitFlow = func(opts initOptions) (*initResult, error) {
+	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
 		capturedOpts = opts
 		return &initResult{
 			Response:    &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Alias: "alice", NamespaceSlug: "team", ProjectSlug: "demo-repo", Lifetime: awid.LifetimeEphemeral},
@@ -704,17 +704,17 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 			ServerName:  "app.aweb.ai",
 		}, nil
 	}
-	runPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
+	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
 	}
 
 	var injectedRepo string
-	runInjectDocs = func(repoRoot string) *injectDocsResult {
+	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
 		injectedRepo = repoRoot
 		return &injectDocsResult{}
 	}
 	var hooksRepo string
 	var hooksAsk bool
-	runSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
 		hooksRepo = repoRoot
 		hooksAsk = askConfirmation
 		return &claudeHooksResult{}
