@@ -398,9 +398,23 @@ func (s *ScreenController) runInlineInputLoop(reader cancelreader.CancelReader) 
 	}
 }
 
+// bulkPasteThreshold is the minimum buffer size that triggers
+// timing-based paste detection for terminals that do not support
+// bracketed paste mode. A single interactive keypress arrives as
+// 1-4 bytes; pasted text arrives as a large chunk in one read.
+const bulkPasteThreshold = 20
+
 func (s *ScreenController) handleInlineInput(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Timing-based paste detection: if we receive a large buffer
+	// without bracketed paste markers but containing \r, treat
+	// \r as newline rather than submit.
+	bulkPaste := !s.pasting &&
+		len(data) >= bulkPasteThreshold &&
+		!bytes.Contains(data, []byte("\x1b[200~")) &&
+		bytes.ContainsAny(data, "\r")
 
 	for i := 0; i < len(data); {
 		// Bracketed paste: ESC[200~ starts paste, ESC[201~ ends it.
@@ -424,6 +438,11 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 
 		if s.pasting {
 			if b == '\r' {
+				if i+1 < len(data) && data[i+1] == '\n' {
+					i++
+					continue
+				}
+				s.handleInlineRuneLocked('\n')
 				i++
 				continue
 			}
@@ -467,6 +486,15 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 			}
 			i++
 		case '\r':
+			if bulkPaste {
+				if i+1 < len(data) && data[i+1] == '\n' {
+					i += 2
+				} else {
+					i++
+				}
+				s.handleInlineRuneLocked('\n')
+				continue
+			}
 			s.handleInlineSubmitLocked()
 			i++
 		case '\n':

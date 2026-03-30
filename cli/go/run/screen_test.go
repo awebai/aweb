@@ -574,6 +574,78 @@ submitted:
 	}
 }
 
+func TestScreenControllerBracketedPastePreservesCRNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals that send \r for newlines in pasted text (e.g. macOS Terminal)
+	paste := []byte("\x1b[200~hello\rworld\rparagraph\x1b[201~")
+	screen.handleInlineInput(paste)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld\nparagraph" {
+		t.Fatalf("expected \\r in paste to become newlines, got %q", value)
+	}
+}
+
+func TestScreenControllerBracketedPastePreservesCRLFNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals that send \r\n for newlines in pasted text
+	paste := []byte("\x1b[200~hello\r\nworld\r\nparagraph\x1b[201~")
+	screen.handleInlineInput(paste)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld\nparagraph" {
+		t.Fatalf("expected \\r\\n in paste to become single newlines, got %q", value)
+	}
+}
+
+func TestScreenControllerUnbracketedBulkPastePreservesNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals without bracketed paste support: a large chunk of text
+	// arrives in a single read() call with \r characters. The handler
+	// should detect this as a paste (many bytes at once) and preserve
+	// newlines instead of submitting at each \r.
+	bulk := []byte("first paragraph content here\rsecond paragraph with more text\rthird paragraph ending")
+	screen.handleInlineInput(bulk)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "first paragraph content here\nsecond paragraph with more text\nthird paragraph ending" {
+		t.Fatalf("expected bulk paste to preserve newlines, got %q", value)
+	}
+
+	// Should not have submitted
+	for {
+		select {
+		case evt := <-screen.events:
+			if evt.Type == ControlPrompt {
+				t.Fatalf("expected no submission during bulk paste, got %q", evt.Text)
+			}
+		default:
+			return
+		}
+	}
+}
+
 func TestScreenControllerNewlineStillSubmitsOutsidePaste(t *testing.T) {
 	screen := &ScreenController{
 		promptLabel:   ">> ",
