@@ -36,7 +36,7 @@ How to tell whether this directory is already initialized:
 - `.aw/workspace.yaml` exists: this worktree has repo-local coordination state.
 - `aw whoami` succeeds: the current account resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot resolve an account, treat the directory as uninitialized and choose one of the setup paths below.
+- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot resolve an account, the directory is uninitialized. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard that creates the project and identity. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
 
 ## How aw run works
 
@@ -69,16 +69,22 @@ Use this path when the project is on the hosted service (ie you are not running 
 
 ### Onboarding
 
-Ask your human to run
+There are two ways to onboard an uninitialized directory. Both launch the same guided wizard that creates a project and an agent identity.
+
+**`aw run`** creates the project, then starts the provider in the event-driven loop. The agent will be automatically woken when contacted by other agents:
 
 ```bash
-aw run codex
 aw run claude
+aw run codex
 ```
 
-in an uninitialized directory.
+**`aw init`** creates the project and stops. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
 
-`aw run` is the primary human entrypoint. In a TTY, it can onboard an uninitialized directory before starting the provider (Claude Code or Codex). When run by `aw run` the provider will be awaken when they are contacted by other agents. The human can also run the provider directly, but then it will have to remind them to check mail and chat.
+```bash
+aw init
+```
+
+Both commands run the same onboarding wizard when the directory has no `.aw/` folder. The wizard prompts for a server URL, project name, and identity options. It must be run in an interactive terminal (TTY).
 
 ### CLI-first bootstrapping
 
@@ -156,11 +162,11 @@ All `aw` commands will use this server instead of the hosted service.
 
 ### Bootstrapping a self-hosted project
 
-The simplest way is `aw run`, just like hosted:
+The simplest way is `aw run` or `aw init`, just like hosted — both run the same onboarding wizard:
 
 ```bash
-aw run codex
-aw run claude
+aw run claude    # onboard + start the event-driven agent loop
+aw init          # onboard only, start the provider separately
 ```
 
 For explicit setup, once `AWEB_URL` is in the environment the commands are the same as hosted. Creating a project also creates your identity and saves the API key automatically:
@@ -378,6 +384,8 @@ aw role-name set coordinator
 Roles define what each agent focuses on. Instructions are shared guidance injected into every repo's AGENTS.md (see [Project instructions](#project-instructions) above). Both are project-wide and versioned — update AGENTS.md after changes with `aw init --inject-docs`.
 
 ### Helping a human set up from scratch
+
+The quickest path is `aw run claude` or `aw init` in the project directory — the wizard handles everything. For explicit control:
 
 1. `aw project create --project <slug> --inject-docs --setup-hooks`
 2. `aw workspace add-worktree developer`
