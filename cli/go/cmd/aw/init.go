@@ -485,20 +485,25 @@ func resolveRoleInput(requested string, suggestedRoles []string, allowPrompt boo
 }
 
 func promptIdentityLifetime(in io.Reader, out io.Writer) (bool, error) {
-	choice, err := promptIndexedChoice(
-		"Identity type",
-		[]string{
-			"Ephemeral",
-			"Permanent",
-		},
-		0,
-		in,
-		out,
-	)
-	if err != nil {
-		return false, err
+	fmt.Fprintf(out, "  1. Ephemeral — workspace-bound, for internal coordination\n")
+	fmt.Fprintf(out, "  2. Permanent — survives beyond this workspace, can own public addresses\n")
+	reader := bufferedPromptReader(in)
+	for {
+		fmt.Fprintf(out, "Identity type [1]: ")
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		line = strings.TrimSpace(line)
+		switch line {
+		case "", "1":
+			return false, nil
+		case "2":
+			return true, nil
+		default:
+			fmt.Fprintf(out, "Enter 1 or 2.\n")
+		}
 	}
-	return choice == "Permanent", nil
 }
 
 func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (initOptions, error) {

@@ -103,7 +103,8 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 	if err != nil {
 		return nil, err
 	}
-	projectSlug, err := promptStringWithIO("Project", sanitizeSlug(filepath.Base(req.WorkingDir)), req.PromptIn, req.PromptOut)
+	slugDefault := firstNonEmpty(req.ProjectSlug, sanitizeSlug(filepath.Base(req.WorkingDir)))
+	projectSlug, err := promptProjectSlug(padSlug(slugDefault, 3), req.PromptIn, req.PromptOut)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +121,7 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 		ServerURL:        serverURL,
 		ServerName:       req.ServerName,
 		AccountName:      req.AccountName,
-		ProjectSlug:      firstNonEmpty(req.ProjectSlug, sanitizeSlug(projectSlug)),
+		ProjectSlug:      sanitizeSlug(projectSlug),
 		NamespaceSlug:    req.NamespaceSlug,
 		Alias:            "",
 		Name:             req.Name,
@@ -179,6 +180,36 @@ func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Write
 		return false, nil
 	default:
 		return false, usageError("please answer y or n")
+	}
+}
+
+const minProjectSlugLength = 3
+
+func padSlug(slug string, minLen int) string {
+	for len(slug) < minLen {
+		slug += "x"
+	}
+	return slug
+}
+
+func promptProjectSlug(defaultSlug string, in io.Reader, out io.Writer) (string, error) {
+	reader := bufferedPromptReader(in)
+	for {
+		fmt.Fprintf(out, "Project [%s]: ", defaultSlug)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			line = defaultSlug
+		}
+		slug := sanitizeSlug(line)
+		if len(slug) < minProjectSlugLength {
+			fmt.Fprintf(out, "Project slug must be at least %d characters.\n", minProjectSlugLength)
+			continue
+		}
+		return slug, nil
 	}
 }
 
