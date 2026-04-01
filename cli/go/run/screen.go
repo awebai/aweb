@@ -37,8 +37,9 @@ type ScreenController struct {
 	historyIndex  int
 	historyDraft  string
 	desiredColumn int
-	pasting       bool
-	lastWasCR     bool
+	pasting      bool
+	lastWasCR    bool
+	pendingBytes []byte
 
 	events chan ControlEvent
 	doneCh chan error
@@ -409,6 +410,13 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Prepend any bytes carried over from the previous read (partial
+	// escape sequences that were split across read boundaries).
+	if len(s.pendingBytes) > 0 {
+		data = append(s.pendingBytes, data...)
+		s.pendingBytes = nil
+	}
+
 	// Timing-based paste detection: if we receive a large buffer
 	// without bracketed paste markers but containing \r, treat
 	// \r as newline rather than submit.
@@ -419,9 +427,18 @@ func (s *ScreenController) handleInlineInput(data []byte) {
 
 	for i := 0; i < len(data); {
 		// Bracketed paste: ESC[200~ starts paste, ESC[201~ ends it.
-		// The 6-byte sequence must arrive in a single read buffer; if
-		// split across calls the bytes fall through as normal input.
-		// In practice bufio's 4096-byte buffer prevents this.
+		// If a partial paste bracket sequence appears at the end of the
+		// buffer, carry it over to the next read instead of processing
+		// the ESC as a standalone keypress.
+		if data[i] == 0x1b && i+5 >= len(data) {
+			tail := data[i:]
+			prefix := []byte("\x1b[200~")[:len(tail)]
+			prefix2 := []byte("\x1b[201~")[:len(tail)]
+			if bytes.Equal(tail, prefix) || bytes.Equal(tail, prefix2) {
+				s.pendingBytes = append(s.pendingBytes[:0], tail...)
+				return
+			}
+		}
 		if i+5 < len(data) && data[i] == 0x1b && data[i+1] == '[' && data[i+2] == '2' && data[i+3] == '0' {
 			if data[i+4] == '0' && data[i+5] == '~' {
 				s.pasting = true

@@ -646,6 +646,52 @@ func TestScreenControllerUnbracketedBulkPastePreservesNewlines(t *testing.T) {
 	}
 }
 
+func TestScreenControllerSplitBracketEndSequence(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Paste start arrives in one read, but the end bracket is split:
+	// ESC arrives at end of first read, [201~ at start of second.
+	screen.handleInlineInput([]byte("\x1b[200~hello world\x1b"))
+	screen.handleInlineInput([]byte("[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello world" {
+		t.Fatalf("expected paste content preserved across split bracket, got %q", value)
+	}
+	if screen.pasting {
+		t.Fatal("expected pasting=false after split end bracket")
+	}
+}
+
+func TestScreenControllerSplitBracketStartSequence(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// The paste start bracket is split: ESC[20 at end of first read,
+	// 0~ at start of second, then content and end bracket.
+	screen.handleInlineInput([]byte("\x1b[20"))
+	screen.handleInlineInput([]byte("0~hello\x1b[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello" {
+		t.Fatalf("expected paste content after split start bracket, got %q", value)
+	}
+	if screen.pasting {
+		t.Fatal("expected pasting=false after end bracket")
+	}
+}
+
 func TestScreenControllerBracketedPasteCRLFSplitAcrossReads(t *testing.T) {
 	screen := &ScreenController{
 		promptLabel:   ">> ",
