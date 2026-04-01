@@ -11,6 +11,7 @@
 #   6. Accepts the invite (token authority)
 #   7. Sends and receives signed mail between identities
 #   8. Acks a message
+#   9. Exercises the lock lifecycle (acquire, list, renew, release)
 #
 # Usage:
 #   ./scripts/e2e-oss-user-journey.sh
@@ -795,19 +796,44 @@ assert_not_empty "roles deactivate keeps active bundle id" "$deactivated_roles_i
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 21: lock list
+# Phase 21: lock lifecycle (acquire, list, renew, release)
 # ---------------------------------------------------------------------------
-echo "=== Phase 21: lock list ==="
+echo "=== Phase 21: lock lifecycle ==="
 
-lock_exit=0
-run_aw_in "$ALICE_DIR" lock list 2>/dev/null || lock_exit=$?
-if [[ $lock_exit -eq 0 ]]; then
-  echo "  PASS: lock list"
-  ((pass++))
-else
-  echo "  FAIL: lock list (exit=$lock_exit)"
-  ((fail++))
-fi
+lock_acquire_out="$(run_aw_in "$ALICE_DIR" lock acquire \
+  --resource-key "e2e-test-resource" --ttl-seconds 300 --json 2>/dev/null)"
+lock_acquire_exit=$?
+LOCK_KEY="$(echo "$lock_acquire_out" | jq_field resource_key)"
+assert_eq "lock acquire exit" "0" "$lock_acquire_exit"
+assert_eq "lock acquire resource_key" "e2e-test-resource" "$LOCK_KEY"
+
+lock_list_out="$(run_aw_in "$ALICE_DIR" lock list --json 2>/dev/null)"
+lock_list_has_resource="$(echo "$lock_list_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+locks=d.get('reservations') or d.get('locks') or []
+print(any(r.get('resource_key') == 'e2e-test-resource' for r in locks))
+" 2>/dev/null || echo "False")"
+assert_eq "lock list shows acquired lock" "True" "$lock_list_has_resource"
+
+lock_renew_out="$(run_aw_in "$ALICE_DIR" lock renew \
+  --resource-key "e2e-test-resource" --ttl-seconds 600 --json 2>/dev/null)"
+lock_renew_exit=$?
+assert_eq "lock renew exit" "0" "$lock_renew_exit"
+
+lock_release_out="$(run_aw_in "$ALICE_DIR" lock release \
+  --resource-key "e2e-test-resource" --json 2>/dev/null)"
+lock_release_exit=$?
+assert_eq "lock release exit" "0" "$lock_release_exit"
+
+lock_list_after="$(run_aw_in "$ALICE_DIR" lock list --json 2>/dev/null)"
+lock_list_still_has="$(echo "$lock_list_after" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+locks=d.get('reservations') or d.get('locks') or []
+print(any(r.get('resource_key') == 'e2e-test-resource' for r in locks))
+" 2>/dev/null || echo "True")"
+assert_eq "lock list empty after release" "False" "$lock_list_still_has"
 echo ""
 
 echo "=== All user journey phases complete ==="
