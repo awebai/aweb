@@ -9,6 +9,7 @@
     "dist",
     ".claude-plugin",
     ".mcp.json",
+    "skills",
     "README.md",
     "package.json"
   ],
