@@ -7,8 +7,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveConfig } from "./config.js";
 import { APIClient } from "./api/client.js";
@@ -154,7 +155,7 @@ Always use the session_id and message_id from the event attributes when replying
   process.on("SIGINT", () => abort.abort());
   process.on("SIGTERM", () => abort.abort());
 
-  startEventLoop(mcp, client, pinStore, config.alias, abort.signal);
+  await startEventLoop(mcp, client, pinStore, config.alias, abort.signal);
 }
 
 async function startEventLoop(
@@ -333,9 +334,15 @@ export async function dispatchEvent(
   }
 }
 
-function isDirectExecution(moduleURL: string): boolean {
+export function isDirectExecution(moduleURL: string): boolean {
   const entry = process.argv[1];
-  return !!entry && moduleURL === pathToFileURL(entry).href;
+  if (!entry) return false;
+
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(moduleURL));
+  } catch {
+    return moduleURL === pathToFileURL(entry).href;
+  }
 }
 
 if (isDirectExecution(import.meta.url)) {

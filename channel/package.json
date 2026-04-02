@@ -2,8 +2,17 @@
   "name": "@awebai/channel",
   "version": "0.0.1",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
   "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
     "test": "vitest run --exclude test/integration.test.ts",
     "test:integration": "vitest run test/integration.test.ts",
     "start": "tsx src/index.ts"
@@ -17,6 +26,7 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.5.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
