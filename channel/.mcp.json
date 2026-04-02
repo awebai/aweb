@@ -1,8 +1,6 @@
 {
-  "mcpServers": {
-    "aweb": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"]
-    }
+  "aweb": {
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"]
   }
 }
