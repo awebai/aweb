@@ -32,7 +32,7 @@ func addChannelMCP(settings map[string]any, cwd string) {
 
 func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	result := &claudeHooksResult{
-		FilePath: filepath.Join(repoRoot, ".claude", "settings.json"),
+		FilePath: filepath.Join(repoRoot, ".mcp.json"),
 	}
 
 	content, err := os.ReadFile(result.FilePath)
@@ -57,7 +57,10 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	}
 
 	if askConfirmation {
-		answer, err := promptString("Set up Claude Code channel MCP server? (y/n)", "y")
+		answer, err := promptString(
+			"Set up Claude Code channel for real-time coordination?\n"+
+				"  (Requires starting Claude Code with: claude --dangerously-load-development-channels server:aweb)\n"+
+				"  (y/n)", "y")
 		if err != nil {
 			result.Error = err
 			result.Skipped = true
@@ -71,12 +74,6 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	}
 
 	addChannelMCP(settings, repoRoot)
-
-	if err := os.MkdirAll(filepath.Dir(result.FilePath), 0o755); err != nil {
-		result.Error = fmt.Errorf("creating %s: %w", filepath.Dir(result.FilePath), err)
-		result.Skipped = true
-		return result
-	}
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -108,7 +105,8 @@ func printChannelMCPResult(result *claudeHooksResult) {
 		return
 	}
 	if result.AlreadyExists {
-		fmt.Println("Channel MCP server: already configured")
+		fmt.Println("Channel MCP server: already configured in .mcp.json")
+		printChannelStartInstructions()
 		return
 	}
 	if result.Skipped {
@@ -118,16 +116,23 @@ func printChannelMCPResult(result *claudeHooksResult) {
 	}
 	if result.Created {
 		fmt.Printf("Created %s with channel MCP server\n", result.FilePath)
+		printChannelStartInstructions()
 		return
 	}
 	if result.Updated {
 		fmt.Printf("Added channel MCP server to %s\n", result.FilePath)
+		printChannelStartInstructions()
 	}
+}
+
+func printChannelStartInstructions() {
+	fmt.Println("  Start Claude Code with:")
+	fmt.Println("    claude --dangerously-load-development-channels server:aweb")
 }
 
 func printManualChannelInstructions() {
 	fmt.Println()
-	fmt.Println("To enable the channel MCP server, add to .claude/settings.json:")
+	fmt.Println("To enable the channel MCP server, add to .mcp.json:")
 	fmt.Println(`  {
     "mcpServers": {
       "aweb": {
@@ -137,4 +142,5 @@ func printManualChannelInstructions() {
       }
     }
   }`)
+	printChannelStartInstructions()
 }

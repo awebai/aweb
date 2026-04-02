@@ -14,6 +14,7 @@ var (
 	guidedOnboardingPrintInitSummary = printInitSummary
 	guidedOnboardingInjectDocs       = InjectAgentDocs
 	guidedOnboardingSetupHooks       = SetupClaudeHooks
+	guidedOnboardingSetupChannel     = SetupChannelMCP
 )
 
 type guidedOnboardingRequest struct {
@@ -154,10 +155,20 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 		} else if err != nil {
 			return nil, err
 		}
-		if hooks, err := promptYesNoWithIO("Set up Claude hooks for aw notify?", false, req.PromptIn, req.PromptOut); err == nil && hooks {
-			printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
+		if channel, err := promptYesNoWithIO(
+			"Set up Claude Code channel for real-time coordination?\n"+
+				"  (Requires: claude --dangerously-load-development-channels server:aweb)",
+			false, req.PromptIn, req.PromptOut,
+		); err == nil && channel {
+			printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
 		} else if err != nil {
 			return nil, err
+		} else if !channel {
+			if hooks, err := promptYesNoWithIO("Set up Claude hooks for aw notify? (polling fallback)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
+				printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
+			} else if err != nil {
+				return nil, err
+			}
 		}
 	}
 

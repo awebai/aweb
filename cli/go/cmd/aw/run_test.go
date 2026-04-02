@@ -641,6 +641,7 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
+	oldSetupChannel := guidedOnboardingSetupChannel
 	oldPrintInitSummary := guidedOnboardingPrintInitSummary
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
@@ -657,6 +658,7 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
 		guidedOnboardingInjectDocs = oldInjectDocs
 		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingSetupChannel = oldSetupChannel
 		guidedOnboardingPrintInitSummary = oldPrintInitSummary
 		initRunCommandVars()
 	})
@@ -719,6 +721,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 		hooksAsk = askConfirmation
 		return &claudeHooksResult{}
 	}
+	var channelRepo string
+	guidedOnboardingSetupChannel = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		channelRepo = repoRoot
+		return &claudeHooksResult{}
+	}
 
 	cmd := &cobraCommandClone{Command: *runCmd}
 	cmd.ResetFlagsForTest()
@@ -755,8 +762,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	if strings.TrimSpace(capturedLoopOpts.InitialPrompt) != "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else." {
 		t.Fatalf("expected onboarding guide prompt, got %q", capturedLoopOpts.InitialPrompt)
 	}
-	if injectedRepo != tmp || hooksRepo != tmp {
-		t.Fatalf("expected docs/hooks on repo root, got docs=%q hooks=%q", injectedRepo, hooksRepo)
+	if injectedRepo != tmp || channelRepo != tmp {
+		t.Fatalf("expected docs/channel on repo root, got docs=%q channel=%q", injectedRepo, channelRepo)
+	}
+	if hooksRepo != "" {
+		t.Fatalf("expected hooks skipped when channel is chosen, got hooks=%q", hooksRepo)
 	}
 	if hooksAsk {
 		t.Fatalf("expected wizard to handle hooks confirmation before setup call")

@@ -179,13 +179,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initInjectDocs {
 			printInjectDocsResult(InjectAgentDocs(repoRoot))
 		}
-		if initSetupHooks {
-			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
-			printClaudeHooksResult(hookResult)
-		}
 		if initSetupChannel {
 			channelResult := SetupChannelMCP(repoRoot, initIsTTY())
 			printChannelMCPResult(channelResult)
+		} else if initSetupHooks {
+			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
+			printClaudeHooksResult(hookResult)
 		}
 		return nil
 	}
@@ -1092,13 +1091,12 @@ func printPostInitActions(result *initResult, workingDir string) {
 	if initInjectDocs {
 		printInjectDocsResult(InjectAgentDocs(repoRoot))
 	}
-	if initSetupHooks {
-		hookResult := SetupClaudeHooks(repoRoot, isTTY())
-		printClaudeHooksResult(hookResult)
-	}
 	if initSetupChannel {
 		channelResult := SetupChannelMCP(repoRoot, isTTY())
 		printChannelMCPResult(channelResult)
+	} else if initSetupHooks {
+		hookResult := SetupClaudeHooks(repoRoot, isTTY())
+		printClaudeHooksResult(hookResult)
 	}
 	if !jsonFlag {
 		printInitNextSteps(result, workingDir, initInjectDocs, initSetupHooks, initSetupChannel)
