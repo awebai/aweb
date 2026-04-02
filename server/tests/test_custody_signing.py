@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from aweb.awid.custody import sign_on_behalf
+from aweb.awid.custody import encrypt_signing_key, sign_on_behalf
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair
 
 
@@ -136,8 +136,6 @@ async def test_self_custodial_agent_returns_none(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_custodial_agent_signs_when_properly_configured(aweb_cloud_db):
     """Custodial agent with key + AWEB_CUSTODY_KEY should return signature tuple."""
-    from aweb.awid.custody import encrypt_signing_key
-
     master_key = bytes.fromhex("aa" * 32)
     db = _DbInfra(aweb_cloud_db.aweb_db)
     project_id = await _create_project(aweb_cloud_db.aweb_db)

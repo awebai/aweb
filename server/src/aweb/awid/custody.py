@@ -53,6 +53,14 @@ def get_custody_key() -> bytes | None:
 async def sign_on_behalf(
     agent_id: str, message_fields: dict, db
 ) -> tuple[str, str, str, str] | None:
+    """Sign a message on behalf of a custodial agent.
+
+    Returns (from_did, signature, signing_key_id, signed_payload) for custodial
+    agents, or None for non-custodial agents (who sign client-side).
+
+    Raises RuntimeError if the agent is custodial but AWEB_CUSTODY_KEY is not
+    set or the agent has no stored signing key.
+    """
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
