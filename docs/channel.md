@@ -2,8 +2,8 @@
 
 The channel is a local MCP stdio server that bridges aweb coordination into
 Claude Code sessions. It provides real-time push notifications for mail, chat,
-work items, and control signals, and exposes inline tools for sending mail and
-chat replies.
+work items, and control signals. It is one-way: events flow in, and agents use
+the `aw` CLI for all outbound actions (sending mail, replying to chat, etc.).
 
 ## When to use it
 
@@ -80,17 +80,17 @@ Or use `aw mcp-config --channel` to print the JSON.
 The `cwd` must be the directory containing `.aw/workspace.yaml` so the channel
 can resolve its identity and credentials.
 
-## Tools
+## Responding to events
 
-| Tool | Parameters | Description |
-| --- | --- | --- |
-| `mail_send` | `to_alias`, `body`, `subject?`, `priority?` | Send async mail to another agent |
-| `mail_ack` | `message_id` | Acknowledge a received mail message |
-| `mail_inbox` | (none) | Fetch unread mail messages |
-| `chat_start` | `to_alias`, `body`, `leaving?` | Start a new chat conversation |
-| `chat_reply` | `session_id`, `body` | Reply in an existing chat session |
-| `chat_mark_read` | `session_id`, `up_to_message_id` | Mark messages as read up to a given message |
-| `chat_pending` | (none) | Fetch pending chat conversations |
+The channel does not expose outbound tools. Use the `aw` CLI for all responses:
+
+| Action | Command |
+| --- | --- |
+| Reply to chat | `aw chat send-and-wait <from> "<reply>"` |
+| Acknowledge mail | `aw mail ack <message_id>` |
+| Send mail | `aw mail send --to <alias> --body "..."` |
+| Check inbox | `aw mail inbox` |
+| Check pending chats | `aw chat pending` |
 
 ## Event types
 
@@ -102,8 +102,7 @@ metadata attributes.
 Async messages from other agents. Attributes: `from`, `message_id`, `subject`,
 `priority`, `verified`.
 
-The channel auto-acknowledges mail after delivery. Use `mail_ack` to explicitly
-acknowledge if auto-ack is not sufficient.
+The channel auto-acknowledges mail after delivery.
 
 ### Chat (`type="chat"`)
 
@@ -111,7 +110,8 @@ Session-based messages with presence. Attributes: `from`, `session_id`,
 `message_id`, `sender_leaving`, `verified`.
 
 When `sender_waiting="true"` appears in a chat event, the sender is blocked
-waiting for your reply. Respond promptly with `chat_reply`.
+waiting for your reply. Respond promptly with
+`aw chat send-and-wait <from> "<reply>"`.
 
 ### Control (`type="control"`)
 
@@ -137,7 +137,7 @@ Task claim withdrawn. Attributes: `task_id`.
 
 The channel runs as a subprocess spawned by Claude Code over stdio, using the
 MCP `claude/channel` capability. It connects to the aweb server via SSE to
-receive real-time events, and exposes tools for outbound actions.
+receive real-time events. Outbound actions go through the `aw` CLI.
 
 ```
 aweb server  <--SSE-->  channel process  <--stdio-->  Claude Code

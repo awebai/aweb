@@ -12,7 +12,6 @@ import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
 
 import { APIClient } from "../src/api/client.js";
-import { handleToolCall } from "../src/tools.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -39,14 +38,6 @@ interface WorkspaceInfo {
   workspace_id?: string;
   did?: string;
   stable_id?: string;
-}
-
-interface ToolSigningContext {
-  seed: Uint8Array | null;
-  did: string;
-  stableID: string;
-  alias: string;
-  projectSlug: string;
 }
 
 interface ServerHandle {
@@ -112,8 +103,6 @@ describe.sequential("channel integration", () => {
   let alice: WorkspaceInfo;
   let bob: WorkspaceInfo;
   let aliceClient: APIClient;
-  let bobClient: APIClient;
-  let bobSigning: ToolSigningContext;
   let mcpClient: Client | undefined;
   let transport: StdioClientTransport | undefined;
   let notifications: NotificationQueue;
@@ -138,14 +127,6 @@ describe.sequential("channel integration", () => {
     await writeReceiverConfig(homeDir, bobDir, server.baseURL, bob);
 
     aliceClient = new APIClient(server.baseURL, alice.api_key);
-    bobClient = new APIClient(server.baseURL, bob.api_key);
-    bobSigning = {
-      seed: null,
-      did: bob.did || "",
-      stableID: bob.stable_id || "",
-      alias: bob.alias,
-      projectSlug: bob.project_slug,
-    };
 
     notifications = new NotificationQueue();
   }, 300_000);
@@ -158,49 +139,11 @@ describe.sequential("channel integration", () => {
     }
   }, 120_000);
 
-  test("mail_inbox reads unread mail from the live server", async () => {
-    const body = `mail inbox ${Date.now()}`;
-    const mail = await sendMail(aliceClient, "bob", body, "pull mail");
-
-    const result = await handleToolCall("mail_inbox", {}, bobClient, bobSigning);
-    const inbox = JSON.parse(result.content[0].text) as Array<Record<string, string>>;
-
-    expect(inbox).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        from: "alice",
-        subject: "pull mail",
-        body,
-        message_id: mail.message_id,
-      }),
-    ]));
-  });
-
-  test("chat_pending reads pending conversations from the live server", async () => {
-    const body = `chat pending ${Date.now()}`;
-    const session = await createChatSession(aliceClient, ["bob"], body, { wait_seconds: 300 });
-
-    const result = await handleToolCall("chat_pending", {}, bobClient, bobSigning);
-    const pending = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
-
-    expect(pending).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        session_id: session.session_id,
-        last_message: body,
-      }),
-    ]));
-  });
-
-  test("channel handles MCP tools and SSE against the live server", async () => {
+  test("channel receives mail and chat notifications from the live server", async () => {
     await startChannelIfNeeded();
 
     const tools = await mcpClient!.listTools();
-    expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      "mail_send",
-      "mail_inbox",
-      "chat_start",
-      "chat_reply",
-      "chat_pending",
-    ]));
+    expect(tools.tools).toHaveLength(0);
 
     const mailBody = `mail notification ${Date.now()}`;
     const mail = await sendMail(aliceClient, "bob", mailBody, "e2e mail", "high");
@@ -215,45 +158,12 @@ describe.sequential("channel integration", () => {
     expect(mailNotification.content).toBe(mailBody);
     expect(mailNotification.meta.from).toContain("alice");
 
-    const sentBody = `mail send ${Date.now()}`;
-    const sentResult = await mcpClient!.callTool({
-      name: "mail_send",
-      arguments: { to_alias: "alice", body: sentBody, subject: "tool send" },
-    });
-    expect(sentResult.content[0]).toMatchObject({ type: "text" });
-    const aliceInbox = await fetchInbox(aliceClient);
-    expect(aliceInbox).toEqual(expect.arrayContaining([
-      expect.objectContaining({ body: sentBody, subject: "tool send" }),
-    ]));
-
     const chatBody = `chat notification ${Date.now()}`;
     const created = await createChatSession(aliceClient, ["bob"], chatBody);
     const chatNotification = await notifications.waitFor(
       (item) => item.meta.type === "chat" && item.meta.session_id === created.session_id && item.content === chatBody,
     );
     expect(chatNotification.meta.from).toContain("alice");
-
-    const replyBody = `chat reply ${Date.now()}`;
-    const replyResult = await mcpClient!.callTool({
-      name: "chat_reply",
-      arguments: { session_id: created.session_id, body: replyBody },
-    });
-    expect(replyResult.content[0]).toMatchObject({ type: "text" });
-    const aliceHistory = await fetchChatHistory(aliceClient, created.session_id);
-    expect(aliceHistory).toEqual(expect.arrayContaining([
-      expect.objectContaining({ body: replyBody, from_agent: "bob" }),
-    ]));
-
-    const startBody = `chat start ${Date.now()}`;
-    const startResult = await mcpClient!.callTool({
-      name: "chat_start",
-      arguments: { to_alias: "alice", body: startBody },
-    });
-    expect(startResult.content[0]).toMatchObject({ type: "text" });
-    const alicePending = await fetchChatPending(aliceClient);
-    expect(alicePending).toEqual(expect.arrayContaining([
-      expect.objectContaining({ last_message: startBody }),
-    ]));
 
     expect(channelStderr).not.toContain("fatal:");
   }, 45_000);
@@ -507,11 +417,6 @@ async function sendMail(
   return client.post("/v1/messages", { to_alias: toAlias, body, subject, priority });
 }
 
-async function fetchInbox(client: APIClient): Promise<Array<Record<string, string>>> {
-  const response = await client.get<{ messages: Array<Record<string, string>> }>("/v1/messages/inbox?limit=50");
-  return response.messages;
-}
-
 async function createChatSession(
   client: APIClient,
   toAliases: string[],
@@ -523,23 +428,6 @@ async function createChatSession(
     message,
     ...extra,
   });
-}
-
-async function fetchChatHistory(
-  client: APIClient,
-  sessionId: string,
-): Promise<Array<Record<string, string>>> {
-  const response = await client.get<{ messages: Array<Record<string, string>> }>(
-    `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?limit=50`,
-  );
-  return response.messages;
-}
-
-async function fetchChatPending(
-  client: APIClient,
-): Promise<Array<Record<string, unknown>>> {
-  const response = await client.get<{ pending: Array<Record<string, unknown>> }>("/v1/chat/pending");
-  return response.pending;
 }
 
 async function waitForHealthyServer(baseURL: string): Promise<void> {

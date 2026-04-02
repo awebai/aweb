@@ -1,10 +1,6 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
@@ -16,9 +12,7 @@ import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent } from "./api/events.js";
 import { fetchInbox, ackMessage, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
-import { loadSigningKey } from "./identity/keys.js";
 import { PinStore } from "./identity/pinstore.js";
-import { TOOL_DEFINITIONS, handleToolCall } from "./tools.js";
 
 const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 const MAX_DISPATCHED_IDS = 2000;
@@ -88,63 +82,25 @@ async function main() {
   const workdir = process.cwd();
   const config = await resolveConfig(workdir);
 
-  // Load signing key if available
-  let seed: Uint8Array | null = null;
-  if (config.signingKeyPath) {
-    try {
-      seed = await loadSigningKey(config.signingKeyPath);
-    } catch (err) {
-      console.error(`[aw-channel] failed to load signing key: ${err}`);
-    }
-  }
-
   const client = new APIClient(config.baseURL, config.apiKey);
   const pinStore = await loadPinStore();
-  const signing = {
-    seed,
-    did: config.did,
-    stableID: config.stableID,
-    alias: config.alias,
-    projectSlug: config.projectSlug,
-  };
 
   const mcp = new Server(
     { name: "aw", version: "0.0.1" },
     {
       capabilities: {
         experimental: { "claude/channel": {} },
-        tools: {},
       },
-      instructions: `Events from the aw channel are coordination messages from other agents in your team.
+      instructions: `Events from the aw channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async, fire-and-forget. Read them, act if needed, acknowledge with mail_ack.
+Mail events (type="mail") are async. Read them and act if needed. Acknowledge with: aw mail ack <message_id>
 
-Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with chat_reply using the session_id from the event. If you need more time, send a chat_reply with a status update.
+Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
+If you need more time, send a status update the same way.
 
-Control events (type="control") are operational signals. On "pause", stop current work and wait. On "resume", continue. On "interrupt", stop and await new instructions.
-
-Always use the session_id and message_id from the event attributes when replying or acknowledging.`,
+Control events (type="control") are operational signals. On "pause", stop current work and wait. On "resume", continue. On "interrupt", stop and await new instructions.`,
     },
   );
-
-  // Register tool handlers
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS,
-  }));
-
-  mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-    try {
-      return await handleToolCall(
-        req.params.name,
-        req.params.arguments as Record<string, unknown>,
-        client,
-        signing,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { content: [{ type: "text" as const, text: `error: ${msg}` }], isError: true };
-    }
-  });
 
   // Connect MCP over stdio
   const transport = new StdioServerTransport();
