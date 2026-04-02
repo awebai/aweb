@@ -108,7 +108,7 @@ async function* parseSSEResponse(
   }
 }
 
-function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
+export function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
   eventName = eventName.trim();
   if (!eventName) return null;
 
@@ -116,9 +116,13 @@ function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
     "connected", "mail_message", "chat_message",
     "control_pause", "control_resume", "control_interrupt",
     "work_available", "claim_update", "claim_removed", "error",
+    "actionable_mail", "actionable_chat",
   ]);
 
   if (!KNOWN_TYPES.has(eventName)) return null;
+
+  if (eventName === "actionable_mail") eventName = "mail_message";
+  if (eventName === "actionable_chat") eventName = "chat_message";
 
   try {
     const payload = JSON.parse(data);

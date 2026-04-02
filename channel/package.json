@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "test": "vitest run",
+    "test:integration": "vitest run test/integration.test.ts",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
