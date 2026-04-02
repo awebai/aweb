@@ -13,6 +13,8 @@ from aweb.aweb_introspection import get_identity_from_auth
 from aweb.auth import validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, BootstrapIdentityResult, bootstrap_identity
 from aweb.coordination.project_registry import ensure_server_project_row
+from aweb.coordination.routes.project_instructions import get_active_project_instructions
+from aweb.coordination.routes.project_roles import get_active_project_roles
 from aweb.coordination.roles import (
     ROLE_MAX_LENGTH,
     role_to_alias_prefix,
@@ -592,6 +594,8 @@ async def create_project(
             project_slug=identity.project_slug,
             project_name=identity.project_name or "",
         )
+        await get_active_project_roles(tx, identity.project_id, bootstrap_if_missing=True)
+        await get_active_project_instructions(tx, identity.project_id, bootstrap_if_missing=True)
         await tx.execute(
             """
             INSERT INTO {{tables.workspaces}}

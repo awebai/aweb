@@ -51,7 +51,7 @@ pnpm playwright test --debug   # Debug mode
 
 ```bash
 aw workspace status
-aw mail inbox --unread-only
+aw mail inbox
 aw work ready
 ```
 

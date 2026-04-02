@@ -1,16 +1,18 @@
 -- 001_initial.sql
--- Description: Clean baseline for the aweb coordination server schema.
--- Fresh installs should derive the full server schema from this file alone.
+-- Clean baseline for the aweb coordination server schema.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- Projects
+-- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.projects}} (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- Partition key for multi-tenant SaaS (NULL for single-tenant standalone mode)
     tenant_id UUID,
     slug TEXT NOT NULL,
     name TEXT,
-    -- Active policy pointer (FK added after project_policies exists)
-    active_policy_id UUID,
+    active_project_roles_id UUID,
+    active_project_instructions_id UUID,
     visibility TEXT NOT NULL DEFAULT 'private'
         CHECK (visibility IN ('private', 'public')),
     owner_type TEXT,
@@ -18,7 +20,6 @@ CREATE TABLE IF NOT EXISTS {{tables.projects}} (
     owner_user_id UUID,
     owner_org_id UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    -- Soft-delete support: NULL means active
     deleted_at TIMESTAMPTZ,
     CONSTRAINT chk_projects_owner_fields CHECK (
         (
@@ -42,25 +43,27 @@ CREATE TABLE IF NOT EXISTS {{tables.projects}} (
     )
 );
 
--- Slugs unique within tenant (or globally if no tenant), for non-deleted projects.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_no_tenant
     ON {{tables.projects}}(slug) WHERE tenant_id IS NULL AND deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_with_tenant
     ON {{tables.projects}}(tenant_id, slug) WHERE tenant_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_active
+    ON {{tables.projects}}(id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_owner_scope
+    ON {{tables.projects}}(owner_type, owner_ref, slug)
+    WHERE owner_ref IS NOT NULL AND deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_projects_active ON {{tables.projects}}(id) WHERE deleted_at IS NULL;
+-- ---------------------------------------------------------------------------
+-- Repos
+-- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.repos}} (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- CASCADE: repos are deleted when their project is deleted (repos without projects are invalid)
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
     origin_url TEXT NOT NULL,
     canonical_origin TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    -- Soft-delete support: NULL means active, timestamp means deleted
-    -- Unique constraint retained for ON CONFLICT support in ensure_repo.
-    -- When a soft-deleted repo is re-registered, ensure_repo clears deleted_at.
     deleted_at TIMESTAMPTZ,
     CONSTRAINT unique_repo_per_project UNIQUE (project_id, canonical_origin)
 );
@@ -69,12 +72,13 @@ CREATE INDEX IF NOT EXISTS idx_repos_project ON {{tables.repos}}(project_id);
 CREATE INDEX IF NOT EXISTS idx_repos_active ON {{tables.repos}}(project_id)
     WHERE deleted_at IS NULL;
 
+-- ---------------------------------------------------------------------------
+-- Workspaces
+-- ---------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
     workspace_id UUID PRIMARY KEY,
-    -- CASCADE: workspaces are deleted when their project is deleted
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
-    -- SET NULL: when repo is hard-deleted (e.g., project deletion cascade), preserve workspace for audit
-    -- When repo is soft-deleted via API, workspaces are soft-deleted manually in application code
     repo_id UUID REFERENCES {{tables.repos}}(id) ON DELETE SET NULL,
     alias TEXT NOT NULL,
     human_name TEXT NOT NULL DEFAULT '',
@@ -82,18 +86,13 @@ CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
     current_branch TEXT,
     focus_task_ref TEXT,
     focus_updated_at TIMESTAMPTZ,
-    -- Physical location: for detecting "gone" workspaces (directory no longer exists)
-    -- Only checked for workspaces on the current hostname to avoid cross-machine false positives
     hostname TEXT,
     workspace_path TEXT,
     timezone TEXT,
-    -- Workspace classification
     workspace_type TEXT NOT NULL DEFAULT 'agent',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    -- Soft-delete support: NULL means active, timestamp means deleted
     deleted_at TIMESTAMPTZ,
-    -- Track when workspace was last seen (updated on coordination activity)
     last_seen_at TIMESTAMPTZ,
     CONSTRAINT chk_workspace_repo CHECK (
         deleted_at IS NOT NULL OR
@@ -114,11 +113,9 @@ CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
     CONSTRAINT chk_workspace_role_length CHECK (role IS NULL OR length(role) <= 50)
 );
 
--- Partial unique index: aliases unique within project for non-deleted workspaces only
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_alias
     ON {{tables.workspaces}}(project_id, alias)
     WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_workspaces_alias ON {{tables.workspaces}}(alias);
 CREATE INDEX IF NOT EXISTS idx_workspaces_project ON {{tables.workspaces}}(project_id);
 CREATE INDEX IF NOT EXISTS idx_workspaces_repo ON {{tables.workspaces}}(repo_id);
@@ -126,16 +123,13 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_active ON {{tables.workspaces}}(projec
     WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_workspaces_hostname ON {{tables.workspaces}}(hostname)
     WHERE hostname IS NOT NULL AND deleted_at IS NULL;
--- Trigger to update updated_at and enforce immutability
+
 CREATE OR REPLACE FUNCTION {{schema}}.update_workspace_timestamp()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Enforce immutability of key fields
     IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
         RAISE EXCEPTION 'project_id is immutable';
     END IF;
-    -- repo_id may be assigned once when a local/manual workspace is upgraded into
-    -- a repo-backed workspace, but cannot change between two non-NULL repos.
     IF OLD.repo_id IS NOT NULL
        AND NEW.repo_id IS DISTINCT FROM OLD.repo_id
        AND NEW.repo_id IS NOT NULL THEN
@@ -144,15 +138,12 @@ BEGIN
     IF NEW.alias IS DISTINCT FROM OLD.alias THEN
         RAISE EXCEPTION 'alias is immutable';
     END IF;
-
-    -- Auto-soft-delete when repo_id becomes NULL (repo was hard-deleted)
     IF OLD.repo_id IS NOT NULL
        AND NEW.repo_id IS NULL
        AND NEW.deleted_at IS NULL
        AND NEW.workspace_type = 'agent' THEN
         NEW.deleted_at = NOW();
     END IF;
-
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
@@ -164,19 +155,19 @@ CREATE TRIGGER workspace_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION {{schema}}.update_workspace_timestamp();
 
+-- ---------------------------------------------------------------------------
+-- Task claims
+-- ---------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS {{tables.task_claims}} (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- CASCADE: claims deleted when project is deleted
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
-    -- CASCADE: claims deleted when workspace is deleted
     workspace_id UUID NOT NULL REFERENCES {{tables.workspaces}}(workspace_id) ON DELETE CASCADE,
     alias TEXT NOT NULL,
     human_name TEXT NOT NULL,
     task_ref TEXT NOT NULL,
-    -- Apex reference for fast team status listings
     apex_task_ref TEXT,
     claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Multiple workspaces can claim the same task (coordinated work with --:jump-in)
     UNIQUE(project_id, task_ref, workspace_id)
 );
 
@@ -202,6 +193,10 @@ CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
 CREATE INDEX IF NOT EXISTS idx_reservations_project_expires
     ON {{tables.reservations}}(project_id, expires_at);
 
+-- ---------------------------------------------------------------------------
+-- Audit log
+-- ---------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS {{tables.audit_log}} (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
@@ -218,31 +213,35 @@ CREATE TABLE IF NOT EXISTS {{tables.audit_log}} (
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON {{tables.audit_log}}(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_alias ON {{tables.audit_log}}(alias);
 CREATE INDEX IF NOT EXISTS idx_audit_log_project ON {{tables.audit_log}}(project_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_agent_id ON {{tables.audit_log}}(agent_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS {{tables.project_policies}} (
-    policy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- ---------------------------------------------------------------------------
+-- Project roles (versioned role bundles)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
+    project_roles_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
     version INT NOT NULL,
     bundle_json JSONB NOT NULL,
     created_by_workspace_id UUID REFERENCES {{tables.workspaces}}(workspace_id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT project_policies_version_unique UNIQUE (project_id, version)
+    CONSTRAINT project_roles_version_unique UNIQUE (project_id, version)
 );
 
--- Add FK after project_policies to avoid circular dependency during create
 ALTER TABLE {{tables.projects}}
-    ADD CONSTRAINT fk_projects_active_policy
-    FOREIGN KEY (active_policy_id)
-    REFERENCES {{tables.project_policies}}(policy_id) ON DELETE SET NULL;
+    ADD CONSTRAINT fk_projects_active_project_roles
+    FOREIGN KEY (active_project_roles_id)
+    REFERENCES {{tables.project_roles}}(project_roles_id) ON DELETE SET NULL;
 
-CREATE INDEX IF NOT EXISTS idx_project_policies_project_version
-    ON {{tables.project_policies}}(project_id, version DESC);
-CREATE INDEX IF NOT EXISTS idx_project_policies_created_by
-    ON {{tables.project_policies}}(created_by_workspace_id)
+CREATE INDEX IF NOT EXISTS idx_project_roles_project_version
+    ON {{tables.project_roles}}(project_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_project_roles_created_by
+    ON {{tables.project_roles}}(created_by_workspace_id)
     WHERE created_by_workspace_id IS NOT NULL;
 
-CREATE OR REPLACE FUNCTION {{schema}}.project_policies_update_timestamp()
+CREATE OR REPLACE FUNCTION {{schema}}.project_roles_update_timestamp()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
@@ -250,16 +249,56 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS project_policies_update_timestamp ON {{tables.project_policies}};
-CREATE TRIGGER project_policies_update_timestamp
-    BEFORE UPDATE ON {{tables.project_policies}}
+DROP TRIGGER IF EXISTS project_roles_update_timestamp ON {{tables.project_roles}};
+CREATE TRIGGER project_roles_update_timestamp
+    BEFORE UPDATE ON {{tables.project_roles}}
     FOR EACH ROW
-    EXECUTE FUNCTION {{schema}}.project_policies_update_timestamp();
+    EXECUTE FUNCTION {{schema}}.project_roles_update_timestamp();
 
-CREATE INDEX IF NOT EXISTS idx_audit_log_agent_id ON {{tables.audit_log}}(agent_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_projects_owner_scope
-    ON {{tables.projects}}(owner_type, owner_ref, slug)
-    WHERE owner_ref IS NOT NULL AND deleted_at IS NULL;
+-- ---------------------------------------------------------------------------
+-- Project instructions (versioned shared guidance)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.project_instructions}} (
+    project_instructions_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
+    version INT NOT NULL,
+    document_json JSONB NOT NULL,
+    created_by_workspace_id UUID REFERENCES {{tables.workspaces}}(workspace_id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT project_instructions_version_unique UNIQUE (project_id, version)
+);
+
+ALTER TABLE {{tables.projects}}
+    ADD CONSTRAINT fk_projects_active_project_instructions
+    FOREIGN KEY (active_project_instructions_id)
+    REFERENCES {{tables.project_instructions}}(project_instructions_id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_instructions_project_version
+    ON {{tables.project_instructions}}(project_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_project_instructions_created_by
+    ON {{tables.project_instructions}}(created_by_workspace_id)
+    WHERE created_by_workspace_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION {{schema}}.project_instructions_update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS project_instructions_update_timestamp ON {{tables.project_instructions}};
+CREATE TRIGGER project_instructions_update_timestamp
+    BEFORE UPDATE ON {{tables.project_instructions}}
+    FOR EACH ROW
+    EXECUTE FUNCTION {{schema}}.project_instructions_update_timestamp();
+
+-- ---------------------------------------------------------------------------
+-- Tasks
+-- ---------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS {{tables.task_counters}} (
     project_id UUID PRIMARY KEY REFERENCES {{tables.projects}}(id) ON DELETE CASCADE,
     next_number INTEGER NOT NULL DEFAULT 1
@@ -330,5 +369,3 @@ CREATE TABLE IF NOT EXISTS {{tables.task_comments}} (
 
 CREATE INDEX IF NOT EXISTS idx_task_comments_task
 ON {{tables.task_comments}} (task_id, created_at);
-ALTER TABLE server.projects
-DROP COLUMN IF EXISTS scope_id;

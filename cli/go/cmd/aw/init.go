@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -56,6 +57,8 @@ var (
 var (
 	initResolveBaseURLForCollection  = resolveBaseURLForInit
 	initFetchSuggestionForCollection = fetchInitSuggestion
+	initIsTTY                        = isTTY
+	initPrintGuidedOnboardingReady   = printGuidedOnboardingReadyMessage
 )
 
 // initFlow identifies which clean-slate workspace/identity creation path to use.
@@ -175,13 +178,56 @@ func runInit(cmd *cobra.Command, args []string) error {
 			printInjectDocsResult(InjectAgentDocs(repoRoot))
 		}
 		if initSetupHooks {
-			hookResult := SetupClaudeHooks(repoRoot, isTTY())
+			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
 			printClaudeHooksResult(hookResult)
 		}
 		return nil
 	}
 
 	if strings.TrimSpace(os.Getenv("AWEB_API_KEY")) == "" {
+		wd, _ := os.Getwd()
+		workspaceMissing, err := initWorkspaceMissing(wd)
+		if err != nil {
+			return err
+		}
+		if workspaceMissing {
+			if !initIsTTY() {
+				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or use `aw project create`, `aw spawn accept-invite`, or `aw connect`")
+			}
+			result, err := guidedOnboardingWizard(guidedOnboardingRequest{
+				WorkingDir:    wd,
+				PromptIn:      os.Stdin,
+				PromptOut:     os.Stderr,
+				ServerURL:     initServerURL,
+				ServerName:    serverFlag,
+				AccountName:   strings.TrimSpace(accountFlag),
+				ProjectSlug:   firstNonEmpty(resolveProjectSlug(), sanitizeSlug(filepath.Base(wd))),
+				NamespaceSlug: resolveExplicitNamespaceSlug(),
+				Alias: func() string {
+					if initPermanent {
+						return strings.TrimSpace(initAlias)
+					}
+					return resolveAliasValue(strings.TrimSpace(initAlias))
+				}(),
+				Name:               strings.TrimSpace(initName),
+				Reachability:       strings.TrimSpace(initReachability),
+				HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+				AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+				SaveConfig:         initSaveConfig,
+				SetDefault:         initSetDefault,
+				WriteContext:       initWriteContext,
+				Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
+				Permanent:          initPermanent,
+				AskPostCreateSetup: true,
+			})
+			if err != nil {
+				return err
+			}
+			if !jsonFlag {
+				initPrintGuidedOnboardingReady(result)
+			}
+			return nil
+		}
 		return usageError("aw init now initializes a workspace in an existing project; set AWEB_API_KEY to a project-scoped key or use `aw project create`")
 	}
 
@@ -215,6 +261,29 @@ func initNeedsFullInit() bool {
 	wd, _ := os.Getwd()
 	_, _, err := awconfig.LoadWorktreeContextFromDir(wd)
 	return err != nil
+}
+
+func initWorkspaceMissing(workingDir string) (bool, error) {
+	_, _, err := awconfig.LoadWorktreeContextFromDir(workingDir)
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, fmt.Errorf("invalid local workspace context: %w", err)
+}
+
+func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
+	if result == nil || strings.TrimSpace(result.InitialPrompt) == "" {
+		return
+	}
+	fmt.Println()
+	fmt.Println("Workspace ready.")
+	fmt.Println("Start your agent here with:")
+	fmt.Println("  aw run claude")
+	fmt.Println("  aw run codex")
+	fmt.Println("Ask it to read the agent guide at https://aweb.ai/agent-guide.txt")
 }
 
 func collectInitOptionsForFlow(flow initFlow) (initOptions, error) {
@@ -416,20 +485,25 @@ func resolveRoleInput(requested string, suggestedRoles []string, allowPrompt boo
 }
 
 func promptIdentityLifetime(in io.Reader, out io.Writer) (bool, error) {
-	choice, err := promptIndexedChoice(
-		"Identity type",
-		[]string{
-			"Ephemeral",
-			"Permanent",
-		},
-		0,
-		in,
-		out,
-	)
-	if err != nil {
-		return false, err
+	fmt.Fprintf(out, "  1. Ephemeral — workspace-bound, for internal coordination\n")
+	fmt.Fprintf(out, "  2. Permanent — survives beyond this workspace, can own public addresses\n")
+	reader := bufferedPromptReader(in)
+	for {
+		fmt.Fprintf(out, "Identity type [1]: ")
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		line = strings.TrimSpace(line)
+		switch line {
+		case "", "1":
+			return false, nil
+		case "2":
+			return true, nil
+		default:
+			fmt.Fprintf(out, "Enter 1 or 2.\n")
+		}
 	}
-	return choice == "Permanent", nil
 }
 
 func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (initOptions, error) {

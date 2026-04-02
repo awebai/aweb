@@ -19,7 +19,7 @@ You write code and implement features.
 
 ```bash
 aw workspace status
-aw mail inbox --unread-only
+aw mail inbox
 aw work ready
 aw roles show
 ```

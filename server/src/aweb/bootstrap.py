@@ -47,7 +47,7 @@ class BootstrapIdentityResult:
     project_name: str
     agent_id: str
     alias: str
-    api_key: str
+    api_key: str | None
     created: bool
     agent_type: str = "agent"
     did: str | None = None
@@ -169,6 +169,7 @@ async def bootstrap_identity(
     namespace: str | None = None,
     address_reachability: str | None = None,
     access_mode: str = "open",
+    mint_api_key: bool = True,
 ) -> BootstrapIdentityResult:
     aweb_db = db.get_manager("aweb")
 
@@ -373,17 +374,19 @@ async def bootstrap_identity(
                 raise AliasExhaustedError("All name prefixes are taken.")
             alias = allocated_alias
 
-        api_key, key_prefix, key_hash = generate_api_key()
-        await tx.execute(
-            """
-            INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active)
-            VALUES ($1, $2, $3, $4, TRUE)
-            """,
-            UUID(resolved_project_id),
-            UUID(agent_id),
-            key_prefix,
-            key_hash,
-        )
+        api_key: str | None = None
+        if mint_api_key:
+            api_key, key_prefix, key_hash = generate_api_key()
+            await tx.execute(
+                """
+                INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active)
+                VALUES ($1, $2, $3, $4, TRUE)
+                """,
+                UUID(resolved_project_id),
+                UUID(agent_id),
+                key_prefix,
+                key_hash,
+            )
 
         # Write agent_log 'create' entry for new agents.
         if created:

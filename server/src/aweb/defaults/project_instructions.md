@@ -1,6 +1,3 @@
-# Agent Instructions
-
-<!-- AWEB:START -->
 ## aweb Coordination Rules
 
 This project uses `aw` for coordination.
@@ -62,4 +59,3 @@ You are part of a team working toward a shared goal. Optimize for the project ou
 - Help teammates when they're blocked
 - Escalate blockers early rather than spinning alone
 - Keep changes small and reviewable so others can build on them
-<!-- AWEB:END -->

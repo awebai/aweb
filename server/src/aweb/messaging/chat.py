@@ -235,6 +235,8 @@ async def get_pending_conversations(
             array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids,
             lm.body AS last_message,
             lm.from_alias AS last_from,
+            lm.from_agent_id AS last_from_agent_id,
+            lm.hang_on AS last_message_hang_on,
             lm.created_at AS last_activity,
             COALESCE(unread.cnt, 0) AS unread_count,
             s.wait_seconds,
@@ -247,7 +249,7 @@ async def get_pending_conversations(
         JOIN {{tables.chat_session_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
-            SELECT body, from_alias, created_at
+            SELECT body, from_alias, from_agent_id, hang_on, created_at
             FROM {{tables.chat_messages}}
             WHERE session_id = s.session_id
             ORDER BY created_at DESC
@@ -276,6 +278,8 @@ async def get_pending_conversations(
             s.session_id,
             lm.body,
             lm.from_alias,
+            lm.from_agent_id,
+            lm.hang_on,
             lm.created_at,
             unread.cnt,
             s.wait_seconds,
@@ -283,7 +287,20 @@ async def get_pending_conversations(
             s.wait_started_by_agent_id,
             wait_ext.total_seconds
         HAVING COALESCE(unread.cnt, 0) > 0
-            OR s.wait_started_at IS NOT NULL
+            OR (
+                s.wait_started_at IS NOT NULL
+                AND s.wait_seconds IS NOT NULL
+                AND s.wait_started_by_agent_id IS NOT NULL
+                AND s.wait_started_by_agent_id <> $1
+                AND (
+                    lm.from_agent_id IS NULL
+                    OR lm.from_agent_id <> $1
+                    OR COALESCE(lm.hang_on, FALSE) = TRUE
+                )
+                AND s.wait_started_at
+                    + ((s.wait_seconds + COALESCE(wait_ext.total_seconds, 0)) * INTERVAL '1 second')
+                    > NOW()
+            )
         ORDER BY lm.created_at DESC
         """,
         UUID(agent_id),

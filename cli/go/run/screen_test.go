@@ -574,6 +574,144 @@ submitted:
 	}
 }
 
+func TestScreenControllerBracketedPastePreservesCRNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals that send \r for newlines in pasted text (e.g. macOS Terminal)
+	paste := []byte("\x1b[200~hello\rworld\rparagraph\x1b[201~")
+	screen.handleInlineInput(paste)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld\nparagraph" {
+		t.Fatalf("expected \\r in paste to become newlines, got %q", value)
+	}
+}
+
+func TestScreenControllerBracketedPastePreservesCRLFNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals that send \r\n for newlines in pasted text
+	paste := []byte("\x1b[200~hello\r\nworld\r\nparagraph\x1b[201~")
+	screen.handleInlineInput(paste)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld\nparagraph" {
+		t.Fatalf("expected \\r\\n in paste to become single newlines, got %q", value)
+	}
+}
+
+func TestScreenControllerUnbracketedBulkPastePreservesNewlines(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Terminals without bracketed paste support: a large chunk of text
+	// arrives in a single read() call with \r characters. The handler
+	// should detect this as a paste (many bytes at once) and preserve
+	// newlines instead of submitting at each \r.
+	bulk := []byte("first paragraph content here\rsecond paragraph with more text\rthird paragraph ending")
+	screen.handleInlineInput(bulk)
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "first paragraph content here\nsecond paragraph with more text\nthird paragraph ending" {
+		t.Fatalf("expected bulk paste to preserve newlines, got %q", value)
+	}
+
+	// Should not have submitted
+	for {
+		select {
+		case evt := <-screen.events:
+			if evt.Type == ControlPrompt {
+				t.Fatalf("expected no submission during bulk paste, got %q", evt.Text)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestScreenControllerSplitBracketEndSequence(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// Paste start arrives in one read, but the end bracket is split:
+	// ESC arrives at end of first read, [201~ at start of second.
+	screen.handleInlineInput([]byte("\x1b[200~hello world\x1b"))
+	screen.handleInlineInput([]byte("[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello world" {
+		t.Fatalf("expected paste content preserved across split bracket, got %q", value)
+	}
+	if screen.pasting {
+		t.Fatal("expected pasting=false after split end bracket")
+	}
+}
+
+func TestScreenControllerSplitBracketStartSequence(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// The paste start bracket is split: ESC[20 at end of first read,
+	// 0~ at start of second, then content and end bracket.
+	screen.handleInlineInput([]byte("\x1b[20"))
+	screen.handleInlineInput([]byte("0~hello\x1b[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello" {
+		t.Fatalf("expected paste content after split start bracket, got %q", value)
+	}
+	if screen.pasting {
+		t.Fatal("expected pasting=false after end bracket")
+	}
+}
+
+func TestScreenControllerBracketedPasteCRLFSplitAcrossReads(t *testing.T) {
+	screen := &ScreenController{
+		promptLabel:   ">> ",
+		inputLine:     ">> ",
+		historyIndex:  -1,
+		desiredColumn: -1,
+		events:        make(chan ControlEvent, 64),
+	}
+
+	// First read: bracketed paste start + text ending with \r
+	screen.handleInlineInput([]byte("\x1b[200~hello\r"))
+	// Second read: \n (second half of \r\n) + more text + paste end
+	screen.handleInlineInput([]byte("\nworld\x1b[201~"))
+
+	value := InputValueFromLine(screen.inputLine, screen.promptLabel)
+	if value != "hello\nworld" {
+		t.Fatalf("expected split \\r\\n to produce single newline, got %q", value)
+	}
+}
+
 func TestScreenControllerNewlineStillSubmitsOutsidePaste(t *testing.T) {
 	screen := &ScreenController{
 		promptLabel:   ">> ",

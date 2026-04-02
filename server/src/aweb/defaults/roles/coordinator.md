@@ -21,7 +21,7 @@ You own the overall project outcome.
 ```bash
 aw workspace status
 aw work ready
-aw mail inbox --unread-only
+aw mail inbox
 aw mail send --to-alias <agent> --body "..."
 ```
 

@@ -1,14 +1,4 @@
-"""Aweb coordination project roles endpoints.
-
-Provides server-backed project roles bundles with versioned contents:
-- Global invariants (guidance for all workspaces)
-- Role playbooks (role-specific guidance)
-- Adapters (tool-specific templates)
-
-Security:
-- All reads are project-scoped via `get_project_from_auth`
-- Writes require an authenticated project context
-"""
+"""Aweb coordination project roles endpoints."""
 
 from __future__ import annotations
 
@@ -18,8 +8,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import asyncpg.exceptions
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pgdbm import AsyncDatabaseManager
+from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
 from aweb.auth import enforce_actor_binding, validate_workspace_id
@@ -60,9 +52,8 @@ def _resolve_selected_role_name(
 
 
 class ProjectRolesBundle(BaseModel):
-    """Versioned project roles bundle containing invariants, roles, and adapters."""
+    """Versioned project roles bundle containing roles and adapters."""
 
-    invariants: List[Dict[str, Any]] = Field(default_factory=list)
     roles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     adapters: Dict[str, Any] = Field(default_factory=dict)
 
@@ -121,13 +112,24 @@ async def get_active_project_roles(
         return None
 
     logger.info("Bootstrapping default project roles for project %s", project_id)
-    project_roles_version = await create_project_roles_version(
-        db,
-        project_id=project_id,
-        base_project_roles_id=None,
-        bundle=get_default_bundle(),
-        created_by_workspace_id=None,
-    )
+    try:
+        project_roles_version = await create_project_roles_version(
+            db,
+            project_id=project_id,
+            base_project_roles_id=None,
+            bundle=get_default_bundle(),
+            created_by_workspace_id=None,
+        )
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
+            raise
+        # A concurrent bootstrap already created the version — read it
+        logger.info("Concurrent bootstrap for project %s, retrying read", project_id)
+        return await get_active_project_roles(
+            db, project_id, bootstrap_if_missing=False
+        )
     await activate_project_roles(
         db,
         project_id=project_id,
@@ -278,14 +280,6 @@ def _generate_etag(project_roles_id: str, updated_at: datetime) -> str:
     return f'"{hashlib.sha256(content.encode()).hexdigest()[:16]}"'
 
 
-class Invariant(BaseModel):
-    """A coordination invariant."""
-
-    id: str
-    title: str
-    body_md: str
-
-
 class RoleDefinition(BaseModel):
     """A single named role definition."""
 
@@ -324,7 +318,6 @@ class ActiveProjectRolesResponse(BaseModel):
     project_id: str
     version: int
     updated_at: datetime
-    invariants: List[Invariant]
     roles: Dict[str, RoleDefinition]
     selected_role: Optional[SelectedRoleInfo] = None
     adapters: Dict[str, Any] = Field(default_factory=dict)
@@ -335,7 +328,7 @@ class CreateProjectRolesRequest(BaseModel):
 
     bundle: ProjectRolesBundle = Field(
         ...,
-        description="Project roles bundle containing invariants, roles, and adapters.",
+        description="Project roles bundle containing roles and adapters.",
     )
     base_project_roles_id: Optional[str] = Field(
         None,
@@ -371,6 +364,14 @@ class ResetProjectRolesResponse(BaseModel):
     version: int
 
 
+class DeactivateProjectRolesResponse(BaseModel):
+    """Response for POST /v1/roles/deactivate."""
+
+    deactivated: bool
+    active_project_roles_id: str
+    version: int
+
+
 class ProjectRolesHistoryItem(BaseModel):
     """A project roles version in the history list."""
 
@@ -401,7 +402,7 @@ async def get_active_project_roles_endpoint(
     ),
     only_selected: bool = Query(
         False,
-        description="If true, return only invariants plus the selected role.",
+        description="If true, return only the selected role.",
     ),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
@@ -450,15 +451,6 @@ async def get_active_project_roles_endpoint(
             detail="only_selected=true requires a role or role_name parameter",
         )
 
-    invariants = [
-        Invariant(
-            id=inv.get("id", ""),
-            title=inv.get("title", ""),
-            body_md=inv.get("body_md", ""),
-        )
-        for inv in project_roles_version.bundle.invariants
-    ]
-
     if only_selected:
         assert selected_role_name is not None
         roles = {
@@ -481,7 +473,6 @@ async def get_active_project_roles_endpoint(
         project_id=project_roles_version.project_id,
         version=project_roles_version.version,
         updated_at=project_roles_version.updated_at,
-        invariants=invariants,
         roles=roles,
         selected_role=selected_role_data,
         adapters=project_roles_version.bundle.adapters,
@@ -655,15 +646,6 @@ async def get_project_roles_by_id_endpoint(
 
     bundle = ProjectRolesBundle(**bundle_data)
 
-    invariants = [
-        Invariant(
-            id=inv.get("id", ""),
-            title=inv.get("title", ""),
-            body_md=inv.get("body_md", ""),
-        )
-        for inv in bundle.invariants
-    ]
-
     roles = {
         name: RoleDefinition(
             title=info.get("title", name),
@@ -678,7 +660,6 @@ async def get_project_roles_by_id_endpoint(
         project_id=str(result["project_id"]),
         version=result["version"],
         updated_at=result["updated_at"],
-        invariants=invariants,
         roles=roles,
         selected_role=None,
         adapters=bundle.adapters,
@@ -816,6 +797,75 @@ async def reset_project_roles_to_default_endpoint(
 
     return ResetProjectRolesResponse(
         reset=True,
+        active_project_roles_id=project_roles_version.project_roles_id,
+        version=project_roles_version.version,
+    )
+
+
+@roles_router.post("/deactivate")
+async def deactivate_project_roles_endpoint(
+    request: Request,
+    db: DatabaseInfra = Depends(get_db_infra),
+) -> DeactivateProjectRolesResponse:
+    """Deactivate project roles by replacing the active bundle with an empty bundle."""
+    identity = await get_identity_from_auth(request, db)
+    project_id = identity.project_id
+    server_db = db.get_manager("server")
+
+    current_active = await server_db.fetch_one(
+        """
+        SELECT active_project_roles_id
+        FROM {{tables.projects}}
+        WHERE id = $1 AND deleted_at IS NULL
+        """,
+        project_id,
+    )
+    previous_project_roles_id = (
+        str(current_active["active_project_roles_id"])
+        if current_active and current_active["active_project_roles_id"]
+        else None
+    )
+
+    project_roles_version = await create_project_roles_version(
+        server_db,
+        project_id=project_id,
+        base_project_roles_id=previous_project_roles_id,
+        bundle={"roles": {}, "adapters": {}},
+        created_by_workspace_id=identity.agent_id if identity.agent_id else None,
+    )
+    await activate_project_roles(
+        server_db,
+        project_id=project_id,
+        project_roles_id=project_roles_version.project_roles_id,
+    )
+
+    await server_db.execute(
+        """
+        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
+        VALUES ($1, $2, $3::jsonb)
+        """,
+        project_id,
+        "project_roles_deactivated",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "project_roles_id": project_roles_version.project_roles_id,
+                "version": project_roles_version.version,
+                "previous_project_roles_id": previous_project_roles_id,
+            }
+        ),
+    )
+
+    logger.info(
+        "Project roles deactivated via API: project=%s project_roles_id=%s version=%d (was: %s)",
+        project_id,
+        project_roles_version.project_roles_id,
+        project_roles_version.version,
+        previous_project_roles_id,
+    )
+
+    return DeactivateProjectRolesResponse(
+        deactivated=True,
         active_project_roles_id=project_roles_version.project_roles_id,
         version=project_roles_version.version,
     )

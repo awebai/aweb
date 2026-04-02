@@ -532,9 +532,9 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	oldNewEventBus := runNewEventBus
 	oldWorkspaceState := runWorkspaceStateForDir
 	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldExecuteInitFlow := runExecuteInitFlow
 	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldPrintInitSummary := runPrintInitSummary
+	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
+	oldPrintInitSummary := guidedOnboardingPrintInitSummary
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -546,9 +546,9 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		runNewEventBus = oldNewEventBus
 		runWorkspaceStateForDir = oldWorkspaceState
 		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		runExecuteInitFlow = oldExecuteInitFlow
 		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		runPrintInitSummary = oldPrintInitSummary
+		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
+		guidedOnboardingPrintInitSummary = oldPrintInitSummary
 		initRunCommandVars()
 	})
 
@@ -587,7 +587,7 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	}
 
 	var capturedOpts initOptions
-	runExecuteInitFlow = func(opts initOptions) (*initResult, error) {
+	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
 		capturedOpts = opts
 		return &initResult{
 			Response:    &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Name: "Alice Example", NamespaceSlug: "team", ProjectSlug: "team", Lifetime: awid.LifetimePersistent},
@@ -595,7 +595,7 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 			ServerName:  "app.aweb.ai",
 		}, nil
 	}
-	runPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
+	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
 	}
 
 	cmd := &cobraCommandClone{Command: *runCmd}
@@ -637,11 +637,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	oldNewEventBus := runNewEventBus
 	oldWorkspaceState := runWorkspaceStateForDir
 	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldExecuteInitFlow := runExecuteInitFlow
 	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldInjectDocs := runInjectDocs
-	oldSetupHooks := runSetupHooks
-	oldPrintInitSummary := runPrintInitSummary
+	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
+	oldInjectDocs := guidedOnboardingInjectDocs
+	oldSetupHooks := guidedOnboardingSetupHooks
+	oldPrintInitSummary := guidedOnboardingPrintInitSummary
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -653,11 +653,11 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 		runNewEventBus = oldNewEventBus
 		runWorkspaceStateForDir = oldWorkspaceState
 		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		runExecuteInitFlow = oldExecuteInitFlow
 		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		runInjectDocs = oldInjectDocs
-		runSetupHooks = oldSetupHooks
-		runPrintInitSummary = oldPrintInitSummary
+		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
+		guidedOnboardingInjectDocs = oldInjectDocs
+		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingPrintInitSummary = oldPrintInitSummary
 		initRunCommandVars()
 	})
 
@@ -696,7 +696,7 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	}
 
 	var capturedOpts initOptions
-	runExecuteInitFlow = func(opts initOptions) (*initResult, error) {
+	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
 		capturedOpts = opts
 		return &initResult{
 			Response:    &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Alias: "alice", NamespaceSlug: "team", ProjectSlug: "demo-repo", Lifetime: awid.LifetimeEphemeral},
@@ -704,17 +704,17 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 			ServerName:  "app.aweb.ai",
 		}, nil
 	}
-	runPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
+	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
 	}
 
 	var injectedRepo string
-	runInjectDocs = func(repoRoot string) *injectDocsResult {
+	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
 		injectedRepo = repoRoot
 		return &injectDocsResult{}
 	}
 	var hooksRepo string
 	var hooksAsk bool
-	runSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
 		hooksRepo = repoRoot
 		hooksAsk = askConfirmation
 		return &claudeHooksResult{}
@@ -876,6 +876,7 @@ func TestNewRunDispatcherBuildsIdleActionableChatPrompt(t *testing.T) {
 }
 
 func TestResolveChatWakeUsesExactUnreadMessageIDBeforePendingLastMessage(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/chat/sessions/s-1/messages":
@@ -991,6 +992,10 @@ func (p *recordingRunProvider) BuildCommand(prompt string, opts awrun.BuildOptio
 }
 
 func (p *recordingRunProvider) BuildResumeCommand(opts awrun.BuildOptions) ([]string, error) {
+	return []string{"fake-provider", "resume", opts.SessionID}, nil
+}
+
+func (p *recordingRunProvider) BuildResumeHint(opts awrun.BuildOptions) ([]string, error) {
 	return []string{"fake-provider", "resume", opts.SessionID}, nil
 }
 
@@ -1352,6 +1357,11 @@ func (p *exitCommandProvider) BuildResumeCommand(opts awrun.BuildOptions) ([]str
 	return []string{"claude", "--resume", opts.SessionID, "--add-dir", "/tmp/gitdir", "--debug"}, nil
 }
 
+func (p *exitCommandProvider) BuildResumeHint(opts awrun.BuildOptions) ([]string, error) {
+	p.resumeOpts = opts
+	return []string{"claude", "--resume", opts.SessionID}, nil
+}
+
 func (p *exitCommandProvider) ParseOutput(string) (*awrun.Event, error) {
 	return &awrun.Event{Type: awrun.EventDone}, nil
 }
@@ -1436,8 +1446,11 @@ func TestRunPrintsContinueAndProviderCommandsOnExit(t *testing.T) {
 	if !strings.Contains(out, "aw run --dir "+tmp+" claude --continue") {
 		t.Fatalf("expected aw continue command, got %q", out)
 	}
-	if !strings.Contains(out, "claude --resume sess-42 --add-dir /tmp/gitdir --debug") {
-		t.Fatalf("expected provider resume command, got %q", out)
+	if !strings.Contains(out, "claude --resume sess-42") {
+		t.Fatalf("expected provider resume hint, got %q", out)
+	}
+	if strings.Contains(out, "--add-dir") || strings.Contains(out, "--debug") {
+		t.Fatalf("resume hint should not include internal flags, got %q", out)
 	}
 	if provider.resumeOpts.SessionID != "sess-42" {
 		t.Fatalf("expected provider resume command to receive session id, got %+v", provider.resumeOpts)

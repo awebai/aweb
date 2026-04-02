@@ -59,7 +59,7 @@ func TestHelpEventPrintsCommands(t *testing.T) {
 	loop.applyControlEvent(ControlEvent{Type: ControlHelp}, st, false, nil)
 
 	output := out.String()
-	for _, cmd := range []string{"/wait", "/resume", "/stop", "/provider", "/autofeed", "/quit", "/help"} {
+	for _, cmd := range []string{"/wait", "/stop", "/provider", "/autofeed", "/quit", "/help"} {
 		if !strings.Contains(output, cmd) {
 			t.Errorf("help output missing %q, got %q", cmd, output)
 		}

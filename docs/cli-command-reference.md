@@ -10,7 +10,7 @@ This reference is derived from the live Cobra help tree generated from the
 | Workspace setup | `connect`, `init`, `project`, `reset`, `spawn`, `use`, `workspace` |
 | Identity | `claim-human`, `identities`, `identity`, `mcp-config`, `whoami` |
 | Messaging and network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
-| Coordination and runtime | `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
+| Coordination and runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `help`, `upgrade`, `version` |
 
 ## Global flags
@@ -562,6 +562,48 @@ Silent if no pending chats; outputs JSON with additionalContext if there are mes
 Flags:
 - `-h, --help   help for notify`
 
+## `instructions`
+
+### `instructions`
+
+Subcommands:
+- `activate    Activate an existing shared project instructions version`
+- `history     List shared project instructions history`
+- `reset       Reset shared project instructions to the server default`
+- `set         Create and activate a new shared project instructions version`
+- `show        Show shared project instructions`
+
+Flags:
+- `-h, --help   help for instructions`
+
+### `instructions activate`
+
+Flags:
+- `-h, --help   help for activate`
+
+### `instructions history`
+
+Flags:
+- `-h, --help        help for history`
+- `--limit int   Max instruction versions (default 20)`
+
+### `instructions reset`
+
+Flags:
+- `-h, --help   help for reset`
+
+### `instructions set`
+
+Flags:
+- `--body string        Instructions markdown body`
+- `--body-file string   Read instructions markdown from file ('-' for stdin)`
+- `-h, --help               help for set`
+
+### `instructions show`
+
+Flags:
+- `-h, --help   help for show`
+
 ## `role-name`
 
 ### `role-name`
@@ -582,16 +624,49 @@ Flags:
 ### `roles`
 
 Subcommands:
+- `activate    Activate an existing project roles bundle version`
+- `deactivate  Deactivate project roles by replacing the active bundle with an empty bundle`
+- `history     List project roles history`
 - `list        List roles defined in the active project roles bundle`
-- `show        Show active project roles invariants and selected role guidance`
+- `reset       Reset project roles to the server default bundle`
+- `set         Create and activate a new project roles bundle version`
+- `show        Show role guidance from the active project roles bundle`
 
 Flags:
 - `-h, --help   help for roles`
+
+### `roles activate`
+
+Flags:
+- `-h, --help   help for activate`
+
+### `roles deactivate`
+
+Flags:
+- `-h, --help   help for deactivate`
+
+### `roles history`
+
+Flags:
+- `-h, --help        help for history`
+- `--limit int   Max role bundle versions (default 20)`
 
 ### `roles list`
 
 Flags:
 - `-h, --help   help for list`
+
+### `roles reset`
+
+Flags:
+- `-h, --help   help for reset`
+
+### `roles set`
+
+Flags:
+- `--bundle-file string   Read project roles bundle JSON from file ('-' for stdin)`
+- `--bundle-json string   Project roles bundle JSON`
+- `-h, --help                 help for set`
 
 ### `roles show`
 

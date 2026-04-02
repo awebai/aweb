@@ -19,7 +19,7 @@ You review code and ensure quality.
 
 ```bash
 aw workspace status
-aw mail inbox --unread-only
+aw mail inbox
 aw chat pending
 ```
 

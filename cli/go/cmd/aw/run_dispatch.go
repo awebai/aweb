@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/chat"
 	awrun "github.com/awebai/aw/run"
 )
 
@@ -112,8 +114,12 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			Limit:      limit,
 		})
 		if err == nil {
+			filtered := chat.FilterDeliveredMessages(history.Messages)
+			if ids := chat.DeliveredMessageIDs(history.Messages); len(ids) > 0 {
+				_ = chat.SaveDeliveredIDs(ids)
+			}
 			markChatHistoryRead(ctx, client, sessionID, history.Messages)
-			for _, msg := range history.Messages {
+			for _, msg := range filtered {
 				if strings.TrimSpace(msg.MessageID) != messageID {
 					continue
 				}
@@ -127,6 +133,9 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				return runWakeResolution{
 					CycleContext: formatIncomingChatContext(alias, msg.Body),
 				}, nil
+			}
+			if len(history.Messages) > 0 && len(filtered) == 0 {
+				return runWakeResolution{Skip: true}, nil
 			}
 		}
 	}
@@ -149,8 +158,12 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			Limit:      100,
 		})
 		if histResp != nil {
+			filtered := chat.FilterDeliveredMessages(histResp.Messages)
+			if ids := chat.DeliveredMessageIDs(histResp.Messages); len(ids) > 0 {
+				_ = chat.SaveDeliveredIDs(ids)
+			}
 			markChatHistoryRead(ctx, client, sessionID, histResp.Messages)
-			if latest := latestIncomingChatMessage(histResp.Messages, selfAlias); latest != nil {
+			if latest := latestIncomingChatMessage(filtered, selfAlias); latest != nil {
 				alias := strings.TrimSpace(latest.FromAgent)
 				if alias == "" {
 					alias = strings.TrimSpace(evt.FromAlias)
@@ -301,9 +314,18 @@ func markChatHistoryRead(ctx context.Context, client *aweb.Client, sessionID str
 	}
 	lastMsgID := messages[len(messages)-1].MessageID
 	if lastMsgID != "" {
-		_, _ = client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{
-			UpToMessageID: lastMsgID,
-		})
+		req := &awid.ChatMarkReadRequest{UpToMessageID: lastMsgID}
+		if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
+			return
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		_, _ = client.ChatMarkRead(ctx, sessionID, req)
 	}
 }
 

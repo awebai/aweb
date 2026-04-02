@@ -54,6 +54,7 @@ type Provider interface {
 	Name() string
 	BuildCommand(prompt string, opts BuildOptions) ([]string, error)
 	BuildResumeCommand(opts BuildOptions) ([]string, error)
+	BuildResumeHint(opts BuildOptions) ([]string, error)
 	ParseOutput(line string) (*Event, error)
 	SessionID(event *Event) string
 }

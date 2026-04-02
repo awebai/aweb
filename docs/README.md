@@ -5,6 +5,8 @@ staged public `aweb` repo.
 
 User guides:
 
+- [agent-guide.txt](agent-guide.txt): canonical onboarding guide delivered to
+  agents by `aw run`
 - [getting-started.md](getting-started.md): Docker/source setup and first-project
   flow
 - [aw-run.md](aw-run.md): `aw run` wizard, providers, session continuity, and
@@ -13,6 +15,8 @@ User guides:
   `workspace add-worktree`
 - [coordination.md](coordination.md): status, work discovery, tasks, claims,
   roles, and locks
+- [coordination-migration.md](coordination-migration.md): rollout and
+  compatibility notes for the project-instructions migration
 - [messaging.md](messaging.md): mail and chat workflows
 - [configuration.md](configuration.md): `.aw/` files, global config, and docs
   injection

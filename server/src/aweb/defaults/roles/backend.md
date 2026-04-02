@@ -33,7 +33,7 @@ cat pyproject.toml  # or requirements.txt
 
 ```bash
 aw workspace status      # Your identity + team status
-aw mail inbox --unread-only
+aw mail inbox
 aw work ready
 ```
 

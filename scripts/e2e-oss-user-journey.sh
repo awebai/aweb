@@ -11,6 +11,7 @@
 #   6. Accepts the invite (token authority)
 #   7. Sends and receives signed mail between identities
 #   8. Acks a message
+#   9. Exercises the lock lifecycle (acquire, list, renew, release)
 #
 # Usage:
 #   ./scripts/e2e-oss-user-journey.sh
@@ -490,9 +491,100 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 16: roles + work discovery
+# Phase 16: instructions management
 # ---------------------------------------------------------------------------
-echo "=== Phase 16: roles + work ==="
+echo "=== Phase 16: instructions management ==="
+
+instructions_show_out="$(run_aw_in "$ALICE_DIR" instructions show --json 2>/dev/null)"
+if [[ $? -eq 0 && -n "$instructions_show_out" ]]; then
+  echo "  PASS: instructions show"
+  ((pass++))
+else
+  echo "  FAIL: instructions show"
+  ((fail++))
+fi
+
+ORIGINAL_INSTRUCTIONS_ID="$(echo "$instructions_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_instructions') or {}).get('project_instructions_id',''))
+" 2>/dev/null || echo "")"
+assert_not_empty "original instructions id" "$ORIGINAL_INSTRUCTIONS_ID"
+if [[ -z "$ORIGINAL_INSTRUCTIONS_ID" ]]; then
+  echo "  Aborting: missing original instructions id"
+  exit 1
+fi
+
+INSTRUCTIONS_BODY_FILE="$ALICE_DIR/instructions-v2.md"
+cat > "$INSTRUCTIONS_BODY_FILE" <<'EOF'
+## Shared Rules
+
+Use `aw instructions show`.
+EOF
+
+instructions_set_out="$(run_aw_in "$ALICE_DIR" instructions set --body-file "$INSTRUCTIONS_BODY_FILE" --json 2>/dev/null)"
+NEW_INSTRUCTIONS_ID="$(echo "$instructions_set_out" | jq_field project_instructions_id)"
+NEW_INSTRUCTIONS_VERSION="$(echo "$instructions_set_out" | jq_field version)"
+NEW_INSTRUCTIONS_ACTIVATED="$(echo "$instructions_set_out" | jq_field activated)"
+assert_not_empty "instructions set id" "$NEW_INSTRUCTIONS_ID"
+assert_eq "instructions set activated" "True" "$NEW_INSTRUCTIONS_ACTIVATED"
+assert_not_empty "instructions set version" "$NEW_INSTRUCTIONS_VERSION"
+
+instructions_show_new="$(run_aw_in "$ALICE_DIR" instructions show --json 2>/dev/null)"
+instructions_show_new_id="$(echo "$instructions_show_new" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_instructions') or {}).get('project_instructions_id',''))
+" 2>/dev/null || echo "")"
+instructions_show_new_body="$(echo "$instructions_show_new" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_instructions') or {}).get('document',{}).get('body_md',''))
+" 2>/dev/null || echo "")"
+assert_eq "instructions show active after set" "$NEW_INSTRUCTIONS_ID" "$instructions_show_new_id"
+if [[ "$instructions_show_new_body" == *"Use \`aw instructions show\`."* ]]; then
+  echo "  PASS: instructions show reflects new body"
+  ((pass++))
+else
+  echo "  FAIL: instructions show missing new body"
+  ((fail++))
+fi
+
+instructions_history_out="$(run_aw_in "$ALICE_DIR" instructions history --json 2>/dev/null)"
+instructions_history_has_new="$(echo "$instructions_history_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+items=d.get('project_instructions_versions') or []
+target=sys.argv[1]
+print(any(item.get('project_instructions_id') == target for item in items))
+" "$NEW_INSTRUCTIONS_ID" 2>/dev/null || echo "False")"
+assert_eq "instructions history includes new version" "True" "$instructions_history_has_new"
+
+instructions_activate_out="$(run_aw_in "$ALICE_DIR" instructions activate "$ORIGINAL_INSTRUCTIONS_ID" --json 2>/dev/null)"
+instructions_activated_id="$(echo "$instructions_activate_out" | jq_field project_instructions_id)"
+instructions_activated_flag="$(echo "$instructions_activate_out" | jq_field activated)"
+assert_eq "instructions activate id" "$ORIGINAL_INSTRUCTIONS_ID" "$instructions_activated_id"
+assert_eq "instructions activate flag" "True" "$instructions_activated_flag"
+
+instructions_show_reactivated="$(run_aw_in "$ALICE_DIR" instructions show --json 2>/dev/null)"
+instructions_show_reactivated_id="$(echo "$instructions_show_reactivated" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_instructions') or {}).get('project_instructions_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "instructions show active after activate" "$ORIGINAL_INSTRUCTIONS_ID" "$instructions_show_reactivated_id"
+
+instructions_reset_out="$(run_aw_in "$ALICE_DIR" instructions reset --json 2>/dev/null)"
+instructions_reset_flag="$(echo "$instructions_reset_out" | jq_field reset)"
+instructions_reset_id="$(echo "$instructions_reset_out" | jq_field active_project_instructions_id)"
+assert_eq "instructions reset flag" "True" "$instructions_reset_flag"
+assert_not_empty "instructions reset active id" "$instructions_reset_id"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 17: roles management + work discovery
+# ---------------------------------------------------------------------------
+echo "=== Phase 17: roles management + work ==="
 
 roles_show_out="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
 if [[ $? -eq 0 && -n "$roles_show_out" ]]; then
@@ -502,6 +594,86 @@ else
   echo "  FAIL: roles show"
   ((fail++))
 fi
+
+ORIGINAL_ROLES_ID="$(echo "$roles_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_roles') or {}).get('project_roles_id',''))
+" 2>/dev/null || echo "")"
+assert_not_empty "original roles id" "$ORIGINAL_ROLES_ID"
+if [[ -z "$ORIGINAL_ROLES_ID" ]]; then
+  echo "  Aborting: missing original roles id"
+  exit 1
+fi
+
+ROLES_BUNDLE_FILE="$ALICE_DIR/roles-v2.json"
+cat > "$ROLES_BUNDLE_FILE" <<'EOF'
+{
+  "roles": {
+    "developer": {
+      "title": "Developer",
+      "playbook_md": "Ship the change."
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "playbook_md": "Review carefully."
+    }
+  }
+}
+EOF
+
+roles_set_out="$(run_aw_in "$ALICE_DIR" roles set --bundle-file "$ROLES_BUNDLE_FILE" --json 2>/dev/null)"
+NEW_ROLES_ID="$(echo "$roles_set_out" | jq_field project_roles_id)"
+NEW_ROLES_VERSION="$(echo "$roles_set_out" | jq_field version)"
+NEW_ROLES_ACTIVATED="$(echo "$roles_set_out" | jq_field activated)"
+assert_not_empty "roles set id" "$NEW_ROLES_ID"
+assert_eq "roles set activated" "True" "$NEW_ROLES_ACTIVATED"
+assert_not_empty "roles set version" "$NEW_ROLES_VERSION"
+
+roles_show_new="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
+roles_show_new_id="$(echo "$roles_show_new" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_roles') or {}).get('project_roles_id',''))
+" 2>/dev/null || echo "")"
+roles_has_reviewer="$(echo "$roles_show_new" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+roles=(d.get('project_roles') or {}).get('roles') or {}
+print('reviewer' in roles)
+" 2>/dev/null || echo "False")"
+assert_eq "roles show active after set" "$NEW_ROLES_ID" "$roles_show_new_id"
+assert_eq "roles show includes reviewer role" "True" "$roles_has_reviewer"
+
+roles_history_out="$(run_aw_in "$ALICE_DIR" roles history --json 2>/dev/null)"
+roles_history_has_new="$(echo "$roles_history_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+items=d.get('project_roles_versions') or []
+target=sys.argv[1]
+print(any(item.get('project_roles_id') == target for item in items))
+" "$NEW_ROLES_ID" 2>/dev/null || echo "False")"
+assert_eq "roles history includes new version" "True" "$roles_history_has_new"
+
+roles_activate_out="$(run_aw_in "$ALICE_DIR" roles activate "$ORIGINAL_ROLES_ID" --json 2>/dev/null)"
+roles_activated_id="$(echo "$roles_activate_out" | jq_field project_roles_id)"
+roles_activated_flag="$(echo "$roles_activate_out" | jq_field activated)"
+assert_eq "roles activate id" "$ORIGINAL_ROLES_ID" "$roles_activated_id"
+assert_eq "roles activate flag" "True" "$roles_activated_flag"
+
+roles_show_reactivated="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
+roles_show_reactivated_id="$(echo "$roles_show_reactivated" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print((d.get('project_roles') or {}).get('project_roles_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "roles show active after activate" "$ORIGINAL_ROLES_ID" "$roles_show_reactivated_id"
+
+roles_reset_out="$(run_aw_in "$ALICE_DIR" roles reset --json 2>/dev/null)"
+roles_reset_flag="$(echo "$roles_reset_out" | jq_field reset)"
+roles_reset_id="$(echo "$roles_reset_out" | jq_field active_project_roles_id)"
+assert_eq "roles reset flag" "True" "$roles_reset_flag"
+assert_not_empty "roles reset active id" "$roles_reset_id"
 
 work_ready_exit=0
 run_aw_in "$ALICE_DIR" work ready --json 2>/dev/null || work_ready_exit=$?
@@ -525,9 +697,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 17: contacts + heartbeat
+# Phase 18: contacts + heartbeat
 # ---------------------------------------------------------------------------
-echo "=== Phase 17: contacts + heartbeat ==="
+echo "=== Phase 18: contacts + heartbeat ==="
 
 contacts_exit=0
 run_aw_in "$ALICE_DIR" contacts list --json 2>/dev/null || contacts_exit=$?
@@ -551,9 +723,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 18: roles + identities
+# Phase 19: roles + identities
 # ---------------------------------------------------------------------------
-echo "=== Phase 18: roles + identities ==="
+echo "=== Phase 19: roles + identities ==="
 
 roles_out="$(run_aw_in "$ALICE_DIR" roles list 2>/dev/null)"
 if [[ $? -eq 0 ]]; then
@@ -591,19 +763,77 @@ assert_eq "reviewer in identities" "True" "$reviewer_found"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 19: lock list
+# Phase 20: roles deactivate
 # ---------------------------------------------------------------------------
-echo "=== Phase 19: lock list ==="
+echo "=== Phase 20: roles deactivate ==="
 
-lock_exit=0
-run_aw_in "$ALICE_DIR" lock list 2>/dev/null || lock_exit=$?
-if [[ $lock_exit -eq 0 ]]; then
-  echo "  PASS: lock list"
+roles_deactivate_out="$(run_aw_in "$ALICE_DIR" roles deactivate --json 2>/dev/null)"
+roles_deactivate_exit=$?
+if [[ $roles_deactivate_exit -eq 0 && -n "$roles_deactivate_out" ]]; then
+  echo "  PASS: roles deactivate"
   ((pass++))
 else
-  echo "  FAIL: lock list (exit=$lock_exit)"
+  echo "  FAIL: roles deactivate (exit=$roles_deactivate_exit)"
   ((fail++))
 fi
+
+deactivated_roles_show_out="$(run_aw_in "$ALICE_DIR" roles show --all-roles --json 2>/dev/null)"
+deactivated_roles_count="$(echo "$deactivated_roles_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+project_roles = d.get('project_roles') or {}
+roles = project_roles.get('roles') or {}
+print(len(roles))
+" 2>/dev/null || echo "")"
+deactivated_roles_id="$(echo "$deactivated_roles_show_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+project_roles = d.get('project_roles') or {}
+print(project_roles.get('active_project_roles_id',''))
+" 2>/dev/null || echo "")"
+assert_eq "roles deactivate clears active bundle" "0" "$deactivated_roles_count"
+assert_not_empty "roles deactivate keeps active bundle id" "$deactivated_roles_id"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 21: lock lifecycle (acquire, list, renew, release)
+# ---------------------------------------------------------------------------
+echo "=== Phase 21: lock lifecycle ==="
+
+lock_acquire_out="$(run_aw_in "$ALICE_DIR" lock acquire \
+  --resource-key "e2e-test-resource" --ttl-seconds 300 --json 2>/dev/null)"
+lock_acquire_exit=$?
+LOCK_KEY="$(echo "$lock_acquire_out" | jq_field resource_key)"
+assert_eq "lock acquire exit" "0" "$lock_acquire_exit"
+assert_eq "lock acquire resource_key" "e2e-test-resource" "$LOCK_KEY"
+
+lock_list_out="$(run_aw_in "$ALICE_DIR" lock list --json 2>/dev/null)"
+lock_list_has_resource="$(echo "$lock_list_out" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+locks=d.get('reservations') or d.get('locks') or []
+print(any(r.get('resource_key') == 'e2e-test-resource' for r in locks))
+" 2>/dev/null || echo "False")"
+assert_eq "lock list shows acquired lock" "True" "$lock_list_has_resource"
+
+lock_renew_out="$(run_aw_in "$ALICE_DIR" lock renew \
+  --resource-key "e2e-test-resource" --ttl-seconds 600 --json 2>/dev/null)"
+lock_renew_exit=$?
+assert_eq "lock renew exit" "0" "$lock_renew_exit"
+
+lock_release_out="$(run_aw_in "$ALICE_DIR" lock release \
+  --resource-key "e2e-test-resource" --json 2>/dev/null)"
+lock_release_exit=$?
+assert_eq "lock release exit" "0" "$lock_release_exit"
+
+lock_list_after="$(run_aw_in "$ALICE_DIR" lock list --json 2>/dev/null)"
+lock_list_still_has="$(echo "$lock_list_after" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+locks=d.get('reservations') or d.get('locks') or []
+print(any(r.get('resource_key') == 'e2e-test-resource' for r in locks))
+" 2>/dev/null || echo "True")"
+assert_eq "lock list empty after release" "False" "$lock_list_still_has"
 echo ""
 
 echo "=== All user journey phases complete ==="

@@ -15,8 +15,6 @@ func ParseControlSubmission(text string) ControlEvent {
 		return ControlEvent{Type: ControlStop}
 	case "/wait":
 		return ControlEvent{Type: ControlWait}
-	case "/resume":
-		return ControlEvent{Type: ControlResume}
 	case "/autofeed on":
 		return ControlEvent{Type: ControlAutofeedOn}
 	case "/autofeed off":
