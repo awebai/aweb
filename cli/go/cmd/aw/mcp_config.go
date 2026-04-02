@@ -3,13 +3,17 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
-var mcpConfigAll bool
+var (
+	mcpConfigAll     bool
+	mcpConfigChannel bool
+)
 
 var mcpConfigCmd = &cobra.Command{
 	Use:   "mcp-config",
@@ -17,6 +21,20 @@ var mcpConfigCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if mcpConfigAll {
 			return mcpConfigAllAccounts()
+		}
+
+		if mcpConfigChannel {
+			wd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+			cfg := channelMCPConfig(wd)
+			out, err := json.MarshalIndent(cfg, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal config: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
 		}
 
 		sel, err := resolveSelectionForDir("")
@@ -81,7 +99,20 @@ func mcpConfigAllAccounts() error {
 	return nil
 }
 
+func channelMCPConfig(cwd string) map[string]any {
+	return map[string]any{
+		"mcpServers": map[string]any{
+			"aweb": map[string]any{
+				"command": "npx",
+				"args":    []string{"@awebai/channel"},
+				"cwd":     cwd,
+			},
+		},
+	}
+}
+
 func init() {
 	mcpConfigCmd.Flags().BoolVar(&mcpConfigAll, "all", false, "Output config for all accounts")
+	mcpConfigCmd.Flags().BoolVar(&mcpConfigChannel, "channel", false, "Output stdio channel config instead of HTTP MCP config")
 	rootCmd.AddCommand(mcpConfigCmd)
 }
