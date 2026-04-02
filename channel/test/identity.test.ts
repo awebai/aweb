@@ -1,13 +1,15 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { computeDIDKey, extractPublicKey, computeStableID } from "../src/identity/did.js";
 import { canonicalJSON, signMessage, verifyMessage, type MessageEnvelope } from "../src/identity/signing.js";
 import { PinStore, type PinResult } from "../src/identity/pinstore.js";
 import { loadSigningKey } from "../src/identity/keys.js";
 
+const testDir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(
-  readFileSync(join(import.meta.dir, "vectors.json"), "utf-8"),
+  readFileSync(join(testDir, "vectors.json"), "utf-8"),
 );
 
 function b64ToBytes(b64: string): Uint8Array {
