@@ -44,6 +44,7 @@ var (
 	initReachability  string
 	initInjectDocs    bool
 	initSetupHooks    bool
+	initSetupChannel  bool
 	initHumanName     string
 	initAgentType     string
 	initSaveConfig    bool
@@ -151,6 +152,7 @@ func init() {
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
+	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code channel MCP server for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
 	initCmd.Flags().BoolVar(&initSaveConfig, "save-config", true, "Write/update ~/.config/aw/config.yaml with the new credentials")
@@ -169,9 +171,9 @@ func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description strin
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	// When only --inject-docs or --setup-hooks are requested, operate on the
-	// existing workspace without running the full init flow.
-	if (initInjectDocs || initSetupHooks) && !initNeedsFullInit() {
+	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
+	// operate on the existing workspace without running the full init flow.
+	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInit() {
 		wd, _ := os.Getwd()
 		repoRoot := resolveRepoRoot(wd)
 		if initInjectDocs {
@@ -180,6 +182,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initSetupHooks {
 			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
 			printClaudeHooksResult(hookResult)
+		}
+		if initSetupChannel {
+			channelResult := SetupChannelMCP(repoRoot, initIsTTY())
+			printChannelMCPResult(channelResult)
 		}
 		return nil
 	}
@@ -1090,13 +1096,17 @@ func printPostInitActions(result *initResult, workingDir string) {
 		hookResult := SetupClaudeHooks(repoRoot, isTTY())
 		printClaudeHooksResult(hookResult)
 	}
+	if initSetupChannel {
+		channelResult := SetupChannelMCP(repoRoot, isTTY())
+		printChannelMCPResult(channelResult)
+	}
 	if !jsonFlag {
-		printInitNextSteps(result, workingDir, initInjectDocs, initSetupHooks)
+		printInitNextSteps(result, workingDir, initInjectDocs, initSetupHooks, initSetupChannel)
 	}
 }
 
-func printInitNextSteps(result *initResult, workingDir string, didInjectDocs, didSetupHooks bool) {
-	lines := initNextStepLines(result, workingDir, didInjectDocs, didSetupHooks)
+func printInitNextSteps(result *initResult, workingDir string, didInjectDocs, didSetupHooks, didSetupChannel bool) {
+	lines := initNextStepLines(result, workingDir, didInjectDocs, didSetupHooks, didSetupChannel)
 	if len(lines) == 0 {
 		return
 	}
@@ -1107,7 +1117,7 @@ func printInitNextSteps(result *initResult, workingDir string, didInjectDocs, di
 	}
 }
 
-func initNextStepLines(result *initResult, workingDir string, didInjectDocs, didSetupHooks bool) []string {
+func initNextStepLines(result *initResult, workingDir string, didInjectDocs, didSetupHooks, didSetupChannel bool) []string {
 	lines := []string{
 		formatInitNextStep("aw run codex", "Start Codex in this directory"),
 		formatInitNextStep("aw run claude", "Start Claude in this directory"),
@@ -1125,6 +1135,9 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	}
 	if !didSetupHooks {
 		lines = append(lines, formatInitNextStep("aw init --setup-hooks", "Set up Claude Code chat notification hook"))
+	}
+	if !didSetupChannel {
+		lines = append(lines, formatInitNextStep("aw init --setup-channel", "Set up Claude Code channel MCP server"))
 	}
 	return lines
 }

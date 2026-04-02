@@ -15,7 +15,7 @@ func TestInitNextStepLinesHostedGitRepoPromoteRunAndDashboard(t *testing.T) {
 	lines := initNextStepLines(&initResult{
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
-	}, repo, false, false)
+	}, repo, false, false, false)
 	text := strings.Join(lines, "\n")
 
 	for _, want := range []string{
@@ -25,6 +25,7 @@ func TestInitNextStepLinesHostedGitRepoPromoteRunAndDashboard(t *testing.T) {
 		"aw claim-human --email you@example.com",
 		"aw init --inject-docs",
 		"aw init --setup-hooks",
+		"aw init --setup-channel",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
@@ -36,7 +37,7 @@ func TestInitNextStepLinesLocalDirStayFocused(t *testing.T) {
 	lines := initNextStepLines(&initResult{
 		ServerName:    "localhost",
 		ExportBaseURL: "http://127.0.0.1:8000/api",
-	}, t.TempDir(), true, true)
+	}, t.TempDir(), true, true, true)
 	text := strings.Join(lines, "\n")
 
 	if len(lines) != 2 {
@@ -47,7 +48,7 @@ func TestInitNextStepLinesLocalDirStayFocused(t *testing.T) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"aw workspace add-worktree <role>", "aw init", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks"} {
+	for _, unwanted := range []string{"aw workspace add-worktree <role>", "aw init", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks", "aw init --setup-channel"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}
