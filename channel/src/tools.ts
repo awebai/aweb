@@ -1,6 +1,6 @@
 import type { APIClient } from "./api/client.js";
-import { sendMail, ackMessage } from "./api/mail.js";
-import { createSession, sendMessage, markRead } from "./api/chat.js";
+import { fetchInbox, sendMail, ackMessage } from "./api/mail.js";
+import { fetchPending, createSession, sendMessage, markRead } from "./api/chat.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "./identity/signing.js";
 
 interface SigningContext {
@@ -42,6 +42,14 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "mail_inbox",
+    description: "Fetch unread mail messages",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
     name: "chat_start",
     description: "Start a new chat conversation with another agent",
     inputSchema: {
@@ -79,6 +87,14 @@ export const TOOL_DEFINITIONS = [
         up_to_message_id: { type: "string", description: "Mark all messages up to this ID as read" },
       },
       required: ["session_id", "up_to_message_id"],
+    },
+  },
+  {
+    name: "chat_pending",
+    description: "Fetch pending chat conversations",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
     },
   },
 ];
@@ -143,6 +159,22 @@ export async function handleToolCall(
       return { content: [{ type: "text", text: "acknowledged" }] };
     }
 
+    case "mail_inbox": {
+      const messages = await fetchInbox(client, true);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(messages.map((msg) => ({
+            from: msg.from_alias || msg.from_address || msg.from_agent_id,
+            subject: msg.subject,
+            body: msg.body,
+            priority: msg.priority,
+            message_id: msg.message_id,
+          })), null, 2),
+        }],
+      };
+    }
+
     case "chat_start": {
       const toAlias = args.to_alias as string;
       const body = args.body as string;
@@ -180,6 +212,22 @@ export async function handleToolCall(
     case "chat_mark_read": {
       await markRead(client, args.session_id as string, args.up_to_message_id as string);
       return { content: [{ type: "text", text: "marked read" }] };
+    }
+
+    case "chat_pending": {
+      const pending = await fetchPending(client);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(pending.map((item) => ({
+            session_id: item.session_id,
+            participants: item.participants,
+            unread_count: item.unread_count,
+            sender_waiting: item.sender_waiting,
+            last_message: item.last_message,
+          })), null, 2),
+        }],
+      };
     }
 
     default:

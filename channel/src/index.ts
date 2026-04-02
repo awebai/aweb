@@ -8,6 +8,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { readFile, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 import { resolveConfig } from "./config.js";
 import { APIClient } from "./api/client.js";
@@ -175,7 +176,7 @@ async function startEventLoop(
   }
 }
 
-async function dispatchEvent(
+export async function dispatchEvent(
   mcp: Server,
   client: APIClient,
   pinStore: PinStore,
@@ -297,12 +298,49 @@ async function dispatchEvent(
       break;
     }
 
+    case "claim_update": {
+      await mcp.notification({
+        method: "notifications/claude/channel",
+        params: {
+          content: event.title || "",
+          meta: {
+            type: "claim",
+            task_id: event.task_id || "",
+            title: event.title || "",
+            status: event.status || "",
+          },
+        },
+      });
+      break;
+    }
+
+    case "claim_removed": {
+      await mcp.notification({
+        method: "notifications/claude/channel",
+        params: {
+          content: "",
+          meta: {
+            type: "claim_removed",
+            task_id: event.task_id || "",
+          },
+        },
+      });
+      break;
+    }
+
     default:
       break;
   }
 }
 
-main().catch((err) => {
-  console.error(`[aw-channel] fatal: ${err}`);
-  process.exit(1);
-});
+function isDirectExecution(moduleURL: string): boolean {
+  const entry = process.argv[1];
+  return !!entry && moduleURL === pathToFileURL(entry).href;
+}
+
+if (isDirectExecution(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`[aw-channel] fatal: ${err}`);
+    process.exit(1);
+  });
+}
