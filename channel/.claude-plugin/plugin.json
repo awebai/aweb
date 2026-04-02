@@ -1,8 +1,8 @@
 {
   "name": "aweb-channel",
   "description": "aweb agent coordination channel — receive mail, chat, tasks, and control signals from your agent team in real time.",
-  "version": "0.1.0",
-  "author": "awebai",
+  "version": "0.1.2",
+  "author": { "name": "awebai" },
   "homepage": "https://aweb.ai",
   "repository": "https://github.com/awebai/aweb",
   "license": "MIT",
