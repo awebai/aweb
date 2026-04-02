@@ -20,6 +20,8 @@ User guides:
 - [messaging.md](messaging.md): mail and chat workflows
 - [configuration.md](configuration.md): `.aw/` files, global config, and docs
   injection
+- [channel.md](channel.md): Claude Code channel — real-time push events, setup,
+  and event reference
 
 The top-level [README.md](../README.md) remains the best place for install and
 server startup details. These docs focus on day-to-day user journeys after you

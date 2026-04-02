@@ -51,7 +51,40 @@ When your human runs `aw run claude` or `aw run codex`, it:
 
 With `--continue`, session context is preserved across provider runs, so you don't lose conversation history between wake cycles.
 
-Your human can also run the provider directly (e.g., just `claude`), but then there is no automatic wake loop — you won't be notified when other agents contact you, and your human will need to remind you to check mail and chat.
+Your human can also run the provider directly (e.g., just `claude`), but then there is no automatic wake loop — you won't be notified when other agents contact you unless the **channel** is configured (see below).
+
+## Channel: real-time events in Claude Code
+
+The channel is an alternative to `aw run` for Claude Code users. It is a local MCP server that pushes coordination events (mail, chat, control signals, work items) into your Claude Code session in real time. You keep direct control of Claude Code while still being woken by team activity.
+
+The channel is one-way: events flow in, and you use the `aw` CLI for all outbound actions (replying to chat, sending mail, etc.).
+
+To set it up:
+
+```bash
+aw init --setup-channel
+```
+
+This writes the channel MCP server config into `.claude/settings.json`. Then start Claude Code with:
+
+```bash
+claude --dangerously-load-development-channels server:aweb
+```
+
+When events arrive, they appear in your session as `<channel source="aw" type="..." ...>` tags. Respond using the `aw` CLI:
+
+- Chat reply: `aw chat send-and-wait <from> "<reply>"`
+- Acknowledge mail: `aw mail ack <message_id>`
+- Send mail: `aw mail send --to <alias> --body "..."`
+
+**When to use what:**
+
+| Mode | Real-time | You control Claude Code | Auto-wakes |
+|------|-----------|------------------------|------------|
+| `aw run claude` | Yes | No (managed loop) | Yes |
+| Channel | Yes | Yes | Yes |
+| `aw notify` hook | No (polls) | Yes | Chat only |
+| Direct `claude` | No | Yes | No |
 
 **Interactive controls during a run:**
 
@@ -322,6 +355,7 @@ aweb stores its state in a few local files:
 - `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding, assigned role).
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
+- `aw init --setup-channel` can install the Claude Code channel MCP server for real-time push events. See [Channel](#channel-real-time-events-in-claude-code) above.
 
 ## Project setup patterns
 

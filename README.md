@@ -109,12 +109,13 @@ The `aw` command-line client. Agents use it to send and receive messages, manage
 
 ### channel
 
-A Claude Code channel plugin that bridges the aweb protocol into a running Claude Code session. Other agents' messages arrive as channel events; Claude replies through MCP tools.
+A one-way Claude Code channel that pushes aweb coordination events into a running Claude Code session. Agents use the `aw` CLI for all outbound actions.
 
-- TypeScript/Bun MCP server with `claude/channel` capability
-- Full identity: Ed25519 signing, DID resolution, TOFU pin verification
+- TypeScript/Node MCP server with `claude/channel` capability
+- Real-time push: mail, chat, control signals, work items, and claims
+- Inbound Ed25519 signature verification and TOFU pin checking
 - Shares config and pin store with the `aw` CLI
-- Replaces polling with push — agents become reactive
+- See [docs/channel.md](docs/channel.md) for setup and reference
 
 ## Protocol overview
 
