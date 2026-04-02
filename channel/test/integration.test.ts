@@ -102,9 +102,10 @@ class NotificationQueue {
   }
 }
 
+let homeDir = "";
+
 describeIf("channel integration", () => {
   let tempRoot = "";
-  let homeDir = "";
   let aliceDir = "";
   let bobDir = "";
   let server: ServerHandle | undefined;
@@ -144,6 +145,8 @@ describeIf("channel integration", () => {
 
     aliceClient = new APIClient(server.baseURL, alice.api_key);
 
+    const configPath = join(homeDir, ".config", "aw", "config.yaml");
+    process.env.AW_CONFIG_PATH = configPath;
     const bobConfig = await resolveConfig(bobDir);
     bobClient = new APIClient(bobConfig.baseURL, bobConfig.apiKey);
     bobSigning = {
@@ -165,6 +168,7 @@ describeIf("channel integration", () => {
       env: {
         ...stringEnv(process.env),
         HOME: homeDir,
+        AW_CONFIG_PATH: configPath,
       },
       stderr: "pipe",
     });
@@ -181,6 +185,7 @@ describeIf("channel integration", () => {
   }, 300_000);
 
   afterAll(async () => {
+    delete process.env.AW_CONFIG_PATH;
     aliceWaitAbort?.abort();
     await aliceWaitResponse?.body?.cancel().catch(() => {});
     await transport?.close().catch(() => {});

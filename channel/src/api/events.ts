@@ -126,7 +126,7 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
 
   try {
     const payload = JSON.parse(data);
-    return { type: eventName as AgentEventType, ...payload };
+    return { ...payload, type: eventName as AgentEventType };
   } catch {
     return { type: eventName as AgentEventType };
   }

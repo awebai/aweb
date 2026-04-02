@@ -50,7 +50,7 @@ interface WorkspaceConfig {
 export async function resolveConfig(
   workdir: string,
 ): Promise<AgentConfig> {
-  const globalPath = join(homedir(), ".config", "aw", "config.yaml");
+  const globalPath = process.env.AW_CONFIG_PATH || join(homedir(), ".config", "aw", "config.yaml");
   const contextPath = join(workdir, ".aw", "context");
   const workspacePath = join(workdir, ".aw", "workspace.yaml");
 
