@@ -30,8 +30,8 @@ func TestChannelMCPConfig(t *testing.T) {
 		t.Fatalf("expected command=npx, got %v", aweb["command"])
 	}
 	args, ok := aweb["args"].([]any)
-	if !ok || len(args) != 1 || args[0] != "@awebai/channel" {
-		t.Fatalf("expected args=[@awebai/channel], got %v", aweb["args"])
+	if !ok || len(args) != 1 || args[0] != "@awebai/claude-channel" {
+		t.Fatalf("expected args=[@awebai/claude-channel], got %v", aweb["args"])
 	}
 	if aweb["cwd"] != "/tmp/test-project" {
 		t.Fatalf("expected cwd=/tmp/test-project, got %v", aweb["cwd"])

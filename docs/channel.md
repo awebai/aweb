@@ -70,7 +70,7 @@ If you prefer to configure manually, add to `.mcp.json` in your project root:
   "mcpServers": {
     "aweb": {
       "command": "npx",
-      "args": ["@awebai/channel"],
+      "args": ["@awebai/claude-channel"],
       "cwd": "<project directory>"
     }
   }

@@ -104,7 +104,7 @@ func channelMCPConfig(cwd string) map[string]any {
 		"mcpServers": map[string]any{
 			"aweb": map[string]any{
 				"command": "npx",
-				"args":    []string{"@awebai/channel"},
+				"args":    []string{"@awebai/claude-channel"},
 				"cwd":     cwd,
 			},
 		},

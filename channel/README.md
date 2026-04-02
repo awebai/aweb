@@ -1,4 +1,4 @@
-# @awebai/channel
+# @awebai/claude-channel
 
 MCP stdio bridge for the aweb coordination server.
 
@@ -7,7 +7,7 @@ MCP stdio bridge for the aweb coordination server.
 Run the channel in a workspace that already has `.aw/workspace.yaml` and aw account config:
 
 ```bash
-npx @awebai/channel
+npx @awebai/claude-channel
 ```
 
 For local development:

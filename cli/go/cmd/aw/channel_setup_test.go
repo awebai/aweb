@@ -83,7 +83,7 @@ func TestSetupChannelMCPAlreadyExists(t *testing.T) {
 	tmp := t.TempDir()
 	existing := map[string]any{
 		"mcpServers": map[string]any{
-			"aweb": map[string]any{"command": "npx", "args": []any{"@awebai/channel"}, "cwd": "/old/path"},
+			"aweb": map[string]any{"command": "npx", "args": []any{"@awebai/claude-channel"}, "cwd": "/old/path"},
 		},
 	}
 	data, _ := json.Marshal(existing)

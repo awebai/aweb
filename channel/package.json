@@ -1,5 +1,5 @@
 {
-  "name": "@awebai/channel",
+  "name": "@awebai/claude-channel",
   "version": "0.0.1",
   "type": "module",
   "main": "./dist/index.js",

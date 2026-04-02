@@ -25,7 +25,7 @@ func addChannelMCP(settings map[string]any, cwd string) {
 	}
 	servers["aweb"] = map[string]any{
 		"command": "npx",
-		"args":    []string{"@awebai/channel"},
+		"args":    []string{"@awebai/claude-channel"},
 		"cwd":     cwd,
 	}
 }
@@ -137,7 +137,7 @@ func printManualChannelInstructions() {
     "mcpServers": {
       "aweb": {
         "command": "npx",
-        "args": ["@awebai/channel"],
+        "args": ["@awebai/claude-channel"],
         "cwd": "<project directory>"
       }
     }
