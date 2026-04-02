@@ -53,10 +53,6 @@ def get_custody_key() -> bytes | None:
 async def sign_on_behalf(
     agent_id: str, message_fields: dict, db
 ) -> tuple[str, str, str, str] | None:
-    master_key = get_custody_key()
-    if master_key is None:
-        return None
-
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
@@ -66,8 +62,20 @@ async def sign_on_behalf(
         """,
         UUID(agent_id),
     )
-    if row is None or row["signing_key_enc"] is None or row["custody"] != "custodial":
+    if row is None or row["custody"] != "custodial":
         return None
+
+    master_key = get_custody_key()
+    if master_key is None:
+        raise RuntimeError(
+            f"AWEB_CUSTODY_KEY not set — cannot sign for custodial agent {agent_id}"
+        )
+
+    if row["signing_key_enc"] is None:
+        raise RuntimeError(
+            f"Custodial agent {agent_id} has no signing key — "
+            f"was likely created without AWEB_CUSTODY_KEY set"
+        )
 
     try:
         private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
