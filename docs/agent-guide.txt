@@ -71,7 +71,7 @@ This writes the channel MCP server config into `.mcp.json`. Then start Claude Co
 claude --dangerously-load-development-channels server:aweb
 ```
 
-When events arrive, they appear in your session as `<channel source="aw" type="..." ...>` tags. Respond using the `aw` CLI:
+When events arrive, they appear in your session as `<channel source="aweb" type="..." ...>` tags. Respond using the `aw` CLI:
 
 - Chat reply: `aw chat send-and-wait <from> "<reply>"`
 - Acknowledge mail: `aw mail ack <message_id>`

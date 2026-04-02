@@ -86,12 +86,12 @@ async function main() {
   const pinStore = await loadPinStore();
 
   const mcp = new Server(
-    { name: "aw", version: "0.0.1" },
+    { name: "aweb", version: "0.1.0" },
     {
       capabilities: {
         experimental: { "claude/channel": {} },
       },
-      instructions: `Events from the aw channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
+      instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
 Mail events (type="mail") are async. Read them and act if needed. Acknowledge with: aw mail ack <message_id>
 
