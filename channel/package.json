@@ -4,7 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --exclude test/integration.test.ts",
     "test:integration": "vitest run test/integration.test.ts",
     "start": "tsx src/index.ts"
   },
