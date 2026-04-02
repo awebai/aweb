@@ -25,28 +25,6 @@ export interface InboxMessage {
   verification_status?: VerificationStatus;
 }
 
-export interface SendMailRequest {
-  to_alias: string;
-  body: string;
-  subject?: string;
-  priority?: "low" | "normal" | "high" | "urgent";
-  // Signing fields (filled by caller)
-  from_did?: string;
-  to_did?: string;
-  from_stable_id?: string;
-  signature?: string;
-  signing_key_id?: string;
-  timestamp?: string;
-  message_id?: string;
-  signed_payload?: string;
-}
-
-export interface SendMailResponse {
-  message_id: string;
-  status: string;
-  delivered_at: string;
-}
-
 export async function fetchInbox(
   client: APIClient,
   unreadOnly: boolean = true,
@@ -66,13 +44,6 @@ export async function fetchInbox(
   }
 
   return resp.messages;
-}
-
-export async function sendMail(
-  client: APIClient,
-  req: SendMailRequest,
-): Promise<SendMailResponse> {
-  return client.post<SendMailResponse>("/v1/messages", req);
 }
 
 export async function ackMessage(

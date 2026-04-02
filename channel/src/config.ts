@@ -10,7 +10,6 @@ export interface AgentConfig {
   stableID: string;
   address: string; // namespace/alias
   alias: string;
-  signingKeyPath: string | null;
   projectSlug: string;
 }
 
@@ -100,7 +99,6 @@ export async function resolveConfig(
     stableID: account.stable_id || "",
     address,
     alias,
-    signingKeyPath: account.signing_key || null,
     projectSlug,
   };
 }

@@ -65,7 +65,7 @@ To set it up:
 aw init --setup-channel
 ```
 
-This writes the channel MCP server config into `.claude/settings.json`. Then start Claude Code with:
+This writes the channel MCP server config into `.mcp.json`. Then start Claude Code with:
 
 ```bash
 claude --dangerously-load-development-channels server:aweb

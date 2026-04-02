@@ -25,6 +25,7 @@ export interface AgentEvent {
   title?: string;
   status?: string;
   text?: string;
+  sender_waiting?: boolean;
 }
 
 /**
@@ -108,16 +109,16 @@ async function* parseSSEResponse(
   }
 }
 
+const KNOWN_TYPES: Set<string> = new Set([
+  "connected", "mail_message", "chat_message",
+  "control_pause", "control_resume", "control_interrupt",
+  "work_available", "claim_update", "claim_removed", "error",
+  "actionable_mail", "actionable_chat",
+]);
+
 export function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
   eventName = eventName.trim();
   if (!eventName) return null;
-
-  const KNOWN_TYPES: Set<string> = new Set([
-    "connected", "mail_message", "chat_message",
-    "control_pause", "control_resume", "control_interrupt",
-    "work_available", "claim_update", "claim_removed", "error",
-    "actionable_mail", "actionable_chat",
-  ]);
 
   if (!KNOWN_TYPES.has(eventName)) return null;
 

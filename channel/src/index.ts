@@ -201,6 +201,7 @@ export async function dispatchEvent(
           session_id: event.session_id,
           message_id: msg.message_id,
         };
+        if (event.sender_waiting) meta.sender_waiting = "true";
         if (msg.sender_leaving) meta.sender_leaving = "true";
         if (msg.verification_status) meta.verified = String(msg.verification_status === "verified");
 

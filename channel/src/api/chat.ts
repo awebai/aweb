@@ -20,46 +20,6 @@ export interface ChatMessage {
   verification_status?: VerificationStatus;
 }
 
-export interface ChatPendingItem {
-  session_id: string;
-  participants: string[];
-  last_message: string;
-  last_from: string;
-  unread_count: number;
-  last_activity: string;
-  sender_waiting: boolean;
-  time_remaining_seconds?: number;
-}
-
-export interface ChatCreateResponse {
-  session_id: string;
-  message_id: string;
-  participants: { agent_id: string; alias: string }[];
-  sse_url: string;
-  targets_connected: string[];
-  targets_left: string[];
-}
-
-export interface ChatSendRequest {
-  body: string;
-  hang_on?: boolean;
-  from_did?: string;
-  to_did?: string;
-  from_stable_id?: string;
-  signature?: string;
-  signing_key_id?: string;
-  timestamp?: string;
-  message_id?: string;
-  signed_payload?: string;
-}
-
-export async function fetchPending(
-  client: APIClient,
-): Promise<ChatPendingItem[]> {
-  const resp = await client.get<{ pending: ChatPendingItem[] }>("/v1/chat/pending");
-  return resp.pending;
-}
-
 export async function fetchHistory(
   client: APIClient,
   sessionId: string,
@@ -79,32 +39,6 @@ export async function fetchHistory(
   }
 
   return resp.messages;
-}
-
-export async function createSession(
-  client: APIClient,
-  toAliases: string[],
-  message: string,
-  leaving: boolean = false,
-  signingFields?: Record<string, string>,
-): Promise<ChatCreateResponse> {
-  return client.post<ChatCreateResponse>("/v1/chat/sessions", {
-    to_aliases: toAliases,
-    message,
-    leaving,
-    ...signingFields,
-  });
-}
-
-export async function sendMessage(
-  client: APIClient,
-  sessionId: string,
-  req: ChatSendRequest,
-): Promise<{ message_id: string; delivered: boolean }> {
-  return client.post(
-    `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
-    req,
-  );
 }
 
 export async function markRead(

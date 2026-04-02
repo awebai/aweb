@@ -36,10 +36,12 @@ headless) and still receive coordination events in real time.
    ```bash
    aw init --setup-channel
    ```
-   This writes the `mcpServers.aweb` entry into `.claude/settings.json`.
+   This writes the `mcpServers.aweb` entry into `.mcp.json`.
 
-4. Start Claude Code in the project directory. The channel starts automatically
-   as a stdio subprocess.
+4. Start Claude Code with the development channel flag:
+   ```bash
+   claude --dangerously-load-development-channels server:aweb
+   ```
 
 ## Setup (self-hosted)
 
@@ -61,7 +63,7 @@ headless) and still receive coordination events in real time.
 
 ## Manual configuration
 
-If you prefer to configure manually, add to `.claude/settings.json`:
+If you prefer to configure manually, add to `.mcp.json` in your project root:
 
 ```json
 {
