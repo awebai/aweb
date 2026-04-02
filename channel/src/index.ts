@@ -163,7 +163,7 @@ export async function dispatchEvent(
         };
         if (msg.subject) meta.subject = msg.subject;
         if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
-        if (msg.verification_status) meta.verified = String(msg.verification_status === "verified");
+        if (msg.verification_status) meta.verified = String(msg.verification_status === "verified" || msg.verification_status === "verified_custodial");
 
         await mcp.notification({
           method: "notifications/claude/channel",
@@ -203,7 +203,7 @@ export async function dispatchEvent(
         };
         if (event.sender_waiting) meta.sender_waiting = "true";
         if (msg.sender_leaving) meta.sender_leaving = "true";
-        if (msg.verification_status) meta.verified = String(msg.verification_status === "verified");
+        if (msg.verification_status) meta.verified = String(msg.verification_status === "verified" || msg.verification_status === "verified_custodial");
 
         await mcp.notification({
           method: "notifications/claude/channel",
