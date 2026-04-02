@@ -171,6 +171,10 @@ func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description strin
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if initSetupChannel && initSetupHooks {
+		return fmt.Errorf("--setup-channel and --setup-hooks are mutually exclusive: the channel supersedes the notify hook")
+	}
+
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
 	// operate on the existing workspace without running the full init flow.
 	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInit() {
@@ -182,7 +186,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initSetupChannel {
 			channelResult := SetupChannelMCP(repoRoot, initIsTTY())
 			printChannelMCPResult(channelResult)
-		} else if initSetupHooks {
+		}
+		if initSetupHooks {
 			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
 			printClaudeHooksResult(hookResult)
 		}
@@ -1094,7 +1099,8 @@ func printPostInitActions(result *initResult, workingDir string) {
 	if initSetupChannel {
 		channelResult := SetupChannelMCP(repoRoot, isTTY())
 		printChannelMCPResult(channelResult)
-	} else if initSetupHooks {
+	}
+	if initSetupHooks {
 		hookResult := SetupClaudeHooks(repoRoot, isTTY())
 		printClaudeHooksResult(hookResult)
 	}
