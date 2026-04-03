@@ -67,10 +67,10 @@ DID registry:
 
 Namespaces:
 
-- `POST /v1/namespaces` — register namespace (DNS TXT verification)
+- `POST /v1/namespaces` — register namespace (DNS TXT verification, or parent-domain authorization for subdomains)
 - `GET /v1/namespaces/{domain}` — query namespace
 - `GET /v1/namespaces` — list namespaces
-- `PUT /v1/namespaces/{domain}` — rotate controller DID (DNS TXT re-verification)
+- `PUT /v1/namespaces/{domain}` — rotate controller DID (DNS re-verification, or parent-domain authorization for subdomains)
 - `DELETE /v1/namespaces/{domain}` — soft-delete
 
 Addresses:
@@ -148,10 +148,15 @@ In awid.ai:
 - aweb-cloud tracks the custodial relationship in its own `managed_namespaces`
   table
 
-A managed namespace like `myproject.aweb.ai` is registered at awid.ai like
-any other namespace. The DNS TXT record proves the controller DID. aweb-cloud
-holds the controller private key and signs registration requests on behalf of
-the project.
+A managed namespace like `myproject.aweb.ai` is registered at awid.ai using
+parent-domain authorization. The parent domain (`aweb.ai`) is registered with
+a master controller DID. Subdomain registrations under a registered parent
+are authorized by the parent controller's DIDKey signature instead of DNS TXT
+verification. This eliminates per-customer DNS records for managed namespaces.
+
+BYOD namespaces (non-aweb.ai domains) still require DNS TXT verification.
+aweb-cloud holds the controller private key and signs registration requests
+on behalf of the project.
 
 ## Replacement Model
 
