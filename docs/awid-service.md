@@ -63,6 +63,7 @@ DID registry:
 - `GET /v1/did/{did_aw}/full` — full mapping (DIDKey auth required)
 - `GET /v1/did/{did_aw}/log` — full audit log
 - `PUT /v1/did/{did_aw}` — rotate key / update server
+- `GET /v1/did/{did_aw}/addresses` — list addresses owned by this identity
 
 Namespaces:
 
