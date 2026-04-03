@@ -5,11 +5,13 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import asyncpg.exceptions
+from httpx import ASGITransport
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.address_reachability import normalize_address_reachability
 from aweb.aweb_introspection import get_identity_from_auth
+from aweb.awid import RegistryClient
 from aweb.auth import validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, BootstrapIdentityResult, bootstrap_identity
 from aweb.coordination.project_registry import ensure_server_project_row
@@ -24,6 +26,7 @@ from aweb.db import DatabaseInfra, get_db_infra
 from aweb.input_validation import is_valid_alias, is_valid_human_name
 from aweb.names import CLASSIC_NAMES
 from aweb.namespace_registry import ensure_dns_namespace_registered, validate_subdomain_label
+from aweb.config import get_awid_registry_url, is_local_awid_registry_url
 from aweb.rate_limit import enforce_init_rate_limit
 from aweb.redis_client import get_redis
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -38,6 +41,17 @@ def _now_iso() -> str:
 
 def _server_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
+
+
+def _registry_client_for_request(request: Request) -> RegistryClient:
+    registry_url = get_awid_registry_url()
+    if is_local_awid_registry_url(registry_url):
+        return RegistryClient(
+            registry_url=registry_url,
+            base_url=_server_url(request),
+            transport=ASGITransport(app=request.app),
+        )
+    return RegistryClient(registry_url=registry_url)
 
 
 def _managed_namespace_domain(namespace_slug: str) -> str:
@@ -562,6 +576,10 @@ async def create_project(
             lifetime=payload.lifetime,
             namespace=requested_namespace_slug if payload.lifetime == "persistent" else None,
             address_reachability=payload.address_reachability,
+            registry_client=_registry_client_for_request(request)
+            if payload.lifetime == "persistent"
+            else None,
+            registry_server_url=_server_url(request) if payload.lifetime == "persistent" else None,
         )
     except AliasExhaustedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -698,6 +716,10 @@ async def init(
             lifetime=payload.lifetime,
             namespace=namespace_slug if payload.lifetime == "persistent" else None,
             address_reachability=payload.address_reachability,
+            registry_client=_registry_client_for_request(request)
+            if payload.lifetime == "persistent"
+            else None,
+            registry_server_url=_server_url(request) if payload.lifetime == "persistent" else None,
         )
     except AliasExhaustedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -20,6 +20,7 @@ from aweb.awid.log import (
     state_hash as awid_state_hash,
 )
 from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.routes.dns_addresses import AddressListResponse, AddressResponse
 
 router = APIRouter(prefix="/v1/did", tags=["did"])
 
@@ -302,6 +303,48 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             signature=head["signature"],
             timestamp=head["timestamp"],
         ),
+    )
+
+
+@router.get(
+    "/{did_aw}/addresses",
+    response_model=AddressListResponse,
+    dependencies=[Depends(rate_limit_dep("did_addresses"))],
+)
+async def list_did_addresses(request: Request, did_aw: str) -> AddressListResponse:
+    try:
+        did_aw = validate_stable_id(did_aw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db = _db(request)
+    rows = await db.fetch_all(
+        """
+        SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, pa.current_did_key,
+               pa.reachability, pa.created_at
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.dns_namespaces}} ns
+          ON ns.namespace_id = pa.namespace_id
+        WHERE pa.did_aw = $1
+          AND pa.deleted_at IS NULL
+          AND ns.deleted_at IS NULL
+        ORDER BY ns.domain ASC, pa.name ASC
+        """,
+        did_aw,
+    )
+    return AddressListResponse(
+        addresses=[
+            AddressResponse(
+                address_id=str(row["address_id"]),
+                domain=row["domain"],
+                name=row["name"],
+                did_aw=row["did_aw"],
+                current_did_key=row["current_did_key"],
+                reachability=str(row.get("reachability") or "private"),
+                created_at=row["created_at"].isoformat(),
+            )
+            for row in rows
+        ]
     )
 
 

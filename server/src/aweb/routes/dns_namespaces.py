@@ -106,6 +106,19 @@ class NamespaceRegisterRequest(BaseModel):
     domain: str = Field(..., min_length=1, max_length=256)
 
 
+class NamespaceRotateControllerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_controller_did: str = Field(..., min_length=1, max_length=256)
+
+    @classmethod
+    def validate_did_key(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized.startswith("did:key:"):
+            raise ValueError("new_controller_did must start with 'did:key:'")
+        return normalized
+
+
 class NamespaceResponse(BaseModel):
     namespace_id: str
     domain: str
@@ -213,6 +226,53 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
         WHERE domain = $1 AND deleted_at IS NULL
         """,
         domain,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+    return _namespace_response(row)
+
+
+@router.put("/{domain}", response_model=NamespaceResponse)
+async def rotate_namespace_controller(
+    domain: str,
+    body: NamespaceRotateControllerRequest,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> NamespaceResponse:
+    """Rotate a namespace controller using DNS re-verification as the only auth.
+
+    This is intentional key-loss recovery: the old controller key may be gone,
+    so authority comes from the DNS TXT record pointing at the new controller DID.
+    """
+    db = db_infra.get_manager("aweb")
+    domain = _validate_domain(domain)
+    new_controller_did = NamespaceRotateControllerRequest.validate_did_key(body.new_controller_did)
+
+    try:
+        dns_controller = await verify_domain(domain)
+    except DnsVerificationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if dns_controller != new_controller_did:
+        raise HTTPException(
+            status_code=403,
+            detail="DNS controller does not match new_controller_did",
+        )
+
+    now = datetime.now(timezone.utc)
+    row = await db.fetch_one(
+        """
+        UPDATE {{tables.dns_namespaces}}
+        SET controller_did = $2,
+            verification_status = 'verified',
+            last_verified_at = $3
+        WHERE domain = $1 AND deleted_at IS NULL
+        RETURNING namespace_id, domain, controller_did, verification_status,
+                  last_verified_at, created_at
+        """,
+        domain,
+        new_controller_did,
+        now,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Namespace not found")

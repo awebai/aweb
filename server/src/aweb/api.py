@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from .config import get_settings
+from .config import get_settings, is_local_awid_registry_url
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from .logging import configure_logging
@@ -46,6 +46,7 @@ _MISSING_CUSTODY_KEY_WARNING = (
     "AWEB_CUSTODY_KEY not configured — custodial agent signing disabled. "
     "Set AWEB_CUSTODY_KEY to a 64-char hex string to enable."
 )
+
 
 async def _mount_mcp_app(app: FastAPI, db_infra: DatabaseInfra, redis: Redis) -> None:
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
@@ -225,6 +226,7 @@ def create_app(
 
     app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
+    mount_local_registry_routes = is_local_awid_registry_url()
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
@@ -272,9 +274,10 @@ def create_app(
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)
-    app.include_router(did_router)
-    app.include_router(dns_addresses_router)
-    app.include_router(dns_namespaces_router)
+    if mount_local_registry_routes:
+        app.include_router(did_router)
+        app.include_router(dns_addresses_router)
+        app.include_router(dns_namespaces_router)
     app.include_router(events_router)
     app.include_router(messages_router)
     app.include_router(projects_router)

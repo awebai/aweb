@@ -1,8 +1,8 @@
 """Stable identity primitives and runtime support for OSS aweb.
 
-This package is the canonical internal home for what used to be awid:
-did:key / did:aw handling, signing, custodial signing support, stable-id
-backfill, and continuity metadata helpers.
+This package is the canonical internal home for did:key / did:aw handling,
+signing, custodial signing support, stable-id backfill, and continuity
+metadata helpers.
 """
 
 from aweb.awid.custody import (
@@ -38,6 +38,16 @@ from aweb.awid.log import (
     state_hash,
 )
 from aweb.awid.replacement import get_sender_delivery_metadata
+from aweb.awid.registry import (
+    Address,
+    AlreadyRegisteredError,
+    DIDKeyEvidence,
+    DIDMapping,
+    KeyResolution,
+    Namespace,
+    RegistryClient,
+    RegistryError,
+)
 from aweb.awid.signing import (
     SIGNED_FIELDS,
     VerifyResult,
@@ -54,7 +64,15 @@ __all__ = [
     "VerifyResult",
     "IDENTITY_CUSTODY_MODES",
     "IDENTITY_LIFETIMES",
+    "Address",
+    "AlreadyRegisteredError",
+    "DIDKeyEvidence",
+    "DIDMapping",
+    "KeyResolution",
+    "Namespace",
     "ResolvedIdentityContract",
+    "RegistryClient",
+    "RegistryError",
     "backfill_missing_stable_ids",
     "canonical_server_origin",
     "canonical_json_bytes",

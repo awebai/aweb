@@ -19,6 +19,7 @@ from aweb.routes.init import (
     InitResponse,
     _build_init_response,
     _lookup_attached_namespace,
+    _registry_client_for_request,
     _resolve_aweb_project,
     _server_url,
     _translate_bootstrap_value_error,
@@ -402,6 +403,12 @@ async def accept_spawn_invite(
                 namespace=namespace_slug if public_name is not None else None,
                 address_reachability=payload.address_reachability,
                 access_mode=str(row["access_mode"]),
+                registry_client=_registry_client_for_request(request)
+                if (payload.lifetime or "ephemeral") == "persistent"
+                else None,
+                registry_server_url=_server_url(request)
+                if (payload.lifetime or "ephemeral") == "persistent"
+                else None,
             )
         except ValueError as exc:
             raise _translate_bootstrap_value_error(exc) from exc

@@ -122,6 +122,7 @@ The stable identity model is:
 - `did:key` may change over time
 - `did:aw` does not change
 - clients may resolve the current key for a `did:aw`
+- clients may list the current active addresses for a `did:aw`
 - clients may verify the latest signed audit-log head without fetching the full
   log
 

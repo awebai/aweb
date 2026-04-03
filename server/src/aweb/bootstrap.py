@@ -20,7 +20,7 @@ from aweb.auth import (
     validate_project_slug,
 )
 from aweb.awid.contract import resolve_identity_contract
-from aweb.awid.custody import encrypt_signing_key, get_custody_key
+from aweb.awid.custody import decrypt_signing_key, encrypt_signing_key, get_custody_key
 from aweb.awid.did import (
     decode_public_key,
     did_from_public_key,
@@ -28,6 +28,7 @@ from aweb.awid.did import (
     generate_keypair,
     stable_id_from_did_key,
 )
+from aweb.awid.registry import AlreadyRegisteredError, RegistryClient, RegistryError
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,9 @@ async def bootstrap_identity(
     address_reachability: str | None = None,
     access_mode: str = "open",
     mint_api_key: bool = True,
+    registry_client: RegistryClient | None = None,
+    registry_server_url: str | None = None,
+    registry_signing_key: bytes | None = None,
 ) -> BootstrapIdentityResult:
     aweb_db = db.get_manager("aweb")
 
@@ -224,6 +228,7 @@ async def bootstrap_identity(
     agent_public_key: str | None = None
     agent_stable_id: str | None = contract.stable_id if contract is not None else None
     signing_key_enc: bytes | None = None
+    effective_registry_signing_key: bytes | None = registry_signing_key
 
     if contract is not None and custody == "self":
         if did is None or public_key is None:
@@ -247,6 +252,7 @@ async def bootstrap_identity(
         if lifetime == "persistent":
             agent_stable_id = stable_id_from_did_key(agent_did)
         agent_public_key = encode_public_key(pub)
+        effective_registry_signing_key = seed
         master_key = get_custody_key()
         if master_key is not None:
             signing_key_enc = encrypt_signing_key(seed, master_key)
@@ -276,7 +282,7 @@ async def bootstrap_identity(
         if alias is not None and alias.strip():
             agent = await tx.fetch_one(
                 """
-                SELECT agent_id, alias, did, stable_id, custody, lifetime, agent_type
+                SELECT agent_id, alias, did, stable_id, custody, lifetime, agent_type, signing_key_enc
                 FROM {{tables.agents}}
                 WHERE project_id = $1 AND alias = $2 AND deleted_at IS NULL
                 """,
@@ -292,6 +298,16 @@ async def bootstrap_identity(
                 custody = agent["custody"]
                 lifetime = agent["lifetime"]
                 agent_type = agent.get("agent_type") or "agent"
+                if (
+                    effective_registry_signing_key is None
+                    and custody == "custodial"
+                    and agent.get("signing_key_enc") is not None
+                ):
+                    master_key = get_custody_key()
+                    if master_key is not None:
+                        effective_registry_signing_key = decrypt_signing_key(
+                            agent["signing_key_enc"], master_key
+                        )
             else:
                 if reinit_without_key_material:
                     raise ValueError("Self-custodial identities require both did and public_key")
@@ -374,34 +390,6 @@ async def bootstrap_identity(
                 raise AliasExhaustedError("All name prefixes are taken.")
             alias = allocated_alias
 
-        api_key: str | None = None
-        if mint_api_key:
-            api_key, key_prefix, key_hash = generate_api_key()
-            await tx.execute(
-                """
-                INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active)
-                VALUES ($1, $2, $3, $4, TRUE)
-                """,
-                UUID(resolved_project_id),
-                UUID(agent_id),
-                key_prefix,
-                key_hash,
-            )
-
-        # Write agent_log 'create' entry for new agents.
-        if created:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.agent_log}}
-                    (agent_id, project_id, operation, new_did)
-                VALUES ($1, $2, $3, $4)
-                """,
-                UUID(agent_id),
-                UUID(resolved_project_id),
-                "create",
-                agent_did,
-            )
-
         ns_address: str | None = None
         if ns_domain is not None:
             if agent_stable_id is None or agent_did is None:
@@ -456,6 +444,49 @@ async def bootstrap_identity(
 
             ns_address = f"{ns_domain}/{alias}"
 
+        if registry_client is not None and registry_server_url is not None and lifetime == "persistent":
+            if agent_did is not None and effective_registry_signing_key is not None:
+                await _sync_registry_identity(
+                    registry_client=registry_client,
+                    did_key=agent_did,
+                    signing_key=effective_registry_signing_key,
+                    server_url=registry_server_url,
+                )
+            elif custody == "self":
+                logger.info(
+                    "Skipping registry sync for self-custodial permanent identity %s; "
+                    "client-side registration uses the local private key",
+                    alias or agent_stable_id or "(unassigned)",
+                )
+
+        api_key: str | None = None
+        if mint_api_key:
+            api_key, key_prefix, key_hash = generate_api_key()
+            await tx.execute(
+                """
+                INSERT INTO {{tables.api_keys}} (project_id, agent_id, key_prefix, key_hash, is_active)
+                VALUES ($1, $2, $3, $4, TRUE)
+                """,
+                UUID(resolved_project_id),
+                UUID(agent_id),
+                key_prefix,
+                key_hash,
+            )
+
+        # Write agent_log 'create' entry for new agents.
+        if created:
+            await tx.execute(
+                """
+                INSERT INTO {{tables.agent_log}}
+                    (agent_id, project_id, operation, new_did)
+                VALUES ($1, $2, $3, $4)
+                """,
+                UUID(agent_id),
+                UUID(resolved_project_id),
+                "create",
+                agent_did,
+            )
+
     return BootstrapIdentityResult(
         project_id=resolved_project_id,
         project_slug=actual_project_slug,
@@ -473,6 +504,41 @@ async def bootstrap_identity(
         address=ns_address,
         address_reachability=ns_reachability,
     )
+
+
+async def _sync_registry_identity(
+    *,
+    registry_client: RegistryClient,
+    did_key: str,
+    signing_key: bytes,
+    server_url: str,
+) -> None:
+    did_aw = stable_id_from_did_key(did_key)
+    try:
+        await registry_client.register_did(did_key, signing_key, server_url)
+        return
+    except AlreadyRegisteredError as exc:
+        if exc.did_aw != did_aw:
+            raise ValueError("Registry did_aw conflict") from exc
+        if exc.existing_did_key != did_key:
+            raise ValueError(
+                "Registry already has this did:aw registered to a different current did:key"
+            ) from exc
+    except RegistryError as exc:
+        raise ValueError(f"Registry DID registration failed: {exc.detail}") from exc
+
+    current_mapping = await registry_client.resolve_key(did_aw)
+    if current_mapping.current_did_key != did_key:
+        raise ValueError("Registry current did:key does not match the local identity")
+
+    existing_mapping = await registry_client._get_did_full(did_aw, signing_key)
+    if existing_mapping.server == server_url:
+        return
+
+    try:
+        await registry_client.update_server(did_aw, server_url, signing_key)
+    except RegistryError as exc:
+        raise ValueError(f"Registry DID server update failed: {exc.detail}") from exc
 
 
 async def delete_agent_identity(db_infra, *, agent_id: str, project_id: str) -> None:
