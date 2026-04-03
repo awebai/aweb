@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from aweb.awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from aweb.awid.signing import canonical_json_bytes
@@ -34,6 +35,37 @@ async def test_health_and_ops_health_expose_registry_state(client):
     ops = await client.get("/ops/health")
     assert ops.status_code == 200
     assert ops.json() == health.json()
+
+
+@pytest.mark.asyncio
+async def test_health_hides_backend_exception_details(awid_db_infra, fake_redis):
+    class BrokenRedis:
+        async def ping(self) -> bool:
+            raise RuntimeError("redis failure at redis://secret-host:6379/0")
+
+    class BrokenDbManager:
+        async def fetch_value(self, _query: str):
+            raise RuntimeError("postgres failure at postgresql://secret-host/db")
+
+    class BrokenDbInfra:
+        is_initialized = True
+        schema = "awid"
+
+        def get_manager(self, _name: str = "aweb"):
+            return BrokenDbManager()
+
+    app = create_app(db_infra=BrokenDbInfra(), redis=BrokenRedis())
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+            response = await test_client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unhealthy"
+    assert payload["checks"]["redis"] == "error"
+    assert payload["checks"]["database"] == "error"
+    assert "secret-host" not in response.text
 
 
 @pytest.mark.asyncio

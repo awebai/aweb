@@ -21,6 +21,11 @@ from .db import AwidDatabaseInfra
 logger = logging.getLogger(__name__)
 
 
+def _public_health_error(*, component: str, exc: Exception, checks: dict[str, str]) -> None:
+    logger.warning("awid health check failed for %s", component, exc_info=exc)
+    checks[component] = "error"
+
+
 def _make_standalone_lifespan():
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -119,7 +124,7 @@ def create_app(
             await redis_client.ping()
             checks["redis"] = "ok"
         except Exception as exc:
-            checks["redis"] = f"error: {exc}"
+            _public_health_error(component="redis", exc=exc, checks=checks)
             healthy = False
 
         try:
@@ -127,7 +132,7 @@ def create_app(
             await db.fetch_value("SELECT 1")
             checks["database"] = "ok"
         except Exception as exc:
-            checks["database"] = f"error: {exc}"
+            _public_health_error(component="database", exc=exc, checks=checks)
             healthy = False
 
         checks["schema"] = str(getattr(request.app.state, "db_schema", "awid"))

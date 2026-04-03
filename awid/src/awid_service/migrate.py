@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,8 @@ from aweb.db_config import build_database_config
 
 from .config import get_settings
 from .db import AwidDatabaseInfra
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -100,10 +103,18 @@ async def _copy_agents(*, source, target) -> int:
         """
         SELECT agent_id, project_id, alias, human_name, agent_type, access_mode, did,
                public_key, custody, stable_id, lifetime, status,
+               (signing_key_enc IS NOT NULL) AS had_signing_key_enc,
                successor_agent_id, role, program, context, created_at, deleted_at
         FROM {{tables.agents}}
         """
     )
+    dropped_signing_keys = sum(1 for row in rows if row["had_signing_key_enc"])
+    if dropped_signing_keys:
+        logger.warning(
+            "Dropping %d custodial signing keys during aweb -> awid migration; "
+            "awid does not import signing_key_enc",
+            dropped_signing_keys,
+        )
     for row in rows:
         await target.execute(
             """

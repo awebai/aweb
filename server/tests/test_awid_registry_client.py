@@ -214,19 +214,90 @@ async def test_get_namespace_returns_none_on_404():
 
 
 @pytest.mark.asyncio
-async def test_rotate_namespace_controller_uses_unauthenticated_dns_reverification_endpoint():
+async def test_register_namespace_supports_parent_authorized_subdomains():
+    parent_signing_key, parent_public_key = generate_keypair()
+    parent_controller_did = did_from_public_key(parent_public_key)
+    child_signing_key, child_public_key = generate_keypair()
+    child_controller_did = did_from_public_key(child_public_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/namespaces"
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        assert auth_did_key == parent_controller_did
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload == {"domain": "project.aweb.ai", "controller_did": child_controller_did}
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "project.aweb.ai",
+                    "operation": "register",
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=signature,
+        )
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-subdomain",
+                "domain": "project.aweb.ai",
+                "controller_did": child_controller_did,
+                "verification_status": "verified",
+                "last_verified_at": "2026-04-03T00:00:00Z",
+                "created_at": "2026-04-03T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    namespace = await client.register_namespace(
+        "project.aweb.ai",
+        child_controller_did,
+        child_signing_key,
+        parent_signing_key=parent_signing_key,
+    )
+
+    assert namespace.domain == "project.aweb.ai"
+    assert namespace.controller_did == child_controller_did
+
+
+@pytest.mark.asyncio
+async def test_rotate_namespace_controller_signs_proof_with_new_controller_key():
+    new_controller_signing_key, new_controller_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_controller_public_key)
+
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PUT"
         assert request.url.path == "/v1/namespaces/example.com"
-        assert "authorization" not in request.headers
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        assert auth_did_key == new_controller_did
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload == {"new_controller_did": "did:key:znewcontroller"}
+        assert payload == {"new_controller_did": new_controller_did}
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "example.com",
+                    "new_controller_did": new_controller_did,
+                    "operation": "rotate_controller",
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=signature,
+        )
         return httpx.Response(
             200,
             json={
                 "namespace_id": "ns-1",
                 "domain": "example.com",
-                "controller_did": "did:key:znewcontroller",
+                "controller_did": new_controller_did,
                 "verification_status": "verified",
                 "last_verified_at": "2026-04-03T00:00:00Z",
                 "created_at": "2026-04-01T00:00:00Z",
@@ -238,9 +309,81 @@ async def test_rotate_namespace_controller_uses_unauthenticated_dns_reverificati
         transport=httpx.MockTransport(handler),
     )
 
-    namespace = await client.rotate_namespace_controller("example.com", "did:key:znewcontroller")
+    namespace = await client.rotate_namespace_controller(
+        "example.com",
+        new_controller_did,
+        new_controller_signing_key,
+    )
 
-    assert namespace.controller_did == "did:key:znewcontroller"
+    assert namespace.controller_did == new_controller_did
+
+
+@pytest.mark.asyncio
+async def test_rotate_namespace_controller_supports_parent_authorization_headers():
+    new_controller_signing_key, new_controller_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_controller_public_key)
+    parent_signing_key, parent_public_key = generate_keypair()
+    parent_controller_did = did_from_public_key(parent_public_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        auth_did_key, auth_signature = _authorization_parts(request.headers["authorization"])
+        parent_did_key, parent_signature = _authorization_parts(
+            request.headers["x-aweb-parent-authorization"]
+        )
+        timestamp = request.headers["x-aweb-timestamp"]
+        parent_timestamp = request.headers["x-aweb-parent-timestamp"]
+        assert auth_did_key == new_controller_did
+        assert parent_did_key == parent_controller_did
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "project.aweb.ai",
+                    "new_controller_did": new_controller_did,
+                    "operation": "rotate_controller",
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=auth_signature,
+        )
+        verify_did_key_signature(
+            did_key=parent_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "project.aweb.ai",
+                    "child_domain": "project.aweb.ai",
+                    "new_controller_did": new_controller_did,
+                    "operation": "authorize_subdomain_rotation",
+                    "timestamp": parent_timestamp,
+                }
+            ),
+            signature_b64=parent_signature,
+        )
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-1",
+                "domain": "project.aweb.ai",
+                "controller_did": new_controller_did,
+                "verification_status": "verified",
+                "last_verified_at": "2026-04-03T00:00:00Z",
+                "created_at": "2026-04-01T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    namespace = await client.rotate_namespace_controller(
+        "project.aweb.ai",
+        new_controller_did,
+        new_controller_signing_key,
+        parent_signing_key=parent_signing_key,
+    )
+
+    assert namespace.controller_did == new_controller_did
 
 
 @pytest.mark.asyncio

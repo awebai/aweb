@@ -15,6 +15,7 @@ from awid_service.migrate import migrate_from_aweb
 async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
     monkeypatch,
     shared_test_pool,
+    caplog,
 ):
     source = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
     await source.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
@@ -125,10 +126,12 @@ async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
 
     monkeypatch.setenv("AWID_DATABASE_URL", source.config.get_dsn())
 
+    caplog.set_level("WARNING")
     result = await migrate_from_aweb(source_schema="aweb", target_schema="awid")
     assert result.namespaces == 1
     assert result.addresses == 1
     assert result.replacements == 1
+    assert "Dropping 2 custodial signing keys" in caplog.text
 
     target = AsyncDatabaseManager(pool=shared_test_pool, schema="awid")
     row = await target.fetch_one(
