@@ -7,7 +7,9 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pgdbm import AsyncDatabaseManager
 
+from aweb.awid.did import did_from_public_key, generate_keypair
 from aweb.db_config import build_database_config
+from aweb.deps import get_domain_verifier
 
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
@@ -44,6 +46,22 @@ def fake_redis() -> FakeRedis:
     return FakeRedis()
 
 
+@pytest.fixture
+def controller_identity():
+    signing_key, public_key = generate_keypair()
+    return signing_key, did_from_public_key(public_key)
+
+
+@pytest.fixture
+def fake_domain_verifier(controller_identity):
+    _signing_key, did_key = controller_identity
+
+    async def _verify_domain(_domain: str) -> str:
+        return did_key
+
+    return _verify_domain
+
+
 @pytest_asyncio.fixture
 async def shared_test_pool(test_db_factory):
     db_manager = await test_db_factory.create_db(suffix="awid_service")
@@ -70,8 +88,9 @@ async def awid_db_infra(shared_test_pool):
 
 
 @pytest_asyncio.fixture
-async def client(awid_db_infra, fake_redis):
+async def client(awid_db_infra, fake_redis, fake_domain_verifier):
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:

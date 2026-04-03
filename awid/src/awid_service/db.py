@@ -80,6 +80,7 @@ class AwidDatabaseInfra:
     def get_manager(self, name: str = "aweb") -> AsyncDatabaseManager:
         if not self._initialized or self._manager is None:
             raise RuntimeError("AwidDatabaseInfra is not initialized")
-        if name not in {"aweb", "awid"}:
-            raise RuntimeError(f"Unknown database manager '{name}'. Available managers: aweb, awid")
+        # The imported aweb routes and helpers are not consistent about the manager
+        # name they request. This wrapper owns only one schema-bound manager, so
+        # any requested name must resolve to that same manager.
         return self._manager

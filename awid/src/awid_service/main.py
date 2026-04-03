@@ -39,7 +39,10 @@ def _make_standalone_lifespan():
 
             app.state.redis = redis
             app.state.db = db_infra
-            app.state.rate_limiter = _build_rate_limiter(redis=redis)
+            app.state.rate_limiter = _build_rate_limiter(
+                redis=redis,
+                backend=settings.rate_limit_backend,
+            )
             app.state.db_schema = settings.db_schema
             yield
         finally:
@@ -65,7 +68,10 @@ def _make_library_lifespan(
 
         app.state.redis = redis
         app.state.db = db_infra
-        app.state.rate_limiter = rate_limiter or _build_rate_limiter(redis=redis)
+        app.state.rate_limiter = rate_limiter or _build_rate_limiter(
+            redis=redis,
+            backend=settings.rate_limit_backend,
+        )
         app.state.db_schema = db_infra.schema
         try:
             yield
@@ -75,8 +81,7 @@ def _make_library_lifespan(
     return lifespan
 
 
-def _build_rate_limiter(*, redis):
-    backend = (os.getenv("AWID_RATE_LIMIT_BACKEND") or "redis").strip().lower()
+def _build_rate_limiter(*, redis, backend: str):
     if backend == "memory":
         return MemoryFixedWindowRateLimiter()
     return RedisFixedWindowRateLimiter(redis=redis)

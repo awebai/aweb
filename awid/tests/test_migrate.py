@@ -51,16 +51,18 @@ async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
     await source.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, project_id, alias, human_name, agent_type, access_mode, lifetime, status, created_at)
-        VALUES ($1, $2, $3, '', 'agent', 'open', 'persistent', 'active', $4),
-               ($5, $2, $6, '', 'agent', 'open', 'persistent', 'active', $4)
+            (agent_id, project_id, alias, human_name, agent_type, access_mode, lifetime, status, signing_key_enc, created_at)
+        VALUES ($1, $2, $3, '', 'agent', 'open', 'persistent', 'active', $4, $5),
+               ($6, $2, $7, '', 'agent', 'open', 'persistent', 'active', $8, $5)
         """,
         old_agent_id,
         project_id,
         "old",
+        b"super-secret-old",
         now,
         new_agent_id,
         "new",
+        b"super-secret-new",
     )
     await source.execute(
         """
@@ -139,3 +141,14 @@ async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
     )
     assert row is not None
     assert row["controller_did"] == "did:key:zcontroller"
+
+    agent_row = await target.fetch_one(
+        """
+        SELECT signing_key_enc
+        FROM {{tables.agents}}
+        WHERE agent_id = $1
+        """,
+        old_agent_id,
+    )
+    assert agent_row is not None
+    assert agent_row["signing_key_enc"] is None

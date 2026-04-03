@@ -99,7 +99,7 @@ async def _copy_agents(*, source, target) -> int:
     rows = await source.fetch_all(
         """
         SELECT agent_id, project_id, alias, human_name, agent_type, access_mode, did,
-               public_key, custody, signing_key_enc, stable_id, lifetime, status,
+               public_key, custody, stable_id, lifetime, status,
                successor_agent_id, role, program, context, created_at, deleted_at
         FROM {{tables.agents}}
         """
@@ -112,8 +112,8 @@ async def _copy_agents(*, source, target) -> int:
                  public_key, custody, signing_key_enc, stable_id, lifetime, status,
                  successor_agent_id, role, program, context, created_at, deleted_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17, $18, $19)
+                    $8, $9, NULL, $10, $11, $12,
+                    $13, $14, $15, $16, $17, $18)
             ON CONFLICT (agent_id) DO NOTHING
             """,
             row["agent_id"],
@@ -125,7 +125,6 @@ async def _copy_agents(*, source, target) -> int:
             row["did"],
             row["public_key"],
             row["custody"],
-            row["signing_key_enc"],
             row["stable_id"],
             row["lifetime"],
             row["status"],

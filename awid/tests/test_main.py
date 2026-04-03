@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from aweb.awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from aweb.awid.signing import canonical_json_bytes
+from aweb.awid import sign_message
 
 from awid_service.main import create_app
 
@@ -13,6 +17,11 @@ def test_create_app_requires_complete_library_dependencies(awid_db_infra, fake_r
 
     with pytest.raises(ValueError):
         create_app(redis=fake_redis)
+
+
+def test_get_manager_accepts_any_name(awid_db_infra):
+    assert awid_db_infra.get_manager("aweb") is awid_db_infra.get_manager("server")
+    assert awid_db_infra.get_manager("anything") is awid_db_infra.get_manager("aweb")
 
 
 @pytest.mark.asyncio
@@ -45,3 +54,29 @@ async def test_did_routes_use_redis_rate_limiter(client, fake_redis):
     resp = await client.get(f"/v1/did/{missing_did_aw}/key")
     assert resp.status_code == 404
     assert fake_redis.eval_calls
+
+
+@pytest.mark.asyncio
+async def test_namespace_mutation_routes_use_overridden_domain_verifier(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = canonical_json_bytes(
+        {
+            "domain": "example.com",
+            "operation": "register",
+            "timestamp": timestamp,
+        }
+    )
+    signature = sign_message(signing_key, payload)
+
+    response = await client.post(
+        "/v1/namespaces",
+        json={"domain": "example.com"},
+        headers={
+            "Authorization": f"DIDKey {controller_did} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["domain"] == "example.com"
