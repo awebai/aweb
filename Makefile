@@ -1,4 +1,6 @@
-.PHONY: help clean test test-server test-cli test-channel test-e2e build
+.PHONY: help clean test test-server test-cli test-channel test-e2e build release-server-check release-server-tag release-server-push
+
+SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 
 help:
 	@echo "Targets:"
@@ -8,6 +10,9 @@ help:
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
+	@echo "  release-server-check  Run server release checks and build PyPI artifacts"
+	@echo "  release-server-tag    Commit the server version bump and create server-v<version>"
+	@echo "  release-server-push   Push main and server-v<version> to trigger PyPI publish"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -26,6 +31,25 @@ test-channel:
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
+
+release-server-check:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
+	rm -rf server/dist/
+	cd server && uv build
+	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
+	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+	@ls -lh server/dist/aweb-$(SERVER_VERSION).tar.gz server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+
+release-server-tag:
+	@git rev-parse --verify "server-v$(SERVER_VERSION)" >/dev/null 2>&1 && (echo "Tag server-v$(SERVER_VERSION) already exists."; exit 1) || true
+	git add server/pyproject.toml server/uv.lock Makefile .claude/skills/release-pypi/SKILL.md server/README.md
+	git commit -m "release: aweb server $(SERVER_VERSION)"
+	git tag "server-v$(SERVER_VERSION)"
+	@echo "Created tag server-v$(SERVER_VERSION)."
+
+release-server-push:
+	git push origin main
+	git push origin server-v$(SERVER_VERSION)
 
 clean:
 	@echo "Cleaning build artifacts..."

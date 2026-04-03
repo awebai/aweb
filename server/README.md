@@ -78,6 +78,22 @@ Important:
 
 See [`docs/self-hosting.md`](docs/self-hosting.md) for the operator view.
 
+## Release to PyPI
+
+The `aweb` Python package is published by GitHub Actions when a matching
+`server-vX.Y.Z` tag is pushed.
+
+Local release commands:
+
+```bash
+make release-server-check
+make release-server-tag
+make release-server-push
+```
+
+The package version lives in `pyproject.toml`. The tag must match that version
+or `.github/workflows/server-release.yml` will fail the release.
+
 ## Identity boundary
 
 Stable identity, signing, continuity, and audit-log verification live under:
