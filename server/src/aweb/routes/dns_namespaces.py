@@ -120,9 +120,8 @@ def _verify_controller_rotation_signature(
         raise HTTPException(status_code=401, detail="Authorization DID must match new_controller_did")
 
 
-async def _find_parent_namespace(db, *, domain: str):
-    return await db.fetch_one(
-        """
+async def _find_parent_namespace(db, *, domain: str, lock_for_share: bool = False):
+    query = """
         SELECT namespace_id, domain, controller_did
         FROM {{tables.dns_namespaces}}
         WHERE deleted_at IS NULL
@@ -131,9 +130,10 @@ async def _find_parent_namespace(db, *, domain: str):
           AND $1 LIKE ('%.' || domain)
         ORDER BY LENGTH(domain) DESC
         LIMIT 1
-        """,
-        domain,
-    )
+    """
+    if lock_for_share:
+        query += "\n        FOR SHARE"
+    return await db.fetch_one(query, domain)
 
 
 def _verify_parent_namespace_authorization(
@@ -228,34 +228,22 @@ async def register_namespace(
 ) -> NamespaceResponse:
     """Register a DNS-backed namespace.
 
-    The caller must prove control of the domain by signing the request
-    with the controller key named in the _aweb.<domain> DNS TXT record.
+    The caller must prove control of the child controller key via the main
+    Authorization header. Registration authority then comes from either the
+    domain TXT record or a verified parent namespace authorization header.
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(body.domain)
-    parent_namespace = await _find_parent_namespace(db, domain=domain)
-    presented_did, _presented_sig = _parse_didkey_auth(request.headers.get("Authorization"))
-
-    if parent_namespace is not None and presented_did == parent_namespace["controller_did"]:
-        if body.controller_did is None:
-            raise HTTPException(
-                status_code=400,
-                detail="controller_did is required for parent-authorized subdomain registration",
-            )
-        caller_did = _verify_controller_signature(
-            request,
-            domain=domain,
-            operation="register",
-            extra_payload={"controller_did": body.controller_did},
-        )
-    else:
-        caller_did = _verify_controller_signature(request, domain=domain, operation="register")
-
+    caller_did = _verify_controller_signature(request, domain=domain, operation="register")
     requested_controller_did = body.controller_did or caller_did
+    if body.controller_did is not None and body.controller_did != caller_did:
+        raise HTTPException(
+            status_code=403,
+            detail="controller_did must match the signing key",
+        )
 
-    if parent_namespace is not None and caller_did == parent_namespace["controller_did"]:
-        controller_did = body.controller_did
-    else:
+    parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
+    if not parent_auth_present:
         try:
             dns_controller = await verify_domain(domain)
         except DnsVerificationError as e:
@@ -266,12 +254,6 @@ async def register_namespace(
                 status_code=403,
                 detail="Signing key does not match DNS controller",
             )
-        if body.controller_did is not None and body.controller_did != caller_did:
-            raise HTTPException(
-                status_code=403,
-                detail="controller_did must match the signing key for DNS-verified registration",
-            )
-        controller_did = requested_controller_did
 
     # Transactional: check-then-insert to prevent duplicate races
     async with db.transaction() as tx:
@@ -287,6 +269,19 @@ async def register_namespace(
 
         if existing is not None:
             return _namespace_response(existing)
+
+        controller_did = requested_controller_did
+        if parent_auth_present:
+            parent_namespace = await _find_parent_namespace(tx, domain=domain, lock_for_share=True)
+            if parent_namespace is None:
+                raise HTTPException(status_code=401, detail="Invalid parent authorization")
+            parent_signer = _verify_parent_namespace_authorization(
+                request,
+                child_domain=domain,
+                controller_did=requested_controller_did,
+            )
+            if parent_signer != parent_namespace["controller_did"]:
+                raise HTTPException(status_code=401, detail="Invalid parent authorization")
 
         ns_id = uuid.uuid4()
         now = datetime.now(timezone.utc)
@@ -356,20 +351,8 @@ async def rotate_namespace_controller(
         domain=domain,
         new_controller_did=new_controller_did,
     )
-    parent_namespace = await _find_parent_namespace(db, domain=domain)
-    parent_authorized = False
-    if parent_namespace is not None:
-        try:
-            parent_signer = _verify_parent_namespace_authorization(
-                request,
-                child_domain=domain,
-                new_controller_did=new_controller_did,
-            )
-            parent_authorized = parent_signer == parent_namespace["controller_did"]
-        except HTTPException:
-            parent_authorized = False
-
-    if not parent_authorized:
+    parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
+    if not parent_auth_present:
         try:
             dns_controller = await verify_domain(domain)
         except DnsVerificationError as e:
@@ -382,22 +365,35 @@ async def rotate_namespace_controller(
             )
 
     now = datetime.now(timezone.utc)
-    row = await db.fetch_one(
-        """
-        UPDATE {{tables.dns_namespaces}}
-        SET controller_did = $2,
-            verification_status = 'verified',
-            last_verified_at = $3
-        WHERE domain = $1 AND deleted_at IS NULL
-        RETURNING namespace_id, domain, controller_did, verification_status,
-                  last_verified_at, created_at
-        """,
-        domain,
-        new_controller_did,
-        now,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Namespace not found")
+    async with db.transaction() as tx:
+        if parent_auth_present:
+            parent_namespace = await _find_parent_namespace(tx, domain=domain, lock_for_share=True)
+            if parent_namespace is None:
+                raise HTTPException(status_code=401, detail="Invalid parent authorization")
+            parent_signer = _verify_parent_namespace_authorization(
+                request,
+                child_domain=domain,
+                new_controller_did=new_controller_did,
+            )
+            if parent_signer != parent_namespace["controller_did"]:
+                raise HTTPException(status_code=401, detail="Invalid parent authorization")
+
+        row = await tx.fetch_one(
+            """
+            UPDATE {{tables.dns_namespaces}}
+            SET controller_did = $2,
+                verification_status = 'verified',
+                last_verified_at = $3
+            WHERE domain = $1 AND deleted_at IS NULL
+            RETURNING namespace_id, domain, controller_did, verification_status,
+                      last_verified_at, created_at
+            """,
+            domain,
+            new_controller_did,
+            now,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
     return _namespace_response(row)
 
 

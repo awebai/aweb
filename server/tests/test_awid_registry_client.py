@@ -225,22 +225,39 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
         assert request.method == "POST"
         assert request.url.path == "/v1/namespaces"
         auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        parent_did_key, parent_signature = _authorization_parts(
+            request.headers["x-aweb-parent-authorization"]
+        )
         timestamp = request.headers["x-aweb-timestamp"]
-        assert auth_did_key == parent_controller_did
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload == {"domain": "project.aweb.ai", "controller_did": child_controller_did}
+        parent_timestamp = request.headers["x-aweb-parent-timestamp"]
+        assert auth_did_key == child_controller_did
+        assert parent_did_key == parent_controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
             payload=canonical_json_bytes(
                 {
                     "domain": "project.aweb.ai",
-                    "controller_did": child_controller_did,
                     "operation": "register",
                     "timestamp": timestamp,
                 }
             ),
             signature_b64=signature,
         )
+        verify_did_key_signature(
+            did_key=parent_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "project.aweb.ai",
+                    "child_domain": "project.aweb.ai",
+                    "controller_did": child_controller_did,
+                    "operation": "authorize_subdomain_registration",
+                    "timestamp": parent_timestamp,
+                }
+            ),
+            signature_b64=parent_signature,
+        )
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload == {"domain": "project.aweb.ai", "controller_did": child_controller_did}
         return httpx.Response(
             200,
             json={
@@ -272,30 +289,45 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
 @pytest.mark.asyncio
 async def test_register_namespace_parent_authorization_binds_child_controller_did():
     parent_signing_key, parent_public_key = generate_keypair()
-    parent_controller_did = did_from_public_key(parent_public_key)
     child_signing_key, child_public_key = generate_keypair()
     child_controller_did = did_from_public_key(child_public_key)
     other_signing_key, other_public_key = generate_keypair()
     other_controller_did = did_from_public_key(other_public_key)
-    del child_signing_key
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        auth_did_key, auth_signature = _authorization_parts(request.headers["authorization"])
+        parent_did_key, parent_signature = _authorization_parts(
+            request.headers["x-aweb-parent-authorization"]
+        )
         timestamp = request.headers["x-aweb-timestamp"]
+        parent_timestamp = request.headers["x-aweb-parent-timestamp"]
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["controller_did"] == other_controller_did
+        assert auth_did_key == other_controller_did
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "project.aweb.ai",
+                    "operation": "register",
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=auth_signature,
+        )
         with pytest.raises(ValueError):
             verify_did_key_signature(
-                did_key=auth_did_key,
+                did_key=parent_did_key,
                 payload=canonical_json_bytes(
                     {
                         "domain": "project.aweb.ai",
+                        "child_domain": "project.aweb.ai",
                         "controller_did": child_controller_did,
-                        "operation": "register",
-                        "timestamp": timestamp,
+                        "operation": "authorize_subdomain_registration",
+                        "timestamp": parent_timestamp,
                     }
                 ),
-                signature_b64=signature,
+                signature_b64=parent_signature,
             )
         return httpx.Response(401, json={"detail": "Invalid signature"})
 

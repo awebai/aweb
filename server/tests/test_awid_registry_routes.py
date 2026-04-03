@@ -135,6 +135,30 @@ def _signed_parent_rotation_headers(
     }
 
 
+def _signed_parent_registration_headers(
+    *,
+    child_domain: str,
+    controller_did: str,
+    signing_key: bytes,
+    did_key: str,
+) -> dict[str, str]:
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = canonical_json_bytes(
+        {
+            "domain": child_domain,
+            "child_domain": child_domain,
+            "controller_did": controller_did,
+            "operation": "authorize_subdomain_registration",
+            "timestamp": timestamp,
+        }
+    )
+    signature = sign_message(signing_key, payload)
+    return {
+        "X-AWEB-Parent-Authorization": f"DIDKey {did_key} {signature}",
+        "X-AWEB-Parent-Timestamp": timestamp,
+    }
+
+
 @pytest.mark.asyncio
 async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
@@ -275,7 +299,6 @@ async def test_register_subdomain_with_parent_authorization_skips_dns(aweb_cloud
     child_controller_did = did_from_public_key(child_public_key)
     parent_namespace_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    del child_signing_key
 
     await aweb_db.execute(
         """
@@ -296,13 +319,20 @@ async def test_register_subdomain_with_parent_authorization_skips_dns(aweb_cloud
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/v1/namespaces",
-            headers=_signed_namespace_headers(
-                domain="project.aweb.ai",
-                operation="register",
-                signing_key=parent_signing_key,
-                did_key=parent_controller_did,
-                extra_payload={"controller_did": child_controller_did},
-            ),
+            headers={
+                **_signed_namespace_headers(
+                    domain="project.aweb.ai",
+                    operation="register",
+                    signing_key=child_signing_key,
+                    did_key=child_controller_did,
+                ),
+                **_signed_parent_registration_headers(
+                    child_domain="project.aweb.ai",
+                    controller_did=child_controller_did,
+                    signing_key=parent_signing_key,
+                    did_key=parent_controller_did,
+                ),
+            },
             json={"domain": "project.aweb.ai", "controller_did": child_controller_did},
         )
 
@@ -316,13 +346,12 @@ async def test_register_subdomain_rejects_parent_signature_for_different_control
     aweb_db = aweb_cloud_db.aweb_db
     parent_signing_key, parent_public_key = generate_keypair()
     parent_controller_did = did_from_public_key(parent_public_key)
-    signed_child_signing_key, signed_child_public_key = generate_keypair()
-    signed_child_controller_did = did_from_public_key(signed_child_public_key)
     requested_child_signing_key, requested_child_public_key = generate_keypair()
     requested_child_controller_did = did_from_public_key(requested_child_public_key)
+    other_child_signing_key, other_child_public_key = generate_keypair()
+    other_child_controller_did = did_from_public_key(other_child_public_key)
     parent_namespace_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    del signed_child_signing_key
     del requested_child_signing_key
 
     await aweb_db.execute(
@@ -344,14 +373,80 @@ async def test_register_subdomain_rejects_parent_signature_for_different_control
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/v1/namespaces",
-            headers=_signed_namespace_headers(
-                domain="project.aweb.ai",
-                operation="register",
-                signing_key=parent_signing_key,
-                did_key=parent_controller_did,
-                extra_payload={"controller_did": signed_child_controller_did},
-            ),
+            headers={
+                **_signed_namespace_headers(
+                    domain="project.aweb.ai",
+                    operation="register",
+                    signing_key=other_child_signing_key,
+                    did_key=other_child_controller_did,
+                ),
+                **_signed_parent_registration_headers(
+                    child_domain="project.aweb.ai",
+                    controller_did=other_child_controller_did,
+                    signing_key=parent_signing_key,
+                    did_key=parent_controller_did,
+                ),
+            },
             json={"domain": "project.aweb.ai", "controller_did": requested_child_controller_did},
+        )
+
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.asyncio
+async def test_rotate_subdomain_with_invalid_parent_auth_does_not_fall_back_to_dns(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    parent_signing_key, parent_public_key = generate_keypair()
+    parent_controller_did = did_from_public_key(parent_public_key)
+    other_parent_signing_key, other_parent_public_key = generate_keypair()
+    other_parent_controller_did = did_from_public_key(other_parent_public_key)
+    old_signing_key, old_public_key = generate_keypair()
+    old_controller_did = did_from_public_key(old_public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+    parent_namespace_id = uuid.uuid4()
+    child_namespace_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+    del old_signing_key
+
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.dns_namespaces}}
+            (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at, namespace_type)
+        VALUES ($1, $2, $3, 'verified', $5, $5, 'dns_verified'),
+               ($4, $6, $7, 'verified', $5, $5, 'dns_verified')
+        """,
+        parent_namespace_id,
+        "aweb.ai",
+        parent_controller_did,
+        child_namespace_id,
+        created_at,
+        "project.aweb.ai",
+        old_controller_did,
+    )
+
+    async def _verify_domain(_domain: str) -> str:
+        return new_controller_did
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            "/v1/namespaces/project.aweb.ai",
+            headers={
+                **_signed_namespace_rotation_headers(
+                    domain="project.aweb.ai",
+                    new_controller_did=new_controller_did,
+                    signing_key=new_signing_key,
+                    did_key=new_controller_did,
+                ),
+                **_signed_parent_rotation_headers(
+                    child_domain="project.aweb.ai",
+                    new_controller_did=new_controller_did,
+                    signing_key=other_parent_signing_key,
+                    did_key=other_parent_controller_did,
+                ),
+            },
+            json={"new_controller_did": new_controller_did},
         )
 
     assert response.status_code == 401, response.text

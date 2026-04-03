@@ -345,21 +345,25 @@ class RegistryClient:
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
     ) -> Namespace:
-        if parent_signing_key is None:
-            _assert_signing_key_matches(controller_did, controller_signing_key)
-            signing_key = controller_signing_key
-        else:
-            signing_key = parent_signing_key
+        _assert_signing_key_matches(controller_did, controller_signing_key)
+        headers = self._signed_namespace_headers(
+            domain=domain,
+            operation="register",
+            signing_key=controller_signing_key,
+        )
+        if parent_signing_key is not None:
+            headers.update(
+                self._signed_parent_namespace_registration_headers(
+                    parent_signing_key=parent_signing_key,
+                    child_domain=domain,
+                    controller_did=controller_did,
+                )
+            )
         return _namespace_from_json(
             await self._request_json(
                 "POST",
                 "/v1/namespaces",
-                headers=self._signed_namespace_headers(
-                    domain=domain,
-                    operation="register",
-                    signing_key=signing_key,
-                    extra_payload={"controller_did": controller_did} if parent_signing_key is not None else None,
-                ),
+                headers=headers,
                 json={"domain": domain, "controller_did": controller_did},
             )
         )
@@ -571,6 +575,31 @@ class RegistryClient:
                 "child_domain": child_domain,
                 "new_controller_did": new_controller_did,
                 "operation": "authorize_subdomain_rotation",
+                "timestamp": timestamp,
+            }
+        )
+        return {
+            "X-AWEB-Parent-Authorization": (
+                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
+                f"{sign_message(parent_signing_key, payload)}"
+            ),
+            "X-AWEB-Parent-Timestamp": timestamp,
+        }
+
+    def _signed_parent_namespace_registration_headers(
+        self,
+        *,
+        parent_signing_key: bytes,
+        child_domain: str,
+        controller_did: str,
+    ) -> dict[str, str]:
+        timestamp = _utc_timestamp()
+        payload = canonical_json_bytes(
+            {
+                "domain": child_domain,
+                "child_domain": child_domain,
+                "controller_did": controller_did,
+                "operation": "authorize_subdomain_registration",
                 "timestamp": timestamp,
             }
         )
