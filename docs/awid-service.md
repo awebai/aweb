@@ -174,9 +174,11 @@ aweb and aweb-cloud use `AWID_REGISTRY_URL` to configure the identity service:
 
 | Value | Behavior |
 |-------|----------|
-| `https://api.awid.ai` (default) | Uses public awid.ai. Identity routes not mounted locally. |
+| `local` (default) | Embedded mode. Identity routes mounted locally. |
+| `https://api.awid.ai` | Uses public awid.ai. Identity routes not mounted locally. |
 | `https://my-awid.example.com` | Uses private awid.ai instance. |
-| `local` | Embedded mode. Identity routes mounted locally. For air-gapped deployments. |
+
+The default switches to `https://api.awid.ai` once the public service is deployed.
 
 ## Graceful Degradation
 
