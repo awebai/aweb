@@ -195,6 +195,16 @@ These are the shapes most developers usually need first.
 
 ## Namespaces
 
+Notes:
+
+- `POST /v1/namespaces` normally uses DNS TXT verification.
+- For subdomains of an already-registered namespace, the parent controller may
+  authorize registration instead; the request body supplies the child
+  `controller_did`.
+- `PUT /v1/namespaces/{domain}` requires proof from the new controller key.
+- For parent-owned subdomains, parent authorization may replace DNS
+  re-verification during rotation.
+
 | Method | Path | Request | Responses |
 | --- | --- | --- | --- |
 | `GET` | `/v1/namespaces` | `-` | `200: NamespaceListResponse, 422: HTTPValidationError` |

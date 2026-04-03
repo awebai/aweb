@@ -213,6 +213,9 @@ Rules:
 - public trust semantics attach to the permanent address, not to ephemeral
   aliases
 - DNS-backed domains are only for permanent identities
+- DNS-verified namespace registration is the default for bring-your-own domains
+- subdomains under an already-registered parent namespace may be authorized by
+  the parent controller instead of per-subdomain DNS verification
 - permanent identity names/addresses are explicit user choices, not
   auto-assigned defaults
 
@@ -316,6 +319,16 @@ Explicit alternative:
 
 The namespace is attached to the project. It is not owned by the first
 identity.
+
+Namespace authority rules:
+
+- BYOD namespace registration is DNS-verified
+- parent-owned subdomains may be registered by the parent controller without a
+  child DNS TXT record
+- controller rotation must always include proof that the caller holds the new
+  controller key
+- for parent-owned subdomains, parent authorization may replace DNS
+  re-verification during controller rotation
 
 Creating a project must not silently imply "create a durable public permanent
 identity" unless the user explicitly asked for that.

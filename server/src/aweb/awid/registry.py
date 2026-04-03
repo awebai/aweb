@@ -343,18 +343,28 @@ class RegistryClient:
         domain: str,
         controller_did: str,
         controller_signing_key: bytes,
+        parent_signing_key: bytes | None = None,
     ) -> Namespace:
         _assert_signing_key_matches(controller_did, controller_signing_key)
+        headers = self._signed_namespace_headers(
+            domain=domain,
+            operation="register",
+            signing_key=controller_signing_key,
+        )
+        if parent_signing_key is not None:
+            headers.update(
+                self._signed_parent_namespace_registration_headers(
+                    parent_signing_key=parent_signing_key,
+                    child_domain=domain,
+                    controller_did=controller_did,
+                )
+            )
         return _namespace_from_json(
             await self._request_json(
                 "POST",
                 "/v1/namespaces",
-                headers=self._signed_namespace_headers(
-                    domain=domain,
-                    operation="register",
-                    signing_key=controller_signing_key,
-                ),
-                json={"domain": domain},
+                headers=headers,
+                json={"domain": domain, "controller_did": controller_did},
             )
         )
 
@@ -366,11 +376,29 @@ class RegistryClient:
         self,
         domain: str,
         new_controller_did: str,
+        new_controller_signing_key: bytes,
+        parent_signing_key: bytes | None = None,
     ) -> Namespace:
+        _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
+        headers = self._signed_namespace_headers(
+            domain=domain,
+            operation="rotate_controller",
+            signing_key=new_controller_signing_key,
+            extra_payload={"new_controller_did": new_controller_did},
+        )
+        if parent_signing_key is not None:
+            headers.update(
+                self._signed_parent_namespace_headers(
+                    parent_signing_key=parent_signing_key,
+                    child_domain=domain,
+                    new_controller_did=new_controller_did,
+                )
+            )
         return _namespace_from_json(
             await self._request_json(
                 "PUT",
                 f"/v1/namespaces/{domain}",
+                headers=headers,
                 json={"new_controller_did": new_controller_did},
             )
         )
@@ -495,15 +523,17 @@ class RegistryClient:
         domain: str,
         operation: str,
         signing_key: bytes,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": domain,
-                "operation": operation,
-                "timestamp": timestamp,
-            }
-        )
+        payload_dict: dict[str, Any] = {
+            "domain": domain,
+            "operation": operation,
+            "timestamp": timestamp,
+        }
+        if extra_payload:
+            payload_dict.update(extra_payload)
+        payload = canonical_json_bytes(payload_dict)
         return {
             "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
@@ -529,6 +559,56 @@ class RegistryClient:
         return {
             "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
+        }
+
+    def _signed_parent_namespace_headers(
+        self,
+        *,
+        parent_signing_key: bytes,
+        child_domain: str,
+        new_controller_did: str,
+    ) -> dict[str, str]:
+        timestamp = _utc_timestamp()
+        payload = canonical_json_bytes(
+            {
+                "domain": child_domain,
+                "child_domain": child_domain,
+                "new_controller_did": new_controller_did,
+                "operation": "authorize_subdomain_rotation",
+                "timestamp": timestamp,
+            }
+        )
+        return {
+            "X-AWEB-Parent-Authorization": (
+                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
+                f"{sign_message(parent_signing_key, payload)}"
+            ),
+            "X-AWEB-Parent-Timestamp": timestamp,
+        }
+
+    def _signed_parent_namespace_registration_headers(
+        self,
+        *,
+        parent_signing_key: bytes,
+        child_domain: str,
+        controller_did: str,
+    ) -> dict[str, str]:
+        timestamp = _utc_timestamp()
+        payload = canonical_json_bytes(
+            {
+                "domain": child_domain,
+                "child_domain": child_domain,
+                "controller_did": controller_did,
+                "operation": "authorize_subdomain_registration",
+                "timestamp": timestamp,
+            }
+        )
+        return {
+            "X-AWEB-Parent-Authorization": (
+                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
+                f"{sign_message(parent_signing_key, payload)}"
+            ),
+            "X-AWEB-Parent-Timestamp": timestamp,
         }
 
 

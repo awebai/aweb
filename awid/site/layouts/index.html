@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Site.Title }}</title>
+  <meta name="description" content="{{ .Site.Params.description }}">
+  <style>
+    :root {
+      --ink: #0e2230;
+      --ink-soft: #4a5b67;
+      --paper: #f5f1e8;
+      --paper-strong: #fffaf0;
+      --line: rgba(14, 34, 48, 0.14);
+      --signal: #d16b38;
+      --signal-deep: #a7491b;
+      --sea: #1d4f63;
+      --shadow: 0 24px 70px rgba(14, 34, 48, 0.12);
+      --radius: 24px;
+      --mono: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(209, 107, 56, 0.16), transparent 34%),
+        radial-gradient(circle at 85% 18%, rgba(29, 79, 99, 0.16), transparent 28%),
+        linear-gradient(180deg, var(--paper-strong), var(--paper));
+    }
+
+    body {
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .frame {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      padding: 10px 0 28px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      background:
+        linear-gradient(145deg, var(--signal), #f0a266 46%, #fff3db);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border: 2px solid rgba(14, 34, 48, 0.56);
+      border-radius: 10px;
+      transform: rotate(14deg);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .nav-links a,
+    .link {
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 28px;
+      align-items: stretch;
+      margin-bottom: 28px;
+    }
+
+    .hero-panel,
+    .card,
+    .codewell {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.68);
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-panel {
+      padding: 44px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-panel::before {
+      content: "";
+      position: absolute;
+      width: 280px;
+      height: 280px;
+      top: -120px;
+      right: -80px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(209,107,56,0.22), rgba(29,79,99,0.08));
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--signal-deep);
+      font-weight: 800;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 18px;
+      height: 2px;
+      background: currentColor;
+    }
+
+    h1 {
+      margin: 18px 0 16px;
+      font-size: clamp(2.8rem, 6vw, 5.2rem);
+      line-height: 0.94;
+      letter-spacing: -0.05em;
+      max-width: 10ch;
+    }
+
+    .lead {
+      margin: 0 0 28px;
+      max-width: 52ch;
+      font-size: 1.08rem;
+      color: var(--ink-soft);
+    }
+
+    .cta-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 700;
+      border: 1px solid transparent;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button.primary {
+      background: linear-gradient(180deg, var(--signal), var(--signal-deep));
+      color: white;
+      box-shadow: 0 16px 30px rgba(209, 107, 56, 0.28);
+    }
+
+    .button.secondary {
+      border-color: var(--line);
+      color: var(--ink);
+      background: rgba(255,255,255,0.62);
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 18px;
+    }
+
+    .card {
+      padding: 24px;
+    }
+
+    .metric {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      margin: 8px 0;
+    }
+
+    .muted {
+      color: var(--ink-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+
+    .card h2,
+    .section h2 {
+      margin: 0 0 10px;
+      font-size: 1.1rem;
+    }
+
+    .section {
+      padding: 20px 0 10px;
+    }
+
+    .codewell {
+      padding: 22px;
+      margin-bottom: 28px;
+      overflow-x: auto;
+      background:
+        linear-gradient(180deg, rgba(14,34,48,0.97), rgba(13,31,42,0.96));
+      color: #e7f0f4;
+      border-color: rgba(255,255,255,0.08);
+    }
+
+    pre {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+
+    ul {
+      margin: 12px 0 0;
+      padding-left: 18px;
+      color: var(--ink-soft);
+    }
+
+    footer {
+      padding-top: 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+      color: var(--ink-soft);
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .grid,
+      .split {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-panel {
+        padding: 30px;
+      }
+
+      h1 {
+        max-width: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <nav class="nav">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>awid.ai</span>
+      </a>
+      <div class="nav-links">
+        <a href="https://github.com/awebai/aweb/tree/main/awid">Source</a>
+        <a href="https://github.com/awebai/aweb/tree/main/docs/id-sot.md">Identity Model</a>
+        <a href="https://github.com/awebai/aweb/tree/main/docs/server-api-reference.md">API</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-panel">
+        <div class="eyebrow">Public Registry</div>
+        <h1>Stable names for agents that outlive any one server.</h1>
+        <p class="lead">
+          {{ .Site.Params.description }} It resolves <code>did:aw</code> identities,
+          verifies DNS-backed namespace control, and keeps durable public addresses
+          like <code>acme.com/support</code> mapped to the current signing key.
+        </p>
+        <div class="cta-row">
+          <a class="button primary" href="https://github.com/awebai/aweb/tree/main/awid">Deploy awid</a>
+          <a class="button secondary" href="https://github.com/awebai/aweb/tree/main/docs/id-sot.md">Read the model</a>
+        </div>
+      </div>
+
+      <div class="hero-side">
+        <article class="card">
+          <div class="eyebrow">What It Resolves</div>
+          <div class="metric">3 surfaces</div>
+          <p class="muted">
+            DID continuity, namespace ownership, and public address resolution through one HTTP service.
+          </p>
+        </article>
+        <article class="card">
+          <div class="eyebrow">Deployment Shape</div>
+          <div class="metric">Thin wrapper</div>
+          <p class="muted">
+            awid.ai reuses the audited identity routes from <code>aweb</code> and adds only service-local runtime wiring.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>DID continuity</h2>
+        <p class="muted">
+          Register a stable <code>did:aw</code>, rotate keys without changing identity, and publish the current server and handle.
+        </p>
+      </article>
+      <article class="card">
+        <h2>DNS authority</h2>
+        <p class="muted">
+          Prove control of a namespace through DNS and manage addresses without handing ownership to a closed platform.
+        </p>
+      </article>
+      <article class="card">
+        <h2>Interop vectors</h2>
+        <p class="muted">
+          Conformance vectors keep the Python backend and Go CLI aligned on signing, stable IDs, and audit-log hashing.
+        </p>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="codewell">
+<pre>GET  /v1/did/{did_aw}/key
+GET  /v1/did/{did_aw}/addresses
+POST /v1/namespaces
+POST /v1/namespaces/{domain}/addresses
+POST /v1/namespaces/{domain}/addresses/{name}/reassign</pre>
+      </div>
+    </section>
+
+    <section class="split">
+      <article class="card">
+        <h2>Why awid exists</h2>
+        <p class="muted">
+          Local aliases are useful inside one project. Public identity is different. awid gives permanent
+          identities a registry-backed surface that can move across servers, keys, and hosting models.
+        </p>
+      </article>
+      <article class="card">
+        <h2>How it fits with aweb</h2>
+        <p class="muted">
+          Self-hosted <code>aweb</code> instances can embed the same routes locally or point to a remote registry
+          with <code>AWID_REGISTRY_URL</code>. The cloud service is the public deployment of that contract.
+        </p>
+      </article>
+    </section>
+
+    <section class="split">
+      <article class="card">
+        <h2>Use it hosted</h2>
+        <ul>
+          <li>Resolve public identities from the shared awid.ai registry.</li>
+          <li>Publish DNS-backed addresses under your own domain.</li>
+          <li>Keep external identity continuity separate from local workspace aliases.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Self-host it</h2>
+        <ul>
+          <li>Run the thin service from the <code>awid/</code> package.</li>
+          <li>Use the same pgdbm migrations and Redis-backed rate limiting.</li>
+          <li>Point <code>aweb</code> at your registry with <code>AWID_REGISTRY_URL</code>.</li>
+        </ul>
+      </article>
+    </section>
+
+    <footer>
+      <span>awid.ai is part of the aweb identity architecture.</span>
+      <span><a class="link" href="https://github.com/awebai/aweb">github.com/awebai/aweb</a></span>
+    </footer>
+  </div>
+</body>
+</html>

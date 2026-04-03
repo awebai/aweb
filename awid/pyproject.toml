@@ -1,0 +1,49 @@
+[project]
+name = "awid-service"
+version = "0.1.0"
+description = "Thin awid.ai registry service wrapper around the aweb protocol package"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Juan Reyero", email = "juan@juanreyero.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aweb>=1.2.3",
+    "typer>=0.16.1",
+    "uvicorn[standard]>=0.35.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/awebai/aweb"
+Repository = "https://github.com/awebai/aweb"
+Documentation = "https://github.com/awebai/aweb/tree/main/docs"
+
+[project.scripts]
+awid = "awid_service.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/awid_service"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".claude/",
+    "AGENTS.md",
+    "CLAUDE.md",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.uv.sources]
+aweb = { path = "../server" }
