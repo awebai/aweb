@@ -301,6 +301,7 @@ async def test_register_subdomain_with_parent_authorization_skips_dns(aweb_cloud
                 operation="register",
                 signing_key=parent_signing_key,
                 did_key=parent_controller_did,
+                extra_payload={"controller_did": child_controller_did},
             ),
             json={"domain": "project.aweb.ai", "controller_did": child_controller_did},
         )
@@ -308,6 +309,52 @@ async def test_register_subdomain_with_parent_authorization_skips_dns(aweb_cloud
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["controller_did"] == child_controller_did
+
+
+@pytest.mark.asyncio
+async def test_register_subdomain_rejects_parent_signature_for_different_controller(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    parent_signing_key, parent_public_key = generate_keypair()
+    parent_controller_did = did_from_public_key(parent_public_key)
+    signed_child_signing_key, signed_child_public_key = generate_keypair()
+    signed_child_controller_did = did_from_public_key(signed_child_public_key)
+    requested_child_signing_key, requested_child_public_key = generate_keypair()
+    requested_child_controller_did = did_from_public_key(requested_child_public_key)
+    parent_namespace_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+    del signed_child_signing_key
+    del requested_child_signing_key
+
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.dns_namespaces}}
+            (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at, namespace_type)
+        VALUES ($1, $2, $3, 'verified', $4, $4, 'dns_verified')
+        """,
+        parent_namespace_id,
+        "aweb.ai",
+        parent_controller_did,
+        created_at,
+    )
+
+    async def _verify_domain(_domain: str) -> str:
+        raise AssertionError("DNS verification should be skipped for parent-authorized subdomains")
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/namespaces",
+            headers=_signed_namespace_headers(
+                domain="project.aweb.ai",
+                operation="register",
+                signing_key=parent_signing_key,
+                did_key=parent_controller_did,
+                extra_payload={"controller_did": signed_child_controller_did},
+            ),
+            json={"domain": "project.aweb.ai", "controller_did": requested_child_controller_did},
+        )
+
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.asyncio

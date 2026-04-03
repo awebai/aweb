@@ -358,6 +358,7 @@ class RegistryClient:
                     domain=domain,
                     operation="register",
                     signing_key=signing_key,
+                    extra_payload={"controller_did": controller_did} if parent_signing_key is not None else None,
                 ),
                 json={"domain": domain, "controller_did": controller_did},
             )

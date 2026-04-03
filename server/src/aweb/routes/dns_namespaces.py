@@ -126,6 +126,7 @@ async def _find_parent_namespace(db, *, domain: str):
         SELECT namespace_id, domain, controller_did
         FROM {{tables.dns_namespaces}}
         WHERE deleted_at IS NULL
+          AND verification_status = 'verified'
           AND domain <> $1
           AND $1 LIKE ('%.' || domain)
         ORDER BY LENGTH(domain) DESC
@@ -139,6 +140,7 @@ def _verify_parent_namespace_authorization(
     request: Request,
     *,
     child_domain: str,
+    controller_did: str | None = None,
     new_controller_did: str | None = None,
 ) -> str:
     extra_payload = {"child_domain": child_domain}
@@ -146,6 +148,8 @@ def _verify_parent_namespace_authorization(
     if new_controller_did is not None:
         operation = "authorize_subdomain_rotation"
         extra_payload["new_controller_did"] = new_controller_did
+    elif controller_did is not None:
+        extra_payload["controller_did"] = controller_did
 
     return _verify_controller_signature(
         request,
@@ -229,19 +233,27 @@ async def register_namespace(
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(body.domain)
-
-    # Verify the caller's DIDKey signature
-    caller_did = _verify_controller_signature(request, domain=domain, operation="register")
-
-    requested_controller_did = body.controller_did or caller_did
     parent_namespace = await _find_parent_namespace(db, domain=domain)
+    presented_did, _presented_sig = _parse_didkey_auth(request.headers.get("Authorization"))
 
-    if parent_namespace is not None and caller_did == parent_namespace["controller_did"]:
+    if parent_namespace is not None and presented_did == parent_namespace["controller_did"]:
         if body.controller_did is None:
             raise HTTPException(
                 status_code=400,
                 detail="controller_did is required for parent-authorized subdomain registration",
             )
+        caller_did = _verify_controller_signature(
+            request,
+            domain=domain,
+            operation="register",
+            extra_payload={"controller_did": body.controller_did},
+        )
+    else:
+        caller_did = _verify_controller_signature(request, domain=domain, operation="register")
+
+    requested_controller_did = body.controller_did or caller_did
+
+    if parent_namespace is not None and caller_did == parent_namespace["controller_did"]:
         controller_did = body.controller_did
     else:
         try:
@@ -329,10 +341,12 @@ async def rotate_namespace_controller(
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> NamespaceResponse:
-    """Rotate a namespace controller using DNS re-verification as the only auth.
+    """Rotate a namespace controller with new-key proof plus DNS or parent auth.
 
-    This is intentional key-loss recovery: the old controller key may be gone,
-    so authority comes from the DNS TXT record pointing at the new controller DID.
+    This is intentional key-loss recovery: the old controller key may be gone.
+    The caller must prove possession of the new controller key, and authority
+    then comes from either DNS re-verification or parent-domain authorization
+    for registered subdomains.
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)

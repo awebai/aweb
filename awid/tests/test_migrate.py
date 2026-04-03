@@ -155,3 +155,52 @@ async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
     )
     assert agent_row is not None
     assert agent_row["signing_key_enc"] is None
+
+
+@pytest.mark.asyncio
+async def test_migrate_from_aweb_logs_nothing_when_no_signing_keys_dropped(
+    monkeypatch,
+    shared_test_pool,
+    caplog,
+):
+    source = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
+    await source.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
+    aweb_path = __import__("pathlib").Path(aweb.__file__).resolve().parent
+    migrations = AsyncMigrationManager(
+        source,
+        migrations_path=str(aweb_path / "migrations" / "aweb"),
+        module_name="awid-migrate-source-zero-drops",
+        migrations_table="schema_migrations",
+    )
+    await migrations.apply_pending_migrations()
+
+    now = datetime.now(timezone.utc)
+    project_id = uuid4()
+    agent_id = uuid4()
+    monkeypatch.setenv("AWID_DATABASE_URL", source.config.get_dsn())
+
+    await source.execute(
+        """
+        INSERT INTO {{tables.projects}} (project_id, slug, name, created_at)
+        VALUES ($1, $2, $3, $4)
+        """,
+        project_id,
+        "proj-zero",
+        "proj-zero",
+        now,
+    )
+    await source.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, project_id, alias, human_name, agent_type, access_mode, lifetime, status, signing_key_enc, created_at)
+        VALUES ($1, $2, $3, '', 'agent', 'open', 'persistent', 'active', NULL, $4)
+        """,
+        agent_id,
+        project_id,
+        "agent-zero",
+        now,
+    )
+
+    caplog.set_level("WARNING")
+    await migrate_from_aweb(source_schema="aweb", target_schema="awid")
+    assert "Dropping" not in caplog.text

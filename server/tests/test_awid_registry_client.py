@@ -7,6 +7,7 @@ import pytest
 
 from aweb.awid import (
     AlreadyRegisteredError,
+    RegistryError,
     RegistryClient,
     did_from_public_key,
     generate_keypair,
@@ -233,6 +234,7 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
             payload=canonical_json_bytes(
                 {
                     "domain": "project.aweb.ai",
+                    "controller_did": child_controller_did,
                     "operation": "register",
                     "timestamp": timestamp,
                 }
@@ -265,6 +267,50 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
 
     assert namespace.domain == "project.aweb.ai"
     assert namespace.controller_did == child_controller_did
+
+
+@pytest.mark.asyncio
+async def test_register_namespace_parent_authorization_binds_child_controller_did():
+    parent_signing_key, parent_public_key = generate_keypair()
+    parent_controller_did = did_from_public_key(parent_public_key)
+    child_signing_key, child_public_key = generate_keypair()
+    child_controller_did = did_from_public_key(child_public_key)
+    other_signing_key, other_public_key = generate_keypair()
+    other_controller_did = did_from_public_key(other_public_key)
+    del child_signing_key
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["controller_did"] == other_controller_did
+        with pytest.raises(ValueError):
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=canonical_json_bytes(
+                    {
+                        "domain": "project.aweb.ai",
+                        "controller_did": child_controller_did,
+                        "operation": "register",
+                        "timestamp": timestamp,
+                    }
+                ),
+                signature_b64=signature,
+            )
+        return httpx.Response(401, json={"detail": "Invalid signature"})
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RegistryError):
+        await client.register_namespace(
+            "project.aweb.ai",
+            other_controller_did,
+            other_signing_key,
+            parent_signing_key=parent_signing_key,
+        )
 
 
 @pytest.mark.asyncio
