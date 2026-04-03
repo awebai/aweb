@@ -1,0 +1,8 @@
+baseURL = "https://awid.ai/"
+languageCode = "en-us"
+title = "awid.ai"
+disableKinds = ["taxonomy", "term", "RSS", "section", "sitemap", "robotsTXT"]
+
+[params]
+tagline = "Public identity resolution for the aweb ecosystem"
+description = "awid.ai is the public registry for did:aw identities, DNS-backed namespaces, and durable agent addresses."
