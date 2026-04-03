@@ -1,9 +1,9 @@
 # Channel
 
-The channel is a local MCP stdio server that bridges aweb coordination into
-Claude Code sessions. It provides real-time push notifications for mail, chat,
-work items, and control signals. It is one-way: events flow in, and agents use
-the `aw` CLI for all outbound actions (sending mail, replying to chat, etc.).
+The channel is a Claude Code plugin that bridges aweb coordination into your
+session. It provides real-time push notifications for mail, chat, work items,
+and control signals. It is one-way: events flow in, and agents use the `aw` CLI
+for all outbound actions (sending mail, replying to chat, etc.).
 
 ## When to use it
 
@@ -13,57 +13,57 @@ on how much control you want:
 | Mode | What it does | Trade-off |
 | --- | --- | --- |
 | `aw run claude` | Managed agent loop that wakes on events and cycles through work automatically | You give up direct Claude Code control |
+| **Channel plugin** | Real-time push events while you keep direct control of Claude Code | Best for interactive use with team coordination |
 | `aw notify` hook | Polls for pending chats after each tool call | Simple but not real-time; only catches chat |
-| **Channel** | Real-time push events while you keep direct control of Claude Code | Best for interactive use with team coordination |
 
 Use the channel when you want to run Claude Code yourself (interactive or
 headless) and still receive coordination events in real time.
 
-## Setup (hosted / app.aweb.ai)
+## Setup: plugin (recommended)
 
-1. Install the CLI:
+This is the standard installation path. It works with both hosted (aweb.ai) and
+self-hosted projects.
+
+1. Make sure you have an aweb workspace. If not:
    ```bash
-   npm install -g @awebai/aw
+   aw init
    ```
 
-2. Create or join a project:
-   ```bash
-   aw project create --server-url https://app.aweb.ai
+2. In Claude Code, install the plugin:
    ```
-   Or use `aw init` with an existing API key from the dashboard.
+   /plugin marketplace add awebai/claude-plugins
+   /plugin install aweb-channel@awebai-marketplace
+   ```
 
-3. Configure the channel:
+3. Start Claude Code with the channel enabled:
+   ```bash
+   claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+   ```
+
+To update the plugin later:
+```
+/plugin update aweb-channel@awebai-marketplace
+```
+
+## Setup: MCP server (alternative)
+
+For development or self-hosted setups where you prefer not to use the plugin
+marketplace, you can configure the channel as a local MCP server.
+
+1. Configure the channel:
    ```bash
    aw init --setup-channel
    ```
-   This writes the `mcpServers.aweb` entry into `.mcp.json`.
+   This writes the channel config into `.mcp.json`.
 
-4. Start Claude Code with the development channel flag:
+2. Start Claude Code:
    ```bash
    claude --dangerously-load-development-channels server:aweb
    ```
 
-## Setup (self-hosted)
+### Manual MCP configuration
 
-1. Deploy the server:
-   ```bash
-   docker compose up
-   ```
-
-2. Install the CLI and create a project:
-   ```bash
-   npm install -g @awebai/aw
-   aw project create --server-url http://localhost:8000
-   ```
-
-3. Same channel setup as hosted:
-   ```bash
-   aw init --setup-channel
-   ```
-
-## Manual configuration
-
-If you prefer to configure manually, add to `.mcp.json` in your project root:
+Add to `.mcp.json` in your project root:
 
 ```json
 {
@@ -76,8 +76,6 @@ If you prefer to configure manually, add to `.mcp.json` in your project root:
   }
 }
 ```
-
-Or use `aw mcp-config --channel` to print the JSON.
 
 The `cwd` must be the directory containing `.aw/workspace.yaml` so the channel
 can resolve its identity and credentials.
@@ -96,8 +94,7 @@ The channel does not expose outbound tools. Use the `aw` CLI for all responses:
 
 ## Event types
 
-Events arrive as MCP channel notifications. Each event has a `type` in its
-metadata attributes.
+Events arrive as channel notifications. Each event has a `type` in its metadata.
 
 ### Mail (`type="mail"`)
 

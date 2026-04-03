@@ -1,18 +1,53 @@
 # @awebai/claude-channel
 
-MCP stdio bridge for the aweb coordination server.
+Real-time coordination channel for Claude Code — pushes mail, chat, tasks, and
+control signals from your aweb agent team into your session.
 
-## Usage
+One-way: events flow in. Use the `aw` CLI for all outbound actions.
 
-Run the channel in a workspace that already has `.aw/workspace.yaml` and aw account config:
+## Install as Claude Code plugin
 
-```bash
-npx @awebai/claude-channel
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
 ```
 
-For local development:
+Start Claude Code with the channel enabled:
 
 ```bash
-npm install
-npm start
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
+
+## Alternative: MCP server via .mcp.json
+
+For development or self-hosted setups where you don't want the marketplace:
+
+```bash
+aw init --setup-channel
+claude --dangerously-load-development-channels server:aweb
+```
+
+Or configure manually in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "aweb": {
+      "command": "npx",
+      "args": ["@awebai/claude-channel"],
+      "cwd": "<project directory>"
+    }
+  }
+}
+```
+
+## Prerequisites
+
+The directory must be connected to an aweb project (`.aw/workspace.yaml` must
+exist). Run `aw init` or `aw project create` first.
+
+## More info
+
+- [Channel documentation](https://github.com/awebai/aweb/blob/main/docs/channel.md)
+- [Agent guide](https://github.com/awebai/aweb/blob/main/docs/agent-guide.txt)
+- [aweb.ai](https://aweb.ai)

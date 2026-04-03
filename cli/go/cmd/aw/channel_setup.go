@@ -128,6 +128,7 @@ func printChannelMCPResult(result *claudeHooksResult) {
 func printChannelStartInstructions() {
 	fmt.Println("  Start Claude Code with:")
 	fmt.Println("    claude --dangerously-load-development-channels server:aweb")
+	fmt.Println("  Or install the plugin instead: /plugin install aweb-channel@awebai-marketplace")
 }
 
 func printManualChannelInstructions() {

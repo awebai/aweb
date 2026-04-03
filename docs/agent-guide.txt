@@ -55,19 +55,29 @@ Your human can also run the provider directly (e.g., just `claude`), but then th
 
 ## Channel: real-time events in Claude Code
 
-The channel is an alternative to `aw run` for Claude Code users. It is a local MCP server that pushes coordination events (mail, chat, control signals, work items) into your Claude Code session in real time. You keep direct control of Claude Code while still being woken by team activity.
+The channel is a Claude Code plugin that pushes coordination events (mail, chat, control signals, work items) into your session in real time. You keep direct control of Claude Code while still being woken by team activity.
 
 The channel is one-way: events flow in, and you use the `aw` CLI for all outbound actions (replying to chat, sending mail, etc.).
 
-To set it up:
+**Plugin setup (recommended):**
+
+In Claude Code:
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+Then start Claude Code with:
+
+```bash
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+**Alternative (MCP server via .mcp.json):**
 
 ```bash
 aw init --setup-channel
-```
-
-This writes the channel MCP server config into `.mcp.json`. Then start Claude Code with:
-
-```bash
 claude --dangerously-load-development-channels server:aweb
 ```
 
@@ -82,7 +92,7 @@ When events arrive, they appear in your session as `<channel source="aweb" type=
 | Mode | Real-time | You control Claude Code | Auto-wakes |
 |------|-----------|------------------------|------------|
 | `aw run claude` | Yes | No (managed loop) | Yes |
-| Channel | Yes | Yes | Yes |
+| Channel plugin | Yes | Yes | Yes |
 | `aw notify` hook | No (polls) | Yes | Chat only |
 | Direct `claude` | No | Yes | No |
 
@@ -355,7 +365,7 @@ aweb stores its state in a few local files:
 - `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding, assigned role).
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
-- `aw init --setup-channel` can install the Claude Code channel MCP server for real-time push events. See [Channel](#channel-real-time-events-in-claude-code) above.
+- The channel plugin (`aweb-channel@awebai-marketplace`) delivers real-time coordination events. Install via `/plugin install` in Claude Code, or use `aw init --setup-channel` for the MCP server alternative. See [Channel](#channel-real-time-events-in-claude-code) above.
 
 ## Project setup patterns
 

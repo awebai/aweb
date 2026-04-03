@@ -157,7 +157,7 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 		}
 		if channel, err := promptYesNoWithIO(
 			"Set up Claude Code channel for real-time coordination?\n"+
-				"  (Requires: claude --dangerously-load-development-channels server:aweb)",
+				"  (Alternative: install the plugin with /plugin install aweb-channel@awebai-marketplace)",
 			false, req.PromptIn, req.PromptOut,
 		); err == nil && channel {
 			printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
