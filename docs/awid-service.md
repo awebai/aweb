@@ -70,6 +70,7 @@ Namespaces:
 - `POST /v1/namespaces` — register namespace (DNS TXT verification)
 - `GET /v1/namespaces/{domain}` — query namespace
 - `GET /v1/namespaces` — list namespaces
+- `PUT /v1/namespaces/{domain}` — rotate controller DID (DNS TXT re-verification)
 - `DELETE /v1/namespaces/{domain}` — soft-delete
 
 Addresses:
