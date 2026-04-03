@@ -175,6 +175,7 @@ These are the shapes most developers usually need first.
 | Method | Path | Request | Responses |
 | --- | --- | --- | --- |
 | `POST` | `/v1/did` | `DidRegisterRequest` | `200: inline-json, 422: HTTPValidationError` |
+| `GET` | `/v1/did/{did_aw}/addresses` | `-` | `200: AddressListResponse, 422: HTTPValidationError` |
 | `GET` | `/v1/did/{did_aw}/key` | `-` | `200: DidKeyResponse, 422: HTTPValidationError` |
 | `GET` | `/v1/did/{did_aw}/head` | `-` | `200: DidHeadResponse, 422: HTTPValidationError` |
 | `GET` | `/v1/did/{did_aw}/full` | `-` | `200: DidFullResponse, 422: HTTPValidationError` |
@@ -200,6 +201,7 @@ These are the shapes most developers usually need first.
 | `POST` | `/v1/namespaces` | `NamespaceRegisterRequest` | `200: NamespaceResponse, 422: HTTPValidationError` |
 | `DELETE` | `/v1/namespaces/{domain}` | `-` | `200: inline-json, 422: HTTPValidationError` |
 | `GET` | `/v1/namespaces/{domain}` | `-` | `200: NamespaceResponse, 422: HTTPValidationError` |
+| `PUT` | `/v1/namespaces/{domain}` | `NamespaceRotateControllerRequest` | `200: NamespaceResponse, 422: HTTPValidationError` |
 
 ## Events
 

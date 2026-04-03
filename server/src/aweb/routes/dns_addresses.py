@@ -215,9 +215,14 @@ class AddressRegisterRequest(BaseModel):
 class AddressUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_did_key: str = Field(..., min_length=1)
+    reachability: str | None = Field(default=None, max_length=32)
 
-    _check_did_key = field_validator("current_did_key")(_validate_did_key)
+    @field_validator("reachability")
+    @classmethod
+    def _validate_reachability(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_address_reachability(value)
 
 
 class AddressReassignRequest(BaseModel):
@@ -404,7 +409,11 @@ async def update_address(
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> AddressResponse:
-    """Update the current_did_key for an address (key rotation)."""
+    """Update address metadata under a DNS-backed namespace.
+
+    When `reachability` is omitted, this is a no-op that returns the current
+    address state unchanged.
+    """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
@@ -442,22 +451,27 @@ async def update_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        await tx.execute(
-            """
-            UPDATE {{tables.public_addresses}}
-            SET current_did_key = $1
-            WHERE address_id = $2
-            """,
-            body.current_did_key,
-            row["address_id"],
-        )
+        next_reachability = body.reachability
+        if next_reachability is not None:
+            row = await tx.fetch_one(
+                """
+                UPDATE {{tables.public_addresses}}
+                SET reachability = $1
+                WHERE address_id = $2
+                RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
+                """,
+                next_reachability,
+                row["address_id"],
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="Address not found")
 
     return AddressResponse(
         address_id=str(row["address_id"]),
         domain=domain,
         name=row["name"],
         did_aw=row["did_aw"],
-        current_did_key=body.current_did_key,
+        current_did_key=row["current_did_key"],
         reachability=str(row.get("reachability") or "private"),
         created_at=row["created_at"].isoformat(),
     )
