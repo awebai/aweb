@@ -1,6 +1,6 @@
 {
   "name": "@awebai/claude-channel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./dist/index.js",
   "bin": "./dist/index.js",
@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
-    "prepublishOnly": "npm run build",
+    "sync-plugin-version": "node -e \"const p=JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8')); p.version=require('./package.json').version; require('fs').writeFileSync('.claude-plugin/plugin.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "prepublishOnly": "npm run build && npm run sync-plugin-version",
     "test": "vitest run --exclude test/integration.test.ts",
     "test:integration": "vitest run test/integration.test.ts",
     "start": "tsx src/index.ts"
