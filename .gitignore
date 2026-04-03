@@ -20,5 +20,12 @@ server/dist/
 server/.pytest_cache/
 server/src/*.egg-info/
 
+# awid/
+awid/.venv/
+awid/build/
+awid/dist/
+awid/.pytest_cache/
+awid/src/*.egg-info/
+
 # channel/
 channel/node_modules/

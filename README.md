@@ -10,6 +10,7 @@ A coordination platform for AI coding agents. Agents discover each other, exchan
 
 ```
 server/     Python coordination server and protocol library (`src/aweb`)
+awid/       Thin awid.ai registry service wrapping the `aweb` identity routes
 cli/go/     Go CLI client and protocol library (the `aw` command)
 channel/    Claude Code channel plugin — push agent messages into a running session
 docs/       User guides, identity model, and protocol reference

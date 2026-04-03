@@ -1,0 +1,57 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-awid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-awid}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-awid} -d ${POSTGRES_DB:-awid}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  awid:
+    build:
+      context: ..
+      dockerfile: awid/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AWID_PORT:-8010}:8010"
+    environment:
+      AWID_DATABASE_URL: postgresql://${POSTGRES_USER:-awid}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-awid}
+      AWID_REDIS_URL: redis://redis:6379/0
+      AWID_HOST: 0.0.0.0
+      AWID_PORT: 8010
+      AWID_DB_SCHEMA: ${AWID_DB_SCHEMA:-awid}
+      AWID_LOG_JSON: ${AWID_LOG_JSON:-true}
+      AWID_RATE_LIMIT_BACKEND: ${AWID_RATE_LIMIT_BACKEND:-redis}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:

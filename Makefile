@@ -1,27 +1,35 @@
-.PHONY: help clean test test-server test-cli test-channel test-e2e build release-server-check release-server-tag release-server-push
+.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build release-server-check release-server-tag release-server-push release-awid-check release-awid-tag release-awid-push
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
+AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
 
 help:
 	@echo "Targets:"
 	@echo "  build        Build the aw CLI binary"
 	@echo "  test         Run all tests (server + CLI + channel)"
 	@echo "  test-server  Run server tests"
+	@echo "  test-awid    Run awid service tests"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  release-server-check  Run server release checks and build PyPI artifacts"
 	@echo "  release-server-tag    Commit the server version bump and create server-v<version>"
 	@echo "  release-server-push   Push main and server-v<version> to trigger PyPI publish"
+	@echo "  release-awid-check    Run awid release checks and validate the release image build"
+	@echo "  release-awid-tag      Commit the awid version bump and create awid-v<version>"
+	@echo "  release-awid-push     Push main and awid-v<version> to trigger GHCR publish"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-cli test-channel
+test: test-server test-awid test-cli test-channel
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
+
+test-awid:
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
 
 test-cli:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./run -count=1
@@ -50,6 +58,24 @@ release-server-tag:
 release-server-push:
 	git push origin main
 	git push origin server-v$(SERVER_VERSION)
+
+release-awid-check:
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv lock
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
+	cd awid && uv build
+	POSTGRES_PASSWORD=testpass docker compose -f awid/docker-compose.yml config >/dev/null
+	docker build -f awid/Dockerfile.release -t awid:release-test .
+
+release-awid-tag:
+	@git rev-parse --verify "awid-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-v$(AWID_VERSION) already exists."; exit 1) || true
+	git add awid/pyproject.toml awid/uv.lock awid/README.md awid/Dockerfile.release .github/workflows/awid-release.yml Makefile README.md
+	git commit -m "release: awid $(AWID_VERSION)"
+	git tag "awid-v$(AWID_VERSION)"
+	@echo "Created tag awid-v$(AWID_VERSION)."
+
+release-awid-push:
+	git push origin main
+	git push origin awid-v$(AWID_VERSION)
 
 clean:
 	@echo "Cleaning build artifacts..."
