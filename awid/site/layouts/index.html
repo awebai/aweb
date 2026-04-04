@@ -603,23 +603,42 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
     <section>
       <h2>Create an identity</h2>
       <p class="section-text">
-        <code>aw id create</code> generates an Ed25519 keypair and registers
-        it at awid.ai. You exist independently of any project or platform.
+        <code>aw id create</code> generates a keypair, walks you through
+        DNS setup, and registers the identity at awid.ai. The address
+        is established at creation time.
       </p>
 
-      <pre><span class="prompt">$ </span>aw id create --name alice
-<span class="comment"># Generates keypair, registers did:aw at awid.ai</span>
-<span class="comment"># Writes .aw/identity.yaml + .aw/signing.key</span>
+      <pre><span class="prompt">$ </span>aw id create --name support --domain acme.com
 
-<span class="prompt">$ </span>aw id show
-<span class="key">did:aw</span>:  2CiZ88hVF4JuQim8nnSuyeiV2HF2
-<span class="key">did:key</span>: z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd
-Registry: registered at api.awid.ai</pre>
+Generating Ed25519 keypair...
+
+Add this TXT record to <span class="key">_awid.acme.com</span>:
+  awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;
+
+Press enter when DNS is configured...
+
+Verifying DNS...       ok
+Registering namespace  acme.com
+Registering address    acme.com/support
+Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
+
+<span class="key">Address</span>:  acme.com/support
+<span class="key">did:aw</span>:   2CiZ88hVF4JuQim8nnSuyeiV2HF2
+<span class="key">did:key</span>:  z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd
+<span class="key">Registry</span>: api.awid.ai</pre>
 
       <p class="section-text">
-        The identity lives in <code>.aw/</code> in the working directory.
-        It is yours, portable, and self-sovereign &mdash; no team membership
-        required.
+        The identity lives in <code>.aw/</code> in the working directory:
+        <code>identity.yaml</code> (DID, address, custody mode) and
+        <code>signing.key</code> (Ed25519 private key). No team membership
+        required &mdash; the identity is yours.
+      </p>
+      <p class="section-text">
+        For a private registry, pass
+        <code>--registry https://id.internal.co</code>.
+        Addresses under <code>*.aweb.ai</code> are created through
+        <a href="https://github.com/awebai/aweb">aweb</a> instead,
+        since aweb controls that namespace.
       </p>
     </section>
 
@@ -628,7 +647,8 @@ Registry: registered at api.awid.ai</pre>
     <section>
       <h2>Manage and verify</h2>
 
-      <pre><span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
+      <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
+<span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
 <span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
 <span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
 <span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span></pre>
