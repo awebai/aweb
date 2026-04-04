@@ -802,6 +802,10 @@ func executeInit(opts initOptions) (*initResult, error) {
 	if v := strings.TrimSpace(resp.ServerURL); v != "" {
 		attachURL = v
 	}
+	promptOut := opts.PromptOut
+	if promptOut == nil {
+		promptOut = os.Stderr
+	}
 	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
 		registry := awid.NewRegistryResolver(nil, nil)
 		if strings.EqualFold(strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), "local") {
@@ -819,9 +823,8 @@ func executeInit(opts initOptions) (*initResult, error) {
 		}
 		registryBaseURL, err := registry.DiscoverRegistry(ctx, registryDomain)
 		if err != nil {
-			return nil, fmt.Errorf("discover authoritative registry: %w", err)
-		}
-		if err := awid.RegisterSelfCustodialDID(
+			fmt.Fprintf(promptOut, "Warning: could not discover identity registry: %v\n", err)
+		} else if err := awid.RegisterSelfCustodialDID(
 			ctx,
 			registryBaseURL,
 			attachURL,
@@ -831,7 +834,7 @@ func executeInit(opts initOptions) (*initResult, error) {
 			strings.TrimSpace(resp.StableID),
 			priv,
 		); err != nil {
-			return nil, fmt.Errorf("register stable identity: %w", err)
+			fmt.Fprintf(promptOut, "Warning: could not register identity at awid.ai: %v\n", err)
 		}
 	}
 	authClient, authClientErr := aweb.NewWithAPIKey(attachURL, resp.APIKey)
@@ -842,10 +845,6 @@ func executeInit(opts initOptions) (*initResult, error) {
 		promptIn := opts.PromptIn
 		if promptIn == nil {
 			promptIn = os.Stdin
-		}
-		promptOut := opts.PromptOut
-		if promptOut == nil {
-			promptOut = os.Stderr
 		}
 		workspaceRole, err = resolveRole(authClient, workspaceRole, opts.PromptRoleAfterBootstrap && workspaceRole == "", promptIn, promptOut)
 		if err != nil {

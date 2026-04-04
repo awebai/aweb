@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -115,5 +116,29 @@ func TestRegisterSelfCustodialDIDTreatsSameKeyConflictAsSuccess(t *testing.T) {
 	}
 	if posts != 1 {
 		t.Fatalf("posts=%d", posts)
+	}
+}
+
+func TestRegisterSelfCustodialDIDRejectsInvalidStableID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	err = RegisterSelfCustodialDID(
+		context.Background(),
+		"https://registry.example.com",
+		"https://app.example.com",
+		"acme.com/alice",
+		"alice",
+		did,
+		"stable-project-key",
+		priv,
+	)
+	if err == nil || !strings.Contains(err.Error(), "did:aw:") {
+		t.Fatalf("err=%v, want did:aw validation failure", err)
 	}
 }

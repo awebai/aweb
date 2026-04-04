@@ -196,17 +196,7 @@ export class RegistryResolver {
   }
 
   async discoverRegistry(domain: string): Promise<string> {
-    domain = canonicalizeDomain(domain);
-    const cached = this.registryCache.get(domain);
-    if (cached && this.now() <= cached.expiresAt) {
-      return cached.value.registryURL;
-    }
-    const authority = await this.discoverAuthority(domain);
-    this.registryCache.set(domain, {
-      value: authority,
-      expiresAt: this.now() + REGISTRY_DISCOVERY_TTL_MS,
-    });
-    return authority.registryURL;
+    return (await this.discoverAuthority(domain)).registryURL;
   }
 
   private async discoverAuthority(domain: string): Promise<DomainAuthority> {

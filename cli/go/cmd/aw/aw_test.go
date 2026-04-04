@@ -3008,7 +3008,7 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 				"api_key":        "aw_sk_new",
 				"created":        true,
 				"did":            "did:key:z6MkPermanentProjectKey",
-				"stable_id":      "stable-project-key",
+				"stable_id":      "did:aw:stable-project-key",
 				"custody":        "self",
 				"lifetime":       "persistent",
 			})

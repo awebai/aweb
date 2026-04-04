@@ -52,6 +52,9 @@ func RegisterSelfCustodialDID(
 	if strings.TrimSpace(did) == "" || strings.TrimSpace(stableID) == "" {
 		return fmt.Errorf("did and stableID are required")
 	}
+	if !strings.HasPrefix(strings.TrimSpace(stableID), "did:aw:") {
+		return fmt.Errorf("stableID must start with did:aw:")
+	}
 	if signingKey == nil {
 		return fmt.Errorf("signing key is required")
 	}
@@ -76,15 +79,15 @@ func RegisterSelfCustodialDID(
 		return err
 	}
 	req := &didRegisterRequest{
-		DIDAW:         stableID,
-		DIDKey:        did,
-		Server:        serverURL,
-		Address:       strings.TrimSpace(address),
-		Seq:           1,
-		StateHash:     stateHash,
-		AuthorizedBy:  did,
-		Timestamp:     timestamp,
-		Proof:         proof,
+		DIDAW:        stableID,
+		DIDKey:       did,
+		Server:       serverURL,
+		Address:      strings.TrimSpace(address),
+		Seq:          1,
+		StateHash:    stateHash,
+		AuthorizedBy: did,
+		Timestamp:    timestamp,
+		Proof:        proof,
 	}
 	if trimmed := strings.TrimSpace(handle); trimmed != "" {
 		req.Handle = &trimmed
