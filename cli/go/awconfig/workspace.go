@@ -2,6 +2,7 @@ package awconfig
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,46 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	return strings.TrimSpace(w.ServerURL) != "" && strings.TrimSpace(w.APIKey) != ""
 }
 
+func (w *WorktreeWorkspace) hasIdentityFields() bool {
+	if w == nil {
+		return false
+	}
+	return strings.TrimSpace(w.DID) != "" ||
+		strings.TrimSpace(w.StableID) != "" ||
+		strings.TrimSpace(w.SigningKey) != "" ||
+		strings.TrimSpace(w.Custody) != "" ||
+		strings.TrimSpace(w.Lifetime) != ""
+}
+
+func (w *WorktreeWorkspace) clearIdentityFields() {
+	if w == nil {
+		return
+	}
+	w.DID = ""
+	w.StableID = ""
+	w.SigningKey = ""
+	w.Custody = ""
+	w.Lifetime = ""
+}
+
+func scrubWorkspaceIdentityFields(path string, state *WorktreeWorkspace, warn bool) {
+	if state == nil || !state.hasIdentityFields() {
+		return
+	}
+	root := WorktreeRootFromWorkspacePath(path)
+	if strings.TrimSpace(root) == "" {
+		return
+	}
+	identityPath := filepath.Join(root, DefaultWorktreeIdentityRelativePath())
+	if _, err := os.Stat(identityPath); err != nil {
+		return
+	}
+	if warn {
+		fmt.Fprintf(os.Stderr, "Warning: ignoring identity fields in %s because %s is present\n", path, identityPath)
+	}
+	state.clearIdentityFields()
+}
+
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	var raw worktreeWorkspaceYAML
 	if err := value.Decode(&raw); err != nil {
@@ -182,6 +223,7 @@ func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
+	scrubWorkspaceIdentityFields(path, &state, true)
 	return &state, nil
 }
 
@@ -202,6 +244,7 @@ func SaveWorktreeWorkspaceTo(path string, state *WorktreeWorkspace) error {
 		return errors.New("nil workspace state")
 	}
 	state.normalize()
+	scrubWorkspaceIdentityFields(path, state, false)
 
 	data, err := yaml.Marshal(state)
 	if err != nil {

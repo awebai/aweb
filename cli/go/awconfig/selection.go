@@ -61,6 +61,7 @@ func resolveAccount(global *GlobalConfig, opts ResolveOptions) (*Selection, erro
 	}
 
 	var workspace *WorktreeWorkspace
+	var identity *WorktreeIdentity
 	if strings.TrimSpace(opts.WorkingDir) != "" {
 		loaded, _, err := LoadWorktreeWorkspaceFromDir(opts.WorkingDir)
 		if err != nil {
@@ -69,6 +70,14 @@ func resolveAccount(global *GlobalConfig, opts ResolveOptions) (*Selection, erro
 			}
 		} else {
 			workspace = loaded
+		}
+		loadedIdentity, _, err := LoadWorktreeIdentityFromDir(opts.WorkingDir)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("invalid worktree identity: %w", err)
+			}
+		} else {
+			identity = loadedIdentity
 		}
 	}
 
@@ -144,7 +153,7 @@ func resolveAccount(global *GlobalConfig, opts ResolveOptions) (*Selection, erro
 		if baseURL == "" || apiKey == "" {
 			return nil, errors.New("worktree workspace binding is missing server_url or api_key")
 		}
-		return finalizeWorkspaceSelection(serverName, baseURL, apiKey, workspace), nil
+		return finalizeWorkspaceSelection(serverName, baseURL, apiKey, workspace, identity, strings.TrimSpace(opts.WorkingDir)), nil
 	}
 
 	// If explicit account is given, it wins; server is implied.
@@ -297,7 +306,7 @@ func finalizeSelection(accountName, serverName, baseURL, apiKey string, acct Acc
 	}
 }
 
-func finalizeWorkspaceSelection(serverName, baseURL, apiKey string, ws *WorktreeWorkspace) *Selection {
+func finalizeWorkspaceSelection(serverName, baseURL, apiKey string, ws *WorktreeWorkspace, identity *WorktreeIdentity, workingDir string) *Selection {
 	namespaceSlug := ""
 	defaultProject := ""
 	identityHandle := ""
@@ -322,6 +331,23 @@ func finalizeWorkspaceSelection(serverName, baseURL, apiKey string, ws *Worktree
 		}
 		if identityHandle == "" {
 			identityHandle = strings.TrimSpace(ws.Alias)
+		}
+	}
+	if identity != nil {
+		if v := strings.TrimSpace(identity.DID); v != "" {
+			did = v
+		}
+		if v := strings.TrimSpace(identity.StableID); v != "" {
+			stableID = v
+		}
+		if v := strings.TrimSpace(identity.Custody); v != "" {
+			custody = v
+		}
+		if v := strings.TrimSpace(identity.Lifetime); v != "" {
+			lifetime = v
+		}
+		if strings.EqualFold(custody, "self") && strings.TrimSpace(workingDir) != "" {
+			signingKey = WorktreeSigningKeyPath(workingDir)
 		}
 	}
 	return &Selection{

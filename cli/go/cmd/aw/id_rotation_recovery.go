@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
@@ -19,20 +18,20 @@ type pendingRotationState struct {
 	PendingKey string `yaml:"pending_key"`
 }
 
-func keysDirForCurrentConfig() (string, error) {
-	configPath, err := defaultGlobalPath()
+func rotationStateDirForCurrentWorktree() (string, error) {
+	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	return awconfig.KeysDir(configPath), nil
+	return filepath.Join(wd, ".aw", "rotation"), nil
 }
 
-func pendingRotationStatePath(keysDir, stableID string) string {
-	return filepath.Join(keysDir, "pending", pendingFileBase(stableID)+".yaml")
+func pendingRotationStatePath(rotationDir, stableID string) string {
+	return filepath.Join(rotationDir, "pending", pendingFileBase(stableID)+".yaml")
 }
 
-func pendingRotationKeyPaths(keysDir, did string) (string, string) {
-	base := filepath.Join(keysDir, "pending", pendingFileBase(did))
+func pendingRotationKeyPaths(rotationDir, did string) (string, string) {
+	base := filepath.Join(rotationDir, "pending", pendingFileBase(did))
 	return base + ".signing.key", base + ".signing.pub"
 }
 
@@ -41,8 +40,8 @@ func pendingFileBase(value string) string {
 	return replacer.Replace(strings.TrimSpace(value))
 }
 
-func loadPendingRotationState(keysDir, stableID string) (*pendingRotationState, error) {
-	path := pendingRotationStatePath(keysDir, stableID)
+func loadPendingRotationState(rotationDir, stableID string) (*pendingRotationState, error) {
+	path := pendingRotationStatePath(rotationDir, stableID)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -57,7 +56,7 @@ func loadPendingRotationState(keysDir, stableID string) (*pendingRotationState, 
 	return &state, nil
 }
 
-func savePendingRotationState(keysDir string, state *pendingRotationState) error {
+func savePendingRotationState(rotationDir string, state *pendingRotationState) error {
 	if state == nil {
 		return fmt.Errorf("nil pending rotation state")
 	}
@@ -65,19 +64,19 @@ func savePendingRotationState(keysDir string, state *pendingRotationState) error
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(pendingRotationStatePath(keysDir, state.StableID), data)
+	return awid.AtomicWriteFile(pendingRotationStatePath(rotationDir, state.StableID), data)
 }
 
-func removePendingRotationState(keysDir, stableID string) error {
-	path := pendingRotationStatePath(keysDir, stableID)
+func removePendingRotationState(rotationDir, stableID string) error {
+	path := pendingRotationStatePath(rotationDir, stableID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func savePendingRotationKeypair(keysDir, did string, pub ed25519.PublicKey, priv ed25519.PrivateKey) (string, error) {
-	keyPath, pubPath := pendingRotationKeyPaths(keysDir, did)
+func savePendingRotationKeypair(rotationDir, did string, pub ed25519.PublicKey, priv ed25519.PrivateKey) (string, error) {
+	keyPath, pubPath := pendingRotationKeyPaths(rotationDir, did)
 	if err := awid.SaveKeypairAt(keyPath, pubPath, pub, priv); err != nil {
 		return "", err
 	}

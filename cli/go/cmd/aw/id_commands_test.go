@@ -639,8 +639,8 @@ func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	if first["status"] != "rotated" {
 		t.Fatalf("first status=%v", first["status"])
 	}
-	keysDir := awconfig.KeysDir(cfgPath)
-	if pending, err := loadPendingRotationState(keysDir, stableID); err != nil || pending != nil {
+	rotationDir := filepath.Join(tmp, ".aw", "rotation")
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil || pending != nil {
 		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
 	cfg := loadConfigForTest(t, cfgPath)
@@ -650,7 +650,7 @@ func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	if registryRotateCalls.Load() != 1 {
 		t.Fatalf("registry rotate calls=%d", registryRotateCalls.Load())
 	}
-	rotatedKeyPath := filepath.Join(keysDir, "rotated", strings.ReplaceAll(oldDID, ":", "-")+".key")
+	rotatedKeyPath := filepath.Join(rotationDir, "rotated", strings.ReplaceAll(oldDID, ":", "-")+".key")
 	if _, err := os.Stat(rotatedKeyPath); err != nil {
 		t.Fatalf("rotated key missing: %v", err)
 	}
@@ -729,8 +729,8 @@ func TestAwIDRotateKeyPreservesPendingStateOnRegistryNetworkError(t *testing.T) 
 		t.Fatalf("expected network error output, got:\n%s", string(out))
 	}
 
-	keysDir := awconfig.KeysDir(cfgPath)
-	pending, err := loadPendingRotationState(keysDir, stableID)
+	rotationDir := filepath.Join(tmp, ".aw", "rotation")
+	pending, err := loadPendingRotationState(rotationDir, stableID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,12 +830,12 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
 
-	keysDir := awconfig.KeysDir(cfgPath)
-	pendingKeyPath, err := savePendingRotationKeypair(keysDir, newDID, newPub, newPriv)
+	rotationDir := filepath.Join(tmp, ".aw", "rotation")
+	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, newDID, newPub, newPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := savePendingRotationState(keysDir, &pendingRotationState{
+	if err := savePendingRotationState(rotationDir, &pendingRotationState{
 		StableID:   stableID,
 		OldDID:     oldDID,
 		NewDID:     newDID,
@@ -864,7 +864,7 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	if registryRotateCalls.Load() != 0 {
 		t.Fatalf("registry rotate calls=%d", registryRotateCalls.Load())
 	}
-	if pending, err := loadPendingRotationState(keysDir, stableID); err != nil || pending != nil {
+	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil || pending != nil {
 		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
 	cfg := loadConfigForTest(t, cfgPath)
@@ -884,18 +884,18 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T) {
 	t.Parallel()
 
-	keysDir := t.TempDir()
+	rotationDir := t.TempDir()
 	newPub, newPriv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	newDID := awid.ComputeDIDKey(newPub)
-	pendingKeyPath, err := savePendingRotationKeypair(keysDir, newDID, newPub, newPriv)
+	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, newDID, newPub, newPriv)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	activeKeyPath := filepath.Join(keysDir, "active.signing.key")
+	activeKeyPath := filepath.Join(rotationDir, "active.signing.key")
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
 		t.Fatal(err)
 	}
@@ -1046,14 +1046,14 @@ default_account: acct
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workspace.SigningKey != signingKeyPath {
-		t.Fatalf("workspace signing_key=%q want %q", workspace.SigningKey, signingKeyPath)
+	if workspace.SigningKey != "" {
+		t.Fatalf("workspace signing_key=%q want empty", workspace.SigningKey)
 	}
-	if workspace.DID != newDID {
-		t.Fatalf("workspace did=%q want %q", workspace.DID, newDID)
+	if workspace.DID != "" {
+		t.Fatalf("workspace did=%q want empty", workspace.DID)
 	}
-	if workspace.Custody != awid.CustodySelf {
-		t.Fatalf("workspace custody=%q want %q", workspace.Custody, awid.CustodySelf)
+	if workspace.Custody != "" {
+		t.Fatalf("workspace custody=%q want empty", workspace.Custody)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(awDir, "identity.yaml"))

@@ -371,3 +371,56 @@ func TestResolvePrefersWorkspaceBindingOverContextDefaults(t *testing.T) {
 		t.Fatalf("stable_id=%q", sel.StableID)
 	}
 }
+
+func TestResolveWorkspaceBindingUsesIdentityYAMLForPermanentIdentity(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(awDir, "workspace.yaml"), &WorktreeWorkspace{
+		ServerURL:      "https://app.aweb.ai",
+		APIKey:         "aw_sk_workspace",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		DID:            "did:key:z6MkStaleWorkspace",
+		StableID:       "did:aw:stale-workspace",
+		SigningKey:     "stale.key",
+		Custody:        "custodial",
+		Lifetime:       "ephemeral",
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	if err := SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &WorktreeIdentity{
+		DID:       "did:key:z6MkIdentity",
+		StableID:  "did:aw:identity",
+		Custody:   "self",
+		Lifetime:  "persistent",
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+
+	sel, err := Resolve(&GlobalConfig{}, ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if sel.DID != "did:key:z6MkIdentity" {
+		t.Fatalf("did=%q", sel.DID)
+	}
+	if sel.StableID != "did:aw:identity" {
+		t.Fatalf("stable_id=%q", sel.StableID)
+	}
+	if sel.Custody != "self" {
+		t.Fatalf("custody=%q", sel.Custody)
+	}
+	if sel.Lifetime != "persistent" {
+		t.Fatalf("lifetime=%q", sel.Lifetime)
+	}
+	if sel.SigningKey != filepath.Join(tmp, ".aw", "signing.key") {
+		t.Fatalf("signing_key=%q", sel.SigningKey)
+	}
+}
