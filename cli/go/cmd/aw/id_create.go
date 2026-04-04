@@ -124,13 +124,6 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 	if err != nil {
 		return idCreateOutput{}, err
 	}
-	if strings.TrimSpace(opts.RegistryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(opts.RegistryURL); err != nil {
-			return idCreateOutput{}, fmt.Errorf("invalid --registry: %w", err)
-		}
-		plan.RegistryURL = registry.DefaultRegistryURL
-		plan.DNSRecordValue = idCreateDNSRecordValue(plan.DIDKey, plan.RegistryURL)
-	}
 
 	registryStatus := "registered"
 	registryErr := ""

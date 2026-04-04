@@ -479,6 +479,71 @@ func TestVerifyIDCreateDomainAuthorityMatchesControllerAndRegistry(t *testing.T)
 	}
 }
 
+func TestVerifyIDCreateDomainAuthorityFailsWrongController(t *testing.T) {
+	t.Parallel()
+
+	wrongPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongDID := awid.ComputeDIDKey(wrongPub)
+
+	err = verifyIDCreateDomainAuthority(
+		context.Background(),
+		staticTXTResolver{
+			"_awid.acme.com": {idCreateDNSRecordValue(wrongDID, "https://registry.example.com")},
+		},
+		"acme.com",
+		"did:key:z6MkExpectedController",
+		"https://registry.example.com",
+	)
+	if err == nil {
+		t.Fatal("expected controller mismatch")
+	}
+	if !strings.Contains(err.Error(), "TXT controller "+wrongDID+" does not match did:key:z6MkExpectedController") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyIDCreateDomainAuthorityFailsWrongRegistry(t *testing.T) {
+	t.Parallel()
+
+	did := "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+	err := verifyIDCreateDomainAuthority(
+		context.Background(),
+		staticTXTResolver{
+			"_awid.acme.com": {idCreateDNSRecordValue(did, "https://other-registry.example.com")},
+		},
+		"acme.com",
+		did,
+		"https://registry.example.com",
+	)
+	if err == nil {
+		t.Fatal("expected registry mismatch")
+	}
+	if !strings.Contains(err.Error(), "TXT registry https://other-registry.example.com does not match https://registry.example.com") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyIDCreateDomainAuthorityFailsWhenTXTRecordMissing(t *testing.T) {
+	t.Parallel()
+
+	err := verifyIDCreateDomainAuthority(
+		context.Background(),
+		staticTXTResolver{},
+		"acme.com",
+		"did:key:z6MkExpectedController",
+		"https://registry.example.com",
+	)
+	if err == nil {
+		t.Fatal("expected missing TXT record error")
+	}
+	if !strings.Contains(err.Error(), "lookup _awid.acme.com") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	t.Parallel()
 

@@ -3352,6 +3352,269 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 	}
 }
 
+func TestAwInitProjectKeyPermanentFailsWhenBootstrapReturnsDifferentDID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	address := "myteam.aweb.ai/alice"
+
+	otherPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDID := awid.ComputeDIDKey(otherPub)
+
+	var didCreateCalls int
+	var didUpdateCalls int
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
+		case "/v1/workspaces/init":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "default",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-existing",
+				"name":           "alice",
+				"address":        address,
+				"api_key":        "aw_sk_existing",
+				"created":        false,
+				"did":            otherDID,
+				"stable_id":      stableID,
+				"custody":        "self",
+				"lifetime":       "persistent",
+			})
+		case "/v1/did":
+			didCreateCalls++
+			t.Fatalf("unexpected registry create after bootstrap mismatch")
+		case "/v1/did/" + stableID:
+			didUpdateCalls++
+			t.Fatalf("unexpected registry update after bootstrap mismatch")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "init",
+		"--server-url", server.URL,
+		"--permanent",
+		"--json",
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=aw_sk_project",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected bootstrap DID mismatch failure:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `bootstrap returned did "`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if didCreateCalls != 0 {
+		t.Fatalf("did create calls=%d want 0", didCreateCalls)
+	}
+	if didUpdateCalls != 0 {
+		t.Fatalf("did update calls=%d want 0", didUpdateCalls)
+	}
+}
+
+func TestAwInitProjectKeyPermanentFallsBackToRegisterWhenUpdateServerIsMissing(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	address := "myteam.aweb.ai/alice"
+
+	createEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
+	var didCreateCalls int
+	var didUpdateCalls int
+	currentRegistryServer := ""
+	var serverURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
+		case "/v1/workspaces/init":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "default",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-existing",
+				"name":           "alice",
+				"address":        address,
+				"api_key":        "aw_sk_existing",
+				"created":        false,
+				"did":            did,
+				"stable_id":      stableID,
+				"custody":        "self",
+				"lifetime":       "persistent",
+			})
+		case "/v1/did":
+			didCreateCalls++
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["did_aw"] != stableID {
+				t.Fatalf("did_aw=%v want %v", payload["did_aw"], stableID)
+			}
+			if payload["did_key"] != did {
+				t.Fatalf("did_key=%v want %v", payload["did_key"], did)
+			}
+			if payload["server"] != serverURL {
+				t.Fatalf("server=%v want %v", payload["server"], serverURL)
+			}
+			if payload["address"] != address {
+				t.Fatalf("address=%v want %v", payload["address"], address)
+			}
+			if payload["handle"] != "alice" {
+				t.Fatalf("handle=%v want alice", payload["handle"])
+			}
+			currentRegistryServer = serverURL
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/" + stableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"server":          currentRegistryServer,
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"log_head":        didLogJSON(createEntry),
+			})
+		case "/v1/did/" + stableID:
+			didUpdateCalls++
+			http.NotFound(w, r)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    serverURL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "init",
+		"--server-url", server.URL,
+		"--permanent",
+		"--json",
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=aw_sk_project",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	if didUpdateCalls != 1 {
+		t.Fatalf("did update calls=%d want 1", didUpdateCalls)
+	}
+	if didCreateCalls != 1 {
+		t.Fatalf("did create calls=%d want 1", didCreateCalls)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["did"] != did {
+		t.Fatalf("did=%v want %v", got["did"], did)
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.RegistryStatus != "registered" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+	if identity.RegistryURL != serverURL {
+		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, serverURL)
+	}
+}
+
 func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	t.Parallel()
 
