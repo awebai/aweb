@@ -55,8 +55,10 @@ from aweb.awid.signing import (
     canonical_json_bytes,
     canonical_payload,
     sign_message,
+    verify_agent_did_key_signature,
     verify_did_key_signature,
     verify_signature,
+    verify_signature_with_public_key,
 )
 from aweb.awid.stable_id import backfill_missing_stable_ids, ensure_agent_stable_ids
 
@@ -96,6 +98,7 @@ __all__ = [
     "assert_permanent_identity",
     "sha256_hex",
     "sign_message",
+    "verify_agent_did_key_signature",
     "sign_on_behalf",
     "state_hash",
     "stable_id_from_did_key",
@@ -104,4 +107,5 @@ __all__ = [
     "validate_stable_id",
     "verify_did_key_signature",
     "verify_signature",
+    "verify_signature_with_public_key",
 ]
