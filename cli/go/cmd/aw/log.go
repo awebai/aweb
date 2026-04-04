@@ -26,7 +26,7 @@ var logCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		path := commLogPath(logsDir, sel.AccountName)
+		path := commLogPath(logsDir, commLogNameForSelection(sel))
 
 		entries, err := readCommLog(path, logLimit)
 		if err != nil {

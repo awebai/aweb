@@ -59,7 +59,6 @@ permanent identities, potentially with reachability controls such as
 | `aw project create` | Project, namespace, first workspace, first identity |
 | `aw init` | Another workspace inside an existing project |
 | `aw spawn create-invite` + `aw spawn accept-invite` | Delegated creation of another workspace identity in the same project |
-| `aw connect` | Local config binding for an already-issued identity key; does not create a new identity |
 
 ## Signing Model
 

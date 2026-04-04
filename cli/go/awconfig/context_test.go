@@ -21,7 +21,7 @@ func TestFindWorktreeContextPathLocalOnly(t *testing.T) {
 		t.Fatalf("mkdir .aw: %v", err)
 	}
 	ctxPath := filepath.Join(root, ".aw", "context")
-	if err := os.WriteFile(ctxPath, []byte("default_account: alice\n"), 0o600); err != nil {
+	if err := os.WriteFile(ctxPath, []byte("human_account: alice\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -58,8 +58,7 @@ func TestSaveWorktreeContextToWrites0600(t *testing.T) {
 	path := filepath.Join(tmp, ".aw", "context")
 
 	ctx := &WorktreeContext{
-		DefaultAccount: "alice",
-		ServerAccounts: map[string]string{"prod": "bob"},
+		HumanAccount: "alice",
 	}
 	if err := SaveWorktreeContextTo(path, ctx); err != nil {
 		t.Fatalf("SaveWorktreeContextTo: %v", err)
@@ -81,9 +80,7 @@ func TestSaveWorktreeContextToRoundTrip(t *testing.T) {
 	path := filepath.Join(tmp, ".aw", "context")
 
 	ctx := &WorktreeContext{
-		DefaultAccount: "alice",
-		ServerAccounts: map[string]string{"prod": "bob"},
-		HumanAccount:   "human",
+		HumanAccount: "human",
 	}
 	if err := SaveWorktreeContextTo(path, ctx); err != nil {
 		t.Fatalf("SaveWorktreeContextTo: %v", err)
@@ -92,12 +89,6 @@ func TestSaveWorktreeContextToRoundTrip(t *testing.T) {
 	loaded, err := LoadWorktreeContextFrom(path)
 	if err != nil {
 		t.Fatalf("LoadWorktreeContextFrom: %v", err)
-	}
-	if loaded.DefaultAccount != "alice" {
-		t.Fatalf("default_account=%s", loaded.DefaultAccount)
-	}
-	if loaded.ServerAccounts["prod"] != "bob" {
-		t.Fatalf("server_accounts[prod]=%s", loaded.ServerAccounts["prod"])
 	}
 	if loaded.HumanAccount != "human" {
 		t.Fatalf("human_account=%s", loaded.HumanAccount)
@@ -110,12 +101,12 @@ func TestSaveWorktreeContextToReplacesExisting(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, ".aw", "context")
 
-	ctx1 := &WorktreeContext{DefaultAccount: "alice"}
+	ctx1 := &WorktreeContext{HumanAccount: "alice"}
 	if err := SaveWorktreeContextTo(path, ctx1); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 
-	ctx2 := &WorktreeContext{DefaultAccount: "bob"}
+	ctx2 := &WorktreeContext{HumanAccount: "bob"}
 	if err := SaveWorktreeContextTo(path, ctx2); err != nil {
 		t.Fatalf("second save: %v", err)
 	}
@@ -124,8 +115,8 @@ func TestSaveWorktreeContextToReplacesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWorktreeContextFrom: %v", err)
 	}
-	if loaded.DefaultAccount != "bob" {
-		t.Fatalf("default_account=%s, want bob", loaded.DefaultAccount)
+	if loaded.HumanAccount != "bob" {
+		t.Fatalf("human_account=%s, want bob", loaded.HumanAccount)
 	}
 }
 
@@ -135,7 +126,7 @@ func TestSaveWorktreeContextToSingleTrailingNewline(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, ".aw", "context")
 
-	ctx := &WorktreeContext{DefaultAccount: "alice"}
+	ctx := &WorktreeContext{HumanAccount: "alice"}
 	if err := SaveWorktreeContextTo(path, ctx); err != nil {
 		t.Fatalf("SaveWorktreeContextTo: %v", err)
 	}
@@ -160,7 +151,7 @@ func TestSaveWorktreeContextToNoTempFileLeftBehind(t *testing.T) {
 	dir := filepath.Join(tmp, ".aw")
 	path := filepath.Join(dir, "context")
 
-	ctx := &WorktreeContext{DefaultAccount: "alice"}
+	ctx := &WorktreeContext{HumanAccount: "alice"}
 	if err := SaveWorktreeContextTo(path, ctx); err != nil {
 		t.Fatalf("SaveWorktreeContextTo: %v", err)
 	}

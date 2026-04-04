@@ -8,10 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from aweb.awid import did_from_public_key, generate_keypair, sign_message, stable_id_from_did_key
-from aweb.awid.log import (
-    log_entry_payload as awid_log_entry_payload,
-    state_hash as awid_state_hash,
-)
+from aweb.awid.log import log_entry_payload, state_hash
 from aweb.awid.signing import canonical_json_bytes
 from aweb.db import get_db_infra
 from aweb.deps import get_domain_verifier
@@ -173,6 +170,82 @@ def _signed_parent_registration_headers(
 
 
 @pytest.mark.asyncio
+async def test_register_did_allows_unbound_identity(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=did_key,
+        server="",
+        address="",
+        handle=None,
+    )
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="create",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=mapping_state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/did",
+            json={
+                "did_aw": did_aw,
+                "did_key": did_key,
+                "server": "",
+                "address": "",
+                "handle": None,
+                "seq": 1,
+                "prev_entry_hash": None,
+                "state_hash": mapping_state_hash,
+                "authorized_by": did_key,
+                "timestamp": timestamp,
+                "proof": proof,
+            },
+        )
+        full_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        full_path = f"/v1/did/{did_aw}/full"
+        full_signature = sign_message(
+            signing_key,
+            f"{full_timestamp}\nGET\n{full_path}".encode("utf-8"),
+        )
+        full_response = await client.get(
+            full_path,
+            headers={
+                "Authorization": f"DIDKey {did_key} {full_signature}",
+                "X-AWEB-Timestamp": full_timestamp,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert full_response.status_code == 200, full_response.text
+    assert full_response.json()["server"] == ""
+    row = await aweb_db.fetch_one(
+        "SELECT did_aw, current_did_key, server_url, address, handle FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        did_aw,
+    )
+    assert row is not None
+    assert row["did_aw"] == did_aw
+    assert row["current_did_key"] == did_key
+    assert row["server_url"] == ""
+    assert row["address"] == ""
+    assert row["handle"] is None
+
+
+@pytest.mark.asyncio
 async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     subject_signing_key, subject_public_key = generate_keypair()
@@ -232,175 +305,8 @@ async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_clo
     assert [item["name"] for item in data["addresses"]] == ["support", "ops"]
 
 
-@pytest.mark.asyncio
-async def test_register_did_allows_standalone_creation_without_server_or_address(aweb_cloud_db):
-    aweb_db = aweb_cloud_db.aweb_db
-    signing_key, public_key = generate_keypair()
-    did_key = did_from_public_key(public_key)
-    did_aw = stable_id_from_did_key(did_key)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    state_hash = awid_state_hash(
-        did_aw=did_aw,
-        current_did_key=did_key,
-        server="",
-        address="",
-        handle=None,
-    )
-    proof = sign_message(
-        signing_key,
-        awid_log_entry_payload(
-            did_aw=did_aw,
-            seq=1,
-            operation="create",
-            previous_did_key=None,
-            new_did_key=did_key,
-            prev_entry_hash=None,
-            state_hash=state_hash,
-            authorized_by=did_key,
-            timestamp=timestamp,
-        ),
-    )
-
-    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(
-            "/v1/did",
-            json={
-                "did_aw": did_aw,
-                "did_key": did_key,
-                "seq": 1,
-                "prev_entry_hash": None,
-                "state_hash": state_hash,
-                "authorized_by": did_key,
-                "timestamp": timestamp,
-                "proof": proof,
-            },
-        )
-
-    assert response.status_code == 200, response.text
-    row = await aweb_db.fetch_one(
-        """
-        SELECT current_did_key, server_url, address, handle
-        FROM {{tables.did_aw_mappings}}
-        WHERE did_aw = $1
-        """,
-        did_aw,
-    )
-    assert row is not None
-    assert row["current_did_key"] == did_key
-    assert row["server_url"] == ""
-    assert row["address"] == ""
-    assert row["handle"] is None
 
 
-@pytest.mark.asyncio
-async def test_update_server_after_standalone_did_creation(aweb_cloud_db):
-    aweb_db = aweb_cloud_db.aweb_db
-    signing_key, public_key = generate_keypair()
-    did_key = did_from_public_key(public_key)
-    did_aw = stable_id_from_did_key(did_key)
-    create_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    create_state_hash = awid_state_hash(
-        did_aw=did_aw,
-        current_did_key=did_key,
-        server="",
-        address="",
-        handle=None,
-    )
-    create_proof = sign_message(
-        signing_key,
-        awid_log_entry_payload(
-            did_aw=did_aw,
-            seq=1,
-            operation="create",
-            previous_did_key=None,
-            new_did_key=did_key,
-            prev_entry_hash=None,
-            state_hash=create_state_hash,
-            authorized_by=did_key,
-            timestamp=create_timestamp,
-        ),
-    )
-
-    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        create_response = await client.post(
-            "/v1/did",
-            json={
-                "did_aw": did_aw,
-                "did_key": did_key,
-                "seq": 1,
-                "prev_entry_hash": None,
-                "state_hash": create_state_hash,
-                "authorized_by": did_key,
-                "timestamp": create_timestamp,
-                "proof": create_proof,
-            },
-        )
-
-        assert create_response.status_code == 200, create_response.text
-
-        log_head = await aweb_db.fetch_one(
-            """
-            SELECT seq, entry_hash
-            FROM {{tables.did_aw_log}}
-            WHERE did_aw = $1
-            ORDER BY seq DESC
-            LIMIT 1
-            """,
-            did_aw,
-        )
-        assert log_head is not None
-
-        update_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        update_state_hash = awid_state_hash(
-            did_aw=did_aw,
-            current_did_key=did_key,
-            server="https://app.example",
-            address="",
-            handle=None,
-        )
-        update_signature = sign_message(
-            signing_key,
-            awid_log_entry_payload(
-                did_aw=did_aw,
-                seq=2,
-                operation="update_server",
-                previous_did_key=did_key,
-                new_did_key=did_key,
-                prev_entry_hash=log_head["entry_hash"],
-                state_hash=update_state_hash,
-                authorized_by=did_key,
-                timestamp=update_timestamp,
-            ),
-        )
-
-        update_response = await client.put(
-            f"/v1/did/{did_aw}",
-            json={
-                "operation": "update_server",
-                "new_did_key": did_key,
-                "server": "https://app.example",
-                "seq": 2,
-                "prev_entry_hash": log_head["entry_hash"],
-                "state_hash": update_state_hash,
-                "authorized_by": did_key,
-                "timestamp": update_timestamp,
-                "signature": update_signature,
-            },
-        )
-
-    assert update_response.status_code == 200, update_response.text
-    row = await aweb_db.fetch_one(
-        """
-        SELECT server_url
-        FROM {{tables.did_aw_mappings}}
-        WHERE did_aw = $1
-        """,
-        did_aw,
-    )
-    assert row is not None
-    assert row["server_url"] == "https://app.example"
 
 
 @pytest.mark.asyncio

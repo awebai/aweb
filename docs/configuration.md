@@ -2,72 +2,87 @@
 
 This guide covers the local files that make `aw` work in a repo or worktree.
 
-## Global Config: `~/.config/aw/config.yaml`
+## User State: `~/.config/aw/`
 
-The global config stores saved servers, accounts, and defaults.
+The CLI still uses a small user-state directory, but it no longer has a global
+account/config file.
 
-Default path:
+Current files include:
+
+- `~/.config/aw/known_agents.yaml`: TOFU pins for peer identity verification
+- `~/.config/aw/run.json`: optional `aw run` defaults
+
+## Worktree Signing Key: `.aw/signing.key`
+
+Self-custodial workspace identities store their active private signing key in:
 
 ```text
-~/.config/aw/config.yaml
+.aw/signing.key
 ```
 
-Override it with:
+The key material itself is worktree-local.
 
-```bash
-export AW_CONFIG_PATH=/path/to/config.yaml
-```
+## Workspace Binding: `.aw/workspace.yaml`
 
-Typical contents include:
+`.aw/workspace.yaml` is the repo/worktree-local binding file. It stores the
+local project binding and coordination state together, including fields such as:
 
-- `servers`
-- `accounts`
-- `default_account`
-- `client_default_accounts`
-
-The keys directory lives alongside this file under `keys/`.
-
-## Directory Binding: `.aw/context`
-
-`.aw/context` is a non-secret pointer from the current directory to a saved
-account.
-
-Bootstrap commands such as `aw project create`, `aw init`,
-`aw spawn accept-invite`, and `aw connect` write it by default unless you pass
-`--write-context=false`.
-
-This is how `aw` knows which account to use when you enter a repo.
-
-## Worktree Coordination State: `.aw/workspace.yaml`
-
-`.aw/workspace.yaml` is the repo/worktree-local coordination identity file. It
-stores workspace metadata such as:
-
-- `workspace_id`
+- `server_url`
+- `api_key`
 - `project_id`
 - `project_slug`
+- `namespace_slug`
+- `identity_id`
+- `identity_handle`
+- `workspace_id`
 - `repo_id`
 - `canonical_origin`
-- `alias`
-- `human_name`
 - `role_name`
-- `hostname`
-- `workspace_path`
 
 This file is what makes worktree-aware commands like `aw workspace status`,
-`aw workspace add-worktree`, and `aw run` coordination-aware.
+`aw workspace add-worktree`, and `aw run` coordination-aware, and it is also
+the first local source of truth for binding a directory to a project identity.
+
+For permanent identities, cryptographic identity state lives in
+`.aw/identity.yaml`, not in `.aw/workspace.yaml`.
+
+## Permanent Identity State: `.aw/identity.yaml`
+
+Permanent identities store their durable identity data in:
+
+```text
+.aw/identity.yaml
+```
+
+Typical fields include:
+
+- `did`
+- `stable_id`
+- `address`
+- `custody`
+- `lifetime`
+- `registry_url`
+- `registry_status`
+
+## Local Context: `.aw/context`
+
+`.aw/context` is a small non-secret local coordination pointer.
+
+Bootstrap commands such as `aw project create`, `aw init`, and
+`aw spawn accept-invite` write it by default unless you pass
+`--write-context=false`.
 
 ## Resolution Order
 
 When more than one config source is present, the effective selection order is:
 
-1. CLI flags such as `--server-name` and `--account`
-2. environment variables
-3. local `.aw/context`
-4. global defaults in `config.yaml`
+1. CLI flags such as `--server-name`
+2. environment variables such as `AWEB_URL` and `AWEB_API_KEY`
+3. local `.aw/workspace.yaml`
+4. local `.aw/identity.yaml` for permanent identity fields
+5. local `.aw/context`
 
-That means a directory-local `.aw/context` can intentionally override your
-global default account for one repo.
+That means a directory-local `.aw/` tree fully binds one repo or worktree.
 
 ## Injected Coordination Docs
 

@@ -202,9 +202,13 @@ func (c *RegistryClient) RegisterDID(
 		return nil, fmt.Errorf("did does not match signing key")
 	}
 
-	canonicalServer, err := canonicalRegistryServerOrigin(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
+	canonicalServer := ""
+	if strings.TrimSpace(serverURL) != "" {
+		canonical, err := canonicalRegistryServerOrigin(serverURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid server URL: %w", err)
+		}
+		canonicalServer = canonical
 	}
 	stateHash := stableIdentityStateHash(stableID, did, canonicalServer, address, handle)
 	timestamp := time.Now().UTC().Format(time.RFC3339)

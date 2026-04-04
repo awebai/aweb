@@ -6,27 +6,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
 
-func keysDirForCurrentConfig() (string, error) {
-	configPath, err := defaultGlobalPath()
+type pendingRotationState struct {
+	StableID    string `yaml:"stable_id"`
+	OldDID      string `yaml:"old_did"`
+	NewDID      string `yaml:"new_did"`
+	RegistryURL string `yaml:"registry_url,omitempty"`
+	PendingKey  string `yaml:"pending_key"`
+}
+
+func rotationStateDirForCurrentWorktree() (string, error) {
+	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	return awconfig.KeysDir(configPath), nil
+	return filepath.Join(wd, ".aw", "rotation"), nil
 }
 
-func pendingRotationStatePath(keysDir, stableID string) string {
-	return filepath.Join(keysDir, "pending", pendingFileBase(stableID)+".yaml")
+func pendingRotationStatePath(rotationDir, stableID string) string {
+	return filepath.Join(rotationDir, "pending", pendingFileBase(stableID)+".yaml")
 }
 
-func pendingRotationKeyPaths(keysDir, did string) (string, string) {
-	base := filepath.Join(keysDir, "pending", pendingFileBase(did))
+func pendingRotationKeyPaths(rotationDir, did string) (string, string) {
+	base := filepath.Join(rotationDir, "pending", pendingFileBase(did))
 	return base + ".signing.key", base + ".signing.pub"
 }
 
@@ -35,8 +41,8 @@ func pendingFileBase(value string) string {
 	return replacer.Replace(strings.TrimSpace(value))
 }
 
-func loadPendingRotationState(keysDir, stableID string) (*pendingRotationState, error) {
-	path := pendingRotationStatePath(keysDir, stableID)
+func loadPendingRotationState(rotationDir, stableID string) (*pendingRotationState, error) {
+	path := pendingRotationStatePath(rotationDir, stableID)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -51,30 +57,27 @@ func loadPendingRotationState(keysDir, stableID string) (*pendingRotationState, 
 	return &state, nil
 }
 
-func savePendingRotationState(keysDir string, state *pendingRotationState) error {
+func savePendingRotationState(rotationDir string, state *pendingRotationState) error {
 	if state == nil {
 		return fmt.Errorf("nil pending rotation state")
-	}
-	if strings.TrimSpace(state.CreatedAt) == "" {
-		state.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	data, err := yaml.Marshal(state)
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(pendingRotationStatePath(keysDir, state.StableID), data)
+	return awid.AtomicWriteFile(pendingRotationStatePath(rotationDir, state.StableID), data)
 }
 
-func removePendingRotationState(keysDir, stableID string) error {
-	path := pendingRotationStatePath(keysDir, stableID)
+func removePendingRotationState(rotationDir, stableID string) error {
+	path := pendingRotationStatePath(rotationDir, stableID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func savePendingRotationKeypair(keysDir, did string, pub ed25519.PublicKey, priv ed25519.PrivateKey) (string, error) {
-	keyPath, pubPath := pendingRotationKeyPaths(keysDir, did)
+func savePendingRotationKeypair(rotationDir, did string, pub ed25519.PublicKey, priv ed25519.PrivateKey) (string, error) {
+	keyPath, pubPath := pendingRotationKeyPaths(rotationDir, did)
 	if err := awid.SaveKeypairAt(keyPath, pubPath, pub, priv); err != nil {
 		return "", err
 	}
@@ -91,11 +94,13 @@ func cleanupPendingRotationKeypair(keyPath string) error {
 	return nil
 }
 
-func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath string) (string, error) {
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
-	if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err == nil {
+func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, expectedDID string) (string, error) {
+	if matches, err := activeKeyMatchesDID(activeKeyPath, expectedDID); err == nil && matches {
+		if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err != nil {
+			return "", err
+		}
 		return activeKeyPath, nil
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
@@ -110,6 +115,14 @@ func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath strin
 	return activeKeyPath, nil
 }
 
+func activeKeyMatchesDID(signingKeyPath, expectedDID string) (bool, error) {
+	priv, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))) == strings.TrimSpace(expectedDID), nil
+}
+
 func ensurePublicKeyMatchesPrivate(signingKeyPath string) error {
 	priv, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
@@ -119,7 +132,7 @@ func ensurePublicKeyMatchesPrivate(signingKeyPath string) error {
 	return awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, priv)
 }
 
-func loadRotationSigningKey(keysDir, address string, pending *pendingRotationState) (ed25519.PrivateKey, bool, error) {
+func loadRotationSigningKey(activeKeyPath string, pending *pendingRotationState) (ed25519.PrivateKey, bool, error) {
 	if pending == nil {
 		return nil, false, fmt.Errorf("missing pending rotation state")
 	}
@@ -130,10 +143,9 @@ func loadRotationSigningKey(keysDir, address string, pending *pendingRotationSta
 	if !os.IsNotExist(err) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
 	}
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
 	activePriv, activeErr := awid.LoadSigningKey(activeKeyPath)
 	if activeErr != nil {
-		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+		return nil, false, fmt.Errorf("load active signing key: %w", activeErr)
 	}
 	if strings.TrimSpace(awid.ComputeDIDKey(activePriv.Public().(ed25519.PublicKey))) != strings.TrimSpace(pending.NewDID) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)

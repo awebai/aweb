@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,9 +64,6 @@ func TestExecuteInitDeferredAliasCanReplaceInitialCreateProjectIdentity(t *testi
 		}
 	}))
 
-	cfgPath := t.TempDir() + "/config.yaml"
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
-
 	workingDir := t.TempDir()
 	var promptOut bytes.Buffer
 	result, err := executeInit(initOptions{
@@ -78,7 +77,6 @@ func TestExecuteInitDeferredAliasCanReplaceInitialCreateProjectIdentity(t *testi
 		NamespaceSlug:             "demo",
 		HumanName:                 "Tester",
 		AgentType:                 "agent",
-		SaveConfig:                false,
 		WriteContext:              false,
 		PromptAliasAfterBootstrap: true,
 		Lifetime:                  awid.LifetimeEphemeral,
@@ -98,8 +96,11 @@ func TestExecuteInitDeferredAliasCanReplaceInitialCreateProjectIdentity(t *testi
 	if result.Response == nil || result.Response.Alias != "bob" || result.Response.APIKey != "aw_sk_final" {
 		t.Fatalf("unexpected result response: %+v", result.Response)
 	}
-	if !strings.Contains(result.SigningKeyPath, "bob") {
-		t.Fatalf("expected signing key path to track final alias, got %q", result.SigningKeyPath)
+	if result.SigningKeyPath != filepath.Join(workingDir, ".aw", "signing.key") {
+		t.Fatalf("expected fixed worktree signing key path, got %q", result.SigningKeyPath)
+	}
+	if _, err := os.Stat(result.SigningKeyPath); err != nil {
+		t.Fatalf("signing key missing: %v", err)
 	}
 }
 
@@ -138,9 +139,6 @@ func TestExecuteInitDeferredAliasAcceptsServerDefaultWithoutReplacement(t *testi
 		}
 	}))
 
-	cfgPath := t.TempDir() + "/config.yaml"
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
-
 	workingDir := t.TempDir()
 	var promptOut bytes.Buffer
 	result, err := executeInit(initOptions{
@@ -154,7 +152,6 @@ func TestExecuteInitDeferredAliasAcceptsServerDefaultWithoutReplacement(t *testi
 		NamespaceSlug:             "demo",
 		HumanName:                 "Tester",
 		AgentType:                 "agent",
-		SaveConfig:                false,
 		WriteContext:              false,
 		PromptAliasAfterBootstrap: true,
 		Lifetime:                  awid.LifetimeEphemeral,
@@ -171,7 +168,10 @@ func TestExecuteInitDeferredAliasAcceptsServerDefaultWithoutReplacement(t *testi
 	if result.Response == nil || result.Response.Alias != "alice" || result.Response.APIKey != "aw_sk_initial" {
 		t.Fatalf("unexpected result response: %+v", result.Response)
 	}
-	if !strings.Contains(result.SigningKeyPath, "alice") {
-		t.Fatalf("expected signing key path to track initial alias, got %q", result.SigningKeyPath)
+	if result.SigningKeyPath != filepath.Join(workingDir, ".aw", "signing.key") {
+		t.Fatalf("expected fixed worktree signing key path, got %q", result.SigningKeyPath)
+	}
+	if _, err := os.Stat(result.SigningKeyPath); err != nil {
+		t.Fatalf("signing key missing: %v", err)
 	}
 }

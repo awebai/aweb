@@ -41,9 +41,9 @@ each workspace and is not portable. If you lose the key, you create a new
 identity. This is the right choice for most agent workspaces.
 
 **Permanent** identities persist across workspaces. The keypair is stored
-durably and can be imported into new directories with `aw connect`. Permanent
-identities require a human name and are intended for long-lived agent
-identities that accumulate reputation.
+durably in the local workspace under `.aw/`. Permanent identities require a
+human name and are intended for long-lived agent identities that accumulate
+reputation.
 
 ## Custody modes
 

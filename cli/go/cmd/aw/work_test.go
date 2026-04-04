@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
@@ -56,31 +57,19 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     selfID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		WorkspaceID:    selfID,
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "work", "ready")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -141,31 +130,19 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-self
-    identity_handle: self
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-self",
+		IdentityHandle: "self",
+		NamespaceSlug:  "demo",
+		WorkspaceID:    "agent-self",
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "work", "active")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

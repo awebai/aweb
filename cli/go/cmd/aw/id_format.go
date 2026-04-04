@@ -18,6 +18,27 @@ func formatIDRegister(v any) string {
 	return sb.String()
 }
 
+func formatIDCreate(v any) string {
+	out := v.(idCreateOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	if strings.TrimSpace(out.Address) != "" {
+		sb.WriteString(fmt.Sprintf("Address:     %s\n", out.Address))
+	}
+	sb.WriteString(fmt.Sprintf("did:aw:      %s\n", out.DIDAW))
+	sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.DIDKey))
+	sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.IdentityPath))
+	sb.WriteString(fmt.Sprintf("Key:         %s\n", out.SigningKeyPath))
+	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryStatus))
+	if strings.TrimSpace(out.RegistryURL) != "" {
+		sb.WriteString(fmt.Sprintf("Registry URL: %s\n", out.RegistryURL))
+	}
+	if strings.TrimSpace(out.RegistryError) != "" {
+		sb.WriteString(fmt.Sprintf("Registry Err: %s\n", out.RegistryError))
+	}
+	return sb.String()
+}
+
 func formatIDShow(v any) string {
 	out := v.(idShowOutput)
 	var sb strings.Builder
@@ -124,9 +145,6 @@ func formatIDRotate(v any) string {
 	}
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
-	}
-	if strings.TrimSpace(out.Warning) != "" {
-		sb.WriteString(fmt.Sprintf("Warning:     %s\n", out.Warning))
 	}
 	return sb.String()
 }

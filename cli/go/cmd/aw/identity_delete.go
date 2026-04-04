@@ -173,29 +173,7 @@ func cleanupDeletedIdentity(sel *awconfig.Selection) (configRemoved, contextRemo
 		keyRemoved = strings.TrimSpace(sel.SigningKey)
 	}
 
-	if strings.TrimSpace(sel.AccountName) != "" {
-		cfgPath, cfgErr := defaultGlobalPath()
-		if cfgErr != nil {
-			return "", "", keyRemoved, cfgErr
-		}
-		if err := awconfig.UpdateGlobalAt(cfgPath, func(cfg *awconfig.GlobalConfig) error {
-			if cfg.Accounts != nil {
-				delete(cfg.Accounts, sel.AccountName)
-			}
-			if strings.TrimSpace(cfg.DefaultAccount) == strings.TrimSpace(sel.AccountName) {
-				cfg.DefaultAccount = firstRemainingAccount(cfg)
-			}
-			if cfg.ClientDefaultAccounts != nil && strings.TrimSpace(cfg.ClientDefaultAccounts["aw"]) == strings.TrimSpace(sel.AccountName) {
-				delete(cfg.ClientDefaultAccounts, "aw")
-			}
-			return nil
-		}); err != nil {
-			return "", "", keyRemoved, err
-		}
-		configRemoved = strings.TrimSpace(sel.AccountName)
-	}
-
-	contextRemoved, err = removeCurrentContextBinding(strings.TrimSpace(sel.AccountName))
+	contextRemoved, err = removeCurrentContextBinding()
 	if err != nil {
 		return configRemoved, "", keyRemoved, err
 	}
@@ -208,11 +186,10 @@ func cleanupDeletedIdentity(sel *awconfig.Selection) (configRemoved, contextRemo
 }
 
 func removeLocalIdentityPins(sel *awconfig.Selection) error {
-	cfgPath, err := defaultGlobalPath()
+	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {
 		return err
 	}
-	pinPath := filepath.Join(filepath.Dir(cfgPath), "known_agents.yaml")
 	ps, err := awid.LoadPinStore(pinPath)
 	if err != nil {
 		return err
@@ -232,13 +209,6 @@ func removeLocalIdentityPins(sel *awconfig.Selection) error {
 	return nil
 }
 
-func firstRemainingAccount(cfg *awconfig.GlobalConfig) string {
-	for _, name := range sortedAccountNames(cfg) {
-		return name
-	}
-	return ""
-}
-
 func removeSigningKeyFiles(signingKeyPath string) error {
 	if err := os.Remove(signingKeyPath); err != nil && !os.IsNotExist(err) {
 		return err
@@ -250,67 +220,57 @@ func removeSigningKeyFiles(signingKeyPath string) error {
 	return nil
 }
 
-func removeCurrentContextBinding(accountName string) (string, error) {
+func removeCurrentContextBinding() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
+
+	removedPaths := make([]string, 0, 2)
+	resultPath := ""
 	ctxPath, err := awconfig.FindWorktreeContextPath(wd)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
-	}
-
-	ctx, err := awconfig.LoadWorktreeContextFrom(ctxPath)
-	if err != nil {
-		return "", err
-	}
-
-	if strings.TrimSpace(accountName) != "" {
-		if strings.TrimSpace(ctx.DefaultAccount) == accountName {
-			ctx.DefaultAccount = ""
-		}
-		for serverName, mappedAccount := range ctx.ServerAccounts {
-			if strings.TrimSpace(mappedAccount) == accountName {
-				delete(ctx.ServerAccounts, serverName)
-			}
-		}
-		for clientName, mappedAccount := range ctx.ClientDefaultAccounts {
-			if strings.TrimSpace(mappedAccount) == accountName {
-				delete(ctx.ClientDefaultAccounts, clientName)
-			}
-		}
-	}
-
-	if strings.TrimSpace(ctx.DefaultAccount) == "" {
-		for _, mappedAccount := range ctx.ServerAccounts {
-			ctx.DefaultAccount = mappedAccount
-			break
-		}
-	}
-	if strings.TrimSpace(ctx.DefaultAccount) == "" {
-		for _, mappedAccount := range ctx.ClientDefaultAccounts {
-			ctx.DefaultAccount = mappedAccount
-			break
-		}
-	}
-
-	if strings.TrimSpace(ctx.DefaultAccount) == "" && len(ctx.ServerAccounts) == 0 && len(ctx.ClientDefaultAccounts) == 0 && strings.TrimSpace(ctx.HumanAccount) == "" {
-		if err := os.Remove(ctxPath); err != nil && !os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
 			return "", err
 		}
-		awDir := filepath.Dir(ctxPath)
-		entries, readErr := os.ReadDir(awDir)
-		if readErr == nil && len(entries) == 0 {
-			_ = os.Remove(awDir)
+	} else {
+		ctx, err := awconfig.LoadWorktreeContextFrom(ctxPath)
+		if err != nil {
+			return "", err
 		}
-		return ctxPath, nil
+		if strings.TrimSpace(ctx.HumanAccount) == "" {
+			if err := os.Remove(ctxPath); err != nil && !os.IsNotExist(err) {
+				return "", err
+			}
+			removedPaths = append(removedPaths, ctxPath)
+		} else {
+			if err := awconfig.SaveWorktreeContextTo(ctxPath, ctx); err != nil {
+				return "", err
+			}
+			resultPath = ctxPath
+		}
 	}
 
-	if err := awconfig.SaveWorktreeContextTo(ctxPath, ctx); err != nil {
-		return "", err
+	workspacePath, wsErr := awconfig.FindWorktreeWorkspacePath(wd)
+	if wsErr == nil {
+		if err := os.Remove(workspacePath); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		removedPaths = append(removedPaths, workspacePath)
+	} else if !os.IsNotExist(wsErr) {
+		return "", wsErr
 	}
-	return ctxPath, nil
+
+	awDir := filepath.Join(wd, ".aw")
+	entries, readErr := os.ReadDir(awDir)
+	if readErr == nil && len(entries) == 0 {
+		_ = os.Remove(awDir)
+	}
+	if resultPath != "" {
+		return resultPath, nil
+	}
+	if len(removedPaths) == 0 {
+		return "", nil
+	}
+	return removedPaths[0], nil
 }

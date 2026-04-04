@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -25,27 +24,12 @@ func TestAwTaskCreateRequiresTitle(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "create")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -88,24 +72,9 @@ func TestAwTaskCreateSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "create",
 		"--title", "Fix the bug",
@@ -113,7 +82,7 @@ default_account: acct
 		"--priority", "P1",
 		"--description", "Detailed description",
 	)
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -177,27 +146,12 @@ func TestAwTaskCreateDefaultPriority(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "create", "--title", "No priority specified")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -232,27 +186,12 @@ func TestAwTaskListSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "list")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -292,27 +231,12 @@ func TestAwTaskListBlockedUsesBlockedEndpoint(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "list", "--status", "blocked", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -347,27 +271,12 @@ func TestAwTaskListFiltersByStatus(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "list", "--status", "in_progress")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	if out, err := run.CombinedOutput(); err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
@@ -410,27 +319,12 @@ func TestAwTaskShowSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "show", "PROJ-001")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -456,27 +350,12 @@ func TestAwTaskShowRequiresRef(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "show")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -516,30 +395,15 @@ func TestAwTaskUpdateSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "update", "PROJ-001",
 		"--status", "in_progress",
 		"--title", "Updated title",
 	)
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -569,27 +433,12 @@ func TestAwTaskUpdateRequiresFields(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "update", "PROJ-001")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -632,28 +481,13 @@ func TestAwTaskCloseSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	// Close multiple tasks at once
 	run := exec.CommandContext(ctx, bin, "task", "close", "PROJ-001", "PROJ-002")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -680,27 +514,12 @@ func TestAwTaskCloseRequiresRef(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "close")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -729,27 +548,12 @@ func TestAwTaskDeleteSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "delete", "PROJ-001")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -797,27 +601,12 @@ func TestAwTaskReopenSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "reopen", "PROJ-001")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -853,27 +642,12 @@ func TestAwTaskDepAddSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "dep", "add", "PROJ-002", "PROJ-001")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -923,27 +697,12 @@ func TestAwTaskStatsSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "stats")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -969,27 +728,12 @@ func TestAwTaskUpdateRejectsBlockedStatus(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "update", "PROJ-001", "--status", "blocked")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1027,27 +771,12 @@ func TestAwTaskCommentAddSuccess(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "task", "comment", "add", "PROJ-001", "This is a comment")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestAwClaimHuman(t *testing.T) {
@@ -47,7 +49,6 @@ func TestAwClaimHuman(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -60,26 +61,11 @@ func TestAwClaimHuman(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	// JSON output.
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -141,7 +127,6 @@ func TestAwClaimHumanNormalizesAPIServerURL(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -154,25 +139,13 @@ func TestAwClaimHumanNormalizesAPIServerURL(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL: server.URL + "/api",
+		APIKey:    "aw_sk_test",
+	})
 
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -199,10 +172,10 @@ func TestAwClaimHumanTextOutput(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/claim-human":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":  "verification_sent",
-				"message": "Check your inbox",
-				"email":   "alice@example.com",
-				"org_id":  "org-1",
+				"status":   "verification_sent",
+				"message":  "Check your inbox",
+				"email":    "alice@example.com",
+				"org_id":   "org-1",
 				"org_slug": "myteam",
 			})
 		case "/v1/agents/heartbeat":
@@ -217,7 +190,6 @@ func TestAwClaimHumanTextOutput(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -230,25 +202,10 @@ func TestAwClaimHumanTextOutput(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -286,7 +243,6 @@ func TestAwClaimHumanAttachedStatus(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -299,25 +255,10 @@ func TestAwClaimHumanAttachedStatus(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -354,7 +295,6 @@ func TestAwClaimHumanAlreadyAttachedStatus(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -367,25 +307,10 @@ func TestAwClaimHumanAlreadyAttachedStatus(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -418,18 +343,8 @@ func TestAwClaimHumanMissingEmail(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
-
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte("default_account: acct\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	run := exec.CommandContext(ctx, bin, "claim-human")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {

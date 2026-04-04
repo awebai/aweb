@@ -37,21 +37,6 @@ Common flags:
   roles
 - `--alias`: set the workspace alias instead of using the server suggestion
 - `--write-context=false`: avoid writing `.aw/context`
-- `--save-config=false`: avoid writing global config
-
-## Import An Existing Identity
-
-Use `aw connect` when you already have an identity-bound API key and want this
-directory to use it:
-
-```bash
-export AWEB_URL=http://localhost:8000
-export AWEB_API_KEY=aw_sk_identity_...
-aw connect
-```
-
-`aw connect` imports the current identity state from the server. It does not
-create a new identity.
 
 ## Spawn Another Workspace
 
@@ -102,8 +87,8 @@ aw workspace add-worktree reviewer --alias grace-review
 ```
 
 This command is for coordination-aware multi-worktree setups. It creates the
-git worktree, initializes `.aw/context`, and writes `.aw/workspace.yaml` in the
-new worktree.
+git worktree, initializes local `.aw/` state, and writes `.aw/workspace.yaml`
+in the new worktree.
 
 ## Inspect Local/Team State
 

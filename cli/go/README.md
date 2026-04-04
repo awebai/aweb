@@ -149,6 +149,23 @@ These persisted config keys are internal state fields. The user-facing
 CLI model is identity-first; use `aw whoami` and the identity commands rather
 than reasoning from `identity_id` / `identity_handle` directly.
 
+### Local workspace binding
+
+Repo/worktree-local binding lives in `.aw/workspace.yaml`:
+
+```yaml
+server_url: http://localhost:8000
+api_key: aw_sk_...
+project_slug: demo
+namespace_slug: demo
+identity_id: <uuid>
+identity_handle: alice
+signing_key: .aw/signing.key
+```
+
+This is the first local source of truth for the current worktree's project and
+identity binding.
+
 ### Local context
 
 Per-directory identity defaults live in `.aw/context`:
@@ -159,7 +176,9 @@ server_accounts:
   localhost:8000: local-alice
 ```
 
-This lets different working directories target different servers and accounts without changing global config.
+This still lets different working directories target different saved accounts
+without changing global config, but `.aw/workspace.yaml` now carries the full
+project binding.
 
 ### Environment variables
 
@@ -176,7 +195,7 @@ All override config file values:
 
 ### Account resolution order
 
-CLI flags (`--server-name`, `--account`) > environment variables > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
+CLI flags (`--server-name`, `--account`) > environment variables > local workspace binding (`.aw/workspace.yaml`) > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
 
 ## CLI Reference
 

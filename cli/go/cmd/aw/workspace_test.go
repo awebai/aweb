@@ -155,13 +155,17 @@ default_account: acct
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     workspaceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "init", "--role", "developer")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -449,11 +453,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -576,11 +576,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -695,11 +691,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -833,11 +825,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -972,11 +960,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1113,11 +1097,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1243,11 +1223,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1387,11 +1363,16 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
@@ -1408,11 +1389,7 @@ default_account: acct-source
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1525,19 +1502,12 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1602,19 +1572,12 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "_invalid")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1653,11 +1616,7 @@ default_account: acct-source
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -1773,20 +1732,21 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "bob")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1893,10 +1853,7 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
@@ -1913,11 +1870,7 @@ default_account: acct-source
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "carol")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1988,10 +1941,7 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
@@ -2008,11 +1958,7 @@ default_account: acct-source
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "dave")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -2161,10 +2107,7 @@ default_account: acct-source
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{
-		DefaultAccount: "acct-source",
-		ServerAccounts: map[string]string{"local": "acct-source"},
-	}); err != nil {
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
@@ -2181,11 +2124,7 @@ default_account: acct-source
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {

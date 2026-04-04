@@ -52,7 +52,7 @@ var mailSendCmd = &cobra.Command{
 			return networkError(err, mailSendTo)
 		}
 		logsDir := defaultLogsDir()
-		appendCommLog(logsDir, sel.AccountName, &CommLogEntry{
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "mail",
@@ -116,7 +116,7 @@ var mailInboxCmd = &cobra.Command{
 			if msg.ReadAt != nil {
 				continue
 			}
-			appendCommLog(logsDir, sel.AccountName, &CommLogEntry{
+			appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 				Timestamp:    msg.CreatedAt,
 				Dir:          "recv",
 				Channel:      "mail",

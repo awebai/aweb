@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -47,8 +46,6 @@ var (
 	initSetupChannel  bool
 	initHumanName     string
 	initAgentType     string
-	initSaveConfig    bool
-	initSetDefault    bool
 	initWriteContext  bool
 	initPrintExports  bool
 	initRole          string
@@ -91,12 +88,9 @@ type initOptions struct {
 	AddressReachability       string
 	HumanName                 string
 	AgentType                 string
-	SaveConfig                bool
-	SetDefault                bool
 	WriteContext              bool
 	AuthToken                 string // Bearer token for the selected flow
 	InviteToken               string
-	AccountName               string
 	WorkspaceRole             string
 	PromptAliasAfterBootstrap bool
 	PromptRoleAfterBootstrap  bool
@@ -111,7 +105,6 @@ type initCollectionInput struct {
 	PromptOut        io.Writer
 	ServerURL        string
 	ServerName       string
-	AccountName      string
 	ProjectSlug      string
 	NamespaceSlug    string
 	Alias            string
@@ -119,8 +112,6 @@ type initCollectionInput struct {
 	Reachability     string
 	HumanName        string
 	AgentType        string
-	SaveConfig       bool
-	SetDefault       bool
 	WriteContext     bool
 	Role             string
 	Permanent        bool
@@ -134,7 +125,6 @@ type initCollectionInput struct {
 
 type initResult struct {
 	Response        *awid.BootstrapIdentityResponse
-	AccountName     string
 	ServerName      string
 	Role            string
 	AttachResult    *contextAttachResult
@@ -148,16 +138,14 @@ func init() {
 	initCmd.Flags().StringVar(&initServerURL, "server-url", "", "Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).")
 	initCmd.Flags().StringVar(&initServerURL, "server", "", "Base URL for the aweb server (alias for --server-url)")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
-	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
+	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code channel MCP server for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
-	initCmd.Flags().BoolVar(&initSaveConfig, "save-config", true, "Write/update ~/.config/aw/config.yaml with the new credentials")
-	initCmd.Flags().BoolVar(&initSetDefault, "set-default", false, "Set this account as default_account in ~/.config/aw/config.yaml")
-	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Write/update .aw/context in the current directory (non-secret pointer)")
+	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
 	initCmd.Flags().BoolVar(&initPermanent, "permanent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
@@ -202,7 +190,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if workspaceMissing {
 			if !initIsTTY() {
-				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or use `aw project create`, `aw spawn accept-invite`, or `aw connect`")
+				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or use `aw project create` or `aw spawn accept-invite`")
 			}
 			result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 				WorkingDir:    wd,
@@ -210,7 +198,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				PromptOut:     os.Stderr,
 				ServerURL:     initServerURL,
 				ServerName:    serverFlag,
-				AccountName:   strings.TrimSpace(accountFlag),
 				ProjectSlug:   firstNonEmpty(resolveProjectSlug(), sanitizeSlug(filepath.Base(wd))),
 				NamespaceSlug: resolveExplicitNamespaceSlug(),
 				Alias: func() string {
@@ -223,11 +210,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				Reachability:       strings.TrimSpace(initReachability),
 				HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 				AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-				SaveConfig:         initSaveConfig,
-				SetDefault:         initSetDefault,
-				WriteContext:       initWriteContext,
 				Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-				Permanent:          initPermanent,
 				AskPostCreateSetup: true,
 			})
 			if err != nil {
@@ -253,14 +236,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if jsonFlag {
 		printJSON(result.Response)
 	} else {
-		printInitSummary(result.Response, result.AccountName, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, opts.WorkingDir, "Initialized workspace")
+		printInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, opts.WorkingDir, "Initialized workspace")
 	}
 	printPostInitActions(result, opts.WorkingDir)
 	return nil
 }
 
 // initNeedsFullInit returns true if the user passed flags that require the
-// full init flow, or if no .aw/context exists yet (first-time init).
+// full init flow, or if no local workspace binding exists yet (first-time init).
 func initNeedsFullInit() bool {
 	if initServerURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPermanent {
 		return true
@@ -269,19 +252,19 @@ func initNeedsFullInit() bool {
 		return true
 	}
 	wd, _ := os.Getwd()
-	_, _, err := awconfig.LoadWorktreeContextFromDir(wd)
-	return err != nil
+	missing, _ := initWorkspaceMissing(wd)
+	return missing
 }
 
 func initWorkspaceMissing(workingDir string) (bool, error) {
-	_, _, err := awconfig.LoadWorktreeContextFromDir(workingDir)
+	_, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
 	if err == nil {
 		return false, nil
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return true, nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("invalid local workspace binding: %w", err)
 	}
-	return false, fmt.Errorf("invalid local workspace context: %w", err)
+	return true, nil
 }
 
 func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
@@ -309,7 +292,6 @@ func collectInitOptionsForFlow(flow initFlow) (initOptions, error) {
 		PromptOut:     os.Stderr,
 		ServerURL:     initServerURL,
 		ServerName:    serverFlag,
-		AccountName:   strings.TrimSpace(accountFlag),
 		ProjectSlug:   resolveProjectSlug(),
 		NamespaceSlug: resolveExplicitNamespaceSlug(),
 		Alias: func() string {
@@ -322,8 +304,6 @@ func collectInitOptionsForFlow(flow initFlow) (initOptions, error) {
 		Reachability: strings.TrimSpace(initReachability),
 		HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 		AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-		SaveConfig:   initSaveConfig,
-		SetDefault:   initSetDefault,
 		WriteContext: initWriteContext,
 		Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
 		Permanent:    initPermanent,
@@ -527,7 +507,7 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		return initOptions{}, fmt.Errorf("working directory is required")
 	}
 
-	baseURL, serverName, _, err := initResolveBaseURLForCollection(input.ServerURL, input.ServerName)
+	baseURL, serverName, err := initResolveBaseURLForCollection(input.ServerURL, input.ServerName)
 	if err != nil {
 		return initOptions{}, err
 	}
@@ -577,6 +557,18 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 	alias := ""
 	aliasExplicit := false
 	name := strings.TrimSpace(input.Name)
+	if input.Permanent {
+		existingHandle, exists, err := detectExistingPersistentIdentityHandle(input.WorkingDir)
+		if err != nil {
+			return initOptions{}, err
+		}
+		if exists {
+			if name != "" && name != existingHandle {
+				return initOptions{}, usageError("--name %q does not match existing .aw/identity.yaml name %q", name, existingHandle)
+			}
+			name = existingHandle
+		}
+	}
 	inviteAliasOptional := flow == flowInvite && !input.Interactive
 	deferAliasPrompt := input.DeferAliasPrompt && flow == flowHeadless && !input.Permanent
 	if !input.Permanent {
@@ -655,12 +647,9 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		AddressReachability:       normalizeAddressReachability(strings.TrimSpace(input.Reachability)),
 		HumanName:                 resolveHumanNameValue(strings.TrimSpace(input.HumanName)),
 		AgentType:                 resolveAgentTypeValue(strings.TrimSpace(input.AgentType)),
-		SaveConfig:                input.SaveConfig,
-		SetDefault:                input.SetDefault,
 		WriteContext:              input.WriteContext,
 		AuthToken:                 authToken,
 		InviteToken:               strings.TrimSpace(input.InviteToken),
-		AccountName:               strings.TrimSpace(input.AccountName),
 		WorkspaceRole:             role,
 		PromptAliasAfterBootstrap: input.DeferAliasPrompt,
 		PromptRoleAfterBootstrap:  input.DeferRolePrompt,
@@ -702,22 +691,25 @@ func executeInit(opts initOptions) (*initResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		return nil, err
-	}
-	did := awid.ComputeDIDKey(pub)
-	pubKeyB64 := base64.RawStdEncoding.EncodeToString(pub)
-
 	lifetime := strings.TrimSpace(opts.Lifetime)
 	if lifetime == "" {
 		lifetime = resolveInitLifetime(initPermanent)
 	}
 
+	identityMaterial, err := prepareInitIdentityMaterial(opts, lifetime)
+	if err != nil {
+		return nil, err
+	}
+	pub := identityMaterial.PublicKey
+	priv := identityMaterial.SigningKey
+	did := identityMaterial.DID
+	pubKeyB64 := base64.RawStdEncoding.EncodeToString(pub)
+
+	bootstrapAlias, bootstrapName := initBootstrapHandleValues(opts, identityMaterial, lifetime)
 	var resp *awid.BootstrapIdentityResponse
 	switch opts.Flow {
 	case flowInvite:
-		resp, err = acceptInviteViaCloud(ctx, opts.BaseURL, opts.InviteToken, opts.IdentityAlias, opts.IdentityName, opts.AddressReachability, opts.HumanName, opts.AgentType, did, pubKeyB64, lifetime)
+		resp, err = acceptInviteViaCloud(ctx, opts.BaseURL, opts.InviteToken, bootstrapAlias, bootstrapName, opts.AddressReachability, opts.HumanName, opts.AgentType, did, pubKeyB64, lifetime)
 
 	case flowProjectKey:
 		var client *aweb.Client
@@ -737,12 +729,12 @@ func executeInit(opts initOptions) (*initResult, error) {
 			Lifetime:            lifetime,
 			AddressReachability: opts.AddressReachability,
 		}
-		if strings.TrimSpace(opts.IdentityAlias) != "" {
-			alias := strings.TrimSpace(opts.IdentityAlias)
+		if strings.TrimSpace(bootstrapAlias) != "" {
+			alias := strings.TrimSpace(bootstrapAlias)
 			req.Alias = &alias
 		}
-		if strings.TrimSpace(opts.IdentityName) != "" {
-			name := strings.TrimSpace(opts.IdentityName)
+		if strings.TrimSpace(bootstrapName) != "" {
+			name := strings.TrimSpace(bootstrapName)
 			req.Name = &name
 		}
 		resp, err = client.InitWorkspace(ctx, req)
@@ -764,12 +756,12 @@ func executeInit(opts initOptions) (*initResult, error) {
 			Lifetime:            lifetime,
 			AddressReachability: opts.AddressReachability,
 		}
-		if strings.TrimSpace(opts.IdentityAlias) != "" {
-			alias := strings.TrimSpace(opts.IdentityAlias)
+		if strings.TrimSpace(bootstrapAlias) != "" {
+			alias := strings.TrimSpace(bootstrapAlias)
 			createReq.Alias = &alias
 		}
-		if strings.TrimSpace(opts.IdentityName) != "" {
-			name := strings.TrimSpace(opts.IdentityName)
+		if strings.TrimSpace(bootstrapName) != "" {
+			name := strings.TrimSpace(bootstrapName)
 			createReq.Name = &name
 		}
 		resp, err = client.CreateProject(ctx, createReq)
@@ -807,32 +799,21 @@ func executeInit(opts initOptions) (*initResult, error) {
 		promptOut = os.Stderr
 	}
 	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
-		fallbackURL := opts.BaseURL
-		if strings.TrimSpace(fallbackURL) == "" {
-			fallbackURL = attachURL
-		}
-		registry, err := newConfiguredRegistryResolver(nil, fallbackURL)
-		if err != nil {
+		if err := validatePersistentBootstrapResponse(identityMaterial, resp); err != nil {
 			return nil, err
 		}
-		registryDomain := strings.TrimSpace(resp.Namespace)
-		if registryDomain == "" {
-			registryDomain = strings.TrimSpace(resp.NamespaceSlug)
+	}
+
+	registryURL := strings.TrimSpace(identityMaterial.RegistryURL)
+	registryStatus := ""
+	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		var syncErr error
+		registryURL, registryStatus, syncErr = syncPersistentIdentityRegistry(ctx, opts, resp, identityMaterial, attachURL)
+		if syncErr != nil {
+			fmt.Fprintf(promptOut, "Warning: could not sync identity at awid.ai: %v\n", syncErr)
 		}
-		registryBaseURL, err := registry.DiscoverRegistry(ctx, registryDomain)
-		if err != nil {
-			fmt.Fprintf(promptOut, "Warning: could not discover identity registry: %v\n", err)
-		} else if err := awid.RegisterSelfCustodialDID(
-			ctx,
-			registryBaseURL,
-			attachURL,
-			strings.TrimSpace(resp.Address),
-			handleFromAddress(resp.Address),
-			did,
-			strings.TrimSpace(resp.StableID),
-			priv,
-		); err != nil {
-			fmt.Fprintf(promptOut, "Warning: could not register identity at awid.ai: %v\n", err)
+		if err := persistPermanentInitIdentity(identityMaterial, resp, registryURL, firstNonEmpty(registryStatus, "pending")); err != nil {
+			return nil, err
 		}
 	}
 	authClient, authClientErr := aweb.NewWithAPIKey(attachURL, resp.APIKey)
@@ -859,62 +840,24 @@ func executeInit(opts initOptions) (*initResult, error) {
 	if handle == "" {
 		return nil, fmt.Errorf("identity bootstrap failed: missing identity handle in response")
 	}
-	accountName := strings.TrimSpace(opts.AccountName)
-	if accountName == "" {
-		accountName = deriveAccountName(opts.ServerName, namespaceSlug, handle)
-	}
-
 	address := resp.Address
 	if address == "" {
 		address = deriveIdentityAddress(namespaceSlug, "", handle)
 	}
-	cfgPath, err := defaultGlobalPath()
-	if err != nil {
-		return nil, err
-	}
-	keysDir := awconfig.KeysDir(cfgPath)
-	signingKeyPath := awid.SigningKeyPath(keysDir, address)
-	if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
-		return nil, err
-	}
-
-	stableID := strings.TrimSpace(resp.StableID)
-	if opts.SaveConfig {
-		if err := awconfig.UpdateGlobalAt(cfgPath, func(cfg *awconfig.GlobalConfig) error {
-			if cfg.Servers == nil {
-				cfg.Servers = map[string]awconfig.Server{}
-			}
-			if cfg.Accounts == nil {
-				cfg.Accounts = map[string]awconfig.Account{}
-			}
-			serverURL := opts.BaseURL
-			if v := strings.TrimSpace(resp.ServerURL); v != "" {
-				serverURL = v
-			}
-			cfg.Servers[opts.ServerName] = awconfig.Server{URL: serverURL}
-			cfg.Accounts[accountName] = awconfig.Account{Account: awid.Account{
-				Server:         opts.ServerName,
-				APIKey:         resp.APIKey,
-				IdentityID:     resp.IdentityID,
-				IdentityHandle: handle,
-				NamespaceSlug:  namespaceSlug,
-				DID:            resp.DID,
-				StableID:       stableID,
-				SigningKey:     signingKeyPath,
-				Custody:        resp.Custody,
-				Lifetime:       resp.Lifetime,
-			}}
-			if strings.TrimSpace(cfg.DefaultAccount) == "" || opts.SetDefault {
-				cfg.DefaultAccount = accountName
-			}
-			return nil
-		}); err != nil {
+	var signingKeyPath string
+	if strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		signingKeyPath = strings.TrimSpace(identityMaterial.SigningKeyPath)
+		if signingKeyPath == "" {
+			signingKeyPath = awconfig.WorktreeSigningKeyPath(opts.WorkingDir)
+		}
+		if err := awid.SaveSigningKey(signingKeyPath, priv); err != nil {
 			return nil, err
 		}
 	}
 
+	stableID := strings.TrimSpace(resp.StableID)
 	if opts.WriteContext {
-		if err := writeOrUpdateContextAt(opts.WorkingDir, opts.ServerName, accountName, true); err != nil {
+		if err := ensureWorktreeContextAt(opts.WorkingDir); err != nil {
 			return nil, err
 		}
 	}
@@ -940,10 +883,28 @@ func executeInit(opts initOptions) (*initResult, error) {
 	if attachResult != nil && attachResult.Workspace != nil && strings.TrimSpace(attachResult.Workspace.Role) != "" {
 		finalRole = strings.TrimSpace(attachResult.Workspace.Role)
 	}
+	if err := persistWorkspaceBinding(workspaceBindingInput{
+		WorkingDir:     opts.WorkingDir,
+		ServerURL:      attachURL,
+		APIKey:         strings.TrimSpace(resp.APIKey),
+		ProjectID:      strings.TrimSpace(resp.ProjectID),
+		ProjectSlug:    strings.TrimSpace(resp.ProjectSlug),
+		NamespaceSlug:  namespaceSlug,
+		IdentityID:     strings.TrimSpace(resp.IdentityID),
+		IdentityHandle: handle,
+		DID:            strings.TrimSpace(resp.DID),
+		StableID:       stableID,
+		SigningKey:     signingKeyPath,
+		Custody:        strings.TrimSpace(resp.Custody),
+		Lifetime:       strings.TrimSpace(resp.Lifetime),
+		Role:           finalRole,
+		AttachResult:   attachResult,
+	}); err != nil {
+		return nil, err
+	}
 
 	return &initResult{
 		Response:        resp,
-		AccountName:     accountName,
 		ServerName:      opts.ServerName,
 		Role:            finalRole,
 		AttachResult:    attachResult,
@@ -1027,6 +988,16 @@ func maybeReplaceInitialCreateProjectIdentity(
 	}
 }
 
+func initBootstrapHandleValues(opts initOptions, identity *initIdentityMaterial, lifetime string) (string, string) {
+	if strings.TrimSpace(lifetime) == awid.LifetimePersistent {
+		if identity != nil && strings.TrimSpace(identity.Handle) != "" {
+			return "", strings.TrimSpace(identity.Handle)
+		}
+		return "", strings.TrimSpace(opts.IdentityName)
+	}
+	return strings.TrimSpace(opts.IdentityAlias), ""
+}
+
 func shouldWarnOnWorkspaceAttach(err error) bool {
 	if err == nil {
 		return false
@@ -1037,7 +1008,7 @@ func shouldWarnOnWorkspaceAttach(err error) bool {
 	return false
 }
 
-func printInitSummary(resp *awid.BootstrapIdentityResponse, accountName, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
+func printInitSummary(resp *awid.BootstrapIdentityResponse, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
 	if resp == nil {
 		return
 	}
@@ -1287,13 +1258,4 @@ func hostFromBaseURL(raw string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(u.Hostname()))
-}
-
-func sortedAccountNames(global *awconfig.GlobalConfig) []string {
-	names := make([]string, 0, len(global.Accounts))
-	for name := range global.Accounts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
