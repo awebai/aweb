@@ -109,4 +109,24 @@ default_account: acct
 	if ctxState.DefaultAccount != "acct" {
 		t.Fatalf("default_account=%q", ctxState.DefaultAccount)
 	}
+
+	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspaceState.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	}
+	if workspaceState.APIKey != "aw_sk_test" {
+		t.Fatalf("api_key=%q", workspaceState.APIKey)
+	}
+	if workspaceState.IdentityID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("identity_id=%q", workspaceState.IdentityID)
+	}
+	if workspaceState.IdentityHandle != "coordinator" {
+		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
+	}
+	if workspaceState.ProjectSlug != "demo" {
+		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
+	}
 }

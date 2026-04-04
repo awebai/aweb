@@ -65,10 +65,10 @@ The bootstrap commands can write three different kinds of local state:
 
 - `~/.config/aw/config.yaml`: saved servers, accounts, and default selection.
 - `.aw/signing.key`: worktree-local private signing key for self-custodial identities.
-- `.aw/context`: non-secret pointer telling this directory which account to
-  use.
-- `.aw/workspace.yaml`: repo/worktree coordination metadata for this specific
-  worktree.
+- `.aw/workspace.yaml`: repo/worktree-local project binding and coordination
+  state for this specific worktree.
+- `.aw/context`: non-secret pointer telling this directory which saved account
+  name to use when needed.
 
 See [configuration.md](configuration.md) for the file details.
 

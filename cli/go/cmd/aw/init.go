@@ -260,7 +260,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 // initNeedsFullInit returns true if the user passed flags that require the
-// full init flow, or if no .aw/context exists yet (first-time init).
+// full init flow, or if no local workspace binding exists yet (first-time init).
 func initNeedsFullInit() bool {
 	if initServerURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPermanent {
 		return true
@@ -269,12 +269,19 @@ func initNeedsFullInit() bool {
 		return true
 	}
 	wd, _ := os.Getwd()
-	_, _, err := awconfig.LoadWorktreeContextFromDir(wd)
-	return err != nil
+	missing, _ := initWorkspaceMissing(wd)
+	return missing
 }
 
 func initWorkspaceMissing(workingDir string) (bool, error) {
-	_, _, err := awconfig.LoadWorktreeContextFromDir(workingDir)
+	_, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err == nil {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("invalid local workspace binding: %w", err)
+	}
+	_, _, err = awconfig.LoadWorktreeContextFromDir(workingDir)
 	if err == nil {
 		return false, nil
 	}
@@ -948,6 +955,25 @@ func executeInit(opts initOptions) (*initResult, error) {
 	finalRole := workspaceRole
 	if attachResult != nil && attachResult.Workspace != nil && strings.TrimSpace(attachResult.Workspace.Role) != "" {
 		finalRole = strings.TrimSpace(attachResult.Workspace.Role)
+	}
+	if err := persistWorkspaceBinding(workspaceBindingInput{
+		WorkingDir:     opts.WorkingDir,
+		ServerURL:      attachURL,
+		APIKey:         strings.TrimSpace(resp.APIKey),
+		ProjectID:      strings.TrimSpace(resp.ProjectID),
+		ProjectSlug:    strings.TrimSpace(resp.ProjectSlug),
+		NamespaceSlug:  namespaceSlug,
+		IdentityID:     strings.TrimSpace(resp.IdentityID),
+		IdentityHandle: handle,
+		DID:            strings.TrimSpace(resp.DID),
+		StableID:       stableID,
+		SigningKey:     signingKeyPath,
+		Custody:        strings.TrimSpace(resp.Custody),
+		Lifetime:       strings.TrimSpace(resp.Lifetime),
+		Role:           finalRole,
+		AttachResult:   attachResult,
+	}); err != nil {
+		return nil, err
 	}
 
 	return &initResult{

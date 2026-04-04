@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -51,12 +52,34 @@ func runUse(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, _, err := resolveClientSelectionForDir(workingDir)
+	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
 	if err != nil {
 		return err
 	}
+	client, err := aweb.NewWithAPIKey(baseURL, sel.APIKey)
+	if err != nil {
+		return err
+	}
+	configureBaseURLFallback(client, sel, baseURL)
 	attachResult, err := autoAttachContext(workingDir, client, "")
 	if err != nil {
+		return err
+	}
+	if err := persistWorkspaceBinding(workspaceBindingInput{
+		WorkingDir:     workingDir,
+		ServerURL:      baseURL,
+		APIKey:         sel.APIKey,
+		ProjectSlug:    sel.DefaultProject,
+		NamespaceSlug:  sel.NamespaceSlug,
+		IdentityID:     sel.IdentityID,
+		IdentityHandle: sel.IdentityHandle,
+		DID:            sel.DID,
+		StableID:       sel.StableID,
+		SigningKey:     sel.SigningKey,
+		Custody:        sel.Custody,
+		Lifetime:       sel.Lifetime,
+		AttachResult:   attachResult,
+	}); err != nil {
 		return err
 	}
 

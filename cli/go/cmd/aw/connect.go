@@ -269,6 +269,29 @@ func executeConnect(opts connectOptions) (*connectResult, error) {
 	if err := writeOrUpdateContextAt(workingDir, serverName, accountName, opts.SetDefault); err != nil {
 		return nil, err
 	}
+	attachResult, err := autoAttachContext(workingDir, client, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := persistWorkspaceBinding(workspaceBindingInput{
+		WorkingDir:     workingDir,
+		ServerURL:      baseURL,
+		APIKey:         apiKey,
+		ProjectID:      strings.TrimSpace(resp.ProjectID),
+		ProjectSlug:    projectSlug,
+		NamespaceSlug:  namespaceSlug,
+		IdentityID:     identityID,
+		IdentityHandle: handle,
+		DID:            identityDID,
+		StableID:       stableID,
+		SigningKey:     signingKeyPath,
+		Custody:        custody,
+		Lifetime:       lifetime,
+		HumanName:      strings.TrimSpace(resp.HumanName),
+		AttachResult:   attachResult,
+	}); err != nil {
+		return nil, err
+	}
 
 	identityLabel := handle
 	if address != "" {

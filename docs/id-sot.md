@@ -722,7 +722,8 @@ Notable help/usage details:
 - `aw connect` imports current server identity state; it does not create or mutate an identity
 - `aw init` supports `--permanent --name <name>` for explicit durable self-custodial creation
 - `aw spawn accept-invite` remains an explicit delegated bootstrap command; unlike `aw run`, it should stay non-prompting
-- `aw reset` is local-only; it removes `.aw/context` without mutating server-side identity state
+- `aw reset` is local-only; it removes `.aw/workspace.yaml` and `.aw/context`
+  without mutating server-side identity state
 
 ### Identity
 

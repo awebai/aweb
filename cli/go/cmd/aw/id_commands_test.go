@@ -871,7 +871,7 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	if cfg.Accounts["acct"].DID != newDID {
 		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, newDID)
 	}
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+	activeKeyPath := awconfig.WorktreeSigningKeyPath(tmp)
 	gotPriv, err := awid.LoadSigningKey(activeKeyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -885,7 +885,6 @@ func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T)
 	t.Parallel()
 
 	keysDir := t.TempDir()
-	address := "myteam.aweb.ai/alice"
 	newPub, newPriv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -896,7 +895,7 @@ func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T)
 		t.Fatal(err)
 	}
 
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+	activeKeyPath := filepath.Join(keysDir, "active.signing.key")
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +903,7 @@ func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T)
 		t.Fatalf("expected missing active public key before recovery, got %v", err)
 	}
 
-	gotKeyPath, err := promotePendingRotationKeypair(keysDir, address, pendingKeyPath, newDID)
+	gotKeyPath, err := promotePendingRotationKeypair(activeKeyPath, pendingKeyPath, newDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -928,11 +927,154 @@ func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T)
 	}
 }
 
+func TestAwIDRotateKeySelfCustodyUsesWorktreeSigningKey(t *testing.T) {
+	t.Parallel()
+
+	var newDID string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/me/rotate":
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			didValue, _ := req["new_did"].(string)
+			if strings.TrimSpace(didValue) == "" {
+				t.Fatal("new_did missing")
+			}
+			newDID = didValue
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"old_did": "did:key:z6MkOldCustodial",
+				"new_did": didValue,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+
+	cfg := strings.TrimSpace(`
+servers:
+  local:
+    url: `+server.URL+`
+accounts:
+  acct:
+    server: local
+    api_key: aw_sk_test
+    identity_id: agent-1
+    identity_handle: alice
+    namespace_slug: myteam.aweb.ai
+    custody: custodial
+    lifetime: persistent
+default_account: acct
+`) + "\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(awDir, "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		ProjectSlug:    "myteam",
+		NamespaceSlug:  "myteam.aweb.ai",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		Custody:        "custodial",
+		Lifetime:       "persistent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       "did:key:z6MkOldCustodial",
+		StableID:  "did:aw:test-custodial",
+		Custody:   "custodial",
+		Lifetime:  "persistent",
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--self-custody", "--json")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rotate-key --self-custody failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(newDID) == "" {
+		t.Fatal("server did not receive new did:key")
+	}
+
+	config := loadConfigForTest(t, cfgPath)
+	acct := config.Accounts["acct"]
+	signingKeyPath := filepath.Join(tmp, ".aw", "signing.key")
+	if resolvedSigningKeyPath, err := filepath.EvalSymlinks(signingKeyPath); err == nil {
+		signingKeyPath = resolvedSigningKeyPath
+	}
+	if acct.SigningKey != signingKeyPath {
+		t.Fatalf("signing_key=%q want %q", acct.SigningKey, signingKeyPath)
+	}
+	if acct.DID != newDID {
+		t.Fatalf("did=%q want %q", acct.DID, newDID)
+	}
+	if acct.Custody != awid.CustodySelf {
+		t.Fatalf("custody=%q want %q", acct.Custody, awid.CustodySelf)
+	}
+	if _, err := os.Stat(signingKeyPath); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "keys")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected global keys dir, err=%v", err)
+	}
+
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(awDir, "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.SigningKey != signingKeyPath {
+		t.Fatalf("workspace signing_key=%q want %q", workspace.SigningKey, signingKeyPath)
+	}
+	if workspace.DID != newDID {
+		t.Fatalf("workspace did=%q want %q", workspace.DID, newDID)
+	}
+	if workspace.Custody != awid.CustodySelf {
+		t.Fatalf("workspace custody=%q want %q", workspace.Custody, awid.CustodySelf)
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(awDir, "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != newDID {
+		t.Fatalf("identity did=%q want %q", identity.DID, newDID)
+	}
+	if identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity custody=%q want %q", identity.Custody, awid.CustodySelf)
+	}
+}
+
 func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
 	t.Helper()
-	keysDir := awconfig.KeysDir(cfgPath)
+	_ = address
 	pub := signingKey.Public().(ed25519.PublicKey)
-	if err := awid.SaveKeypair(keysDir, address, pub, signingKey); err != nil {
+	workingDir := filepath.Dir(cfgPath)
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if err := awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, signingKey); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &awconfig.GlobalConfig{
@@ -948,7 +1090,7 @@ func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespace
 					NamespaceSlug:  namespaceSlug,
 					DID:            did,
 					StableID:       stableID,
-					SigningKey:     awid.SigningKeyPath(keysDir, address),
+					SigningKey:     signingKeyPath,
 					Custody:        "self",
 					Lifetime:       "persistent",
 				},

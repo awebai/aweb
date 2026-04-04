@@ -60,6 +60,18 @@ func resolveAccount(global *GlobalConfig, opts ResolveOptions) (*Selection, erro
 		global.Accounts = map[string]Account{}
 	}
 
+	var workspace *WorktreeWorkspace
+	if strings.TrimSpace(opts.WorkingDir) != "" {
+		loaded, _, err := LoadWorktreeWorkspaceFromDir(opts.WorkingDir)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("invalid worktree workspace: %w", err)
+			}
+		} else {
+			workspace = loaded
+		}
+	}
+
 	ctx := opts.Context
 	if ctx == nil && strings.TrimSpace(opts.ContextPath) != "" {
 		loaded, err := LoadWorktreeContextFrom(opts.ContextPath)
@@ -115,6 +127,24 @@ func resolveAccount(global *GlobalConfig, opts ResolveOptions) (*Selection, erro
 		if err := ValidateBaseURL(baseURL); err != nil {
 			return nil, fmt.Errorf("invalid AWEB_URL: %w", err)
 		}
+	}
+
+	if accountName == "" && workspace != nil && workspace.HasBinding() {
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(workspace.ServerURL)
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(workspace.APIKey)
+		}
+		if serverName == "" {
+			if derived, err := DeriveServerNameFromURL(strings.TrimSpace(workspace.ServerURL)); err == nil {
+				serverName = derived
+			}
+		}
+		if baseURL == "" || apiKey == "" {
+			return nil, errors.New("worktree workspace binding is missing server_url or api_key")
+		}
+		return finalizeWorkspaceSelection(serverName, baseURL, apiKey, workspace), nil
 	}
 
 	// If explicit account is given, it wins; server is implied.
@@ -264,6 +294,49 @@ func finalizeSelection(accountName, serverName, baseURL, apiKey string, acct Acc
 		SigningKey:     strings.TrimSpace(acct.SigningKey),
 		Custody:        strings.TrimSpace(acct.Custody),
 		Lifetime:       strings.TrimSpace(acct.Lifetime),
+	}
+}
+
+func finalizeWorkspaceSelection(serverName, baseURL, apiKey string, ws *WorktreeWorkspace) *Selection {
+	namespaceSlug := ""
+	defaultProject := ""
+	identityHandle := ""
+	identityID := ""
+	did := ""
+	stableID := ""
+	signingKey := ""
+	custody := ""
+	lifetime := ""
+	if ws != nil {
+		namespaceSlug = strings.TrimSpace(ws.NamespaceSlug)
+		defaultProject = strings.TrimSpace(ws.ProjectSlug)
+		identityHandle = strings.TrimSpace(ws.IdentityHandle)
+		identityID = strings.TrimSpace(ws.IdentityID)
+		did = strings.TrimSpace(ws.DID)
+		stableID = strings.TrimSpace(ws.StableID)
+		signingKey = strings.TrimSpace(ws.SigningKey)
+		custody = strings.TrimSpace(ws.Custody)
+		lifetime = strings.TrimSpace(ws.Lifetime)
+		if namespaceSlug == "" {
+			namespaceSlug = defaultProject
+		}
+		if identityHandle == "" {
+			identityHandle = strings.TrimSpace(ws.Alias)
+		}
+	}
+	return &Selection{
+		ServerName:     serverName,
+		BaseURL:        baseURL,
+		APIKey:         apiKey,
+		DefaultProject: defaultProject,
+		IdentityID:     identityID,
+		IdentityHandle: identityHandle,
+		NamespaceSlug:  namespaceSlug,
+		DID:            did,
+		StableID:       stableID,
+		SigningKey:     signingKey,
+		Custody:        custody,
+		Lifetime:       lifetime,
 	}
 }
 

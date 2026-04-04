@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"syscall"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -492,7 +492,15 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 }
 
 func resolveRunWorkspaceStateForDir(workingDir string) (runWorkspaceState, error) {
-	_, _, err := awconfig.LoadWorktreeContextFromDir(workingDir)
+	_, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err == nil {
+		return runWorkspaceStateInitialized, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return runWorkspaceStateInitialized, fmt.Errorf("invalid local workspace binding: %w", err)
+	}
+
+	_, _, err = awconfig.LoadWorktreeContextFromDir(workingDir)
 	if err == nil {
 		return runWorkspaceStateInitialized, nil
 	}

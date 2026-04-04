@@ -94,6 +94,9 @@ client_default_accounts:
 `)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	run := exec.CommandContext(ctx, bin, "id", "delete", "--confirm")
 	run.Env = append(os.Environ(),
@@ -128,6 +131,9 @@ client_default_accounts:
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); !os.IsNotExist(err) {
 		t.Fatalf("expected .aw/context removal, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected .aw/workspace.yaml removal, err=%v", err)
 	}
 	pins, err := awid.LoadPinStore(filepath.Join(tmp, "known_agents.yaml"))
 	if err != nil {

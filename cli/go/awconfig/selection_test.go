@@ -2,6 +2,7 @@ package awconfig
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/awebai/aw/awid"
@@ -302,5 +303,71 @@ func TestResolveAccountByAgentAliasAmbiguous(t *testing.T) {
 	_, err := Resolve(global, ResolveOptions{AccountName: "alice"})
 	if err == nil {
 		t.Fatalf("expected error for ambiguous alias")
+	}
+}
+
+func TestResolvePrefersWorkspaceBindingOverContextDefaults(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(awDir, "workspace.yaml"), &WorktreeWorkspace{
+		ServerURL:      "https://app.aweb.ai",
+		APIKey:         "aw_sk_workspace",
+		IdentityID:     "ws-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		DID:            "did:key:z6MkWorkspace",
+		StableID:       "did:aw:workspace",
+		SigningKey:     ".aw/signing.key",
+		Custody:        "self",
+		Lifetime:       "persistent",
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	if err := SaveWorktreeContextTo(filepath.Join(awDir, "context"), &WorktreeContext{
+		DefaultAccount: "acct-global",
+		ServerAccounts: map[string]string{"prod": "acct-global"},
+	}); err != nil {
+		t.Fatalf("save context: %v", err)
+	}
+
+	global := &GlobalConfig{
+		Servers: map[string]Server{
+			"prod": {URL: "https://staging.aweb.ai"},
+		},
+		Accounts: map[string]Account{
+			"acct-global": {Account: awid.Account{
+				Server:         "prod",
+				APIKey:         "aw_sk_global",
+				IdentityID:     "global-1",
+				IdentityHandle: "bob",
+			}},
+		},
+		DefaultAccount: "acct-global",
+	}
+
+	sel, err := Resolve(global, ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if sel.AccountName != "" {
+		t.Fatalf("account=%q", sel.AccountName)
+	}
+	if sel.BaseURL != "https://app.aweb.ai" {
+		t.Fatalf("baseURL=%q", sel.BaseURL)
+	}
+	if sel.APIKey != "aw_sk_workspace" {
+		t.Fatalf("apiKey=%q", sel.APIKey)
+	}
+	if sel.IdentityHandle != "alice" {
+		t.Fatalf("identity_handle=%q", sel.IdentityHandle)
+	}
+	if sel.StableID != "did:aw:workspace" {
+		t.Fatalf("stable_id=%q", sel.StableID)
 	}
 }

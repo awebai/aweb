@@ -491,6 +491,23 @@ func registerWorkspaceForRoot(root string, client *aweb.Client, roleOverride str
 		WorkspacePath:   root,
 		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
 	}
+	if existingState != nil {
+		state = existingState
+		state.WorkspaceID = resp.WorkspaceID
+		state.ProjectID = resp.ProjectID
+		state.ProjectSlug = resp.ProjectSlug
+		state.RepoID = resp.RepoID
+		state.CanonicalOrigin = resp.CanonicalOrigin
+		state.Alias = resp.Alias
+		if strings.TrimSpace(resp.HumanName) != "" {
+			state.HumanName = resp.HumanName
+		}
+		state.RoleName = role
+		state.Role = role
+		state.Hostname = hostname
+		state.WorkspacePath = root
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(statePath, state); err != nil {
 		return nil, fmt.Errorf("write %s: %w", statePath, err)
 	}
@@ -526,8 +543,43 @@ func registerLocalAttachmentForDir(workingDir string, client *aweb.Client) (*con
 		return nil, err
 	}
 
-	if err := clearLocalWorkspaceState(workingDir); err != nil {
-		return nil, err
+	statePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	state, stateErr := awconfig.LoadWorktreeWorkspaceFrom(statePath)
+	switch {
+	case stateErr == nil:
+		state.WorkspaceID = strings.TrimSpace(resp.WorkspaceID)
+		if v := strings.TrimSpace(resp.ProjectID); v != "" {
+			state.ProjectID = v
+		}
+		if v := strings.TrimSpace(resp.ProjectSlug); v != "" {
+			state.ProjectSlug = v
+			if strings.TrimSpace(state.NamespaceSlug) == "" {
+				state.NamespaceSlug = v
+			}
+		}
+		if v := strings.TrimSpace(resp.Alias); v != "" {
+			state.Alias = v
+			if strings.TrimSpace(state.IdentityHandle) == "" {
+				state.IdentityHandle = v
+			}
+		}
+		if v := strings.TrimSpace(resp.HumanName); v != "" {
+			state.HumanName = v
+		}
+		state.RepoID = ""
+		state.CanonicalOrigin = ""
+		state.Hostname = hostname
+		state.WorkspacePath = workspacePath
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := awconfig.SaveWorktreeWorkspaceTo(statePath, state); err != nil {
+			return nil, fmt.Errorf("write %s: %w", statePath, err)
+		}
+	case os.IsNotExist(stateErr):
+		// Commands that own identity/project binding persistence will write
+		// workspace.yaml after attach. Do not create a coordination-only file
+		// here for plain local directories.
+	case stateErr != nil:
+		return nil, fmt.Errorf("read %s: %w", statePath, stateErr)
 	}
 
 	return &contextAttachResult{
@@ -543,14 +595,6 @@ func registerLocalAttachmentForDir(workingDir string, client *aweb.Client) (*con
 			Created:       resp.Created,
 		},
 	}, nil
-}
-
-func clearLocalWorkspaceState(workingDir string) error {
-	statePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove %s: %w", statePath, err)
-	}
-	return nil
 }
 
 func resolveWorkspaceRepoOrigin(root, explicit string) (string, error) {

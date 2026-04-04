@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -110,7 +112,11 @@ func continuePendingIDRotation(
 	if current == nil || pending == nil {
 		return fmt.Errorf("missing rotation context")
 	}
-	newPriv, promoted, err := loadRotationSigningKey(keysDir, current.Address, pending)
+	activeKeyPath, err := resolveLocalSigningKeyPath(current.Selection)
+	if err != nil {
+		return err
+	}
+	newPriv, promoted, err := loadRotationSigningKey(activeKeyPath, pending)
 	if err != nil {
 		return err
 	}
@@ -147,7 +153,10 @@ func finalizeIDRotation(
 	pending *pendingRotationState,
 	promoted bool,
 ) error {
-	keyPath := awid.SigningKeyPath(keysDir, current.Address)
+	keyPath, err := resolveLocalSigningKeyPath(current.Selection)
+	if err != nil {
+		return err
+	}
 	if !promoted {
 		oldPriv := current.SigningKey
 		oldDID := awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey))
@@ -158,8 +167,7 @@ func finalizeIDRotation(
 		if err := awid.ArchiveKey(keysDir, oldDID, oldPub, oldPriv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to archive old key: %v\n", err)
 		}
-		var err error
-		keyPath, err = promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey, pending.NewDID)
+		keyPath, err = promotePendingRotationKeypair(keyPath, pending.PendingKey, pending.NewDID)
 		if err != nil {
 			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 		}
@@ -211,19 +219,16 @@ func runCustodialGraduation(sel *awconfig.Selection) error {
 		return err
 	}
 
-	// Save new keypair.
-	configPath, err := defaultGlobalPath()
+	// Save the new keypair at the worktree-local signing-key path.
+	keyPath, err := resolveLocalSigningKeyPath(sel)
 	if err != nil {
 		return err
 	}
-	keysDir := awconfig.KeysDir(configPath)
-	address := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
-	if err := awid.SaveKeypair(keysDir, address, newPub, newPriv); err != nil {
+	if err := awid.SaveKeypairAt(keyPath, awid.PublicKeyPath(keyPath), newPub, newPriv); err != nil {
 		return fmt.Errorf("save new keypair: %w", err)
 	}
 
 	// Update config.
-	keyPath := awid.SigningKeyPath(keysDir, address)
 	if err := updateAccountIdentity(sel.AccountName, newDID, awid.CustodySelf, keyPath); err != nil {
 		return err
 	}
@@ -279,18 +284,90 @@ func runDidLog(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func resolveLocalSigningKeyPath(sel *awconfig.Selection) (string, error) {
+	if sel != nil && strings.TrimSpace(sel.SigningKey) != "" {
+		return strings.TrimSpace(sel.SigningKey), nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return awconfig.WorktreeSigningKeyPath(wd), nil
+}
+
+func resolveCurrentAccountName(accountName string) (string, error) {
+	if strings.TrimSpace(accountName) != "" {
+		return strings.TrimSpace(accountName), nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	cfg, err := awconfig.LoadGlobal()
+	if err != nil {
+		return "", err
+	}
+	var ctx *awconfig.WorktreeContext
+	if loaded, _, loadErr := awconfig.LoadWorktreeContextFromDir(wd); loadErr == nil {
+		ctx = loaded
+	} else if !os.IsNotExist(loadErr) {
+		return "", loadErr
+	}
+	sel, err := awconfig.Resolve(cfg, awconfig.ResolveOptions{
+		ClientName: "aw",
+		Context:    ctx,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(sel.AccountName), nil
+}
+
 // updateAccountIdentity updates DID, custody, and signing key path in the global config.
 func updateAccountIdentity(accountName, newDID, custody, signingKeyPath string) error {
+	resolvedAccountName, err := resolveCurrentAccountName(accountName)
+	if err != nil {
+		return err
+	}
+
 	configPath, err := defaultGlobalPath()
 	if err != nil {
 		return err
 	}
-	return awconfig.UpdateGlobalAt(configPath, func(cfg *awconfig.GlobalConfig) error {
-		acct := cfg.Accounts[accountName]
+	if err := awconfig.UpdateGlobalAt(configPath, func(cfg *awconfig.GlobalConfig) error {
+		acct := cfg.Accounts[resolvedAccountName]
 		acct.DID = newDID
 		acct.Custody = custody
 		acct.SigningKey = signingKeyPath
-		cfg.Accounts[accountName] = acct
+		cfg.Accounts[resolvedAccountName] = acct
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if wd, wdErr := os.Getwd(); wdErr == nil {
+		workspacePath := filepath.Join(wd, awconfig.DefaultWorktreeWorkspaceRelativePath())
+		if workspace, loadErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); loadErr == nil {
+			workspace.DID = newDID
+			workspace.Custody = custody
+			workspace.SigningKey = signingKeyPath
+			if saveErr := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); saveErr != nil {
+				return saveErr
+			}
+		} else if !os.IsNotExist(loadErr) {
+			return loadErr
+		}
+
+		identityPath := filepath.Join(wd, awconfig.DefaultWorktreeIdentityRelativePath())
+		if identity, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath); loadErr == nil {
+			identity.DID = newDID
+			identity.Custody = custody
+			if saveErr := awconfig.SaveWorktreeIdentityTo(identityPath, identity); saveErr != nil {
+				return saveErr
+			}
+		} else if !os.IsNotExist(loadErr) {
+			return loadErr
+		}
+	}
+	return nil
 }

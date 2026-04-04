@@ -255,62 +255,82 @@ func removeCurrentContextBinding(accountName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	removedPaths := make([]string, 0, 2)
+	resultPath := ""
 	ctxPath, err := awconfig.FindWorktreeContextPath(wd)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
-	}
-
-	ctx, err := awconfig.LoadWorktreeContextFrom(ctxPath)
-	if err != nil {
-		return "", err
-	}
-
-	if strings.TrimSpace(accountName) != "" {
-		if strings.TrimSpace(ctx.DefaultAccount) == accountName {
-			ctx.DefaultAccount = ""
-		}
-		for serverName, mappedAccount := range ctx.ServerAccounts {
-			if strings.TrimSpace(mappedAccount) == accountName {
-				delete(ctx.ServerAccounts, serverName)
-			}
-		}
-		for clientName, mappedAccount := range ctx.ClientDefaultAccounts {
-			if strings.TrimSpace(mappedAccount) == accountName {
-				delete(ctx.ClientDefaultAccounts, clientName)
-			}
-		}
-	}
-
-	if strings.TrimSpace(ctx.DefaultAccount) == "" {
-		for _, mappedAccount := range ctx.ServerAccounts {
-			ctx.DefaultAccount = mappedAccount
-			break
-		}
-	}
-	if strings.TrimSpace(ctx.DefaultAccount) == "" {
-		for _, mappedAccount := range ctx.ClientDefaultAccounts {
-			ctx.DefaultAccount = mappedAccount
-			break
-		}
-	}
-
-	if strings.TrimSpace(ctx.DefaultAccount) == "" && len(ctx.ServerAccounts) == 0 && len(ctx.ClientDefaultAccounts) == 0 && strings.TrimSpace(ctx.HumanAccount) == "" {
-		if err := os.Remove(ctxPath); err != nil && !os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
 			return "", err
 		}
-		awDir := filepath.Dir(ctxPath)
-		entries, readErr := os.ReadDir(awDir)
-		if readErr == nil && len(entries) == 0 {
-			_ = os.Remove(awDir)
+	} else {
+		ctx, err := awconfig.LoadWorktreeContextFrom(ctxPath)
+		if err != nil {
+			return "", err
 		}
-		return ctxPath, nil
+
+		if strings.TrimSpace(accountName) != "" {
+			if strings.TrimSpace(ctx.DefaultAccount) == accountName {
+				ctx.DefaultAccount = ""
+			}
+			for serverName, mappedAccount := range ctx.ServerAccounts {
+				if strings.TrimSpace(mappedAccount) == accountName {
+					delete(ctx.ServerAccounts, serverName)
+				}
+			}
+			for clientName, mappedAccount := range ctx.ClientDefaultAccounts {
+				if strings.TrimSpace(mappedAccount) == accountName {
+					delete(ctx.ClientDefaultAccounts, clientName)
+				}
+			}
+		}
+
+		if strings.TrimSpace(ctx.DefaultAccount) == "" {
+			for _, mappedAccount := range ctx.ServerAccounts {
+				ctx.DefaultAccount = mappedAccount
+				break
+			}
+		}
+		if strings.TrimSpace(ctx.DefaultAccount) == "" {
+			for _, mappedAccount := range ctx.ClientDefaultAccounts {
+				ctx.DefaultAccount = mappedAccount
+				break
+			}
+		}
+
+		if strings.TrimSpace(ctx.DefaultAccount) == "" && len(ctx.ServerAccounts) == 0 && len(ctx.ClientDefaultAccounts) == 0 && strings.TrimSpace(ctx.HumanAccount) == "" {
+			if err := os.Remove(ctxPath); err != nil && !os.IsNotExist(err) {
+				return "", err
+			}
+			removedPaths = append(removedPaths, ctxPath)
+		} else {
+			if err := awconfig.SaveWorktreeContextTo(ctxPath, ctx); err != nil {
+				return "", err
+			}
+			resultPath = ctxPath
+		}
 	}
 
-	if err := awconfig.SaveWorktreeContextTo(ctxPath, ctx); err != nil {
-		return "", err
+	workspacePath, wsErr := awconfig.FindWorktreeWorkspacePath(wd)
+	if wsErr == nil {
+		if err := os.Remove(workspacePath); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		removedPaths = append(removedPaths, workspacePath)
+	} else if !os.IsNotExist(wsErr) {
+		return "", wsErr
 	}
-	return ctxPath, nil
+
+	awDir := filepath.Join(wd, ".aw")
+	entries, readErr := os.ReadDir(awDir)
+	if readErr == nil && len(entries) == 0 {
+		_ = os.Remove(awDir)
+	}
+	if resultPath != "" {
+		return resultPath, nil
+	}
+	if len(removedPaths) == 0 {
+		return "", nil
+	}
+	return removedPaths[0], nil
 }

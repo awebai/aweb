@@ -94,8 +94,7 @@ func cleanupPendingRotationKeypair(keyPath string) error {
 	return nil
 }
 
-func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath string, expectedDID string) (string, error) {
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, expectedDID string) (string, error) {
 	if matches, err := activeKeyMatchesDID(activeKeyPath, expectedDID); err == nil && matches {
 		if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err != nil {
 			return "", err
@@ -133,7 +132,7 @@ func ensurePublicKeyMatchesPrivate(signingKeyPath string) error {
 	return awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, priv)
 }
 
-func loadRotationSigningKey(keysDir, address string, pending *pendingRotationState) (ed25519.PrivateKey, bool, error) {
+func loadRotationSigningKey(activeKeyPath string, pending *pendingRotationState) (ed25519.PrivateKey, bool, error) {
 	if pending == nil {
 		return nil, false, fmt.Errorf("missing pending rotation state")
 	}
@@ -144,7 +143,6 @@ func loadRotationSigningKey(keysDir, address string, pending *pendingRotationSta
 	if !os.IsNotExist(err) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
 	}
-	activeKeyPath := awid.SigningKeyPath(keysDir, address)
 	activePriv, activeErr := awid.LoadSigningKey(activeKeyPath)
 	if activeErr != nil {
 		return nil, false, fmt.Errorf("load active signing key: %w", activeErr)

@@ -193,13 +193,18 @@ Trust continuity attaches to permanent addresses, not ephemeral aliases.
 
 ### Workspace context
 
-`.aw/context` stores the local directory's account binding.
+`.aw/workspace.yaml` stores the local workspace binding and coordination state.
 
-- `aw init`, `aw project create`, `aw spawn accept-invite`, and `aw connect`
-  update it
-- `aw reset` removes it
+- `aw init`, `aw project create`, `aw spawn accept-invite`, `aw connect`, and
+  `aw use` update it
+- `aw reset` removes it together with `.aw/context`
 - `aw id delete --confirm` removes or updates it as part of local
   cleanup
+
+`.aw/context` still stores the local directory's selected saved account name.
+- the same bootstrap commands update it by default
+- `aw reset` removes it
+- `aw id delete --confirm` removes or updates it as part of local cleanup
 
 ### Local signing keys
 

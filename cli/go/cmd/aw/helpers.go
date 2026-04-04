@@ -975,7 +975,10 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 	if err != nil || ws == nil {
 		return nil
 	}
-	wsAlias := strings.TrimSpace(ws.Alias)
+	wsAlias := strings.TrimSpace(ws.IdentityHandle)
+	if wsAlias == "" {
+		wsAlias = strings.TrimSpace(ws.Alias)
+	}
 	selAlias := strings.TrimSpace(sel.IdentityHandle)
 	if wsAlias == "" || selAlias == "" {
 		return nil

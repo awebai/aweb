@@ -508,6 +508,19 @@ func TestAwProjectCreateWithoutRolesAllowsLocalAttach(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); err != nil {
 		t.Fatalf("expected .aw/context: %v", err)
 	}
+	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspaceState.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	}
+	if workspaceState.ProjectSlug != "demo" {
+		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
+	}
+	if workspaceState.IdentityHandle != "alice" {
+		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
+	}
 }
 
 func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {

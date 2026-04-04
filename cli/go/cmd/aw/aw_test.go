@@ -2923,8 +2923,21 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); err != nil {
 		t.Fatalf("expected .aw/context: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("workspace.yaml should not be kept for local attach, err=%v", err)
+	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspaceState.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	}
+	if workspaceState.APIKey != "aw_sk_new" {
+		t.Fatalf("api_key=%q", workspaceState.APIKey)
+	}
+	if workspaceState.ProjectSlug != "demo" {
+		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
+	}
+	if workspaceState.IdentityHandle != "alice" {
+		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
 	}
 }
 
@@ -2933,6 +2946,11 @@ func TestAwConnectInRepoWritesContextInRepo(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_roles_id": "pol-1",
+				"roles":            map[string]any{},
+			})
 		case "/v1/auth/introspect":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-123",
@@ -2952,6 +2970,17 @@ func TestAwConnectInRepoWritesContextInRepo(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/register":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     "ws-123",
+				"project_id":       "proj-123",
+				"project_slug":     "myco",
+				"repo_id":          "repo-123",
+				"canonical_origin": "github.com/acme/repo",
+				"alias":            "alice",
+				"human_name":       "Alice",
+				"created":          true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2990,6 +3019,22 @@ func TestAwConnectInRepoWritesContextInRepo(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".aw", "context")); err != nil {
 		t.Fatalf("expected .aw/context in repo: %v", err)
+	}
+	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(repo, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspaceState.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	}
+	if workspaceState.APIKey != "aw_sk_test" {
+		t.Fatalf("api_key=%q", workspaceState.APIKey)
+	}
+	if workspaceState.ProjectSlug != "myco" {
+		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
+	}
+	if workspaceState.IdentityHandle != "alice" {
+		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); !os.IsNotExist(err) {
 		t.Fatalf("unexpected parent .aw/context, err=%v", err)
@@ -3941,6 +3986,16 @@ func TestAwConnect(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"human_name":      "Alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4088,6 +4143,15 @@ func TestAwConnectPreservesExistingIdentity(t *testing.T) {
 			w.WriteHeader(200)
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4201,6 +4265,15 @@ func TestAwConnectDoesNotOverrideExistingContextDefaultWithoutSetDefault(t *test
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4317,6 +4390,15 @@ func TestAwConnectIdentityAlreadySetNoLocalKey(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4408,6 +4490,15 @@ func TestAwConnectRecoverWith409AndLocalKey(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4518,6 +4609,15 @@ func TestAwConnectUsesServerStableID(t *testing.T) {
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case "/v1/workspaces/attach":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":    "ws-attach-1",
+				"project_id":      "proj-123",
+				"project_slug":    "myco",
+				"alias":           "alice",
+				"attachment_type": "local_dir",
+				"created":         true,
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -4695,13 +4795,17 @@ func TestAwResetLocal(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	// Create .aw/context.
+	// Create .aw/context and .aw/workspace.yaml.
 	awDir := filepath.Join(tmp, ".aw")
 	if err := os.MkdirAll(awDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ctxPath := filepath.Join(awDir, "context")
 	if err := os.WriteFile(ctxPath, []byte("default_account: test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := filepath.Join(awDir, "workspace.yaml")
+	if err := os.WriteFile(workspacePath, []byte("server_url: https://app.aweb.ai\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -4717,6 +4821,9 @@ func TestAwResetLocal(t *testing.T) {
 	}
 	if _, err := os.Stat(ctxPath); !os.IsNotExist(err) {
 		t.Fatal(".aw/context still exists after reset")
+	}
+	if _, err := os.Stat(workspacePath); !os.IsNotExist(err) {
+		t.Fatal(".aw/workspace.yaml still exists after reset")
 	}
 	if _, err := os.Stat(awDir); !os.IsNotExist(err) {
 		t.Fatal(".aw directory still exists after reset (should be cleaned up when empty)")
