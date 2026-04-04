@@ -807,15 +807,13 @@ func executeInit(opts initOptions) (*initResult, error) {
 		promptOut = os.Stderr
 	}
 	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
-		registry := awid.NewRegistryResolver(nil, nil)
-		if strings.EqualFold(strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), "local") {
-			fallbackURL := opts.BaseURL
-			if strings.TrimSpace(fallbackURL) == "" {
-				fallbackURL = attachURL
-			}
-			if err := registry.SetFallbackRegistryURL(fallbackURL); err != nil {
-				return nil, fmt.Errorf("invalid embedded registry base URL: %w", err)
-			}
+		fallbackURL := opts.BaseURL
+		if strings.TrimSpace(fallbackURL) == "" {
+			fallbackURL = attachURL
+		}
+		registry, err := newConfiguredRegistryResolver(nil, fallbackURL)
+		if err != nil {
+			return nil, err
 		}
 		registryDomain := strings.TrimSpace(resp.Namespace)
 		if registryDomain == "" {

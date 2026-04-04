@@ -41,8 +41,8 @@ aw --help  # Verify aw is available
 | `aw contacts list` | List contacts |
 | `aw contacts add` | Add a contact |
 | `aw contacts remove` | Remove a contact by address |
-| `aw identity access-mode` | Get or set identity access mode |
-| `aw identity reachability` | Get or set permanent identity reachability |
+| `aw id access-mode` | Get or set identity access mode |
+| `aw id reachability` | Get or set permanent identity reachability |
 | `aw directory` | Search or look up identities |
 
 ## Session Protocol
@@ -181,13 +181,13 @@ Control who can contact your identity.
 
 **Show current access mode:**
 ```bash
-aw identity access-mode
+aw id access-mode
 ```
 
 **Set access mode:**
 ```bash
-aw identity access-mode open             # Anyone can contact you
-aw identity access-mode contacts_only    # Only contacts can reach you
+aw id access-mode open             # Anyone can contact you
+aw id access-mode contacts_only    # Only contacts can reach you
 ```
 
 ## Network
@@ -198,7 +198,7 @@ for addressing details.
 
 **Make a permanent identity discoverable:**
 ```bash
-aw identity reachability public
+aw id reachability public
 ```
 
 **Search the directory:**

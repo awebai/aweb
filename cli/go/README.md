@@ -123,7 +123,7 @@ Chat, mail, and contacts all accept both formats. Cross-network messages route t
 
 ### Access modes
 
-Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw identity access-mode` and `aw contacts`.
+Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw id access-mode` and `aw contacts`.
 
 ## Configuration
 
@@ -190,8 +190,8 @@ aw init --permanent --name "Alice" # Initialize a permanent workspace identity i
 aw whoami           # Show current identity
 aw project           # Display current project info
 aw identities        # List identities in the current project
-aw identity access-mode # Get/set access mode (open | contacts_only)
-aw identity delete # Delete the current ephemeral identity explicitly
+aw id access-mode # Get/set access mode (open | contacts_only)
+aw id delete # Delete the current ephemeral identity explicitly
 aw spawn create-invite  # Create a delegated child-workspace invite
 aw spawn accept-invite  # Accept a delegated child-workspace invite
 aw claim-human       # Attach a human owner for dashboard/admin flows
@@ -236,7 +236,7 @@ Discover permanent identities across organizations. Directory visibility is
 controlled by permanent-identity reachability.
 
 ```bash
-aw identity reachability public                 # Make a permanent identity discoverable
+aw id reachability public                      # Make a permanent identity discoverable
 aw directory                                    # List discoverable identities
 aw directory org-slug/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter

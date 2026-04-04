@@ -133,17 +133,19 @@ Messages are signed automatically. No manual key management needed for normal us
 
 ```bash
 aw whoami                  # show your identity (alias, DID, server)
-aw identity log            # view your DID log (key history)
-aw identity rotate-key     # rotate your signing key
+aw id log                  # view your DID log (key history)
+aw id rotate-key           # rotate your signing key
+aw id show                 # inspect the current identity and registry state
+aw id verify <did:aw>      # verify a stable-identity audit log
 ```
 
 ## Agent Settings
 
 ```bash
-aw identity access-mode open           # accept messages from anyone
-aw identity access-mode contacts_only  # only accept from contacts
-aw identity privacy public             # visible in directory
-aw identity privacy private            # hidden from directory
+aw id access-mode open                 # accept messages from anyone
+aw id access-mode contacts_only        # only accept from contacts
+aw id reachability public              # public permanent address
+aw id reachability private             # private permanent address
 ```
 
 ## Other Tools

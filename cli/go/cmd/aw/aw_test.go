@@ -297,7 +297,7 @@ func TestAwIdentityCommandSurface(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	identityHelp := exec.CommandContext(ctx, bin, "identity", "--help")
+	identityHelp := exec.CommandContext(ctx, bin, "id", "--help")
 	identityHelp.Dir = tmp
 	identityOut, err := identityHelp.CombinedOutput()
 	if err != nil {
@@ -306,6 +306,11 @@ func TestAwIdentityCommandSurface(t *testing.T) {
 
 	identityText := string(identityOut)
 	for _, want := range []string{
+		"register",
+		"show",
+		"resolve",
+		"verify",
+		"namespace",
 		"rotate-key",
 		"log",
 		"access-mode",
@@ -317,17 +322,6 @@ func TestAwIdentityCommandSurface(t *testing.T) {
 		}
 	}
 
-	idHelp := exec.CommandContext(ctx, bin, "id", "--help")
-	idHelp.Dir = tmp
-	idOut, err := idHelp.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected aw id --help to fail, got success:\n%s", string(idOut))
-	}
-
-	idText := string(idOut)
-	if !strings.Contains(idText, `unknown command "id"`) {
-		t.Fatalf("expected unknown command error for aw id --help:\n%s", idText)
-	}
 	if strings.Contains(identityText, "create-permanent") {
 		t.Fatalf("identity help should not expose create-permanent:\n%s", identityText)
 	}
@@ -1966,7 +1960,7 @@ default_account: acct
 		t.Fatalf("write config: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "access-mode", "--json")
+	run := exec.CommandContext(ctx, bin, "id", "access-mode", "--json")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -2050,7 +2044,7 @@ default_account: acct
 		t.Fatalf("write config: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "access-mode", "open", "--json")
+	run := exec.CommandContext(ctx, bin, "id", "access-mode", "open", "--json")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -2250,7 +2244,7 @@ default_account: acct
 		t.Fatalf("write config: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "reachability", "--json")
+	run := exec.CommandContext(ctx, bin, "id", "reachability", "--json")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -2342,7 +2336,7 @@ default_account: acct
 		t.Fatalf("write config: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "reachability", "private", "--json")
+	run := exec.CommandContext(ctx, bin, "id", "reachability", "private", "--json")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -2988,6 +2982,7 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents/suggest-alias-prefix":
@@ -3014,10 +3009,21 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 			})
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/did:aw:stable-project-key/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:stable-project-key",
+				"current_did_key": "did:key:z6MkPermanentProjectKey",
+				"server":          serverURL,
+				"address":         "myteam.aweb.ai/Alice",
+				"handle":          "Alice",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	serverURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -3841,8 +3847,8 @@ func TestAwConnectIdentityAlreadySetNoLocalKey(t *testing.T) {
 	if !strings.Contains(string(out), "no matching signing key found locally") {
 		t.Fatalf("expected 'no matching signing key found locally', got: %s", string(out))
 	}
-	if !strings.Contains(string(out), "aw identity delete --confirm") {
-		t.Fatalf("expected recovery suggestion with 'aw identity delete --confirm', got: %s", string(out))
+	if !strings.Contains(string(out), "aw id delete --confirm") {
+		t.Fatalf("expected recovery suggestion with 'aw id delete --confirm', got: %s", string(out))
 	}
 }
 
