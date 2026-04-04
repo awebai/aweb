@@ -25,7 +25,11 @@ func SaveKeypair(keysDir, address string, pub ed25519.PublicKey, priv ed25519.Pr
 	base := addressToKeyFileBase(address)
 	keyPath := filepath.Join(keysDir, base+".signing.key")
 	pubPath := filepath.Join(keysDir, base+".signing.pub")
+	return SaveKeypairAt(keyPath, pubPath, pub, priv)
+}
 
+// SaveKeypairAt writes a keypair to explicit PEM file paths.
+func SaveKeypairAt(keyPath, pubPath string, pub ed25519.PublicKey, priv ed25519.PrivateKey) error {
 	if err := writePrivateKey(keyPath, priv); err != nil {
 		return err
 	}
@@ -113,6 +117,11 @@ func writePublicKey(path string, pub ed25519.PublicKey) error {
 // SigningKeyPath returns the path to an agent's signing key file.
 func SigningKeyPath(keysDir, address string) string {
 	return filepath.Join(keysDir, addressToKeyFileBase(address)+".signing.key")
+}
+
+// PublicKeyPath returns the sibling public-key PEM path for a signing key path.
+func PublicKeyPath(signingKeyPath string) string {
+	return strings.TrimSuffix(signingKeyPath, ".key") + ".pub"
 }
 
 // addressToKeyFileBase converts an agent address (e.g. "mycompany/researcher")

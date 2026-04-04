@@ -174,9 +174,9 @@ delegate to the awid library.
 | `mail.go` | `aw mail send`, `aw mail inbox` |
 | `chat.go` | `aw chat *` |
 | `network.go` | `aw directory` |
-| `agents.go` | `aw identities`, `aw identity access-mode`, `aw identity reachability`, `aw identity delete` |
+| `agents.go` | `aw identities`, `aw id access-mode`, `aw id reachability`, `aw id delete` |
 | `contacts.go` | `aw contacts` |
-| `did.go` | `aw identity log`, `aw identity rotate-key` |
+| `did.go` | `aw id log`, `aw id rotate-key`, `aw id register`, `aw id show`, `aw id resolve`, `aw id verify`, `aw id namespace` |
 | `heartbeat.go` | `aw heartbeat` |
 | `introspect.go` | `aw whoami` |
 | `reset.go` | `aw reset` |

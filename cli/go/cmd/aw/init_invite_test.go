@@ -52,6 +52,16 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/did:aw:invite/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:invite",
+				"current_did_key": "did:key:z6MkInvite",
+				"server":          "https://app.aweb.ai",
+				"address":         "myteam.aweb.ai/maintainer",
+				"handle":          "maintainer",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -398,6 +408,16 @@ func TestAwInitInviteAcceptUsesServerProvidedAliasHint(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/did:aw:invite/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:invite",
+				"current_did_key": "did:key:z6MkInvite",
+				"server":          "https://app.aweb.ai",
+				"address":         "myteam.aweb.ai/maintainer",
+				"handle":          "maintainer",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -479,6 +499,16 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/did:aw:invite/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:invite",
+				"current_did_key": "did:key:z6MkInvite",
+				"server":          "https://app.aweb.ai",
+				"address":         "myteam.aweb.ai/maintainer",
+				"handle":          "maintainer",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}

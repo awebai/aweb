@@ -142,7 +142,7 @@ User-facing lifecycle verb:
 CLI command:
 
 ```bash
-aw identity delete --confirm
+aw id delete --confirm
 ```
 
 Effects:
@@ -163,14 +163,14 @@ Permanent identities are not treated as disposable.
 
 Relevant operations:
 
-- `aw identity rotate-key`
+- `aw id rotate-key`
 
 Archive and replacement belong to the permanent identity model, but this CLI
 intentionally omits a fake successor-based command for them.
 
 - `archive` is the normal permanent end-state action
 - `replace` is the owner-authorized continuity move after key loss
-- both are owner-admin lifecycle flows, not `aw identity delete`
+- both are owner-admin lifecycle flows, not `aw id delete`
 
 ## Trust
 
@@ -198,7 +198,7 @@ Trust continuity attaches to permanent addresses, not ephemeral aliases.
 - `aw init`, `aw project create`, `aw spawn accept-invite`, and `aw connect`
   update it
 - `aw reset` removes it
-- `aw identity delete --confirm` removes or updates it as part of local
+- `aw id delete --confirm` removes or updates it as part of local
   cleanup
 
 ### Local signing keys
@@ -218,7 +218,7 @@ Preferred CLI language:
   workspace identity
 - `aw init --permanent --name <name>`: initialize a workspace with a permanent
   self-custodial identity
-- `aw identity delete`: delete the current ephemeral identity
+- `aw id delete`: delete the current ephemeral identity
 
 Language to avoid:
 

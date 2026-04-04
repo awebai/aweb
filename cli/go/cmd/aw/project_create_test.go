@@ -508,6 +508,7 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var serverURL string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -534,12 +535,23 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 			})
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/did:aw:stable-permanent/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:stable-permanent",
+				"current_did_key": "did:key:z6MkPermanent",
+				"server":          serverURL,
+				"address":         "myteam.aweb.ai/maintainer",
+				"handle":          "maintainer",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}
 	}))
+	serverURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -22,13 +22,25 @@ func TestRegisterSelfCustodialDIDPostsCreateEntry(t *testing.T) {
 
 	var got didRegisterRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/did" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write([]byte(`{"registered":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"server":          "https://app.example.com",
+				"address":         "acme.com/alice",
+				"handle":          "alice",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		default:
 			t.Fatalf("method=%s path=%s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatal(err)
-		}
-		_, _ = w.Write([]byte(`{"registered":true}`))
 	}))
 	t.Cleanup(server.Close)
 

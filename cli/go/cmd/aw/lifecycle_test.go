@@ -95,7 +95,7 @@ client_default_accounts:
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "delete", "--confirm")
+	run := exec.CommandContext(ctx, bin, "id", "delete", "--confirm")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
@@ -197,7 +197,7 @@ default_account: acct
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "identity", "delete", "--confirm")
+	run := exec.CommandContext(ctx, bin, "id", "delete", "--confirm")
 	run.Env = append(os.Environ(),
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",

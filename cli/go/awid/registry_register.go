@@ -4,12 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 )
 
 type didRegisterRequest struct {
@@ -45,70 +44,14 @@ func RegisterSelfCustodialDID(
 	if err != nil {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
-	serverURL, err = canonicalRegistryServerOrigin(serverURL)
-	if err != nil {
-		return fmt.Errorf("invalid server URL: %w", err)
+	client := NewAWIDRegistryClient(nil, nil)
+	client.DefaultRegistryURL = registryBaseURL
+	_, err = client.RegisterDID(ctx, registryBaseURL, serverURL, address, handle, did, stableID, signingKey)
+	var already *AlreadyRegisteredError
+	if errors.As(err, &already) && strings.TrimSpace(already.ExistingDIDKey) == strings.TrimSpace(did) {
+		return nil
 	}
-	if strings.TrimSpace(did) == "" || strings.TrimSpace(stableID) == "" {
-		return fmt.Errorf("did and stableID are required")
-	}
-	if !strings.HasPrefix(strings.TrimSpace(stableID), "did:aw:") {
-		return fmt.Errorf("stableID must start with did:aw:")
-	}
-	if signingKey == nil {
-		return fmt.Errorf("signing key is required")
-	}
-	if got := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != did {
-		return fmt.Errorf("did does not match signing key")
-	}
-
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	stateHash := stableIdentityStateHash(stableID, did, serverURL, address, strings.TrimSpace(handle))
-	proofPayload := CanonicalDidLogPayload(stableID, &DidKeyEvidence{
-		Seq:          1,
-		Operation:    "create",
-		NewDIDKey:    did,
-		StateHash:    stateHash,
-		AuthorizedBy: did,
-		Timestamp:    timestamp,
-	})
-	proof := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(proofPayload)))
-
-	client, err := New(registryBaseURL)
-	if err != nil {
-		return err
-	}
-	req := &didRegisterRequest{
-		DIDAW:        stableID,
-		DIDKey:       did,
-		Server:       serverURL,
-		Address:      strings.TrimSpace(address),
-		Seq:          1,
-		StateHash:    stateHash,
-		AuthorizedBy: did,
-		Timestamp:    timestamp,
-		Proof:        proof,
-	}
-	if trimmed := strings.TrimSpace(handle); trimmed != "" {
-		req.Handle = &trimmed
-	}
-	if err := client.Post(ctx, "/v1/did", req, nil); err != nil {
-		code, ok := HTTPStatusCode(err)
-		if !ok || code != 409 {
-			return err
-		}
-		var existing didKeyResponse
-		if getErr := client.Get(ctx, "/v1/did/"+urlPathEscape(stableID)+"/key", &existing); getErr != nil {
-			return err
-		}
-		if strings.TrimSpace(existing.DIDAW) != stableID {
-			return fmt.Errorf("registry returned mismatched did:aw %q", existing.DIDAW)
-		}
-		if strings.TrimSpace(existing.CurrentDIDKey) != did {
-			return fmt.Errorf("did:aw already registered to %s", existing.CurrentDIDKey)
-		}
-	}
-	return nil
+	return err
 }
 
 func canonicalRegistryServerOrigin(raw string) (string, error) {

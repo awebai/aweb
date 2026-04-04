@@ -61,8 +61,8 @@ var identitiesCmd = &cobra.Command{
 }
 
 var identityCmd = &cobra.Command{
-	Use:   "identity",
-	Short: "Identity lifecycle, settings, and key management",
+	Use:   "id",
+	Short: "Identity lifecycle, registry, settings, and key management",
 }
 
 var agentAccessModeCmd = &cobra.Command{

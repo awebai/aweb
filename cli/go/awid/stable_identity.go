@@ -19,22 +19,22 @@ const (
 )
 
 type DidKeyEvidence struct {
-	Seq            int
-	Operation      string
-	PreviousDIDKey *string
-	NewDIDKey      string
-	PrevEntryHash  *string
-	EntryHash      string
-	StateHash      string
-	AuthorizedBy   string
-	Signature      string
-	Timestamp      string
+	Seq            int     `json:"seq"`
+	Operation      string  `json:"operation"`
+	PreviousDIDKey *string `json:"previous_did_key"`
+	NewDIDKey      string  `json:"new_did_key"`
+	PrevEntryHash  *string `json:"prev_entry_hash"`
+	EntryHash      string  `json:"entry_hash"`
+	StateHash      string  `json:"state_hash"`
+	AuthorizedBy   string  `json:"authorized_by"`
+	Signature      string  `json:"signature"`
+	Timestamp      string  `json:"timestamp"`
 }
 
 type DidKeyResolution struct {
-	DIDAW         string
-	CurrentDIDKey string
-	LogHead       *DidKeyEvidence
+	DIDAW         string          `json:"did_aw"`
+	CurrentDIDKey string          `json:"current_did_key"`
+	LogHead       *DidKeyEvidence `json:"log_head"`
 }
 
 type StableIdentityVerification struct {
@@ -146,6 +146,41 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		CurrentDIDKey: res.CurrentDIDKey,
 		FetchedAt:     now.UTC(),
 	}, nil
+}
+
+func VerifyDidLogEntries(didAW string, entries []DidKeyEvidence, now time.Time) (*VerifiedLogHead, error) {
+	didAW = strings.TrimSpace(didAW)
+	if !strings.HasPrefix(didAW, "did:aw:") {
+		return nil, fmt.Errorf("invalid did:aw %q", didAW)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("missing audit log entries")
+	}
+
+	var cached *VerifiedLogHead
+	for index := range entries {
+		entry := entries[index]
+		resolution := &DidKeyResolution{
+			DIDAW:         didAW,
+			CurrentDIDKey: strings.TrimSpace(entry.NewDIDKey),
+			LogHead:       &entry,
+		}
+		outcome, nextHead, err := VerifyDidKeyResolution(resolution, cached, now)
+		if err != nil {
+			return nil, err
+		}
+		if outcome != StableIdentityVerified || nextHead == nil {
+			return nil, fmt.Errorf("unexpected verification outcome %s at seq %d", outcome, entry.Seq)
+		}
+		if index == 0 && entry.Seq != 1 {
+			return nil, fmt.Errorf("audit log must start at seq 1")
+		}
+		if index > 0 && entry.Seq != entries[index-1].Seq+1 {
+			return nil, fmt.Errorf("audit log sequence gap at seq %d", entry.Seq)
+		}
+		cached = nextHead
+	}
+	return cached, nil
 }
 
 func CanonicalDidLogPayload(didAW string, head *DidKeyEvidence) string {

@@ -11,6 +11,12 @@ func atomicWriteFile(path string, data []byte) error {
 	return atomicWriteFileMode(path, data, 0o600)
 }
 
+// AtomicWriteFile exposes the atomic secret-file writer for higher-level CLI
+// state that must survive partial failures safely.
+func AtomicWriteFile(path string, data []byte) error {
+	return atomicWriteFile(path, data)
+}
+
 // atomicWriteFileMode writes data to path using temp-file-and-rename.
 // The temp file is chmod'd to mode before any data is written.
 func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
