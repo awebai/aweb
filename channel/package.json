@@ -20,15 +20,17 @@
     "test:integration": "vitest run test/integration.test.ts",
     "start": "tsx src/index.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "tldts": "^7.0.27"
+  },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@noble/ed25519": "^2.2.3",
     "@noble/hashes": "^2.0.1",
-    "bs58": "^6.0.0",
-    "js-yaml": "^4.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.5.2",
+    "bs58": "^6.0.0",
+    "js-yaml": "^4.1.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
