@@ -28,7 +28,7 @@ class _FakeRegistryClient:
         self.register_calls: list[tuple[str, bytes, str]] = []
         self.update_calls: list[tuple[str, str, bytes]] = []
         self.resolve_calls: list[str] = []
-        self.full_calls: list[tuple[str, bytes]] = []
+        self.mapping_calls: list[tuple[str, bytes]] = []
         self.current_did_key_by_did_aw: dict[str, str] = {}
         self.server_by_did_aw: dict[str, str] = {}
 
@@ -49,8 +49,8 @@ class _FakeRegistryClient:
 
         return _Resolution(self.current_did_key_by_did_aw[did_aw])
 
-    async def _get_did_full(self, did_aw: str, signing_key: bytes):
-        self.full_calls.append((did_aw, signing_key))
+    async def get_mapping(self, did_aw: str, signing_key: bytes):
+        self.mapping_calls.append((did_aw, signing_key))
 
         class _Mapping:
             def __init__(self, server: str) -> None:
@@ -142,6 +142,8 @@ async def test_bootstrap_identity_updates_registry_server_after_idempotent_retry
 
     assert second.agent_id == first.agent_id
     assert registry_client.register_calls == [(did_key, signing_key, "https://new.example")]
+    assert registry_client.resolve_calls == [first.stable_id]
+    assert registry_client.mapping_calls == [(first.stable_id, signing_key)]
     assert registry_client.update_calls == [(first.stable_id, "https://new.example", signing_key)]
 
 

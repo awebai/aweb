@@ -12,56 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.deps import DomainVerifier, get_db, get_domain_verifier
 from aweb.dns_verify import DnsVerificationError
 from aweb.ratelimit import rate_limit_dep
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.routes.dns_auth import validate_did_key as _validate_did_key
+from aweb.routes.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces", tags=["namespaces"])
 
-_AUTH_TIMESTAMP_SKEW_SECONDS = 300
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
-
-
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
-
-
-def _parse_didkey_auth(authorization: str | None) -> tuple[str, str]:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    parts = authorization.split(" ")
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization must be: DIDKey <did:key> <signature>",
-        )
-    return parts[1], parts[2]
-
-
-def _require_timestamp(request: Request, *, header_name: str = "X-AWEB-Timestamp") -> str:
-    value = request.headers.get(header_name)
-    if not value:
-        raise HTTPException(status_code=401, detail=f"Missing {header_name} header")
-    return value
-
-
-def _enforce_timestamp_skew(ts: str) -> None:
-    try:
-        ts = ts.strip()
-        if ts.endswith("Z"):
-            ts = ts[:-1] + "+00:00"
-        dt = datetime.fromisoformat(ts)
-        if dt.tzinfo is None:
-            raise HTTPException(status_code=401, detail="Timestamp must include timezone")
-        dt = dt.astimezone(timezone.utc)
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Malformed timestamp")
-    delta = abs((datetime.now(timezone.utc) - dt).total_seconds())
-    if delta > _AUTH_TIMESTAMP_SKEW_SECONDS:
-        raise HTTPException(status_code=401, detail="Timestamp outside allowed skew window")
 
 
 def _verify_controller_signature(
@@ -73,26 +31,18 @@ def _verify_controller_signature(
     authorization_header: str = "Authorization",
     timestamp_header: str = "X-AWEB-Timestamp",
 ) -> str:
-    """Parse auth headers, verify signature, return the signing did:key."""
-    did_key, sig = _parse_didkey_auth(request.headers.get(authorization_header))
-    timestamp = _require_timestamp(request, header_name=timestamp_header)
-    _enforce_timestamp_skew(timestamp)
-
     payload_dict = {
         "domain": domain,
         "operation": operation,
-        "timestamp": timestamp,
     }
     if extra_payload:
         payload_dict.update(extra_payload)
-    payload = canonical_json_bytes(payload_dict)
-
-    try:
-        verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=sig)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
-    return did_key
+    return verify_signed_json_request(
+        request,
+        payload_dict=payload_dict,
+        authorization_header=authorization_header,
+        timestamp_header=timestamp_header,
+    )
 
 
 def _validate_domain(domain: str) -> str:
@@ -177,10 +127,7 @@ class NamespaceRegisterRequest(BaseModel):
     def validate_controller_did(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = (value or "").strip()
-        if not normalized.startswith("did:key:"):
-            raise ValueError("controller_did must start with 'did:key:'")
-        return normalized
+        return _validate_did_key(value)
 
 
 class NamespaceRotateControllerRequest(BaseModel):
@@ -191,10 +138,7 @@ class NamespaceRotateControllerRequest(BaseModel):
     @field_validator("new_controller_did")
     @classmethod
     def validate_did_key(cls, value: str) -> str:
-        normalized = (value or "").strip()
-        if not normalized.startswith("did:key:"):
-            raise ValueError("new_controller_did must start with 'did:key:'")
-        return normalized
+        return _validate_did_key(value)
 
 
 class NamespaceResponse(BaseModel):
@@ -345,7 +289,7 @@ async def rotate_namespace_controller(
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
-    new_controller_did = NamespaceRotateControllerRequest.validate_did_key(body.new_controller_did)
+    new_controller_did = body.new_controller_did
     _verify_controller_rotation_signature(
         request,
         domain=domain,

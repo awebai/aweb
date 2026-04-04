@@ -25,11 +25,17 @@ class MigrationResult:
     replacements: int
 
 
+class _DryRunTarget:
+    async def execute(self, _query: str, *args: Any) -> None:
+        return None
+
+
 async def migrate_from_aweb(
     *,
     source_schema: str = "aweb",
     target_schema: str = "awid",
     include_managed: bool = False,
+    dry_run: bool = False,
 ) -> MigrationResult:
     settings = get_settings()
     config = build_database_config(connection_string=settings.database_url)
@@ -38,25 +44,51 @@ async def migrate_from_aweb(
     target = AwidDatabaseInfra(schema=target_schema)
     source = AsyncDatabaseManager(pool=shared_pool, schema=source_schema)
     try:
-        await target.initialize(shared_pool=shared_pool, run_migrations=True)
-        target_db = target.get_manager("aweb")
-
-        async with target_db.transaction() as tx:
-            projects = await _copy_projects(source=source, target=tx)
-            agents = await _copy_agents(source=source, target=tx)
-            did_mappings = await _copy_did_mappings(source=source, target=tx)
-            did_log_entries = await _copy_did_log(source=source, target=tx)
+        if dry_run:
+            target_db = _DryRunTarget()
+            projects = await _copy_projects(source=source, target=target_db)
+            agents = await _copy_agents(source=source, target=target_db)
+            did_mappings = await _copy_did_mappings(source=source, target=target_db)
+            did_log_entries = await _copy_did_log(source=source, target=target_db)
             namespaces = await _copy_namespaces(
                 source=source,
-                target=tx,
+                target=target_db,
                 include_managed=include_managed,
             )
-            addresses = await _copy_addresses(source=source, target=tx, include_managed=include_managed)
+            addresses = await _copy_addresses(
+                source=source,
+                target=target_db,
+                include_managed=include_managed,
+            )
             replacements = await _copy_replacements(
                 source=source,
-                target=tx,
+                target=target_db,
                 include_managed=include_managed,
             )
+        else:
+            await target.initialize(shared_pool=shared_pool, run_migrations=True)
+            target_db = target.get_manager("aweb")
+
+            async with target_db.transaction() as tx:
+                projects = await _copy_projects(source=source, target=tx)
+                agents = await _copy_agents(source=source, target=tx)
+                did_mappings = await _copy_did_mappings(source=source, target=tx)
+                did_log_entries = await _copy_did_log(source=source, target=tx)
+                namespaces = await _copy_namespaces(
+                    source=source,
+                    target=tx,
+                    include_managed=include_managed,
+                )
+                addresses = await _copy_addresses(
+                    source=source,
+                    target=tx,
+                    include_managed=include_managed,
+                )
+                replacements = await _copy_replacements(
+                    source=source,
+                    target=tx,
+                    include_managed=include_managed,
+                )
         return MigrationResult(
             projects=projects,
             agents=agents,
@@ -67,7 +99,8 @@ async def migrate_from_aweb(
             replacements=replacements,
         )
     finally:
-        await target.close()
+        if not dry_run:
+            await target.close()
         await shared_pool.close()
 
 

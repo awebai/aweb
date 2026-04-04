@@ -10,55 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.address_reachability import normalize_address_reachability
+from aweb.awid.did import validate_stable_id
 from aweb.deps import DomainVerifier, get_db, get_domain_verifier
 from aweb.dns_verify import DnsVerificationError
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.routes.dns_auth import validate_did_key as _validate_dns_did_key
+from aweb.routes.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 
 _STALE_THRESHOLD = timedelta(hours=24)
-
-
-# ---------------------------------------------------------------------------
-# Auth helpers (shared pattern with dns_namespaces)
-# ---------------------------------------------------------------------------
-
-
-def _parse_didkey_auth(authorization: str | None) -> tuple[str, str]:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    parts = authorization.split(" ")
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization must be: DIDKey <did:key> <signature>",
-        )
-    return parts[1], parts[2]
-
-
-def _require_timestamp(request: Request) -> str:
-    value = request.headers.get("X-AWEB-Timestamp")
-    if not value:
-        raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp header")
-    return value
-
-
-def _enforce_timestamp_skew(ts: str) -> None:
-    try:
-        ts = ts.strip()
-        if ts.endswith("Z"):
-            ts = ts[:-1] + "+00:00"
-        dt = datetime.fromisoformat(ts)
-        if dt.tzinfo is None:
-            raise HTTPException(status_code=401, detail="Timestamp must include timezone")
-        dt = dt.astimezone(timezone.utc)
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Malformed timestamp")
-    delta = abs((datetime.now(timezone.utc) - dt).total_seconds())
-    if delta > 300:
-        raise HTTPException(status_code=401, detail="Timestamp outside allowed skew window")
 
 
 def _verify_address_signature(
@@ -68,24 +28,14 @@ def _verify_address_signature(
     name: str,
     operation: str,
 ) -> str:
-    """Parse auth headers, verify signature, return the signing did:key."""
-    did_key, sig = _parse_didkey_auth(request.headers.get("Authorization"))
-    timestamp = _require_timestamp(request)
-    _enforce_timestamp_skew(timestamp)
-
-    payload = canonical_json_bytes({
-        "domain": domain,
-        "name": name,
-        "operation": operation,
-        "timestamp": timestamp,
-    })
-
-    try:
-        verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=sig)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
-    return did_key
+    return verify_signed_json_request(
+        request,
+        payload_dict={
+            "domain": domain,
+            "name": name,
+            "operation": operation,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -184,15 +134,11 @@ def _require_controller(caller_did: str, ns_row) -> None:
 
 
 def _validate_did_aw(v: str) -> str:
-    if not v.startswith("did:aw:"):
-        raise ValueError("must start with 'did:aw:'")
-    return v
+    return validate_stable_id(v)
 
 
 def _validate_did_key(v: str) -> str:
-    if not v.startswith("did:key:z"):
-        raise ValueError("must start with 'did:key:z'")
-    return v
+    return _validate_dns_did_key(v)
 
 
 class AddressRegisterRequest(BaseModel):
