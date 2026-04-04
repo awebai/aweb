@@ -22,6 +22,9 @@ func formatIDCreate(v any) string {
 	out := v.(idCreateOutput)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	if strings.TrimSpace(out.Address) != "" {
+		sb.WriteString(fmt.Sprintf("Address:     %s\n", out.Address))
+	}
 	sb.WriteString(fmt.Sprintf("did:aw:      %s\n", out.DIDAW))
 	sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.DIDKey))
 	sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.IdentityPath))

@@ -12,11 +12,14 @@ func TestSaveWorktreeIdentityToRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, ".aw", "identity.yaml")
 	want := &WorktreeIdentity{
-		DID:       "did:key:z6MkkRoundTrip",
-		StableID:  "did:aw:roundtrip",
-		Custody:   "self",
-		Lifetime:  "persistent",
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:            "did:key:z6MkkRoundTrip",
+		StableID:       "did:aw:roundtrip",
+		Address:        "acme.com/alice",
+		Custody:        "self",
+		Lifetime:       "persistent",
+		RegistryURL:    "https://registry.example.com",
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-04T00:00:00Z",
 	}
 	if err := SaveWorktreeIdentityTo(path, want); err != nil {
 		t.Fatalf("SaveWorktreeIdentityTo: %v", err)
@@ -37,11 +40,14 @@ func TestSaveWorktreeIdentityToWrites0600(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, ".aw", "identity.yaml")
 	if err := SaveWorktreeIdentityTo(path, &WorktreeIdentity{
-		DID:       "did:key:z6MkkPerms",
-		StableID:  "did:aw:perms",
-		Custody:   "self",
-		Lifetime:  "persistent",
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:            "did:key:z6MkkPerms",
+		StableID:       "did:aw:perms",
+		Address:        "acme.com/perms",
+		Custody:        "self",
+		Lifetime:       "persistent",
+		RegistryURL:    "https://registry.example.com",
+		RegistryStatus: "pending",
+		CreatedAt:      "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("SaveWorktreeIdentityTo: %v", err)
 	}

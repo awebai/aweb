@@ -266,7 +266,7 @@ Flags:
 ### `identity`
 
 Subcommands:
-- `create       Create a standalone permanent identity in .aw/`
+- `create       Create a standalone permanent identity with a DNS-backed address in .aw/`
 - `access-mode  Get or set identity access mode`
 - `delete       Delete the current ephemeral identity`
 - `log          Show an identity log`

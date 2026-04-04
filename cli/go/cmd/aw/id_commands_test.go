@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -150,9 +152,104 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 
 	var createdDIDAW string
 	var createdDIDKey string
-	var registryURL string
+	var namespaceCreated atomic.Bool
+	var addressCreated atomic.Bool
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/acme.com":
+			switch r.Method {
+			case http.MethodGet:
+				if !namespaceCreated.Load() {
+					http.NotFound(w, r)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"namespace_id":        "ns-1",
+					"domain":              "acme.com",
+					"controller_did":      createdDIDKey,
+					"verification_status": "verified",
+					"last_verified_at":    "2026-04-04T00:00:00Z",
+					"created_at":          "2026-04-04T00:00:00Z",
+				})
+			default:
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+		case "/v1/namespaces":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["domain"] != "acme.com" {
+				t.Fatalf("namespace domain=%v", payload["domain"])
+			}
+			controllerDID, _ := payload["controller_did"].(string)
+			createdDIDKey = controllerDID
+			verifyCanonicalRegistryAuth(t, r, map[string]string{
+				"domain":    "acme.com",
+				"operation": "register",
+			})
+			namespaceCreated.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      createdDIDKey,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-04T00:00:00Z",
+				"created_at":          "2026-04-04T00:00:00Z",
+			})
+		case "/v1/namespaces/acme.com/addresses/alice":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			if !addressCreated.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          createdDIDAW,
+				"current_did_key": createdDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/namespaces/acme.com/addresses":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			createdDIDAW, _ = payload["did_aw"].(string)
+			if payload["name"] != "alice" {
+				t.Fatalf("address name=%v", payload["name"])
+			}
+			if payload["current_did_key"] != createdDIDKey {
+				t.Fatalf("current_did_key=%v want %v", payload["current_did_key"], createdDIDKey)
+			}
+			if payload["reachability"] != "public" {
+				t.Fatalf("reachability=%v", payload["reachability"])
+			}
+			verifyCanonicalRegistryAuth(t, r, map[string]string{
+				"domain":    "acme.com",
+				"name":      "alice",
+				"operation": "register_address",
+			})
+			addressCreated.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          createdDIDAW,
+				"current_did_key": createdDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
 		case "/v1/did":
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -163,11 +260,11 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			if payload["server"] != "" {
 				t.Fatalf("server=%v want empty string", payload["server"])
 			}
-			if payload["address"] != "" {
-				t.Fatalf("address=%v want empty string", payload["address"])
+			if payload["address"] != "acme.com/alice" {
+				t.Fatalf("address=%v want acme.com/alice", payload["address"])
 			}
-			if payload["handle"] != nil {
-				t.Fatalf("handle=%v want nil", payload["handle"])
+			if payload["handle"] != "alice" {
+				t.Fatalf("handle=%v want alice", payload["handle"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case "/v1/did/" + createdDIDAW + "/full":
@@ -175,8 +272,8 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				"did_aw":          createdDIDAW,
 				"current_did_key": createdDIDKey,
 				"server":          "",
-				"address":         "",
-				"handle":          nil,
+				"address":         "acme.com/alice",
+				"handle":          "alice",
 				"created_at":      "2026-04-04T00:00:00Z",
 				"updated_at":      "2026-04-04T00:00:00Z",
 			})
@@ -184,7 +281,6 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	registryURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -193,12 +289,14 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--json")
-	run.Env = append(os.Environ(), "AWID_REGISTRY_URL="+registryURL)
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "Acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("id create failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Create this DNS TXT record before continuing:") {
+		t.Fatalf("expected DNS instructions in output:\n%s", string(out))
 	}
 
 	var got map[string]any
@@ -210,6 +308,12 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	}
 	if got["registry_status"] != "registered" {
 		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+	if got["address"] != "acme.com/alice" {
+		t.Fatalf("address=%v", got["address"])
+	}
+	if got["registry_url"] != server.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], server.URL)
 	}
 
 	identityPath := filepath.Join(tmp, ".aw", "identity.yaml")
@@ -237,11 +341,20 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if identity.StableID != got["did_aw"] {
 		t.Fatalf("identity stable_id=%q want %q", identity.StableID, got["did_aw"])
 	}
+	if identity.Address != "acme.com/alice" {
+		t.Fatalf("identity address=%q", identity.Address)
+	}
 	if identity.Custody != awid.CustodySelf {
 		t.Fatalf("identity custody=%q", identity.Custody)
 	}
 	if identity.Lifetime != awid.LifetimePersistent {
 		t.Fatalf("identity lifetime=%q", identity.Lifetime)
+	}
+	if identity.RegistryURL != server.URL {
+		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, server.URL)
+	}
+	if identity.RegistryStatus != "registered" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
 	}
 
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
@@ -273,7 +386,7 @@ func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice")
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "acme.com")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -307,14 +420,13 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--json")
-	run.Env = append(os.Environ(), "AWID_REGISTRY_URL="+registryURL)
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "acme.com", "--registry", registryURL, "--skip-dns-verify", "--json")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("id create failed unexpectedly: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Warning: could not register identity at awid.ai") {
+	if !strings.Contains(string(out), "Warning: could not finish identity registration at") {
 		t.Fatalf("expected warning in output:\n%s", string(out))
 	}
 
@@ -322,17 +434,48 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["registry_status"] != "unreachable" {
+	if got["registry_status"] != "pending" {
 		t.Fatalf("registry_status=%v", got["registry_status"])
 	}
 	if got["registry_error"] == "" {
 		t.Fatalf("expected registry_error in output: %+v", got)
+	}
+	if got["address"] != "acme.com/alice" {
+		t.Fatalf("address=%v", got["address"])
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
 		t.Fatalf("identity.yaml missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
+	}
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.RegistryStatus != "pending" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+	if identity.Address != "acme.com/alice" {
+		t.Fatalf("identity address=%q", identity.Address)
+	}
+}
+
+func TestVerifyIDCreateDomainAuthorityMatchesControllerAndRegistry(t *testing.T) {
+	t.Parallel()
+
+	did := "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+	err := verifyIDCreateDomainAuthority(
+		context.Background(),
+		staticTXTResolver{
+			"_awid.acme.com": {idCreateDNSRecordValue(did, "https://registry.example.com")},
+		},
+		"acme.com",
+		did,
+		"https://registry.example.com",
+	)
+	if err != nil {
+		t.Fatalf("verifyIDCreateDomainAuthority: %v", err)
 	}
 }
 
@@ -804,4 +947,60 @@ func extractPublicKeyForTest(t *testing.T, did string) ed25519.PublicKey {
 		t.Fatalf("extract public key for %s: %v", did, err)
 	}
 	return pub
+}
+
+func verifyCanonicalRegistryAuth(t *testing.T, r *http.Request, fields map[string]string) {
+	t.Helper()
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+	if auth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	if timestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp header")
+	}
+	parts := strings.Split(auth, " ")
+	if len(parts) != 3 || parts[0] != "DIDKey" {
+		t.Fatalf("unexpected Authorization header %q", auth)
+	}
+	fields = cloneStringMap(fields)
+	fields["timestamp"] = timestamp
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	if !ed25519.Verify(extractPublicKeyForTest(t, parts[1]), payload, sig) {
+		t.Fatalf("invalid signature for payload %s", string(payload))
+	}
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	out := make(map[string]string, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+type staticTXTResolver map[string][]string
+
+func (r staticTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if records, ok := r[name]; ok {
+		return records, nil
+	}
+	return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
+}
+
+func TestStaticTXTResolverNotFoundErrorShape(t *testing.T) {
+	t.Parallel()
+
+	_, err := staticTXTResolver{}.LookupTXT(context.Background(), "_awid.example.com")
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+		t.Fatalf("expected not-found DNSError, got %v", err)
+	}
 }

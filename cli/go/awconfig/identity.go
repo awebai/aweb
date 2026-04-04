@@ -10,11 +10,14 @@ import (
 )
 
 type WorktreeIdentity struct {
-	DID       string `yaml:"did"`
-	StableID  string `yaml:"stable_id"`
-	Custody   string `yaml:"custody"`
-	Lifetime  string `yaml:"lifetime"`
-	CreatedAt string `yaml:"created_at"`
+	DID            string `yaml:"did"`
+	StableID       string `yaml:"stable_id"`
+	Address        string `yaml:"address,omitempty"`
+	Custody        string `yaml:"custody"`
+	Lifetime       string `yaml:"lifetime"`
+	RegistryURL    string `yaml:"registry_url,omitempty"`
+	RegistryStatus string `yaml:"registry_status,omitempty"`
+	CreatedAt      string `yaml:"created_at"`
 }
 
 func DefaultWorktreeIdentityRelativePath() string {
