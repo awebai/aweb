@@ -1068,6 +1068,100 @@ default_account: acct
 	}
 }
 
+func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.yaml")
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	writeSelfCustodyConfig(t, cfgPath, "https://app.aweb.ai", "acme.com/alice", "acme.com", "alice", did, stableID, priv)
+
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := filepath.Join(awDir, "workspace.yaml")
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &awconfig.WorktreeWorkspace{
+		ServerURL:      "https://app.aweb.ai",
+		APIKey:         "aw_sk_test",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "acme.com",
+		WorkspaceID:    "ws-1",
+		ProjectSlug:    "acme",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identityPath := filepath.Join(awDir, "identity.yaml")
+	if err := awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeData, err := os.ReadFile(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeInfo, err := os.Stat(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("AW_CONFIG_PATH", cfgPath)
+	t.Setenv("AWEB_URL", "")
+	t.Setenv("AWEB_API_KEY", "")
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	if err := updateAccountIdentity("acct", "did:key:z6MkUpdated", awid.CustodySelf, awconfig.WorktreeSigningKeyPath(tmp)); err != nil {
+		t.Fatalf("updateAccountIdentity: %v", err)
+	}
+
+	afterData, err := os.ReadFile(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterData) != string(beforeData) {
+		t.Fatalf("workspace.yaml changed unexpectedly:\nbefore:\n%s\nafter:\n%s", string(beforeData), string(afterData))
+	}
+	if !os.SameFile(beforeInfo, afterInfo) {
+		t.Fatal("workspace.yaml was rewritten even though identity.yaml exists")
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != "did:key:z6MkUpdated" {
+		t.Fatalf("identity did=%q want %q", identity.DID, "did:key:z6MkUpdated")
+	}
+	if identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity custody=%q want %q", identity.Custody, awid.CustodySelf)
+	}
+}
+
 func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
 	t.Helper()
 	_ = address

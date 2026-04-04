@@ -123,22 +123,26 @@ func (w *WorktreeWorkspace) clearIdentityFields() {
 	w.Lifetime = ""
 }
 
-func scrubWorkspaceIdentityFields(path string, state *WorktreeWorkspace, warn bool) {
+func scrubWorkspaceIdentityFields(path string, state *WorktreeWorkspace, warn bool) error {
 	if state == nil || !state.hasIdentityFields() {
-		return
+		return nil
 	}
 	root := WorktreeRootFromWorkspacePath(path)
 	if strings.TrimSpace(root) == "" {
-		return
+		return nil
 	}
 	identityPath := filepath.Join(root, DefaultWorktreeIdentityRelativePath())
 	if _, err := os.Stat(identityPath); err != nil {
-		return
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", identityPath, err)
 	}
 	if warn {
 		fmt.Fprintf(os.Stderr, "Warning: ignoring identity fields in %s because %s is present\n", path, identityPath)
 	}
 	state.clearIdentityFields()
+	return nil
 }
 
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
@@ -223,7 +227,9 @@ func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
-	scrubWorkspaceIdentityFields(path, &state, true)
+	if err := scrubWorkspaceIdentityFields(path, &state, true); err != nil {
+		return nil, err
+	}
 	return &state, nil
 }
 
@@ -244,7 +250,9 @@ func SaveWorktreeWorkspaceTo(path string, state *WorktreeWorkspace) error {
 		return errors.New("nil workspace state")
 	}
 	state.normalize()
-	scrubWorkspaceIdentityFields(path, state, false)
+	if err := scrubWorkspaceIdentityFields(path, state, false); err != nil {
+		return err
+	}
 
 	data, err := yaml.Marshal(state)
 	if err != nil {
@@ -258,10 +266,5 @@ func WorktreeRootFromWorkspacePath(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	clean := filepath.Clean(path)
-	base := filepath.Base(clean)
-	if base == "workspace.yaml" {
-		return filepath.Dir(filepath.Dir(clean))
-	}
-	return filepath.Dir(filepath.Dir(clean))
+	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
 }

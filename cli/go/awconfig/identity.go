@@ -79,10 +79,5 @@ func WorktreeRootFromIdentityPath(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	clean := filepath.Clean(path)
-	base := filepath.Base(clean)
-	if base == "identity.yaml" {
-		return filepath.Dir(filepath.Dir(clean))
-	}
-	return filepath.Dir(filepath.Dir(clean))
+	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
 }

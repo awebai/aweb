@@ -119,3 +119,36 @@ workspace_id: ws-1
 		t.Fatalf("workspace identity fields were not scrubbed: %#v", state)
 	}
 }
+
+func TestScrubWorkspaceIdentityFieldsReturnsStatErrors(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	workspacePath := filepath.Join(awDir, "workspace.yaml")
+	state := &WorktreeWorkspace{
+		DID:        "did:key:z6MkWorkspace",
+		StableID:   "did:aw:workspace",
+		SigningKey: ".aw/signing.key",
+		Custody:    "self",
+		Lifetime:   "persistent",
+	}
+
+	if err := os.Chmod(awDir, 0o000); err != nil {
+		t.Fatalf("chmod .aw: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(awDir, 0o755)
+	}()
+
+	err := scrubWorkspaceIdentityFields(workspacePath, state, false)
+	if err == nil {
+		t.Fatal("expected stat error")
+	}
+	if !strings.Contains(err.Error(), "stat ") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

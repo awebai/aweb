@@ -347,18 +347,25 @@ func updateAccountIdentity(accountName, newDID, custody, signingKeyPath string) 
 
 	if wd, wdErr := os.Getwd(); wdErr == nil {
 		workspacePath := filepath.Join(wd, awconfig.DefaultWorktreeWorkspaceRelativePath())
-		if workspace, loadErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); loadErr == nil {
+		identityPath := filepath.Join(wd, awconfig.DefaultWorktreeIdentityRelativePath())
+		hasPersistentIdentity := false
+		if _, statErr := os.Stat(identityPath); statErr == nil {
+			hasPersistentIdentity = true
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+
+		if workspace, loadErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); loadErr == nil && !hasPersistentIdentity {
 			workspace.DID = newDID
 			workspace.Custody = custody
 			workspace.SigningKey = signingKeyPath
 			if saveErr := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); saveErr != nil {
 				return saveErr
 			}
-		} else if !os.IsNotExist(loadErr) {
+		} else if loadErr != nil && !os.IsNotExist(loadErr) {
 			return loadErr
 		}
 
-		identityPath := filepath.Join(wd, awconfig.DefaultWorktreeIdentityRelativePath())
 		if identity, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath); loadErr == nil {
 			identity.DID = newDID
 			identity.Custody = custody
