@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 var identityRotateKeyCmd = &cobra.Command{
 	Use:   "rotate-key",
 	Short: "Rotate the identity signing key",
-	Long:  "Generate a new Ed25519 keypair, sign the rotation with the old key, and update the server and local config.",
+	Long:  "Generate a new Ed25519 keypair, rotate the did:key at awid.ai, and promote the local keypair.",
 	RunE:  runDidRotateKey,
 }
 
@@ -45,7 +46,7 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if sel.Custody == awid.CustodySelf {
-			return fmt.Errorf("identity %q is already self-custodial", sel.AccountName)
+			return fmt.Errorf("current identity is already self-custodial")
 		}
 		return runCustodialGraduation(sel)
 	}
@@ -61,22 +62,25 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	keysDir, err := keysDirForCurrentConfig()
+	rotationDir, err := rotationStateDirForCurrentWorktree()
 	if err != nil {
 		return err
 	}
 	oldPriv := current.SigningKey
-	oldPub := oldPriv.Public().(ed25519.PublicKey)
-	oldDID := current.DID
 	registryURL, err := current.registryURL(ctx)
 	if err != nil {
 		return err
 	}
 
-	if pending, err := loadPendingRotationState(keysDir, current.StableID); err != nil {
+	pending, err := loadPendingRotationState(rotationDir, current.StableID)
+	if err != nil {
 		return err
-	} else if pending != nil {
-		return continuePendingIDRotation(ctx, current, keysDir, oldPriv, oldPub, oldDID, pending)
+	}
+	if pending != nil {
+		if v := strings.TrimSpace(pending.RegistryURL); v != "" {
+			registryURL = v
+		}
+		return continuePendingIDRotation(ctx, current, rotationDir, registryURL, pending)
 	}
 
 	newPub, newPriv, err := awid.GenerateKeypair()
@@ -84,116 +88,107 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	newDID := awid.ComputeDIDKey(newPub)
-	pendingKeyPath, err := savePendingRotationKeypair(keysDir, newDID, newPub, newPriv)
+	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, newDID, newPub, newPriv)
 	if err != nil {
 		return fmt.Errorf("save pending rotation keypair: %w", err)
 	}
-	pending := &pendingRotationState{
+	pending = &pendingRotationState{
 		StableID:    current.StableID,
-		Address:     current.Address,
-		OldDID:      oldDID,
+		OldDID:      awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey)),
 		NewDID:      newDID,
 		RegistryURL: registryURL,
 		PendingKey:  pendingKeyPath,
 	}
-	if err := savePendingRotationState(keysDir, pending); err != nil {
+	if err := savePendingRotationState(rotationDir, pending); err != nil {
 		_ = cleanupPendingRotationKeypair(pendingKeyPath)
 		return err
 	}
-	if _, err := current.Registry.RotateDIDKey(ctx, registryURL, current.StableID, oldPriv, newPriv); err != nil {
-		_ = removePendingRotationState(keysDir, current.StableID)
-		_ = cleanupPendingRotationKeypair(pendingKeyPath)
-		return err
-	}
-	return continuePendingIDRotation(ctx, current, keysDir, oldPriv, oldPub, oldDID, pending)
+	return continuePendingIDRotation(ctx, current, rotationDir, registryURL, pending)
 }
 
 func continuePendingIDRotation(
 	ctx context.Context,
 	current *currentIdentityContext,
-	keysDir string,
-	oldPriv ed25519.PrivateKey,
-	oldPub ed25519.PublicKey,
-	oldDID string,
+	rotationDir string,
+	registryURL string,
 	pending *pendingRotationState,
 ) error {
 	if current == nil || pending == nil {
 		return fmt.Errorf("missing rotation context")
 	}
-	newPriv, promoted, err := loadRotationSigningKey(keysDir, current.Address, pending)
+	activeKeyPath, err := resolveLocalSigningKeyPath(current.Selection)
 	if err != nil {
 		return err
 	}
-	newPub := newPriv.Public().(ed25519.PublicKey)
-	newDID := awid.ComputeDIDKey(newPub)
-	if strings.TrimSpace(newDID) != strings.TrimSpace(pending.NewDID) {
+	newPriv, promoted, err := loadRotationSigningKey(activeKeyPath, pending)
+	if err != nil {
+		return err
+	}
+	newDID := awid.ComputeDIDKey(newPriv.Public().(ed25519.PublicKey))
+	if newDID != pending.NewDID {
 		return fmt.Errorf("pending rotation key does not match recorded new did:key")
 	}
-	if strings.TrimSpace(current.DID) == strings.TrimSpace(newDID) {
-		return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "synced", promoted)
-	}
-	if strings.TrimSpace(current.DID) != strings.TrimSpace(pending.OldDID) {
-		return fmt.Errorf("current did:key %s does not match pending rotation state (%s → %s)", current.DID, pending.OldDID, pending.NewDID)
-	}
 
-	resp, err := current.Client.RotateKey(ctx, &awid.RotateKeyRequest{
-		NewDID:       newDID,
-		NewPublicKey: newPub,
-		Custody:      awid.CustodySelf,
-	})
+	resolution, err := current.Registry.ResolveKeyAt(ctx, registryURL, pending.StableID)
 	if err != nil {
-		warning := fmt.Sprintf("registry rotation succeeded, but the server update failed: %v. Retry `aw id rotate-key` to finish syncing the server.", err)
-		fmt.Fprintln(os.Stderr, "Warning:", warning)
-		printOutput(idRotateOutput{
-			Status:       "pending_server_update",
-			RegistryURL:  pending.RegistryURL,
-			OldDID:       pending.OldDID,
-			NewDID:       pending.NewDID,
-			Warning:      warning,
-			PendingRetry: true,
-		}, formatIDRotate)
-		return nil
+		return err
 	}
-	if strings.TrimSpace(resp.NewDID) != newDID {
-		return fmt.Errorf("server rotation returned unexpected did:key %s; retry `aw id rotate-key` to finish syncing", resp.NewDID)
+	switch resolution.CurrentDIDKey {
+	case pending.OldDID:
+		oldDID := awid.ComputeDIDKey(current.SigningKey.Public().(ed25519.PublicKey))
+		if oldDID != pending.OldDID {
+			return fmt.Errorf("current signing key does not match pending rotation state (%s → %s)", pending.OldDID, pending.NewDID)
+		}
+		if _, err := current.Registry.RotateDIDKey(ctx, registryURL, pending.StableID, current.SigningKey, newPriv); err != nil {
+			return err
+		}
+	case pending.NewDID:
+		// Registry rotation already succeeded; finish local promotion.
+	default:
+		return fmt.Errorf("registry did:key %s does not match pending rotation state (%s → %s)", resolution.CurrentDIDKey, pending.OldDID, pending.NewDID)
 	}
-	return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "rotated", promoted)
+	return finalizeIDRotation(current, rotationDir, registryURL, pending, promoted)
 }
 
 func finalizeIDRotation(
 	current *currentIdentityContext,
-	keysDir string,
-	oldPriv ed25519.PrivateKey,
-	oldPub ed25519.PublicKey,
-	oldDID string,
+	rotationDir string,
+	registryURL string,
 	pending *pendingRotationState,
-	status string,
 	promoted bool,
 ) error {
-	keyPath := awid.SigningKeyPath(keysDir, current.Address)
+	keyPath, err := resolveLocalSigningKeyPath(current.Selection)
+	if err != nil {
+		return err
+	}
 	if !promoted {
-		if err := awid.ArchiveKey(keysDir, oldDID, oldPub, oldPriv); err != nil {
+		oldPriv := current.SigningKey
+		oldDID := awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey))
+		if oldDID != pending.OldDID {
+			return fmt.Errorf("current signing key does not match pending rotation state (%s → %s)", pending.OldDID, pending.NewDID)
+		}
+		oldPub := oldPriv.Public().(ed25519.PublicKey)
+		if err := awid.ArchiveKey(rotationDir, oldDID, oldPub, oldPriv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to archive old key: %v\n", err)
 		}
-		var err error
-		keyPath, err = promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey)
+		keyPath, err = promotePendingRotationKeypair(keyPath, pending.PendingKey, pending.NewDID)
 		if err != nil {
-			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
+			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 		}
 	} else if err := ensurePublicKeyMatchesPrivate(keyPath); err != nil {
-		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
+		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
-	if err := updateAccountIdentity(current.Selection.AccountName, pending.NewDID, awid.CustodySelf, keyPath); err != nil {
-		return fmt.Errorf("update account identity: %w. Retry `aw id rotate-key` to finish syncing", err)
+	if err := updateAccountIdentity(pending.NewDID, awid.CustodySelf, keyPath); err != nil {
+		return fmt.Errorf("update local identity: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
-	if err := removePendingRotationState(keysDir, current.StableID); err != nil {
-		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish syncing", err)
+	if err := removePendingRotationState(rotationDir, current.StableID); err != nil {
+		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
 
 	printOutput(idRotateOutput{
-		Status:      status,
-		RegistryURL: pending.RegistryURL,
-		OldDID:      oldDID,
+		Status:      "rotated",
+		RegistryURL: registryURL,
+		OldDID:      pending.OldDID,
 		NewDID:      pending.NewDID,
 	}, formatIDRotate)
 	return nil
@@ -228,20 +223,17 @@ func runCustodialGraduation(sel *awconfig.Selection) error {
 		return err
 	}
 
-	// Save new keypair.
-	configPath, err := defaultGlobalPath()
+	// Save the new keypair at the worktree-local signing-key path.
+	keyPath, err := resolveLocalSigningKeyPath(sel)
 	if err != nil {
 		return err
 	}
-	keysDir := awconfig.KeysDir(configPath)
-	address := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
-	if err := awid.SaveKeypair(keysDir, address, newPub, newPriv); err != nil {
+	if err := awid.SaveKeypairAt(keyPath, awid.PublicKeyPath(keyPath), newPub, newPriv); err != nil {
 		return fmt.Errorf("save new keypair: %w", err)
 	}
 
 	// Update config.
-	keyPath := awid.SigningKeyPath(keysDir, address)
-	if err := updateAccountIdentity(sel.AccountName, newDID, awid.CustodySelf, keyPath); err != nil {
+	if err := updateAccountIdentity(newDID, awid.CustodySelf, keyPath); err != nil {
 		return err
 	}
 	printOutput(idRotateOutput{
@@ -296,18 +288,48 @@ func runDidLog(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// updateAccountIdentity updates DID, custody, and signing key path in the global config.
-func updateAccountIdentity(accountName, newDID, custody, signingKeyPath string) error {
-	configPath, err := defaultGlobalPath()
-	if err != nil {
-		return err
+func resolveLocalSigningKeyPath(sel *awconfig.Selection) (string, error) {
+	if sel != nil && strings.TrimSpace(sel.SigningKey) != "" {
+		return strings.TrimSpace(sel.SigningKey), nil
 	}
-	return awconfig.UpdateGlobalAt(configPath, func(cfg *awconfig.GlobalConfig) error {
-		acct := cfg.Accounts[accountName]
-		acct.DID = newDID
-		acct.Custody = custody
-		acct.SigningKey = signingKeyPath
-		cfg.Accounts[accountName] = acct
-		return nil
-	})
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return awconfig.WorktreeSigningKeyPath(wd), nil
+}
+
+func updateAccountIdentity(newDID, custody, signingKeyPath string) error {
+	if wd, wdErr := os.Getwd(); wdErr == nil {
+		workspacePath := filepath.Join(wd, awconfig.DefaultWorktreeWorkspaceRelativePath())
+		identityPath := filepath.Join(wd, awconfig.DefaultWorktreeIdentityRelativePath())
+		hasPersistentIdentity := false
+		if _, statErr := os.Stat(identityPath); statErr == nil {
+			hasPersistentIdentity = true
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+
+		if workspace, loadErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); loadErr == nil && !hasPersistentIdentity {
+			workspace.DID = newDID
+			workspace.Custody = custody
+			workspace.SigningKey = signingKeyPath
+			if saveErr := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); saveErr != nil {
+				return saveErr
+			}
+		} else if loadErr != nil && !os.IsNotExist(loadErr) {
+			return loadErr
+		}
+
+		if identity, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath); loadErr == nil {
+			identity.DID = newDID
+			identity.Custody = custody
+			if saveErr := awconfig.SaveWorktreeIdentityTo(identityPath, identity); saveErr != nil {
+				return saveErr
+			}
+		} else if !os.IsNotExist(loadErr) {
+			return loadErr
+		}
+	}
+	return nil
 }

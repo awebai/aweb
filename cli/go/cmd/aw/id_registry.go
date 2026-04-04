@@ -60,12 +60,10 @@ type idNamespaceOutput struct {
 }
 
 type idRotateOutput struct {
-	Status       string `json:"status"`
-	RegistryURL  string `json:"registry_url,omitempty"`
-	OldDID       string `json:"old_did,omitempty"`
-	NewDID       string `json:"new_did,omitempty"`
-	Warning      string `json:"warning,omitempty"`
-	PendingRetry bool   `json:"pending_retry,omitempty"`
+	Status      string `json:"status"`
+	RegistryURL string `json:"registry_url,omitempty"`
+	OldDID      string `json:"old_did,omitempty"`
+	NewDID      string `json:"new_did,omitempty"`
 }
 
 type currentIdentityContext struct {
@@ -81,16 +79,6 @@ type currentIdentityContext struct {
 	StableID   string
 	Custody    string
 	Lifetime   string
-}
-
-type pendingRotationState struct {
-	StableID    string `yaml:"stable_id"`
-	Address     string `yaml:"address"`
-	OldDID      string `yaml:"old_did"`
-	NewDID      string `yaml:"new_did"`
-	RegistryURL string `yaml:"registry_url"`
-	PendingKey  string `yaml:"pending_key"`
-	CreatedAt   string `yaml:"created_at"`
 }
 
 var idRegisterCmd = &cobra.Command{

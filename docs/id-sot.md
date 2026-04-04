@@ -683,8 +683,7 @@ map that currently implements that model.
 
 Common global flags:
 
-- `--account`: account name from `config.yaml`
-- `--server-name`: server name from `config.yaml`
+- `--server-name`: override the server host or name for this command
 - `--json`: JSON output
 - `--debug`: log background errors to stderr
 
@@ -700,12 +699,10 @@ Current `aw --help` groups commands into:
 
 ### Workspace Setup
 
-- `aw connect`: import an existing identity context using environment credentials
 - `aw init`: initialize a local workspace in an existing project
 - `aw project`: show the current project
 - `aw reset`: remove the local workspace binding in the current directory
 - `aw spawn`: authorize another workspace to join this project
-- `aw use <account-or-alias>`: use an existing identity in this workspace
 - `aw workspace`: manage repo-local coordination workspaces
 
 Subcommands:
@@ -727,10 +724,10 @@ Notable help/usage details:
 
 - `aw project create` uses `--project <slug>` for the project slug; it may also fall back to `AWEB_PROJECT`/`AWEB_PROJECT_SLUG` or a TTY prompt
 - `aw project create --namespace <slug>` optionally sets an authoritative namespace slug distinct from the project slug; when omitted, the namespace defaults to the project slug
-- `aw connect` imports current server identity state; it does not create or mutate an identity
 - `aw init` supports `--permanent --name <name>` for explicit durable self-custodial creation
 - `aw spawn accept-invite` remains an explicit delegated bootstrap command; unlike `aw run`, it should stay non-prompting
-- `aw reset` is local-only; it removes `.aw/context` without mutating server-side identity state
+- `aw reset` is local-only; it removes `.aw/workspace.yaml` and `.aw/context`
+  without mutating server-side identity state
 
 ### Identity
 
@@ -743,6 +740,7 @@ Notable help/usage details:
 Subcommands:
 
 - `aw id access-mode [open|contacts_only]`: get or set identity access mode
+- `aw id create --name <name> --domain <domain>`: create a standalone permanent identity in `.aw/`, verify the `_awid.<domain>` TXT record, and register the namespace, address, and `did:aw` mapping
 - `aw id delete`: delete the current ephemeral identity
 - `aw id log [address]`: show an identity log
 - `aw id reachability [private|org-visible|contacts-only|public]`: get or set permanent address reachability
@@ -756,8 +754,6 @@ Subcommands:
 Notable help/usage details:
 
 - `aw whoami` has alias `introspect`
-- `aw mcp-config --all` outputs config for all accounts
-
 ### Messaging & Network
 
 - `aw chat`: real-time chat
@@ -877,6 +873,5 @@ Subcommands:
 - permanent self-custodial identities are chosen only at creation time via `--permanent --name <name>`
 - `aw id` is the single public family for lifecycle, registry, settings, and key management
 - `aw whoami` is the canonical human-facing identity-inspection command; `aw introspect` remains as the technical alias
-- `aw connect` is import-only
 - `aw reset` is local-only
 - `aw mcp-config` belongs with identity because it describes how the current identity is exposed to MCP clients

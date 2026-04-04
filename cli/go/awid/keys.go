@@ -36,6 +36,11 @@ func SaveKeypairAt(keyPath, pubPath string, pub ed25519.PublicKey, priv ed25519.
 	return writePublicKey(pubPath, pub)
 }
 
+// SaveSigningKey writes only the private signing key PEM to the given path.
+func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
+	return writePrivateKey(path, priv)
+}
+
 // LoadSigningKey reads an Ed25519 private key from a PEM file.
 func LoadSigningKey(path string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)

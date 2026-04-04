@@ -7,7 +7,7 @@ This reference is derived from the live Cobra help tree generated from the
 
 | Family | Commands |
 | --- | --- |
-| Workspace setup | `connect`, `init`, `project`, `reset`, `spawn`, `use`, `workspace` |
+| Workspace setup | `init`, `project`, `reset`, `spawn`, `workspace` |
 | Identity | `claim-human`, `identities`, `identity`, `mcp-config`, `whoami` |
 | Messaging and network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
 | Coordination and runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
@@ -15,10 +15,9 @@ This reference is derived from the live Cobra help tree generated from the
 
 ## Global flags
 
-- `--account string`: Account name from config.yaml.
 - `--debug`: Log background errors to stderr.
 - `--json`: Output as JSON when the command supports it.
-- `--server-name string`: Select a configured server by name.
+- `--server-name string`: Override the server host or name for this command.
 
 ## Notes
 
@@ -34,31 +33,19 @@ This reference is derived from the live Cobra help tree generated from the
 
 | Variable | Purpose |
 | --- | --- |
-| `AW_CONFIG_PATH` | Override the CLI config path |
-| `AWEB_SERVER` | Select a configured server by name |
-| `AWEB_ACCOUNT` | Select a configured account by name |
 | `AWEB_URL` | Override the base server URL |
 | `AWEB_API_KEY` | Override the API key |
 | `AW_DEBUG` | Enable debug logging |
 
-## Account Resolution Order
+## Resolution Order
 
 The CLI resolves context in this order:
 
-1. explicit flags such as `--server-name` and `--account`
+1. explicit flags such as `--server-name`
 2. environment variables
-3. local `.aw/context`
-4. global default account in config
-
-## `connect`
-
-### `connect`
-
-Use this when you already have an identity-bound API key and want to bind the current directory to that identity.
-
-Flags:
-- `-h, --help          help for connect`
-- `--set-default   Set this account as default even if one already exists`
+3. local `.aw/workspace.yaml`
+4. local `.aw/identity.yaml` for permanent identity fields
+5. local `.aw/context`
 
 ## `init`
 
@@ -72,16 +59,14 @@ Flags:
 - `-h, --help                  help for init`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent)`
+- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
 - `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`
 - `--role string           Compatibility alias for --role-name`
 - `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
-- `--save-config           Write/update ~/.config/aw/config.yaml with the new credentials (default true)`
 - `--server string         Base URL for the aweb server (alias for --server-url)`
 - `--server-url string     Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
-- `--set-default           Set this account as default_account in ~/.config/aw/config.yaml`
 - `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
 - `--write-context         Write/update .aw/context in the current directory (non-secret pointer) (default true)`
 
@@ -106,7 +91,7 @@ Flags:
 - `-h, --help                    help for create`
 - `--human-name string       Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs             Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string             Permanent identity name (required with --permanent)`
+- `--name string             Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--namespace string        Authoritative namespace slug when it differs from the project slug (default: project slug)`
 - `--namespace-slug string   Authoritative namespace slug (alias for --namespace)`
 - `--permanent               Create a durable self-custodial identity instead of the default ephemeral identity`
@@ -115,10 +100,8 @@ Flags:
 - `--reachability string     Permanent address reachability (private|org-visible|contacts-only|public)`
 - `--role string             Compatibility alias for --role-name`
 - `--role-name string        Workspace role name (must match a role in the active project roles bundle)`
-- `--save-config             Write/update ~/.config/aw/config.yaml with the new credentials (default true)`
 - `--server string           Base URL for the aweb server (alias for --server-url)`
 - `--server-url string       Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
-- `--set-default             Set this account as default_account in ~/.config/aw/config.yaml`
 - `--setup-hooks             Set up Claude Code PostToolUse hook for aw notify`
 - `--write-context           Write/update .aw/context in the current directory (non-secret pointer) (default true)`
 
@@ -184,16 +167,14 @@ Flags:
 - `-h, --help                  help for accept-invite`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent)`
+- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
 - `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`
 - `--role string           Compatibility alias for --role-name`
 - `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
-- `--save-config           Write/update ~/.config/aw/config.yaml with the new credentials (default true)`
 - `--server string         Base URL for the aweb server (alias for --server-url)`
 - `--server-url string     Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
-- `--set-default           Set this account as default_account in ~/.config/aw/config.yaml`
 - `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
 - `--write-context         Write/update .aw/context in the current directory (non-secret pointer) (default true)`
 
@@ -266,14 +247,26 @@ Flags:
 ### `identity`
 
 Subcommands:
+- `create       Create a standalone permanent identity with a DNS-backed address in .aw/`
 - `access-mode  Get or set identity access mode`
 - `delete       Delete the current ephemeral identity`
 - `log          Show an identity log`
 - `reachability Get or set permanent address reachability`
+- `register     Register the current permanent identity at awid.ai`
+- `resolve      Resolve a did:aw to its current did:key`
+- `show         Show the current identity and registry status`
+- `namespace    Inspect a namespace and its registered addresses`
 - `rotate-key   Rotate the identity signing key`
+- `verify       Verify the full audit log for a did:aw`
 
 Flags:
 - `-h, --help   help for identity`
+
+### `identity create`
+
+Flags:
+- `-h, --help      help for create`
+- `--name string   Permanent identity name`
 
 ### `identity access-mode`
 
@@ -291,6 +284,26 @@ Flags:
 Flags:
 - `-h, --help   help for log`
 
+### `identity namespace`
+
+Flags:
+- `-h, --help   help for namespace`
+
+### `identity register`
+
+Flags:
+- `-h, --help   help for register`
+
+### `identity resolve`
+
+Flags:
+- `-h, --help   help for resolve`
+
+### `identity show`
+
+Flags:
+- `-h, --help   help for show`
+
 ### `identity reachability`
 
 Flags:
@@ -301,6 +314,11 @@ Flags:
 Flags:
 - `-h, --help           help for rotate-key`
 - `--self-custody   Graduate from custodial to self-custody`
+
+### `identity verify`
+
+Flags:
+- `-h, --help   help for verify`
 
 ## `mcp-config`
 
@@ -680,7 +698,7 @@ Flags:
 
 ### `run`
 
-In a TTY, if this directory is not initialized yet, aw run can guide you through new-project creation or existing-project init before starting the provider. The explicit bootstrap commands remain available for scripts and expert use: aw project create, aw init, aw spawn accept-invite, and aw connect.  Current implementation includes: - repeated provider invocations (currently Claude and Codex) - provider session continuity when --continue is requested - /stop, /wait, /resume, /autofeed on|off, /quit, and prompt override controls - aw event-stream wakeups for mail, chat, and optional work events - optional background services declared in aw run config  This aw-first command intentionally excludes bead-specific dispatch.
+In a TTY, if this directory is not initialized yet, aw run can guide you through new-project creation or existing-project init before starting the provider. The explicit bootstrap commands remain available for scripts and expert use: aw project create, aw init, and aw spawn accept-invite. Current implementation includes repeated provider invocations (currently Claude and Codex), provider session continuity when --continue is requested, `/stop`, `/wait`, `/resume`, `/autofeed on|off`, `/quit`, and prompt override controls, aw event-stream wakeups for mail, chat, and optional work events, and optional background services declared in aw run config. This aw-first command intentionally excludes bead-specific dispatch.
 
 Flags:
 - `--allowed-tools string         Provider-specific allowed tools string`

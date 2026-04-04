@@ -56,18 +56,18 @@ aw init --server-url "$AWEB_URL"
 - `aw init`: explicit existing-project bootstrap when you already have a
   project-scoped key.
 - `aw spawn accept-invite <token>`: join from another workspace's invite.
-- `aw connect`: import an already-issued identity-bound key into this
-  directory.
 
 ## What Gets Written Locally
 
-The bootstrap commands can write three different kinds of local state:
+The bootstrap commands can write local state in:
 
-- `~/.config/aw/config.yaml`: saved servers, accounts, and default selection.
-- `.aw/context`: non-secret pointer telling this directory which account to
-  use.
-- `.aw/workspace.yaml`: repo/worktree coordination metadata for this specific
-  worktree.
+- `~/.config/aw/known_agents.yaml`: TOFU pins for peer identity verification.
+- `.aw/signing.key`: worktree-local private signing key for self-custodial identities.
+- `.aw/workspace.yaml`: repo/worktree-local project binding and coordination
+  state for this specific worktree.
+- `.aw/identity.yaml`: permanent identity metadata when this workspace owns a
+  durable identity.
+- `.aw/context`: non-secret local coordination pointer.
 
 See [configuration.md](configuration.md) for the file details.
 
@@ -81,4 +81,3 @@ That means the normal first-project or spawn flow is:
 - create or join a project
 - get an ephemeral alias
 - start coordinating immediately
-

@@ -13,14 +13,13 @@ import (
 	"time"
 )
 
-func testNamespaceConfig(t *testing.T, serverURL string) (bin, cfgPath, tmp string) {
+func testNamespaceConfig(t *testing.T, serverURL string) (bin, tmp string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	tmp = t.TempDir()
 	bin = filepath.Join(tmp, "aw")
-	cfgPath = filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -33,18 +32,7 @@ func testNamespaceConfig(t *testing.T, serverURL string) (bin, cfgPath, tmp stri
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+serverURL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, serverURL)
 	return
 }
 
@@ -81,17 +69,13 @@ func TestAwNamespaceAdd(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "add", "acme.com", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -133,17 +117,13 @@ func TestAwNamespaceAddTextOutput(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "add", "acme.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -199,18 +179,14 @@ func TestAwNamespaceList(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// JSON output.
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "list", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -252,17 +228,13 @@ func TestAwNamespaceListPreservesAPIBaseURL(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL+"/api")
+	bin, tmp := testNamespaceConfig(t, server.URL+"/api")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "list", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -303,17 +275,13 @@ func TestAwNamespaceListTextOutput(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "list")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -360,17 +328,13 @@ func TestAwNamespaceVerify(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "verify", "acme.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -416,17 +380,13 @@ func TestAwNamespaceVerifyDNSFailure(t *testing.T) {
 				}
 			}))
 
-			bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+			bin, tmp := testNamespaceConfig(t, server.URL)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			run := exec.CommandContext(ctx, bin, "project", "namespace", "verify", "acme.com")
-			run.Env = append(os.Environ(),
-				"AW_CONFIG_PATH="+cfgPath,
-				"AWEB_URL=",
-				"AWEB_API_KEY=",
-			)
+			run.Env = testCommandEnv(tmp)
 			run.Dir = tmp
 			out, err := run.CombinedOutput()
 			if err == nil {
@@ -467,18 +427,14 @@ func TestAwNamespaceDelete(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// --force skips TTY confirmation.
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "delete", "acme.com", "--force")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -511,17 +467,13 @@ func TestAwNamespaceDeleteNotFound(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "delete", "nonexistent.com", "--force")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -550,7 +502,7 @@ func TestAwNamespaceDeleteRequiresForceInNonTTY(t *testing.T) {
 		}
 	}))
 
-	bin, cfgPath, tmp := testNamespaceConfig(t, server.URL)
+	bin, tmp := testNamespaceConfig(t, server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -558,11 +510,7 @@ func TestAwNamespaceDeleteRequiresForceInNonTTY(t *testing.T) {
 	// No --force, stdin is not a TTY (piped from test).
 	run := exec.CommandContext(ctx, bin, "project", "namespace", "delete", "acme.com")
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {

@@ -15,7 +15,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
+
+func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
+	t.Helper()
+	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
+		ServerURL:      serverURL,
+		APIKey:         "aw_sk_test",
+		IdentityHandle: handle,
+		NamespaceSlug:  namespace,
+		ProjectSlug:    namespace,
+		WorkspaceID:    "workspace-1",
+	})
+}
 
 func TestWhoAmIUsesConfiguredBaseURLWithoutExtraNetworkCalls(t *testing.T) {
 	t.Parallel()
@@ -45,7 +59,6 @@ func TestWhoAmIUsesConfiguredBaseURLWithoutExtraNetworkCalls(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -55,23 +68,10 @@ func TestWhoAmIUsesConfiguredBaseURLWithoutExtraNetworkCalls(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-    namespace_slug: acme
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "whoami", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -131,7 +131,6 @@ func TestWhoAmIFallsBackAndPersistsRecoveredBaseURL(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -141,23 +140,10 @@ func TestWhoAmIFallsBackAndPersistsRecoveredBaseURL(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-    namespace_slug: acme
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	workspacePath := writeNetworkWorkspace(t, tmp, server.URL, "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "whoami", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -167,12 +153,12 @@ default_account: acct
 		t.Fatalf("run: %v\npaths=%v\n%s", err, gotPaths, out)
 	}
 
-	cfgData, err := os.ReadFile(cfgPath)
+	cfgData, err := os.ReadFile(workspacePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cfgData), "url: "+server.URL+"/api") {
-		t.Fatalf("expected config to persist recovered /api URL, got:\n%s", string(cfgData))
+	if !strings.Contains(string(cfgData), "server_url: "+server.URL+"/api") {
+		t.Fatalf("expected workspace binding to persist recovered /api URL, got:\n%s", string(cfgData))
 	}
 
 	pathsMu.Lock()
@@ -229,21 +215,10 @@ func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T
 	t.Cleanup(server.Close)
 
 	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	workspacePath := writeNetworkWorkspace(t, tmp, server.URL, "", "")
 
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
+	t.Setenv("HOME", tmp)
+	t.Setenv("AW_CONFIG_PATH", "")
 	t.Setenv("AWEB_URL", "")
 	t.Setenv("AWEB_API_KEY", "")
 
@@ -268,12 +243,12 @@ default_account: acct
 		t.Fatalf("event=%#v", event)
 	}
 
-	cfgData, err := os.ReadFile(cfgPath)
+	cfgData, err := os.ReadFile(workspacePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cfgData), "url: "+server.URL+"/api") {
-		t.Fatalf("expected config to persist recovered /api URL, got:\n%s", string(cfgData))
+	if !strings.Contains(string(cfgData), "server_url: "+server.URL+"/api") {
+		t.Fatalf("expected workspace binding to persist recovered /api URL, got:\n%s", string(cfgData))
 	}
 
 	pathsMu.Lock()
@@ -369,7 +344,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "acme/researcher", "--body", "hello network", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -444,7 +419,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "bob", "--body", "hello local", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -520,7 +495,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "acme/bot", "hello network", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -597,7 +572,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--start-conversation", "aweb/merlin", "hello")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -658,7 +633,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -728,7 +703,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "directory", "--capability", "translate", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -798,7 +773,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "directory", "acme/researcher", "--json")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -44,17 +43,12 @@ func TestAwInstructionsShowDisplaysActiveInstructions(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "instructions", "show")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -116,17 +110,12 @@ func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "instructions", "show", "instructions-2")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -198,17 +187,12 @@ func TestAwInstructionsSetCreatesAndActivatesNewVersion(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "instructions", "set", "--body-file", "-")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	run.Stdin = strings.NewReader("## Shared Rules\n\nUse `aw`.\n")
 	out, err := run.CombinedOutput()
@@ -281,17 +265,12 @@ func TestAwInstructionsHistoryListsVersions(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "instructions", "history", "--limit", "5")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -308,23 +287,7 @@ func TestAwInstructionsHistoryListsVersions(t *testing.T) {
 	}
 }
 
-func writeTestConfig(t *testing.T, path, serverURL string) {
+func writeTestConfig(t *testing.T, workingDir, serverURL string) {
 	t.Helper()
-
-	content := strings.TrimSpace(`
-servers:
-  local:
-    url: `+serverURL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`) + "\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, workingDir, serverURL)
 }

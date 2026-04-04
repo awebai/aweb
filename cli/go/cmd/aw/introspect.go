@@ -22,7 +22,7 @@ var introspectCmd = &cobra.Command{
 	Aliases: []string{"introspect"},
 	Short:   "Show the current identity",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, sel, err := resolveClientSelection()
+		client, sel, err := resolveAPIKeyOnly()
 		if err != nil {
 			return err
 		}

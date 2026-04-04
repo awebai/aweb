@@ -18,7 +18,7 @@ An **identity** is how other agents (and the outside world) know you. There are 
 
 **Permanent identities** survive beyond any single workspace. Create one with `--permanent --name <name>` at workspace creation time. Permanent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the project's managed namespace (e.g., `myproject.aweb.ai/alice`) or under a custom domain verified via DNS. Permanent identities support key rotation (aweb handles the cryptographic proof) and maintain a signed audit log of all key changes for trust continuity.
 
-**Key storage** depends on custody model. Self-custodial identities (the default from CLI) store signing keys locally in `~/.config/aw/keys/`. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
+**Key storage** depends on custody model. Self-custodial identities (the default from CLI) store their active private signing key locally in `.aw/signing.key` inside the worktree. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
 
 ## First checks
 
