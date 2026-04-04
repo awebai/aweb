@@ -7,18 +7,20 @@
   <meta name="description" content="{{ .Site.Params.description }}">
   <style>
     :root {
-      --ink: #0e2230;
-      --ink-soft: #4a5b67;
-      --paper: #f5f1e8;
-      --paper-strong: #fffaf0;
-      --line: rgba(14, 34, 48, 0.14);
-      --signal: #d16b38;
-      --signal-deep: #a7491b;
-      --sea: #1d4f63;
-      --shadow: 0 24px 70px rgba(14, 34, 48, 0.12);
-      --radius: 24px;
-      --mono: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
-      --sans: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+      --bg: #eef2f3;
+      --panel: rgba(255, 255, 255, 0.86);
+      --panel-strong: #ffffff;
+      --ink: #13212b;
+      --ink-soft: #52616d;
+      --line: rgba(19, 33, 43, 0.13);
+      --line-strong: rgba(19, 33, 43, 0.24);
+      --accent: #0f766e;
+      --accent-soft: rgba(15, 118, 110, 0.12);
+      --warn: #9a3412;
+      --radius: 22px;
+      --shadow: 0 22px 60px rgba(19, 33, 43, 0.08);
+      --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     }
 
     * { box-sizing: border-box; }
@@ -26,12 +28,12 @@
     html, body {
       margin: 0;
       padding: 0;
-      font-family: var(--sans);
-      color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(209, 107, 56, 0.16), transparent 34%),
-        radial-gradient(circle at 85% 18%, rgba(29, 79, 99, 0.16), transparent 28%),
-        linear-gradient(180deg, var(--paper-strong), var(--paper));
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(19, 33, 43, 0.08), transparent 22%),
+        linear-gradient(180deg, #f8fafb 0%, var(--bg) 100%);
+      color: var(--ink);
+      font-family: var(--sans);
     }
 
     body {
@@ -40,256 +42,404 @@
     }
 
     .frame {
-      width: min(1120px, calc(100vw - 32px));
+      width: min(1160px, calc(100vw - 32px));
       margin: 0 auto;
-      padding: 28px 0 56px;
+      padding: 24px 0 56px;
+    }
+
+    .nav,
+    .hero,
+    .stance,
+    .surface,
+    .docs,
+    .closing,
+    footer {
+      display: grid;
+      gap: 20px;
     }
 
     .nav {
-      display: flex;
-      justify-content: space-between;
+      grid-template-columns: 1fr auto;
       align-items: center;
-      gap: 20px;
-      padding: 10px 0 28px;
+      margin-bottom: 22px;
     }
 
     .brand {
       display: inline-flex;
       align-items: center;
       gap: 12px;
-      text-decoration: none;
       color: inherit;
+      text-decoration: none;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.01em;
     }
 
     .brand-mark {
-      width: 38px;
-      height: 38px;
-      border-radius: 12px;
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid var(--line-strong);
       background:
-        linear-gradient(145deg, var(--signal), #f0a266 46%, #fff3db);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+        linear-gradient(135deg, rgba(15, 118, 110, 0.18), rgba(255,255,255,0.84)),
+        linear-gradient(180deg, #f7fbfb, #e8efef);
       position: relative;
-      overflow: hidden;
     }
 
     .brand-mark::after {
       content: "";
       position: absolute;
-      inset: 9px;
-      border: 2px solid rgba(14, 34, 48, 0.56);
-      border-radius: 10px;
-      transform: rotate(14deg);
+      inset: 7px;
+      border-radius: 999px;
+      border: 2px solid rgba(19, 33, 43, 0.58);
     }
 
     .nav-links {
       display: flex;
       gap: 18px;
       flex-wrap: wrap;
-      align-items: center;
     }
 
     .nav-links a,
-    .link {
+    .text-link {
       color: var(--ink);
       text-decoration: none;
       font-weight: 600;
     }
 
-    .hero {
-      display: grid;
-      grid-template-columns: 1.2fr 0.8fr;
-      gap: 28px;
-      align-items: stretch;
-      margin-bottom: 28px;
-    }
-
-    .hero-panel,
-    .card,
-    .codewell {
+    .shell {
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: rgba(255, 255, 255, 0.68);
-      backdrop-filter: blur(8px);
+      background: var(--panel);
       box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
     }
 
-    .hero-panel {
-      padding: 44px;
+    .hero {
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      margin-bottom: 20px;
+    }
+
+    .hero-main,
+    .hero-side,
+    .surface-block,
+    .doc-card,
+    .closing-card {
+      padding: 28px;
+    }
+
+    .hero-main {
       position: relative;
       overflow: hidden;
     }
 
-    .hero-panel::before {
+    .hero-main::before {
       content: "";
       position: absolute;
-      width: 280px;
-      height: 280px;
-      top: -120px;
-      right: -80px;
+      inset: auto -90px -90px auto;
+      width: 240px;
+      height: 240px;
       border-radius: 999px;
-      background: linear-gradient(180deg, rgba(209,107,56,0.22), rgba(29,79,99,0.08));
+      background: radial-gradient(circle, rgba(15, 118, 110, 0.14), rgba(15, 118, 110, 0.02) 72%, transparent 74%);
+      pointer-events: none;
     }
 
     .eyebrow {
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      font-size: 0.82rem;
-      letter-spacing: 0.12em;
+      font-size: 0.78rem;
       text-transform: uppercase;
-      color: var(--signal-deep);
+      letter-spacing: 0.13em;
       font-weight: 800;
+      color: var(--accent);
     }
 
     .eyebrow::before {
       content: "";
-      width: 18px;
+      width: 20px;
       height: 2px;
       background: currentColor;
     }
 
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
     h1 {
-      margin: 18px 0 16px;
-      font-size: clamp(2.8rem, 6vw, 5.2rem);
-      line-height: 0.94;
+      margin-top: 14px;
+      font-size: clamp(2.6rem, 5.6vw, 4.9rem);
+      line-height: 0.95;
       letter-spacing: -0.05em;
-      max-width: 10ch;
+      max-width: 11ch;
     }
 
     .lead {
-      margin: 0 0 28px;
-      max-width: 52ch;
+      margin-top: 18px;
+      max-width: 60ch;
       font-size: 1.08rem;
       color: var(--ink-soft);
     }
 
-    .cta-row {
+    .hero-claims {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .claim {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 15px;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .claim strong {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .hero-actions {
       display: flex;
-      gap: 14px;
+      gap: 12px;
       flex-wrap: wrap;
-      align-items: center;
+      margin-top: 24px;
     }
 
     .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 14px 18px;
       border-radius: 999px;
-      text-decoration: none;
+      padding: 13px 18px;
       font-weight: 700;
-      border: 1px solid transparent;
-      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
-    }
-
-    .button:hover {
-      transform: translateY(-1px);
+      text-decoration: none;
+      border: 1px solid var(--line-strong);
+      color: var(--ink);
+      background: rgba(255,255,255,0.8);
     }
 
     .button.primary {
-      background: linear-gradient(180deg, var(--signal), var(--signal-deep));
-      color: white;
-      box-shadow: 0 16px 30px rgba(209, 107, 56, 0.28);
-    }
-
-    .button.secondary {
-      border-color: var(--line);
-      color: var(--ink);
-      background: rgba(255,255,255,0.62);
+      background: var(--ink);
+      border-color: var(--ink);
+      color: #fff;
     }
 
     .hero-side {
       display: grid;
-      gap: 18px;
+      gap: 14px;
     }
 
-    .card {
-      padding: 24px;
+    .hero-side .shell {
+      height: 100%;
     }
 
-    .metric {
-      font-size: 2.2rem;
+    .side-label {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
       font-weight: 800;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .side-metric {
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      line-height: 0.95;
       letter-spacing: -0.05em;
-      margin: 8px 0;
+      font-weight: 800;
+      margin-bottom: 10px;
     }
 
     .muted {
       color: var(--ink-soft);
     }
 
-    .grid {
-      display: grid;
+    .stance {
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 18px;
-      margin-bottom: 28px;
+      margin-bottom: 20px;
     }
 
-    .card h2,
-    .section h2 {
-      margin: 0 0 10px;
-      font-size: 1.1rem;
-    }
-
-    .section {
-      padding: 20px 0 10px;
-    }
-
-    .codewell {
+    .stance .shell {
       padding: 22px;
-      margin-bottom: 28px;
-      overflow-x: auto;
-      background:
-        linear-gradient(180deg, rgba(14,34,48,0.97), rgba(13,31,42,0.96));
-      color: #e7f0f4;
-      border-color: rgba(255,255,255,0.08);
     }
 
-    pre {
-      margin: 0;
-      font-family: var(--mono);
+    .stance h2 {
+      font-size: 1.08rem;
+      margin-bottom: 10px;
+    }
+
+    .surface {
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      margin-bottom: 20px;
+    }
+
+    .surface-block h2,
+    .docs h2,
+    .closing h2 {
+      font-size: 1.2rem;
+      margin-bottom: 12px;
+    }
+
+    .surface-note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+      color: var(--ink);
+      border-radius: 10px;
+    }
+
+    .endpoint-group + .endpoint-group {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .endpoint-group h3 {
       font-size: 0.95rem;
-      line-height: 1.6;
+      margin-bottom: 10px;
     }
 
-    .split {
+    .endpoint-list {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-      margin-bottom: 28px;
+      gap: 10px;
     }
 
-    ul {
+    .endpoint {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.6);
+    }
+
+    .method {
+      font-family: var(--mono);
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    code,
+    .mono {
+      font-family: var(--mono);
+    }
+
+    code {
+      font-size: 0.92em;
+    }
+
+    .endpoint-path {
+      display: block;
+      font-family: var(--mono);
+      font-size: 0.92rem;
+      margin-bottom: 4px;
+      color: var(--ink);
+    }
+
+    .docs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 20px;
+    }
+
+    .doc-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,0.68);
+      box-shadow: var(--shadow);
+    }
+
+    .doc-card h2 {
+      margin-bottom: 10px;
+    }
+
+    .doc-card ul,
+    .closing-card ul {
       margin: 12px 0 0;
       padding-left: 18px;
       color: var(--ink-soft);
     }
 
-    footer {
-      padding-top: 22px;
-      display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      flex-wrap: wrap;
-      color: var(--ink-soft);
-      border-top: 1px solid var(--line);
+    .closing {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      margin-bottom: 20px;
     }
 
-    @media (max-width: 920px) {
+    .closing-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(19, 33, 43, 0.96);
+      color: #edf3f6;
+      box-shadow: 0 24px 60px rgba(19, 33, 43, 0.18);
+    }
+
+    .closing-card .muted,
+    .closing-card ul {
+      color: rgba(237, 243, 246, 0.78);
+    }
+
+    .warning {
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    footer {
+      grid-template-columns: 1fr auto;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-soft);
+      align-items: center;
+    }
+
+    @media (max-width: 980px) {
       .hero,
-      .grid,
-      .split {
+      .surface,
+      .closing,
+      .docs,
+      .stance,
+      footer {
         grid-template-columns: 1fr;
       }
 
-      .hero-panel {
-        padding: 30px;
+      .hero-claims {
+        grid-template-columns: 1fr;
       }
 
       h1 {
         max-width: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .nav {
+        grid-template-columns: 1fr;
+      }
+
+      .endpoint {
+        grid-template-columns: 1fr;
+      }
+
+      .frame {
+        width: min(1160px, calc(100vw - 20px));
+        padding-top: 18px;
+      }
+
+      .hero-main,
+      .hero-side,
+      .surface-block,
+      .doc-card,
+      .closing-card {
+        padding: 22px;
       }
     }
   </style>
@@ -309,108 +459,224 @@
     </nav>
 
     <section class="hero">
-      <div class="hero-panel">
-        <div class="eyebrow">Public Registry</div>
-        <h1>Stable names for agents that outlive any one server.</h1>
+      <article class="hero-main shell">
+        <div class="eyebrow">Public Registry, Not a Closed Directory</div>
+        <h1>A shared registry for public agent identity. Not the only one.</h1>
         <p class="lead">
-          {{ .Site.Params.description }} It resolves <code>did:aw</code> identities,
-          verifies DNS-backed namespace control, and keeps durable public addresses
-          like <code>acme.com/support</code> mapped to the current signing key.
+          {{ .Site.Params.description }} The point of <code>awid.ai</code> is to give the ecosystem
+          one widely reachable place to resolve public identity, while keeping the protocol portable
+          enough that other registries can exist, interoperate, and compete. Domains publish controller
+          and registry authority through `_awid` DNS TXT records.
         </p>
-        <div class="cta-row">
-          <a class="button primary" href="https://github.com/awebai/aweb/tree/main/awid">Deploy awid</a>
-          <a class="button secondary" href="https://github.com/awebai/aweb/tree/main/docs/id-sot.md">Read the model</a>
+        <div class="hero-claims">
+          <div class="claim">
+            <strong>What it should be</strong>
+            <span class="muted">The default public registry and reference deployment for the protocol.</span>
+          </div>
+          <div class="claim">
+            <strong>What it should not be</strong>
+            <span class="muted">A mandatory identity owner or the only place a permanent identity can exist.</span>
+          </div>
+          <div class="claim">
+            <strong>What we encourage</strong>
+            <span class="muted">Shared public resolution, domain ownership, protocol compatibility, and self-hosting where it matters.</span>
+          </div>
         </div>
-      </div>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/awebai/aweb/tree/main/awid">Read the service</a>
+          <a class="button" href="https://github.com/awebai/aweb/tree/main/docs/server-api-reference.md">Inspect the API</a>
+        </div>
+      </article>
 
       <div class="hero-side">
-        <article class="card">
-          <div class="eyebrow">What It Resolves</div>
-          <div class="metric">3 surfaces</div>
+        <article class="shell hero-side">
+          <div class="side-label">Market Shape</div>
+          <div class="side-metric">One common public default, many possible registries</div>
           <p class="muted">
-            DID continuity, namespace ownership, and public address resolution through one HTTP service.
+            Public identity becomes useful when strangers can resolve it. That argues for a shared
+            default service. It does not argue for a monopoly.
           </p>
         </article>
-        <article class="card">
-          <div class="eyebrow">Deployment Shape</div>
-          <div class="metric">Thin wrapper</div>
+        <article class="shell hero-side">
+          <div class="side-label">Trust Boundary</div>
+          <div class="side-metric">Read publicly. Write only with signatures.</div>
           <p class="muted">
-            awid.ai reuses the audited identity routes from <code>aweb</code> and adds only service-local runtime wiring.
+            The public surface should stay small: anonymous reads for discovery, authenticated writes
+            for mutation, and operator endpoints kept out of the protocol story.
           </p>
         </article>
       </div>
     </section>
 
-    <section class="grid">
-      <article class="card">
-        <h2>DID continuity</h2>
+    <section class="stance">
+      <article class="shell">
+        <h2>Why a shared service matters</h2>
         <p class="muted">
-          Register a stable <code>did:aw</code>, rotate keys without changing identity, and publish the current server and handle.
+          If a public <code>did:aw</code> or DNS-backed address is going to work across companies,
+          wallets, agents, and hosts, there has to be at least one registry that everyone can query
+          without prior coordination.
         </p>
       </article>
-      <article class="card">
-        <h2>DNS authority</h2>
+      <article class="shell">
+        <h2>Why exclusivity would be a mistake</h2>
         <p class="muted">
-          Prove control of a namespace through DNS and manage addresses without handing ownership to a closed platform.
+          Identity systems become brittle when one vendor becomes the only valid resolver. The protocol
+          should support multiple registries, portable state, and verifiable transitions so users can move.
         </p>
       </article>
-      <article class="card">
-        <h2>Interop vectors</h2>
+      <article class="shell">
+        <h2>What the site should signal</h2>
         <p class="muted">
-          Conformance vectors keep the Python backend and Go CLI aligned on signing, stable IDs, and audit-log hashing.
-        </p>
-      </article>
-    </section>
-
-    <section class="section">
-      <div class="codewell">
-<pre>GET  /v1/did/{did_aw}/key
-GET  /v1/did/{did_aw}/addresses
-POST /v1/namespaces
-POST /v1/namespaces/{domain}/addresses
-POST /v1/namespaces/{domain}/addresses/{name}/reassign</pre>
-      </div>
-    </section>
-
-    <section class="split">
-      <article class="card">
-        <h2>Why awid exists</h2>
-        <p class="muted">
-          Local aliases are useful inside one project. Public identity is different. awid gives permanent
-          identities a registry-backed surface that can move across servers, keys, and hosting models.
-        </p>
-      </article>
-      <article class="card">
-        <h2>How it fits with aweb</h2>
-        <p class="muted">
-          Self-hosted <code>aweb</code> instances can embed the same routes locally or point to a remote registry
-          with <code>AWID_REGISTRY_URL</code>. The cloud service is the public deployment of that contract.
+          <code>awid.ai</code> is the hosted public registry and the compatibility target. It is also a thin
+          service you can run yourself. That balance is the product.
         </p>
       </article>
     </section>
 
-    <section class="split">
-      <article class="card">
-        <h2>Use it hosted</h2>
+    <section class="surface">
+      <article class="surface-block shell">
+        <div class="eyebrow">Open Surface</div>
+        <h2>What endpoints should actually be public</h2>
+        <p class="muted">
+          Open the endpoints needed for resolution and discovery. Keep the write API explicit and narrow.
+          Do not lead with internal health, ops, or deployment-specific routes on the marketing page.
+        </p>
+        <div class="surface-note">
+          Anonymous reads make the registry useful. Signed writes keep control with the identity or
+          namespace controller. Registry selection starts at DNS, then the client talks to the
+          authoritative awid service for that namespace.
+        </div>
+      </article>
+
+      <article class="surface-block shell">
+        <div class="endpoint-group">
+          <h3>Public read API</h3>
+          <div class="endpoint-list">
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <span class="endpoint-path">/v1/did/{did_aw}/key</span>
+                <span class="muted">Resolve the current signing key for a stable identity.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <span class="endpoint-path">/v1/did/{did_aw}/addresses</span>
+                <span class="muted">List public addresses currently attached to an identity.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <span class="endpoint-path">/v1/namespaces/{domain}</span>
+                <span class="muted">Inspect the registered controller and verification state for a namespace.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <span class="endpoint-path">/v1/namespaces/{domain}/addresses/{name}</span>
+                <span class="muted">Resolve a durable public address such as <code>acme.com/support</code>.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="endpoint-group">
+          <h3>Authenticated write API</h3>
+          <div class="endpoint-list">
+            <div class="endpoint">
+              <span class="method">POST</span>
+              <div>
+                <span class="endpoint-path">/v1/did</span>
+                <span class="muted">Register a new stable identity with signed creation evidence.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">PUT</span>
+              <div>
+                <span class="endpoint-path">/v1/did/{did_aw}</span>
+                <span class="muted">Rotate keys or update the published server for an identity.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">POST / PUT</span>
+              <div>
+                <span class="endpoint-path">/v1/namespaces</span>
+                <span class="endpoint-path">/v1/namespaces/{domain}</span>
+                <span class="muted">Register a namespace or rotate its controller with DNS or verified parent authorization.</span>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">POST / PUT / DELETE</span>
+              <div>
+                <span class="endpoint-path">/v1/namespaces/{domain}/addresses...</span>
+                <span class="muted">Create, update, reassign, and remove public addresses under a controlled namespace.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="docs">
+      <article class="doc-card">
+        <h2>How to explain it on the site</h2>
         <ul>
-          <li>Resolve public identities from the shared awid.ai registry.</li>
-          <li>Publish DNS-backed addresses under your own domain.</li>
-          <li>Keep external identity continuity separate from local workspace aliases.</li>
+          <li>Lead with the trust model, not a feature list.</li>
+          <li>Describe the hosted service as the public default, not the sole authority.</li>
+          <li>Separate public reads from signed writes so the surface feels legible.</li>
         </ul>
       </article>
-      <article class="card">
-        <h2>Self-host it</h2>
+      <article class="doc-card">
+        <h2>What technical buyers care about</h2>
         <ul>
-          <li>Run the thin service from the <code>awid/</code> package.</li>
-          <li>Use the same pgdbm migrations and Redis-backed rate limiting.</li>
-          <li>Point <code>aweb</code> at your registry with <code>AWID_REGISTRY_URL</code>.</li>
+          <li>Can identities survive key rotation and server moves?</li>
+          <li>Can domains stay under owner control rather than platform control?</li>
+          <li>Can they self-host later without abandoning the protocol?</li>
         </ul>
+      </article>
+      <article class="doc-card">
+        <h2>What VCs should understand</h2>
+        <ul>
+          <li>The network effect is in shared public resolution.</li>
+          <li>The defensibility is not lock-in; it is becoming the credible default and compatibility target.</li>
+          <li>The protocol can stay open while the hosted registry still becomes strategically central.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="closing">
+      <article class="closing-card">
+        <div class="eyebrow">Recommended Positioning</div>
+        <h2>Encourage a two-layer model</h2>
+        <p class="muted">
+          Encourage everyone to treat <code>awid.ai</code> as the common public registry for open
+          internet identity, while also making it normal to run compatible registries for private,
+          sovereign, or regulated environments.
+        </p>
+        <ul>
+          <li>Use <code>awid.ai</code> for public discovery and cross-organization interoperability.</li>
+          <li>Use your own domain and your own signing keys for authority.</li>
+          <li>Self-host when policy, geography, or product strategy requires it.</li>
+          <li>Keep protocol docs focused on verifiable state transitions, not implementation internals.</li>
+        </ul>
+      </article>
+
+      <article class="doc-card">
+        <h2>What not to overclaim</h2>
+        <p class="muted">
+          Do not claim that permanent identity is impossible without <code>awid.ai</code>. That is too strong and
+          strategically unnecessary. The stronger claim is that a shared public registry is <span class="warning">the most useful default</span>,
+          and that <code>awid.ai</code> aims to be that default.
+        </p>
       </article>
     </section>
 
     <footer>
-      <span>awid.ai is part of the aweb identity architecture.</span>
-      <span><a class="link" href="https://github.com/awebai/aweb">github.com/awebai/aweb</a></span>
+      <span>awid.ai is the hosted public registry for the aweb identity model, and a reference deployment others can implement.</span>
+      <span><a class="text-link" href="https://github.com/awebai/aweb">github.com/awebai/aweb</a></span>
     </footer>
   </div>
 </body>

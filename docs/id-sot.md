@@ -329,6 +329,11 @@ Namespace authority rules:
   controller key
 - for parent-owned subdomains, parent authorization may replace DNS
   re-verification during controller rotation
+- exact-domain DNS verification uses `_awid.<domain>` TXT records, not `_aweb`
+- TXT format is `awid=v1; controller=<did:key>; [registry=<origin>;]`
+- when `registry=` is absent, clients default to `https://api.awid.ai`
+- client-side registry discovery may inherit the nearest parent `_awid` record
+  for subdomains so parent-authorized namespaces remain resolvable
 
 Creating a project must not silently imply "create a durable public permanent
 identity" unless the user explicitly asked for that.

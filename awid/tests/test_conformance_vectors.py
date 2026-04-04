@@ -7,6 +7,7 @@ from pathlib import Path
 from aweb.awid.did import stable_id_from_did_key
 from aweb.awid.log import log_entry_payload
 from aweb.awid.signing import canonical_json_bytes, canonical_payload, sign_message
+from aweb.dns_verify import awid_txt_name, awid_txt_value
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -63,3 +64,8 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
             )
             assert payload.decode("utf-8") == link["canonical_payload"]
             assert sign_message(bytes.fromhex(link["old_seed_hex"]), payload) == link["signature_b64"]
+
+    dns_vectors = _load_json("dns-txt-v1.json")
+    for case in dns_vectors:
+        assert awid_txt_name(case["domain"]) == case["dns_name"]
+        assert awid_txt_value(case["controller_did"], case["registry_url"]) == case["dns_value"]

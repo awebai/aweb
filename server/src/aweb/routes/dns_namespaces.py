@@ -245,11 +245,11 @@ async def register_namespace(
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     if not parent_auth_present:
         try:
-            dns_controller = await verify_domain(domain)
+            dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-        if dns_controller != caller_did:
+        if dns_authority.controller_did != caller_did:
             raise HTTPException(
                 status_code=403,
                 detail="Signing key does not match DNS controller",
@@ -354,11 +354,11 @@ async def rotate_namespace_controller(
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     if not parent_auth_present:
         try:
-            dns_controller = await verify_domain(domain)
+            dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-        if dns_controller != new_controller_did:
+        if dns_authority.controller_did != new_controller_did:
             raise HTTPException(
                 status_code=403,
                 detail="DNS controller does not match new_controller_did",

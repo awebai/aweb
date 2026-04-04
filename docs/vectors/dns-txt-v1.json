@@ -1,0 +1,18 @@
+[
+  {
+    "name": "default_public_registry",
+    "domain": "acme.com",
+    "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+    "registry_url": null,
+    "dns_name": "_awid.acme.com",
+    "dns_value": "awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;"
+  },
+  {
+    "name": "explicit_registry_origin",
+    "domain": "project.example.com",
+    "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+    "registry_url": "https://registry.example.com",
+    "dns_name": "_awid.project.example.com",
+    "dns_value": "awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd; registry=https://registry.example.com;"
+  }
+]

@@ -28,8 +28,8 @@ func TestAddExternalNamespace(t *testing.T) {
 			"is_default":            false,
 			"is_external":           true,
 			"published_agent_count": 0,
-			"dns_txt_name":          "_aweb.acme.com",
-			"dns_txt_value":         "aweb=v1; controller=did:key:z6Mkf;",
+			"dns_txt_name":          "_awid.acme.com",
+			"dns_txt_value":         "awid=v1; controller=did:key:z6Mkf; registry=https://api.awid.ai;",
 			"dns_status":            "desired",
 			"registration_status":   "unregistered",
 			"created_at":            "2026-03-19T10:00:00Z",
@@ -58,7 +58,7 @@ func TestAddExternalNamespace(t *testing.T) {
 	if resp.FullName != "acme.com" {
 		t.Fatalf("full_name=%q", resp.FullName)
 	}
-	if resp.DnsTxtName != "_aweb.acme.com" {
+	if resp.DnsTxtName != "_awid.acme.com" {
 		t.Fatalf("dns_txt_name=%q", resp.DnsTxtName)
 	}
 	if resp.DnsStatus != "desired" {

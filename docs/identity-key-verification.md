@@ -184,3 +184,4 @@ Interoperability vectors live in [vectors/](vectors/README.md):
 - `vectors/stable-id-v1.json` (`did:key` -> `did:aw` derivation)
 - `vectors/identity-log-v1.json` (log entry hashing + signing)
 - `vectors/rotation-announcements-v1.json` (rotation announcement payload signing/chaining)
+- `vectors/dns-txt-v1.json` (canonical `_awid` DNS TXT records and optional `registry=` declaration)

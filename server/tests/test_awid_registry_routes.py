@@ -11,6 +11,7 @@ from aweb.awid import did_from_public_key, generate_keypair, sign_message, stabl
 from aweb.awid.signing import canonical_json_bytes
 from aweb.db import get_db_infra
 from aweb.deps import get_domain_verifier
+from aweb.dns_verify import DomainAuthority
 from aweb.ratelimit import MemoryFixedWindowRateLimiter
 from aweb.routes.did import router as did_router
 from aweb.routes.dns_addresses import router as dns_addresses_router
@@ -39,6 +40,14 @@ def _build_registry_test_app(*, aweb_db, domain_verifier) -> FastAPI:
     app.dependency_overrides[get_db_infra] = lambda: _DbInfra(aweb_db=aweb_db)
     app.dependency_overrides[get_domain_verifier] = lambda: domain_verifier
     return app
+
+
+def _authority(domain: str, controller_did: str) -> DomainAuthority:
+    return DomainAuthority(
+        controller_did=controller_did,
+        registry_url="https://api.awid.ai",
+        dns_name=f"_awid.{domain}",
+    )
 
 
 def _signed_address_headers(
@@ -255,8 +264,8 @@ async def test_update_address_changes_reachability_not_did_key(aweb_cloud_db):
         created_at,
     )
 
-    async def _verify_domain(_domain: str) -> str:
-        return controller_did
+    async def _verify_domain(domain: str) -> DomainAuthority:
+        return _authority(domain, controller_did)
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -312,7 +321,7 @@ async def test_register_subdomain_with_parent_authorization_skips_dns(aweb_cloud
         created_at,
     )
 
-    async def _verify_domain(_domain: str) -> str:
+    async def _verify_domain(_domain: str) -> DomainAuthority:
         raise AssertionError("DNS verification should be skipped for parent-authorized subdomains")
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
@@ -366,7 +375,7 @@ async def test_register_subdomain_rejects_parent_signature_for_different_control
         created_at,
     )
 
-    async def _verify_domain(_domain: str) -> str:
+    async def _verify_domain(_domain: str) -> DomainAuthority:
         raise AssertionError("DNS verification should be skipped for parent-authorized subdomains")
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
@@ -425,8 +434,8 @@ async def test_rotate_subdomain_with_invalid_parent_auth_does_not_fall_back_to_d
         old_controller_did,
     )
 
-    async def _verify_domain(_domain: str) -> str:
-        return new_controller_did
+    async def _verify_domain(domain: str) -> DomainAuthority:
+        return _authority(domain, new_controller_did)
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -482,7 +491,7 @@ async def test_rotate_subdomain_controller_with_parent_authorization_skips_dns(a
         old_controller_did,
     )
 
-    async def _verify_domain(_domain: str) -> str:
+    async def _verify_domain(_domain: str) -> DomainAuthority:
         raise AssertionError("DNS verification should be skipped for parent-authorized subdomains")
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
@@ -532,8 +541,8 @@ async def test_rotate_namespace_controller_reverifies_dns_and_updates_controller
         created_at,
     )
 
-    async def _verify_domain(_domain: str) -> str:
-        return new_controller_did
+    async def _verify_domain(domain: str) -> DomainAuthority:
+        return _authority(domain, new_controller_did)
 
     app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=_verify_domain)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
