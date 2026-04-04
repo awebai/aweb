@@ -28,6 +28,7 @@ dependencies = [
     "pgdbm>=0.4.1",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "publicsuffix2>=2.20191221",
     "pynacl>=1.6.2",
     "pyyaml>=6.0.2",
     "redis>=6.4.0",

@@ -11,6 +11,8 @@ records on every child name.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
+import os
 
 import dns.asyncresolver
 import dns.exception
@@ -69,22 +71,18 @@ def awid_txt_value(controller_did: str, registry_url: str | None = None) -> str:
 
 
 async def _lookup_domain_authority(domain: str, *, allow_ancestors: bool) -> DomainAuthority | None:
-    labels = _canonicalize_domain(domain).split(".")
-    for index in range(len(labels)):
-        candidate_domain = ".".join(labels[index:])
+    candidate_domains = _candidate_domains_for_lookup(domain, allow_ancestors=allow_ancestors)
+    for candidate_domain in candidate_domains:
         qname = awid_txt_name(candidate_domain)
 
         try:
             answers = await dns.asyncresolver.resolve(qname, "TXT")
-        except (
-            dns.resolver.NXDOMAIN,
-            dns.resolver.NoAnswer,
-            dns.resolver.NoNameservers,
-            dns.exception.Timeout,
-        ):
-            if allow_ancestors and index < len(labels) - 1:
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            if allow_ancestors:
                 continue
             return None
+        except (dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
+            raise DnsVerificationError(f"DNS lookup failed for {qname}") from exc
 
         awid_records = []
         for rdata in answers:
@@ -93,7 +91,7 @@ async def _lookup_domain_authority(domain: str, *, allow_ancestors: bool) -> Dom
                 awid_records.append(text)
 
         if not awid_records:
-            if allow_ancestors and index < len(labels) - 1:
+            if allow_ancestors:
                 continue
             raise DnsVerificationError(f"No awid TXT record found at {qname}")
 
@@ -120,6 +118,30 @@ def _canonicalize_domain(domain: str) -> str:
     return domain.lower().rstrip(".")
 
 
+def _candidate_domains_for_lookup(domain: str, *, allow_ancestors: bool) -> list[str]:
+    canonical_domain = _canonicalize_domain(domain)
+    if not allow_ancestors:
+        return [canonical_domain]
+
+    labels = canonical_domain.split(".")
+    boundary_domain = _registered_domain_boundary(canonical_domain)
+    boundary_labels = boundary_domain.split(".")
+    max_index = len(labels) - len(boundary_labels)
+    return [".".join(labels[index:]) for index in range(max_index + 1)]
+
+
+def _registered_domain_boundary(domain: str) -> str:
+    try:
+        from publicsuffix2 import get_sld
+    except ImportError as exc:
+        raise RuntimeError("publicsuffix2 is required for awid registry discovery") from exc
+
+    boundary = get_sld(domain, strict=True)
+    if not boundary:
+        return domain
+    return _canonicalize_domain(boundary)
+
+
 def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
     """Parse an awid TXT record.
 
@@ -133,7 +155,10 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         if "=" not in part:
             continue
         key, _, value = part.partition("=")
-        fields[key.strip()] = value.strip()
+        normalized_key = key.strip()
+        if normalized_key in fields:
+            raise DnsVerificationError(f"Duplicate {normalized_key} field in awid TXT record")
+        fields[normalized_key] = value.strip()
 
     version = fields.get("awid")
     if version != "v1":
@@ -148,7 +173,7 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
     registry = fields.get("registry")
     if registry:
         try:
-            registry = canonical_server_origin(registry)
+            registry = _validate_registry_origin(registry)
         except Exception as exc:
             raise DnsVerificationError(f"Invalid registry origin in awid TXT record: {registry}") from exc
     else:
@@ -160,3 +185,48 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         dns_name=dns_name,
         inherited=False,
     )
+
+
+def _validate_registry_origin(registry_url: str) -> str:
+    canonical = canonical_server_origin(registry_url)
+    parsed = ipaddress.ip_address  # bind for local use below without repeated global lookup
+
+    from urllib.parse import urlparse
+
+    url = urlparse(canonical)
+    host = (url.hostname or "").lower()
+    if not host:
+        raise ValueError("registry URL must include a host")
+
+    if _is_production_environment() and url.scheme != "https":
+        raise ValueError("registry URL must use https in production")
+
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError("registry URL must not target localhost")
+
+    try:
+        ip = parsed(host)
+    except ValueError:
+        ip = None
+
+    if ip is not None:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_unspecified
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
+            raise ValueError("registry URL must not target a local or reserved IP address")
+        raise ValueError("registry URL must not use a literal IP address")
+
+    return canonical
+
+
+def _is_production_environment() -> bool:
+    for name in ("APP_ENV", "ENVIRONMENT"):
+        value = (os.getenv(name) or "").strip().lower()
+        if value:
+            return value in {"prod", "production"}
+    return False
