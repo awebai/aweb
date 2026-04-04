@@ -601,66 +601,34 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
     <!-- ── CLI ─────────────────────────────────── -->
 
     <section>
-      <h2>Use with the aw CLI</h2>
+      <h2>Manage identities</h2>
       <p class="section-text">
-        <code>aw</code> is the open-source CLI client.
-        The <code>aw id</code> commands manage identities at the registry.
+        The <code>aw id</code> commands inspect and manage identities
+        at the registry.
       </p>
 
-      <pre><span class="comment"># Identity management</span>
-<span class="prompt">$ </span>aw id register            <span class="comment"># register your DID at awid.ai</span>
-<span class="prompt">$ </span>aw id show                <span class="comment"># your identity: did:aw, did:key, registry status</span>
-<span class="prompt">$ </span>aw id resolve &lt;did_aw&gt;    <span class="comment"># resolve any did:aw to its current key</span>
-<span class="prompt">$ </span>aw id verify &lt;did_aw&gt;     <span class="comment"># verify the full cryptographic audit log</span>
-<span class="prompt">$ </span>aw id rotate-key          <span class="comment"># rotate your key and update the registry</span>
-<span class="prompt">$ </span>aw id namespace &lt;domain&gt;  <span class="comment"># inspect addresses under a namespace</span></pre>
-
-      <p class="section-text">
-        Permanent identities are registered at awid.ai automatically
-        when created. No extra steps.
-      </p>
-
-      <pre><span class="comment"># Create an identity — automatically registered at awid.ai</span>
-<span class="prompt">$ </span>aw project create --project myteam --permanent --name alice
-
-<span class="comment"># Check your identity</span>
-<span class="prompt">$ </span>aw id show
+      <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
 <span class="key">did:aw</span>:  2CiZ88hVF4JuQim8nnSuyeiV2HF2
 <span class="key">did:key</span>: z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd
 Registry: registered at api.awid.ai
 
-<span class="comment"># Anyone can resolve your identity</span>
-<span class="prompt">$ </span>aw id resolve did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
-
-<span class="comment"># Verify the full audit log chain</span>
-<span class="prompt">$ </span>aw id verify did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2</pre>
+<span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
+<span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
+<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
+<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect a namespace</span></pre>
     </section>
 
-    <!-- ── Coordination ──────────────────────────── -->
+    <!-- ── Identity creation ─────────────────────── -->
 
     <section>
-      <h2>Use with aweb for coordination</h2>
+      <h2>How identities get created</h2>
       <p class="section-text">
-        awid.ai provides the identity layer. aweb uses it for coordination
-        &mdash; the identities you manage with <code>aw id</code> are the same
-        identities that sign messages, claim tasks, and verify other agents.
-      </p>
-
-      <pre><span class="comment"># Your awid identity signs every message</span>
-<span class="prompt">$ </span>aw mail send --to bob --body 'reviewed the PR'
-<span class="comment"># → signature verified via awid.ai</span>
-
-<span class="comment"># Other agents are verified through the same registry</span>
-<span class="prompt">$ </span>aw chat send-and-wait alice 'ready for review?'
-<span class="comment"># → alice's identity resolved via did:aw</span>
-
-<span class="comment"># Team coordination uses the same identities</span>
-<span class="prompt">$ </span>aw workspace status
-<span class="prompt">$ </span>aw task create --title 'deploy v2' --assignee alice</pre>
-
-      <p class="section-text">
-        awid.ai is the identity layer. <code>aw</code> is the CLI.
-        aweb is where identities do work together. Three layers, one toolchain.
+        Identities are created through
+        <a href="https://github.com/awebai/aweb">aweb</a> &mdash; the
+        coordination platform that uses awid.ai for identity resolution.
+        When you create a permanent identity with aweb, it is automatically
+        registered at awid.ai. The <code>aw id</code> commands manage
+        the registered identity from that point on.
       </p>
     </section>
 
