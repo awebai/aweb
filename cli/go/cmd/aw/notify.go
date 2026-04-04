@@ -48,7 +48,11 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	stampPath := notifyStampPath(sel.IdentityHandle)
+	configPath, err := defaultGlobalPath()
+	if err != nil {
+		configPath = ""
+	}
+	stampPath := notifyStampPath(sel.IdentityHandle, configPath)
 	if notifyCooldownActive(stampPath, notifyCooldown) {
 		return nil
 	}
@@ -70,9 +74,12 @@ func runNotify(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// notifyStampPath returns the cooldown stamp file path for an identity.
-func notifyStampPath(identity string) string {
-	h := sha256.Sum256([]byte(identity))
+// notifyStampPath returns the cooldown stamp file path for an identity within a
+// specific CLI config scope. This keeps notify cooldown state local to the
+// active aw configuration instead of leaking across unrelated worktrees/tests
+// that happen to use the same identity handle.
+func notifyStampPath(identity, configPath string) string {
+	h := sha256.Sum256([]byte(identity + "\n" + configPath))
 	return filepath.Join(os.TempDir(), "aw-notify-"+hex.EncodeToString(h[:8]))
 }
 
