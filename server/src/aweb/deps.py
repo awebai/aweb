@@ -4,9 +4,9 @@ from typing import Any, Callable, Awaitable
 
 from fastapi import Request
 
-from aweb.dns_verify import verify_domain as _real_verify_domain
+from aweb.dns_verify import DomainAuthority, verify_domain as _real_verify_domain
 
-DomainVerifier = Callable[[str], Awaitable[str]]
+DomainVerifier = Callable[[str], Awaitable[DomainAuthority]]
 
 
 def get_db(request: Request) -> Any:

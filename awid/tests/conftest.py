@@ -10,6 +10,7 @@ from pgdbm import AsyncDatabaseManager
 from aweb.awid.did import did_from_public_key, generate_keypair
 from aweb.db_config import build_database_config
 from aweb.deps import get_domain_verifier
+from aweb.dns_verify import DomainAuthority
 
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
@@ -56,8 +57,12 @@ def controller_identity():
 def fake_domain_verifier(controller_identity):
     _signing_key, did_key = controller_identity
 
-    async def _verify_domain(_domain: str) -> str:
-        return did_key
+    async def _verify_domain(domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=did_key,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{domain}",
+        )
 
     return _verify_domain
 

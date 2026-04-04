@@ -129,7 +129,7 @@ async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: Dom
 
     # Stale, revoked, or never verified — re-check DNS
     try:
-        dns_controller = await verify_domain(domain)
+        dns_authority = await verify_domain(domain)
     except DnsVerificationError:
         await db.execute(
             """
@@ -144,7 +144,7 @@ async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: Dom
             detail="Namespace DNS verification failed — namespace revoked",
         )
 
-    if dns_controller != ns_row["controller_did"]:
+    if dns_authority.controller_did != ns_row["controller_did"]:
         await db.execute(
             """
             UPDATE {{tables.dns_namespaces}}

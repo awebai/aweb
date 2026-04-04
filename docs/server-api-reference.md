@@ -198,6 +198,8 @@ These are the shapes most developers usually need first.
 Notes:
 
 - `POST /v1/namespaces` normally uses DNS TXT verification.
+- The DNS contract is `_awid.<domain> TXT "awid=v1; controller=<did:key>; [registry=<origin>;]"`.
+- When `registry=` is absent, namespace discovery defaults to `https://api.awid.ai`.
 - For subdomains of an already-registered namespace, the parent controller may
   authorize registration instead; the request body supplies the child
   `controller_did`.

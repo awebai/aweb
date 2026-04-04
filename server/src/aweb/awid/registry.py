@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 from nacl.signing import SigningKey
@@ -13,6 +13,9 @@ from aweb.awid.did import did_from_public_key, stable_id_from_did_key
 from aweb.awid.log import canonical_server_origin, log_entry_payload, state_hash
 from aweb.awid.signing import canonical_json_bytes, sign_message
 from aweb.config import is_local_awid_registry_url
+
+
+DomainRegistryResolver = Callable[[str], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -92,21 +95,34 @@ class RegistryClient:
     timeout_seconds: float = 5.0
     transport: httpx.AsyncBaseTransport | None = None
     base_url: str | None = None
+    domain_registry_resolver: DomainRegistryResolver | None = None
 
-    def _resolved_base_url(self) -> str:
-        if self.base_url:
+    def _resolved_base_url(self, registry_url: str | None = None) -> str:
+        target_registry_url = registry_url or self.registry_url
+        if registry_url is None and self.base_url:
             if not is_local_awid_registry_url(self.registry_url):
                 raise ValueError(
                     "base_url override is only allowed in local mode"
                 )
             return self.base_url.rstrip("/")
-        if is_local_awid_registry_url(self.registry_url):
+        if is_local_awid_registry_url(target_registry_url):
             if self.transport is None:
                 raise ValueError(
                     "registry_url='local' requires an explicit base_url or transport for HTTP access"
                 )
             return "http://awid.local"
-        return canonical_server_origin(self.registry_url)
+        return canonical_server_origin(target_registry_url)
+
+    async def _registry_url_for_domain(self, domain: str) -> str:
+        if self.domain_registry_resolver is not None:
+            return canonical_server_origin(await self.domain_registry_resolver(domain))
+        if self.transport is not None:
+            return self.registry_url
+        if is_local_awid_registry_url(self.registry_url):
+            return self.registry_url
+        from aweb.dns_verify import discover_authoritative_registry
+
+        return canonical_server_origin(await discover_authoritative_registry(domain))
 
     async def _request_json(
         self,
@@ -115,9 +131,10 @@ class RegistryClient:
         *,
         headers: dict[str, str] | None = None,
         json: dict[str, Any] | None = None,
+        registry_url: str | None = None,
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(
-            base_url=self._resolved_base_url(),
+            base_url=self._resolved_base_url(registry_url=registry_url),
             timeout=self.timeout_seconds,
             transport=self.transport,
         ) as client:
@@ -144,9 +161,16 @@ class RegistryClient:
         *,
         headers: dict[str, str] | None = None,
         json: dict[str, Any] | None = None,
+        registry_url: str | None = None,
     ) -> dict[str, Any] | None:
         try:
-            return await self._request_json(method, path, headers=headers, json=json)
+            return await self._request_json(
+                method,
+                path,
+                headers=headers,
+                json=json,
+                registry_url=registry_url,
+            )
         except RegistryError as exc:
             if exc.status_code == 404:
                 return None
@@ -345,6 +369,7 @@ class RegistryClient:
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
     ) -> Namespace:
+        registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(controller_did, controller_signing_key)
         headers = self._signed_namespace_headers(
             domain=domain,
@@ -365,11 +390,16 @@ class RegistryClient:
                 "/v1/namespaces",
                 headers=headers,
                 json={"domain": domain, "controller_did": controller_did},
+                registry_url=registry_url,
             )
         )
 
     async def get_namespace(self, domain: str) -> Namespace | None:
-        data = await self._request_optional_json("GET", f"/v1/namespaces/{domain}")
+        data = await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
         return None if data is None else _namespace_from_json(data)
 
     async def rotate_namespace_controller(
@@ -379,6 +409,7 @@ class RegistryClient:
         new_controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
     ) -> Namespace:
+        registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
         headers = self._signed_namespace_headers(
             domain=domain,
@@ -400,6 +431,7 @@ class RegistryClient:
                 f"/v1/namespaces/{domain}",
                 headers=headers,
                 json={"new_controller_did": new_controller_did},
+                registry_url=registry_url,
             )
         )
 
@@ -411,6 +443,7 @@ class RegistryClient:
         controller_signing_key: bytes,
         reachability: str,
     ) -> Address:
+        registry_url = await self._registry_url_for_domain(domain)
         key_resolution = await self.resolve_key(did_aw)
         return _address_from_json(
             await self._request_json(
@@ -428,15 +461,24 @@ class RegistryClient:
                     "current_did_key": key_resolution.current_did_key,
                     "reachability": reachability,
                 },
+                registry_url=registry_url,
             )
         )
 
     async def resolve_address(self, domain: str, name: str) -> Address | None:
-        data = await self._request_optional_json("GET", f"/v1/namespaces/{domain}/addresses/{name}")
+        data = await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}/addresses/{name}",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
         return None if data is None else _address_from_json(data)
 
     async def list_addresses(self, domain: str) -> list[Address]:
-        data = await self._request_json("GET", f"/v1/namespaces/{domain}/addresses")
+        data = await self._request_json(
+            "GET",
+            f"/v1/namespaces/{domain}/addresses",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
         return [_address_from_json(item) for item in data.get("addresses", [])]
 
     async def update_address(
@@ -446,6 +488,7 @@ class RegistryClient:
         controller_signing_key: bytes,
         reachability: str | None = None,
     ) -> Address:
+        registry_url = await self._registry_url_for_domain(domain)
         payload: dict[str, Any] = {}
         if reachability is not None:
             payload["reachability"] = reachability
@@ -460,6 +503,7 @@ class RegistryClient:
                     signing_key=controller_signing_key,
                 ),
                 json=payload,
+                registry_url=registry_url,
             )
         )
 
@@ -469,6 +513,7 @@ class RegistryClient:
         name: str,
         controller_signing_key: bytes,
     ) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
         await self._request_json(
             "DELETE",
             f"/v1/namespaces/{domain}/addresses/{name}",
@@ -478,6 +523,7 @@ class RegistryClient:
                 operation="delete_address",
                 signing_key=controller_signing_key,
             ),
+            registry_url=registry_url,
         )
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
@@ -491,6 +537,7 @@ class RegistryClient:
         new_did_aw: str,
         controller_signing_key: bytes,
     ) -> Address:
+        registry_url = await self._registry_url_for_domain(domain)
         key_resolution = await self.resolve_key(new_did_aw)
         return _address_from_json(
             await self._request_json(
@@ -506,6 +553,7 @@ class RegistryClient:
                     "did_aw": new_did_aw,
                     "current_did_key": key_resolution.current_did_key,
                 },
+                registry_url=registry_url,
             )
         )
 

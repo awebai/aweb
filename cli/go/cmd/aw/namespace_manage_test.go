@@ -68,8 +68,8 @@ func TestAwNamespaceAdd(t *testing.T) {
 				"full_name":           "acme.com",
 				"display_name":        "acme.com",
 				"is_external":         true,
-				"dns_txt_name":        "_aweb.acme.com",
-				"dns_txt_value":       "aweb=v1; controller=did:key:z6Mkf;",
+				"dns_txt_name":        "_awid.acme.com",
+				"dns_txt_value":       "awid=v1; controller=did:key:z6Mkf; registry=https://api.awid.ai;",
 				"dns_status":          "desired",
 				"registration_status": "unregistered",
 				"created_at":          "2026-03-19T10:00:00Z",
@@ -122,8 +122,8 @@ func TestAwNamespaceAddTextOutput(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"namespace_id":  "ns-1",
 				"full_name":     "acme.com",
-				"dns_txt_name":  "_aweb.acme.com",
-				"dns_txt_value": "aweb=v1; controller=did:key:z6Mkf;",
+				"dns_txt_name":  "_awid.acme.com",
+				"dns_txt_value": "awid=v1; controller=did:key:z6Mkf; registry=https://api.awid.ai;",
 				"dns_status":    "desired",
 			})
 		case "/v1/agents/heartbeat":
@@ -154,7 +154,7 @@ func TestAwNamespaceAddTextOutput(t *testing.T) {
 	if !strings.Contains(output, "acme.com") {
 		t.Fatalf("expected domain in output:\n%s", output)
 	}
-	if !strings.Contains(output, "_aweb.acme.com") {
+	if !strings.Contains(output, "_awid.acme.com") {
 		t.Fatalf("expected TXT name in output:\n%s", output)
 	}
 	if !strings.Contains(output, "aw project namespace verify") {
@@ -402,8 +402,8 @@ func TestAwNamespaceVerifyDNSFailure(t *testing.T) {
 						{
 							"namespace_id":  "ns-1",
 							"full_name":     "acme.com",
-							"dns_txt_name":  "_aweb.acme.com",
-							"dns_txt_value": "aweb=v1; controller=did:key:z6Mkf;",
+							"dns_txt_name":  "_awid.acme.com",
+							"dns_txt_value": "awid=v1; controller=did:key:z6Mkf; registry=https://api.awid.ai;",
 						},
 					})
 				case "/api/v1/projects/p-1/namespaces/ns-1/verify":
@@ -434,7 +434,7 @@ func TestAwNamespaceVerifyDNSFailure(t *testing.T) {
 			}
 
 			output := string(out)
-			if !strings.Contains(output, "_aweb.acme.com") {
+			if !strings.Contains(output, "_awid.acme.com") {
 				t.Fatalf("expected TXT name in error guidance:\n%s", output)
 			}
 			if !strings.Contains(output, "did:key:z6Mkf") {

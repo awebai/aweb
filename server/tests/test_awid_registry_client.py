@@ -215,6 +215,38 @@ async def test_get_namespace_returns_none_on_404():
 
 
 @pytest.mark.asyncio
+async def test_get_namespace_uses_discovered_registry_for_domain():
+    async def _resolve_registry(domain: str) -> str:
+        assert domain == "example.com"
+        return "https://registry.example"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://registry.example/v1/namespaces/example.com")
+        return httpx.Response(
+            200,
+            json={
+                "namespace_id": "ns-1",
+                "domain": "example.com",
+                "controller_did": None,
+                "verification_status": "verified",
+                "last_verified_at": None,
+                "created_at": "2026-04-04T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+        domain_registry_resolver=_resolve_registry,
+    )
+
+    namespace = await client.get_namespace("example.com")
+
+    assert namespace is not None
+    assert namespace.domain == "example.com"
+
+
+@pytest.mark.asyncio
 async def test_register_namespace_supports_parent_authorized_subdomains():
     parent_signing_key, parent_public_key = generate_keypair()
     parent_controller_did = did_from_public_key(parent_public_key)
@@ -582,6 +614,41 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
         "/v1/namespaces/acme.com/addresses/support",
         f"/v1/did/{subject_did_aw}/addresses",
     ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_address_uses_discovered_registry_for_domain():
+    async def _resolve_registry(domain: str) -> str:
+        assert domain == "acme.com"
+        return "https://registry.acme.test"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL(
+            "https://registry.acme.test/v1/namespaces/acme.com/addresses/support"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "address_id": "addr-1",
+                "domain": "acme.com",
+                "name": "support",
+                "did_aw": "did:aw:z6Mksubject",
+                "current_did_key": "did:key:z6Mksubject",
+                "reachability": "public",
+                "created_at": "2026-04-04T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+        domain_registry_resolver=_resolve_registry,
+    )
+
+    address = await client.resolve_address("acme.com", "support")
+
+    assert address is not None
+    assert address.name == "support"
 
 
 @pytest.mark.asyncio

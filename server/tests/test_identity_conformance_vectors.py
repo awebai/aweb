@@ -7,6 +7,7 @@ from pathlib import Path
 from aweb.awid.did import stable_id_from_did_key
 from aweb.awid.log import log_entry_payload
 from aweb.awid.signing import canonical_json_bytes, canonical_payload, sign_message
+from aweb.dns_verify import awid_txt_name, awid_txt_value
 
 
 _SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -77,3 +78,11 @@ def test_rotation_announcement_vectors_match_current_signing_contract() -> None:
             )
             assert payload.decode("utf-8") == link["canonical_payload"]
             assert sign_message(bytes.fromhex(link["old_seed_hex"]), payload) == link["signature_b64"]
+
+
+def test_dns_txt_vectors_match_current_dns_contract() -> None:
+    vectors = _load_json("dns-txt-v1.json")
+
+    for case in vectors:
+        assert awid_txt_name(case["domain"]) == case["dns_name"]
+        assert awid_txt_value(case["controller_did"], case["registry_url"]) == case["dns_value"]

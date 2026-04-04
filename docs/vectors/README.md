@@ -32,6 +32,10 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Canonical rotation-announcement payloads (single link + chaining)
   - Expected Ed25519 signatures (base64, **no padding**)
 
+- `dns-txt-v1.json`
+  - Canonical `_awid.<domain>` TXT record name/value pairs
+  - Covers default public-registry records and explicit `registry=` declarations
+
 ## Encoding notes
 
 - **Canonical JSON:** lexicographic key sort, compact separators, literal UTF-8 (no `\uXXXX` escapes).
