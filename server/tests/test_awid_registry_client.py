@@ -991,50 +991,6 @@ async def test_cached_registry_client_serves_stale_then_refreshes_in_background(
 
 
 @pytest.mark.asyncio
-async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache(monkeypatch):
-    signing_key, public_key = generate_keypair()
-    old_did_key = did_from_public_key(public_key)
-    new_signing_key, new_public_key = generate_keypair()
-    new_did_key = did_from_public_key(new_public_key)
-    did_aw = stable_id_from_did_key(old_did_key)
-    now = {"value": 0}
-    current_key = {"value": old_did_key}
-
-    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert request.url.path == f"/v1/did/{did_aw}/key"
-        return httpx.Response(
-            200,
-            json={
-                "did_aw": did_aw,
-                "current_did_key": current_key["value"],
-                "log_head": None,
-            },
-        )
-
-    client = CachedRegistryClient(
-        registry_url="https://api.awid.ai",
-        redis_client=_FakeRedis(),
-        transport=httpx.MockTransport(handler),
-    )
-
-    fresh = await client.resolve_key(did_aw)
-    assert fresh.current_did_key == old_did_key
-
-    current_key["value"] = new_did_key
-    now["value"] = 301
-
-    force_fresh = await client.resolve_key_fresh(did_aw)
-
-    assert force_fresh.current_did_key == new_did_key
-    cached = await client.resolve_key(did_aw)
-    assert cached.current_did_key == new_did_key
-    assert new_signing_key != signing_key
-
-
-@pytest.mark.asyncio
 async def test_cached_registry_client_uses_address_ttl_for_list_addresses(monkeypatch):
     subject_signing_key, subject_public_key = generate_keypair()
     subject_did_key = did_from_public_key(subject_public_key)

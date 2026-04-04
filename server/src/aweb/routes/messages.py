@@ -20,7 +20,6 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.awid.custody import sign_on_behalf
 from aweb.awid.did import validate_stable_id
 from aweb.awid.replacement import get_sender_delivery_metadata
-from aweb.awid.signing import canonical_payload, verify_agent_did_key_signature
 from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
 from aweb.deps import get_db
@@ -317,7 +316,6 @@ async def send_message(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_signed_payload = payload.signed_payload
-    signature_verification = None
     created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
@@ -388,22 +386,6 @@ async def send_message(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
-    else:
-        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
-        try:
-            signature_verification = await verify_agent_did_key_signature(
-                request=request,
-                db=db,
-                agent_id=actor_id,
-                did_key=payload.from_did or "",
-                payload=signed_payload_bytes,
-                signature_b64=payload.signature,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_from_did = signature_verification.did_key
-        msg_signing_key_id = signature_verification.did_key
-        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         message_id, created_at = await deliver_message(
@@ -444,9 +426,6 @@ async def send_message(
         "to_agent_id": to_agent_id,
         "subject": payload.subject,
     }
-    if signature_verification is not None:
-        hook_context["signature_verification_status"] = signature_verification.status
-        hook_context["signature_verification_source"] = signature_verification.source
     await fire_mutation_hook(request, "message.sent", hook_context)
 
     return SendMessageResponse(
