@@ -68,14 +68,8 @@ func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 }
 
 func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
-	cfg, err := awconfig.LoadGlobal()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-	sel, err := awconfig.Resolve(cfg, awconfig.ResolveOptions{
+	sel, err := awconfig.Resolve(awconfig.ResolveOptions{
 		ServerName:        serverFlag,
-		AccountName:       accountFlag,
-		ClientName:        "aw",
 		WorkingDir:        workingDir,
 		AllowEnvOverrides: true,
 	})
@@ -118,11 +112,10 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 		}
 
 		// Load TOFU pin store for sender identity verification.
-		cfgPath, err := defaultGlobalPath()
+		pinPath, err := awconfig.DefaultKnownAgentsPath()
 		if err != nil {
 			return nil, nil, err
 		}
-		pinPath := filepath.Join(filepath.Dir(cfgPath), "known_agents.yaml")
 		ps, err := awid.LoadPinStore(pinPath)
 		if err != nil {
 			debugLog("load pin store: %v", err)
@@ -311,8 +304,8 @@ func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL s
 		configuredBaseURL: strings.TrimSuffix(baseURL, "/"),
 		currentBaseURL:    strings.TrimSuffix(baseURL, "/"),
 		persist: func(resolved string) {
-			if err := persistResolvedServerURL(sel.ServerName, resolved); err != nil {
-				debugLog("persist resolved base URL for %s: %v", sel.ServerName, err)
+			if err := persistResolvedServerURL(sel.WorkspacePath, resolved); err != nil {
+				debugLog("persist resolved base URL for %s: %v", sel.WorkspacePath, err)
 			}
 		},
 	}
@@ -364,24 +357,24 @@ func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) e
 	return nil
 }
 
-func persistResolvedServerURL(serverName, baseURL string) error {
-	serverName = strings.TrimSpace(serverName)
+func persistResolvedServerURL(workspacePath, baseURL string) error {
+	workspacePath = strings.TrimSpace(workspacePath)
 	baseURL = strings.TrimSpace(baseURL)
-	if serverName == "" || baseURL == "" {
+	if workspacePath == "" || baseURL == "" {
 		return nil
 	}
-	return awconfig.UpdateGlobal(func(cfg *awconfig.GlobalConfig) error {
-		if cfg.Servers == nil {
-			cfg.Servers = map[string]awconfig.Server{}
-		}
-		srv := cfg.Servers[serverName]
-		if strings.TrimSpace(srv.URL) == baseURL {
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		if os.IsNotExist(err) {
 			return nil
 		}
-		srv.URL = baseURL
-		cfg.Servers[serverName] = srv
+		return err
+	}
+	if strings.TrimSpace(workspace.ServerURL) == baseURL {
 		return nil
-	})
+	}
+	workspace.ServerURL = baseURL
+	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
 type baseURLFallbackState struct {
@@ -537,44 +530,17 @@ func joinURLPath(basePath, relPath string) string {
 	return basePath + relPath
 }
 
-func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, global *awconfig.GlobalConfig, err error) {
-	global, err = awconfig.LoadGlobal()
-	if err != nil {
-		return "", "", nil, err
-	}
-
-	wd, _ := os.Getwd()
-	ctx, _, _ := awconfig.LoadWorktreeContextFromDir(wd)
-
+func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, err error) {
 	baseURL = strings.TrimSpace(urlVal)
 	serverName = strings.TrimSpace(serverVal)
 
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
 	}
-	// If the user didn't specify a server/url, prefer the current worktree context
-	// (keeps "init/rotate" operations scoped to the same server as normal commands).
-	if baseURL == "" && serverName == "" && ctx != nil {
-		if v := strings.TrimSpace(ctx.DefaultAccount); v != "" {
-			if acct, ok := global.Accounts[v]; ok {
-				serverName = strings.TrimSpace(acct.Server)
-			}
-		}
-		if serverName == "" && len(ctx.ServerAccounts) == 1 {
-			for k := range ctx.ServerAccounts {
-				serverName = strings.TrimSpace(k)
-				break
-			}
-		}
-	}
 	if baseURL == "" && serverName != "" {
-		if srv, ok := global.Servers[serverName]; ok && strings.TrimSpace(srv.URL) != "" {
-			baseURL = strings.TrimSpace(srv.URL)
-		} else {
-			baseURL, err = awconfig.DeriveBaseURLFromServerName(serverName)
-			if err != nil {
-				return "", "", nil, err
-			}
+		baseURL, err = awconfig.DeriveBaseURLFromServerName(serverName)
+		if err != nil {
+			return "", "", err
 		}
 	}
 	if baseURL == "" {
@@ -587,13 +553,13 @@ func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName
 		}
 	}
 	if err := awconfig.ValidateBaseURL(baseURL); err != nil {
-		return "", "", nil, err
+		return "", "", err
 	}
 	baseURL, err = resolveWorkingBaseURL(baseURL)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", err
 	}
-	return baseURL, serverName, global, nil
+	return baseURL, serverName, nil
 }
 
 func isTTY() bool {
@@ -725,10 +691,6 @@ func promptIndexedChoice(label string, options []string, defaultIndex int, in io
 	}
 }
 
-func defaultGlobalPath() (string, error) {
-	return awconfig.DefaultGlobalConfigPath()
-}
-
 func sanitizeKeyComponent(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" {
@@ -753,10 +715,6 @@ func sanitizeKeyComponent(s string) string {
 		return "x"
 	}
 	return out
-}
-
-func deriveAccountName(serverName, namespaceSlug, handle string) string {
-	return "acct-" + sanitizeKeyComponent(serverName) + "__" + sanitizeKeyComponent(namespaceSlug) + "__" + sanitizeKeyComponent(handle)
 }
 
 // deriveIdentityAddress builds the canonical external identity address from
@@ -785,51 +743,14 @@ func handleFromAddress(address string) string {
 	return address
 }
 
-func writeOrUpdateContext(serverName, accountName string) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	return writeOrUpdateContextAt(wd, serverName, accountName, true)
-}
-
-func writeOrUpdateContextWithOptions(serverName, accountName string, setDefault bool) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	return writeOrUpdateContextAt(wd, serverName, accountName, setDefault)
-}
-
-func writeOrUpdateContextAt(workingDir, serverName, accountName string, setDefault bool) error {
-	// Always write to workingDir/.aw/context. Never walk up the directory
-	// tree — that would write to a parent project's context and cause
-	// identity mismatches.
+func ensureWorktreeContextAt(workingDir string) error {
 	ctxPath := filepath.Join(workingDir, awconfig.DefaultWorktreeContextRelativePath())
-
-	ctx := &awconfig.WorktreeContext{
-		DefaultAccount: accountName,
-		ServerAccounts: map[string]string{serverName: accountName},
+	if _, err := os.Stat(ctxPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	if existing, err := awconfig.LoadWorktreeContextFrom(ctxPath); err == nil {
-		ctx = existing
-		if ctx.ServerAccounts == nil {
-			ctx.ServerAccounts = map[string]string{}
-		}
-		// Multi-server-friendly: keep the existing default unless explicitly asked
-		// to override it, while still adding/updating the per-server mapping.
-		if strings.TrimSpace(ctx.DefaultAccount) == "" || setDefault {
-			ctx.DefaultAccount = accountName
-		}
-		ctx.ServerAccounts[serverName] = accountName
-	}
-	if ctx.ClientDefaultAccounts == nil {
-		ctx.ClientDefaultAccounts = map[string]string{}
-	}
-	// `aw` should default to the last identity set by `aw` in this directory.
-	ctx.ClientDefaultAccounts["aw"] = accountName
-
-	return awconfig.SaveWorktreeContextTo(ctxPath, ctx)
+	return awconfig.SaveWorktreeContextTo(ctxPath, &awconfig.WorktreeContext{})
 }
 
 func printJSON(v any) {
@@ -947,7 +868,7 @@ func checkVerificationRequired(err error) string {
 	if envelope.Error.Details.MaskedEmail != "" {
 		hint += " (" + envelope.Error.Details.MaskedEmail + ")"
 	}
-	hint += ". Verify this account in the dashboard, then reconnect with `aw connect` or re-run `aw init` with a fresh project key."
+	hint += ". Verify this account in the dashboard, then re-run `aw init` with a fresh project key."
 	return hint
 }
 

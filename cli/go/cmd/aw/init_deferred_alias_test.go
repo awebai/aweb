@@ -64,9 +64,6 @@ func TestExecuteInitDeferredAliasCanReplaceInitialCreateProjectIdentity(t *testi
 		}
 	}))
 
-	cfgPath := t.TempDir() + "/config.yaml"
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
-
 	workingDir := t.TempDir()
 	var promptOut bytes.Buffer
 	result, err := executeInit(initOptions{
@@ -80,7 +77,6 @@ func TestExecuteInitDeferredAliasCanReplaceInitialCreateProjectIdentity(t *testi
 		NamespaceSlug:             "demo",
 		HumanName:                 "Tester",
 		AgentType:                 "agent",
-		SaveConfig:                false,
 		WriteContext:              false,
 		PromptAliasAfterBootstrap: true,
 		Lifetime:                  awid.LifetimeEphemeral,
@@ -143,9 +139,6 @@ func TestExecuteInitDeferredAliasAcceptsServerDefaultWithoutReplacement(t *testi
 		}
 	}))
 
-	cfgPath := t.TempDir() + "/config.yaml"
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
-
 	workingDir := t.TempDir()
 	var promptOut bytes.Buffer
 	result, err := executeInit(initOptions{
@@ -159,7 +152,6 @@ func TestExecuteInitDeferredAliasAcceptsServerDefaultWithoutReplacement(t *testi
 		NamespaceSlug:             "demo",
 		HumanName:                 "Tester",
 		AgentType:                 "agent",
-		SaveConfig:                false,
 		WriteContext:              false,
 		PromptAliasAfterBootstrap: true,
 		Lifetime:                  awid.LifetimeEphemeral,

@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -118,11 +117,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -192,11 +187,7 @@ default_account: acct
 
 	// Run WITHOUT --json: should produce human-readable text.
 	run := exec.CommandContext(ctx, bin, "introspect")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -266,11 +257,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -526,6 +513,7 @@ func TestAwProjectCreateRejectsProjectNameFlag(t *testing.T) {
 
 func TestAwIntrospectServerFlagSelectsConfiguredServer(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: named server/account selection was removed with config.yaml")
 
 	serverA := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -603,11 +591,7 @@ server_accounts:
 	}
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--server-name", "b", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -672,10 +656,8 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_env",
-		"AWEB_URL=",
 	)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -736,7 +718,6 @@ func TestAwProjectCreateUsesSuggestedAliasWhenNotExplicit(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -752,9 +733,8 @@ func TestAwProjectCreateUsesSuggestedAliasWhenNotExplicit(t *testing.T) {
 	run := exec.CommandContext(ctx, bin, "project", "create", "--project", "demo", "--print-exports=false", "--write-context=false", "--json")
 	// Ensure non-TTY mode so aw init doesn't prompt during tests.
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
 		"AW_DID_REGISTRY_URL=http://127.0.0.1:1",
 	)
 	run.Dir = tmp
@@ -846,11 +826,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "identities", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -940,11 +916,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "lock", "renew", "--resource-key", "my-lock", "--ttl-seconds", "3600", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1019,11 +991,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "project", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1104,11 +1072,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "lock", "revoke", "--prefix", "test-", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1185,11 +1149,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1318,7 +1278,6 @@ func TestAwInitWritesConfig(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1331,10 +1290,9 @@ func TestAwInitWritesConfig(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--server-name", "local", "--server-url", server.URL, "--account", "acct", "--print-exports=false", "--write-context=false", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--server-url", server.URL, "--print-exports=false", "--write-context=false", "--json")
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project_test",
 	)
 	run.Dir = tmp
@@ -1351,50 +1309,27 @@ func TestAwInitWritesConfig(t *testing.T) {
 		t.Fatalf("api_key=%v", got["api_key"])
 	}
 
-	data, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg struct {
-		Servers        map[string]map[string]any `yaml:"servers"`
-		Accounts       map[string]map[string]any `yaml:"accounts"`
-		DefaultAccount string                    `yaml:"default_account"`
+	if workspace.ServerURL != server.URL {
+		t.Fatalf("workspace server_url=%q", workspace.ServerURL)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
+	if workspace.APIKey != "aw_sk_alice" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
-	if cfg.DefaultAccount != "acct" {
-		t.Fatalf("default_account=%q", cfg.DefaultAccount)
+	if workspace.NamespaceSlug != "demo" {
+		t.Fatalf("workspace namespace_slug=%q", workspace.NamespaceSlug)
 	}
-	localSrv, ok := cfg.Servers["local"]
-	if !ok {
-		t.Fatalf("missing servers.local")
+	if workspace.IdentityID != "identity-alice" {
+		t.Fatalf("workspace identity_id=%q", workspace.IdentityID)
 	}
-	if localSrv["url"] != server.URL {
-		t.Fatalf("servers.local.url=%v", localSrv["url"])
+	if workspace.IdentityHandle != "alice" {
+		t.Fatalf("workspace identity_handle=%q", workspace.IdentityHandle)
 	}
-	acct, ok := cfg.Accounts["acct"]
-	if !ok {
-		t.Fatalf("missing accounts.acct")
-	}
-	if acct["server"] != "local" {
-		t.Fatalf("accounts.acct.server=%v", acct["server"])
-	}
-	if acct["api_key"] != "aw_sk_alice" {
-		t.Fatalf("accounts.acct.api_key=%v", acct["api_key"])
-	}
-	if acct["namespace_slug"] != "demo" {
-		t.Fatalf("accounts.acct.namespace_slug=%v", acct["namespace_slug"])
-	}
-	if acct["identity_id"] != "identity-alice" {
-		t.Fatalf("accounts.acct.identity_id=%v", acct["identity_id"])
-	}
-	if acct["identity_handle"] != "alice" {
-		t.Fatalf("accounts.acct.identity_handle=%v", acct["identity_handle"])
-	}
-	stableID, _ := acct["stable_id"].(string)
-	if stableID != "did:aw:test-stable-id" {
-		t.Fatalf("accounts.acct.stable_id=%v, want did:aw:test-stable-id", acct["stable_id"])
+	if workspace.StableID != "did:aw:test-stable-id" {
+		t.Fatalf("workspace stable_id=%q", workspace.StableID)
 	}
 }
 
@@ -1432,44 +1367,29 @@ func TestAwInitStoresFullDomainAddress(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "project", "create",
 		"--project", "myteam",
-		"--server-name", "local",
 		"--server-url", server.URL,
-		"--account", "acct",
 		"--print-exports=false",
 		"--write-context=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("init failed: %v\n%s", err, string(out))
 	}
 
-	data, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg struct {
-		Accounts map[string]map[string]any `yaml:"accounts"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
-	}
-	acct, ok := cfg.Accounts["acct"]
-	if !ok {
-		t.Fatalf("missing accounts.acct")
-	}
-	// The config should store the authoritative namespace slug, not the
-	// full domain label.
-	if acct["namespace_slug"] != "myteam" {
-		t.Fatalf("namespace_slug=%v, want myteam", acct["namespace_slug"])
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("namespace_slug=%q, want myteam", workspace.NamespaceSlug)
 	}
 }
 
@@ -1534,11 +1454,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1658,11 +1574,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "contacts", "list", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1741,11 +1653,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "contacts", "add", "bob@example.com", "--label", "Bob", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1825,11 +1733,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "contacts", "remove", "bob@example.com", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1896,11 +1800,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "contacts", "remove", "nobody@example.com")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1973,11 +1873,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "access-mode", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2057,11 +1953,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "access-mode", "open", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2156,18 +2048,14 @@ default_account: acct
 			}
 
 			run := exec.CommandContext(ctx, bin, "introspect")
-			run.Env = append(os.Environ(),
-				"AW_CONFIG_PATH="+cfgPath,
-				"AWEB_URL=",
-				"AWEB_API_KEY=",
-			)
+			run.Env = testCommandEnv(tmp)
 			run.Dir = tmp
 			out, err := run.CombinedOutput()
 			if err == nil {
 				t.Fatalf("expected failure, got success:\n%s", string(out))
 			}
 			outStr := string(out)
-			if !strings.Contains(outStr, "aw connect") {
+			if !strings.Contains(outStr, "aw init") {
 				t.Fatalf("expected reconnect hint in error, got: %s", outStr)
 			}
 			if tc.wantEmail {
@@ -2257,11 +2145,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "reachability", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2349,11 +2233,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "reachability", "private", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2450,11 +2330,7 @@ default_account: acct
 			"--body", "hello",
 			"--json",
 		)
-		run.Env = append(os.Environ(),
-			"AW_CONFIG_PATH="+cfgPath,
-			"AWEB_URL=",
-			"AWEB_API_KEY=",
-		)
+		run.Env = testCommandEnv(tmp)
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -2525,9 +2401,7 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 		"--alias", "coordinator",
 		"--write-context=false",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project",
 	)
 	run.Dir = tmp
@@ -2539,33 +2413,21 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 	if initAuth != "Bearer aw_sk_project" {
 		t.Fatalf("Authorization=%q, want Bearer aw_sk_project", initAuth)
 	}
-	data, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg struct {
-		Accounts map[string]map[string]any `yaml:"accounts"`
+	if workspace.APIKey != "aw_sk_new" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
+	if workspace.NamespaceSlug != "livepub" && workspace.NamespaceSlug != "live-publication-project" {
+		t.Fatalf("workspace namespace_slug=%q, want livepub or live-publication-project", workspace.NamespaceSlug)
 	}
-	var found bool
-	for name, acct := range cfg.Accounts {
-		if acct["api_key"] == "aw_sk_new" {
-			found = true
-			if acct["namespace_slug"] != "livepub" && acct["namespace_slug"] != "live-publication-project" {
-				t.Fatalf("accounts.%s.namespace_slug=%v, want livepub or live-publication-project", name, acct["namespace_slug"])
-			}
-			if acct["identity_handle"] != "coordinator" {
-				t.Fatalf("accounts.%s.identity_handle=%v, want coordinator", name, acct["identity_handle"])
-			}
-			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
-				t.Fatalf("accounts.%s.signing_key=%v, want .aw/signing.key", name, acct["signing_key"])
-			}
-		}
+	if workspace.IdentityHandle != "coordinator" {
+		t.Fatalf("workspace identity_handle=%q", workspace.IdentityHandle)
 	}
-	if !found {
-		t.Fatalf("no account with api_key=aw_sk_new in config:\n%s", string(data))
+	if !strings.Contains(workspace.SigningKey, filepath.Join(".aw", "signing.key")) {
+		t.Fatalf("workspace signing_key=%q, want .aw/signing.key", workspace.SigningKey)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -2627,9 +2489,7 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 		"--server-url", server.URL,
 		"--alias", "coordinator",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project",
 	)
 	run.Stdin = strings.NewReader("")
@@ -2684,26 +2544,21 @@ func TestAwProjectCreateNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "project", "create",
 		"--server-url", server.URL,
 		"--project", "demo",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
 	}
-	if _, statErr := os.Stat(cfgPath); statErr != nil {
-		t.Fatalf("config should be written on success, statErr=%v", statErr)
+	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); statErr != nil {
+		t.Fatalf("workspace.yaml should be written on success, statErr=%v", statErr)
 	}
 }
 
@@ -2746,25 +2601,20 @@ func TestAwAcceptInviteNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "spawn", "accept-invite", "aw_inv_test",
 		"--server-url", server.URL,
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
 	}
-	if _, statErr := os.Stat(cfgPath); statErr != nil {
-		t.Fatalf("config should be written on success, statErr=%v", statErr)
+	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); statErr != nil {
+		t.Fatalf("workspace.yaml should be written on success, statErr=%v", statErr)
 	}
 }
 
@@ -2809,7 +2659,6 @@ func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "init",
@@ -2817,9 +2666,7 @@ func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 		"--alias", "bob",
 		"--json",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project",
 	)
 	run.Stdin = strings.NewReader("")
@@ -2831,8 +2678,8 @@ func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 	if !json.Valid(extractJSON(t, out)) {
 		t.Fatalf("expected JSON output, got:\n%s", string(out))
 	}
-	if _, statErr := os.Stat(cfgPath); statErr != nil {
-		t.Fatalf("config should be written on success, statErr=%v", statErr)
+	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); statErr != nil {
+		t.Fatalf("workspace.yaml should be written on success, statErr=%v", statErr)
 	}
 }
 
@@ -2943,6 +2790,7 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 
 func TestAwConnectInRepoWritesContextInRepo(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -3149,37 +2997,22 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 		t.Fatalf("response lifetime=%v", resp["lifetime"])
 	}
 
-	data, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg struct {
-		Accounts map[string]map[string]any `yaml:"accounts"`
+	if workspace.APIKey != "aw_sk_new" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("workspace namespace_slug=%q, want myteam", workspace.NamespaceSlug)
 	}
-	var found bool
-	for _, acct := range cfg.Accounts {
-		if acct["api_key"] == "aw_sk_new" {
-			found = true
-			if acct["namespace_slug"] != "myteam" {
-				t.Fatalf("namespace_slug=%v, want myteam", acct["namespace_slug"])
-			}
-			if acct["lifetime"] != "persistent" {
-				t.Fatalf("lifetime=%v, want persistent", acct["lifetime"])
-			}
-			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
-				t.Fatalf("signing_key=%v, want .aw/signing.key", acct["signing_key"])
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no account with api_key=aw_sk_new in config:\n%s", string(data))
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
 		t.Fatalf("identity.yaml missing: %v", err)
+	}
+	if identity.Lifetime != "persistent" {
+		t.Fatalf("identity lifetime=%q, want persistent", identity.Lifetime)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -3353,39 +3186,23 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 		t.Fatalf("did update calls=%d want 1", didUpdateCalls)
 	}
 
-	data, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg struct {
-		Accounts map[string]map[string]any `yaml:"accounts"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
-	}
-	var found bool
-	for _, acct := range cfg.Accounts {
-		if acct["api_key"] == "aw_sk_existing" {
-			found = true
-			if acct["did"] != did {
-				t.Fatalf("did=%v want %v", acct["did"], did)
-			}
-			if acct["stable_id"] != stableID {
-				t.Fatalf("stable_id=%v want %v", acct["stable_id"], stableID)
-			}
-			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
-				t.Fatalf("signing_key=%v, want .aw/signing.key", acct["signing_key"])
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no account with api_key=aw_sk_existing in config:\n%s", string(data))
+	if workspace.APIKey != "aw_sk_existing" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {
 		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.DID != did {
+		t.Fatalf("identity did=%q want %q", identity.DID, did)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("identity stable_id=%q want %q", identity.StableID, stableID)
 	}
 	if identity.RegistryStatus != "registered" {
 		t.Fatalf("registry_status=%q", identity.RegistryStatus)
@@ -3757,11 +3574,7 @@ default_account: acct
 		"--to", "monitor",
 		"--body", "hello from identity",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -3903,11 +3716,7 @@ default_account: acct
 		"--to", "monitor",
 		"--body", "hello from namespace",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -3954,6 +3763,7 @@ default_account: acct
 
 func TestAwConnect(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	const stableID = "did:aw:GrRZYotwid5A4FxaddwPxsxChzo"
 	const did = "did:key:z6MkConnectImported"
@@ -4110,6 +3920,7 @@ func TestAwConnect(t *testing.T) {
 
 func TestAwConnectPreservesExistingIdentity(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	existingDID := awid.ComputeDIDKey(pub)
@@ -4239,109 +4050,7 @@ default_account: acct-`+server.Listener.Addr().String()+`__agent-1
 }
 
 func TestAwConnectDoesNotOverrideExistingContextDefaultWithoutSetDefault(t *testing.T) {
-	t.Parallel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/auth/introspect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_id":     "proj-123",
-				"identity_id":    "agent-1",
-				"namespace_slug": "myco",
-				"alias":          "alice",
-				"agent_type":     "agent",
-			})
-		case "/v1/projects/current":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_id": "proj-123",
-				"slug":       "myco",
-			})
-		case "/v1/agents/resolve/alice":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":      "did:key:z6MkConnectDefault",
-				"address":  "myco/alice",
-				"custody":  "custodial",
-				"lifetime": "persistent",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/workspaces/attach":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":    "ws-attach-1",
-				"project_id":      "proj-123",
-				"project_slug":    "myco",
-				"alias":           "alice",
-				"attachment_type": "local_dir",
-				"created":         true,
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	// Pre-create a context that already has a default identity.
-	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, ".aw", "context"), []byte(strings.TrimSpace(`
-default_account: keep-me
-server_accounts:
-  example.com: keep-me
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write empty config — connect will add the new account.
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "connect")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL="+server.URL,
-		"AWEB_API_KEY=aw_sk_test",
-		"AW_DID_REGISTRY_URL=http://127.0.0.1:1", // unreachable — forces best-effort failure
-	)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	ctxData, err := os.ReadFile(filepath.Join(tmp, ".aw", "context"))
-	if err != nil {
-		t.Fatalf("read context: %v", err)
-	}
-	var got awconfig.WorktreeContext
-	if err := yaml.Unmarshal(ctxData, &got); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(ctxData))
-	}
-	if got.DefaultAccount != "keep-me" {
-		t.Fatalf("default_account=%q, want keep-me", got.DefaultAccount)
-	}
-	serverName, _ := awconfig.DeriveServerNameFromURL(server.URL)
-	if got.ServerAccounts[serverName] == "" {
-		t.Fatalf("expected server_accounts[%q] to be set", serverName)
-	}
+	t.Skip("obsolete after aweb-aadv.2 removed aw connect and account-based context defaults")
 }
 
 func TestAwConnectIdentityAlreadySetNoLocalKey(t *testing.T) {
@@ -4585,6 +4294,7 @@ func TestAwConnectRecoverWith409AndLocalKey(t *testing.T) {
 
 func TestAwConnectUsesServerStableID(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	const stableID = "did:aw:4FAsTHsY3uUjQ6rLw8TDwQyd5Ek"
 	const did = "did:key:z6MkServerStableID"
@@ -4679,6 +4389,7 @@ func TestAwConnectUsesServerStableID(t *testing.T) {
 
 func TestAwConnectMissingEnvVars(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -4704,11 +4415,7 @@ func TestAwConnectMissingEnvVars(t *testing.T) {
 
 	// No AWEB_URL or AWEB_API_KEY — should fail.
 	run := exec.CommandContext(ctx, bin, "connect")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -4721,6 +4428,7 @@ func TestAwConnectMissingEnvVars(t *testing.T) {
 
 func TestAwConnectNoAgentID(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: aw connect was removed")
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -4884,19 +4592,15 @@ default_account: acct-log-test
 		"--body", "hello from log test",
 		"--subject", "log test",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 
-	// The log should be in the same directory as config.yaml, under logs/.
-	logFile := filepath.Join(tmp, "logs", "acct-log-test.jsonl")
+	// Communication logs now live in the per-user state dir under ~/.config/aw/logs.
+	logFile := filepath.Join(tmp, ".config", "aw", "logs", "workspace.jsonl")
 	logData, err := os.ReadFile(logFile)
 	if err != nil {
 		t.Fatalf("log file not created: %v", err)
@@ -4954,7 +4658,7 @@ func TestResolveBaseURLForInitFallsBackToDefault(t *testing.T) {
 	// resolveBaseURLForInit should fall back to the default URL.
 	// If the server is reachable, we get a URL back; if not, the error
 	// should mention app.aweb.ai. Either way, the default was used.
-	baseURL, serverName, _, err := resolveBaseURLForInit("", "")
+	baseURL, serverName, err := resolveBaseURLForInit("", "")
 	if err != nil {
 		if !strings.Contains(err.Error(), "app.aweb.ai") {
 			t.Fatalf("expected error to reference default URL app.aweb.ai, got: %v", err)
@@ -5128,11 +4832,7 @@ default_account: acct
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "mcp-config")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -5166,6 +4866,7 @@ default_account: acct
 
 func TestMCPConfigAll(t *testing.T) {
 	t.Parallel()
+	t.Skip("obsolete after aweb-aadv.2: mcp-config --all was removed")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -5195,11 +4896,7 @@ default_account: local-alice
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "mcp-config", "--all")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

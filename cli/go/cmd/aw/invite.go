@@ -39,10 +39,6 @@ var spawnCreateInviteCmd = &cobra.Command{
 	Short: "Create a spawn invite for another workspace",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := resolveCloudClient()
-		if err != nil {
-			return err
-		}
 		if inviteUses < 1 {
 			return usageError("--uses must be >= 1")
 		}
@@ -51,6 +47,10 @@ var spawnCreateInviteCmd = &cobra.Command{
 			return err
 		}
 		accessMode, err := mapInviteAccessMode(inviteAccess)
+		if err != nil {
+			return err
+		}
+		client, err := resolveCloudClient()
 		if err != nil {
 			return err
 		}
@@ -163,9 +163,7 @@ func init() {
 	spawnAcceptInviteCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code channel MCP server for real-time coordination")
 	spawnAcceptInviteCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
-	spawnAcceptInviteCmd.Flags().BoolVar(&initSaveConfig, "save-config", true, "Write/update ~/.config/aw/config.yaml with the new credentials")
-	spawnAcceptInviteCmd.Flags().BoolVar(&initSetDefault, "set-default", false, "Set this account as default_account in ~/.config/aw/config.yaml")
-	spawnAcceptInviteCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Write/update .aw/context in the current directory (non-secret pointer)")
+	spawnAcceptInviteCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(spawnAcceptInviteCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initPermanent, "permanent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
@@ -341,8 +339,6 @@ func runSpawnAcceptInvite(cmd *cobra.Command, args []string) error {
 		Reachability:    strings.TrimSpace(initReachability),
 		HumanName:       resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 		AgentType:       resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-		SaveConfig:      initSaveConfig,
-		SetDefault:      initSetDefault,
 		WriteContext:    initWriteContext,
 		Role:            resolveRequestedRole(strings.TrimSpace(initRole)),
 		Permanent:       permanent,
@@ -361,7 +357,7 @@ func runSpawnAcceptInvite(cmd *cobra.Command, args []string) error {
 	if jsonFlag {
 		printJSON(result.Response)
 	} else {
-		printInitSummary(result.Response, result.AccountName, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, opts.WorkingDir, "Accepted spawn invite")
+		printInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, opts.WorkingDir, "Accepted spawn invite")
 	}
 	printPostInitActions(result, opts.WorkingDir)
 	return nil

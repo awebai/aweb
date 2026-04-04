@@ -66,7 +66,7 @@ var runCmd = &cobra.Command{
 In a TTY, if this directory is not initialized yet, aw run can guide you
 through new-project creation or existing-project init before starting the
 provider. The explicit bootstrap commands remain available for scripts and
-expert use: aw project create, aw init, aw spawn accept-invite, and aw connect.
+expert use: aw project create, aw init, and aw spawn accept-invite.
 
 Current implementation includes:
   - repeated provider invocations (currently Claude and Codex)
@@ -446,7 +446,7 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 	}
 	if state == runWorkspaceStateMissing {
 		if !interactive {
-			return nil, nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`, or rerun in a TTY for guided onboarding")
+			return nil, nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, or `aw spawn accept-invite`, or rerun in a TTY for guided onboarding")
 		}
 		proceed, promptErr := promptYesNoWithIO(
 			"This directory is not initialized as an aweb workspace. Initialize now?",
@@ -458,7 +458,7 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 			return nil, nil, nil, promptErr
 		}
 		if !proceed {
-			return nil, nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, `aw spawn accept-invite`, or `aw connect`")
+			return nil, nil, nil, usageError("current directory is not initialized for aw; run `aw project create`, `aw init`, or `aw spawn accept-invite`")
 		}
 
 		onboarding, onboardingErr := guidedOnboardingWizard(guidedOnboardingRequest{
@@ -498,12 +498,5 @@ func resolveRunWorkspaceStateForDir(workingDir string) (runWorkspaceState, error
 		return runWorkspaceStateInitialized, fmt.Errorf("invalid local workspace binding: %w", err)
 	}
 
-	_, _, err = awconfig.LoadWorktreeContextFromDir(workingDir)
-	if err == nil {
-		return runWorkspaceStateInitialized, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return runWorkspaceStateMissing, nil
-	}
-	return runWorkspaceStateInitialized, fmt.Errorf("invalid local workspace context: %w", err)
+	return runWorkspaceStateMissing, nil
 }

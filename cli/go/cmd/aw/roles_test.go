@@ -57,41 +57,28 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		WorkspaceID: "agent-1",
-		Role:        "reviewer",
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		WorkspaceID:    "agent-1",
+		ProjectSlug:    "demo",
+		Role:           "reviewer",
 	}); err != nil {
 		t.Fatalf("save workspace state: %v", err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "roles", "show")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -144,31 +131,12 @@ func TestAwRolesListListsSortedRoles(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "list")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -218,16 +186,11 @@ func TestAwRolesShowAllRolesRendersPlaybooks(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "show", "--all-roles")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -289,16 +252,11 @@ func TestAwRolesHistoryListsVersions(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "history", "--limit", "5")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -367,16 +325,11 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "set", "--bundle-file", "-")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	run.Stdin = strings.NewReader(`{"roles":{"reviewer":{"title":"Reviewer","playbook_md":"Review carefully."}}}`)
 	out, err := run.CombinedOutput()
@@ -439,16 +392,11 @@ func TestAwRolesActivateActivatesExistingVersion(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "activate", "roles-2")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -485,16 +433,11 @@ func TestAwRolesResetResetsToDefault(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "reset")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -531,16 +474,11 @@ func TestAwRolesDeactivateDeactivatesToEmptyBundle(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeTestConfig(t, cfgPath, server.URL)
+	writeTestConfig(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "roles", "deactivate")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

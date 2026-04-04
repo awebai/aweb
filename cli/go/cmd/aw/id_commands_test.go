@@ -643,9 +643,9 @@ func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil || pending != nil {
 		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
-	cfg := loadConfigForTest(t, cfgPath)
-	if cfg.Accounts["acct"].DID != currentRegistryDID {
-		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, currentRegistryDID)
+	identity := loadIdentityForTest(t, tmp)
+	if identity.DID != currentRegistryDID {
+		t.Fatalf("identity DID=%s want %s", identity.DID, currentRegistryDID)
 	}
 	if registryRotateCalls.Load() != 1 {
 		t.Fatalf("registry rotate calls=%d", registryRotateCalls.Load())
@@ -753,9 +753,9 @@ func TestAwIDRotateKeyPreservesPendingStateOnRegistryNetworkError(t *testing.T) 
 		t.Fatalf("pending public key missing: %v", err)
 	}
 
-	cfg := loadConfigForTest(t, cfgPath)
-	if cfg.Accounts["acct"].DID != oldDID {
-		t.Fatalf("config DID changed on registry failure: %s", cfg.Accounts["acct"].DID)
+	identity := loadIdentityForTest(t, tmp)
+	if identity.DID != oldDID {
+		t.Fatalf("identity DID changed on registry failure: %s", identity.DID)
 	}
 }
 
@@ -867,9 +867,9 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	if pending, err := loadPendingRotationState(rotationDir, stableID); err != nil || pending != nil {
 		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
-	cfg := loadConfigForTest(t, cfgPath)
-	if cfg.Accounts["acct"].DID != newDID {
-		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, newDID)
+	identity := loadIdentityForTest(t, tmp)
+	if identity.DID != newDID {
+		t.Fatalf("identity DID=%s want %s", identity.DID, newDID)
 	}
 	activeKeyPath := awconfig.WorktreeSigningKeyPath(tmp)
 	gotPriv, err := awid.LoadSigningKey(activeKeyPath)
@@ -1006,11 +1006,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--self-custody", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1020,20 +1016,9 @@ default_account: acct
 		t.Fatal("server did not receive new did:key")
 	}
 
-	config := loadConfigForTest(t, cfgPath)
-	acct := config.Accounts["acct"]
 	signingKeyPath := filepath.Join(tmp, ".aw", "signing.key")
 	if resolvedSigningKeyPath, err := filepath.EvalSymlinks(signingKeyPath); err == nil {
 		signingKeyPath = resolvedSigningKeyPath
-	}
-	if acct.SigningKey != signingKeyPath {
-		t.Fatalf("signing_key=%q want %q", acct.SigningKey, signingKeyPath)
-	}
-	if acct.DID != newDID {
-		t.Fatalf("did=%q want %q", acct.DID, newDID)
-	}
-	if acct.Custody != awid.CustodySelf {
-		t.Fatalf("custody=%q want %q", acct.Custody, awid.CustodySelf)
 	}
 	if _, err := os.Stat(signingKeyPath); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -1131,7 +1116,7 @@ func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testi
 	}()
 
 	time.Sleep(20 * time.Millisecond)
-	if err := updateAccountIdentity("acct", "did:key:z6MkUpdated", awid.CustodySelf, awconfig.WorktreeSigningKeyPath(tmp)); err != nil {
+	if err := updateAccountIdentity("did:key:z6MkUpdated", awid.CustodySelf, awconfig.WorktreeSigningKeyPath(tmp)); err != nil {
 		t.Fatalf("updateAccountIdentity: %v", err)
 	}
 
@@ -1164,47 +1149,46 @@ func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testi
 
 func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
 	t.Helper()
-	_ = address
 	pub := signingKey.Public().(ed25519.PublicKey)
 	workingDir := filepath.Dir(cfgPath)
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	if err := awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, signingKey); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &awconfig.GlobalConfig{
-		Servers: map[string]awconfig.Server{
-			"local": {URL: serverURL},
-		},
-		Accounts: map[string]awconfig.Account{
-			"acct": {
-				Account: awid.Account{
-					Server:         "local",
-					APIKey:         "aw_sk_test",
-					IdentityHandle: handle,
-					NamespaceSlug:  namespaceSlug,
-					DID:            did,
-					StableID:       stableID,
-					SigningKey:     signingKeyPath,
-					Custody:        "self",
-					Lifetime:       "persistent",
-				},
-				DefaultProject: "myteam",
-			},
-		},
-		DefaultAccount: "acct",
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:      serverURL,
+		APIKey:         "aw_sk_test",
+		ProjectSlug:    "myteam",
+		NamespaceSlug:  namespaceSlug,
+		IdentityID:     "agent-1",
+		IdentityHandle: handle,
+		DID:            did,
+		StableID:       stableID,
+		SigningKey:     signingKeyPath,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if err := cfg.SaveGlobalTo(cfgPath); err != nil {
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   address,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func loadConfigForTest(t *testing.T, cfgPath string) *awconfig.GlobalConfig {
+func loadIdentityForTest(t *testing.T, workingDir string) *awconfig.WorktreeIdentity {
 	t.Helper()
-	cfg, err := awconfig.LoadGlobalFrom(cfgPath)
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(workingDir, ".aw", "identity.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cfg
+	return identity
 }
 
 func testDidLogEntry(t *testing.T, didAW string, signingKey ed25519.PrivateKey, newDID, operation string, previousDID, prevHash *string, seq int, stateHash string) awid.DidKeyEvidence {

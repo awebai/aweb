@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"gopkg.in/yaml.v3"
 	"net/http"
 	"os"
 	"os/exec"
@@ -53,31 +53,22 @@ func TestAwIdentityDeleteEphemeral(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	cfg := strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_ephemeral
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: myco
-    custody: custodial
-    lifetime: ephemeral
-default_account: acct
-`) + "\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_ephemeral",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "myco",
+		ProjectSlug:    "myco",
+	})
 	ps := awid.NewPinStore()
 	ps.StorePin("did:key:canonical", "myco/alice", "", "")
 	ps.StorePin("did:key:handle", "alice", "", "")
-	if err := ps.Save(filepath.Join(tmp, "known_agents.yaml")); err != nil {
+	legacyKnownAgentsPath := filepath.Join(tmp, "known_agents.yaml")
+	knownAgentsPath := filepath.Join(tmp, ".config", "aw", "known_agents.yaml")
+	if err := ps.Save(legacyKnownAgentsPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,16 +85,9 @@ client_default_accounts:
 `)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	run := exec.CommandContext(ctx, bin, "id", "delete", "--confirm")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -115,27 +99,13 @@ client_default_accounts:
 	if !strings.Contains(string(out), "Identity deleted.") {
 		t.Fatalf("expected delete output, got: %s", string(out))
 	}
-
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfgOut struct {
-		Accounts map[string]map[string]any `yaml:"accounts"`
-	}
-	if err := yaml.Unmarshal(data, &cfgOut); err != nil {
-		t.Fatalf("yaml: %v\n%s", err, string(data))
-	}
-	if len(cfgOut.Accounts) != 0 {
-		t.Fatalf("expected account removal after delete:\n%s", string(data))
-	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); !os.IsNotExist(err) {
 		t.Fatalf("expected .aw/context removal, err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("expected .aw/workspace.yaml removal, err=%v", err)
 	}
-	pins, err := awid.LoadPinStore(filepath.Join(tmp, "known_agents.yaml"))
+	pins, err := awid.LoadPinStore(knownAgentsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,35 +150,19 @@ func TestAwIdentityDeleteRejectsPermanent(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
-	cfg := strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_permanent
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: myco
-    custody: custodial
-    lifetime: ephemeral
-    did: did:key:z6MkWrongLocalState
-default_account: acct
-`) + "\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_permanent",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "myco",
+		ProjectSlug:    "myco",
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "delete", "--confirm")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-	)
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {

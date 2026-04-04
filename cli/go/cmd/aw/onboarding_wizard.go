@@ -86,7 +86,7 @@ func executeGuidedExistingProjectInit(req guidedOnboardingRequest) (*guidedOnboa
 	if err != nil {
 		return nil, err
 	}
-	guidedOnboardingPrintInitSummary(result.Response, result.AccountName, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Initialized workspace")
+	guidedOnboardingPrintInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Initialized workspace")
 	return &guidedOnboardingResult{}, nil
 }
 
@@ -133,7 +133,7 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 	if err != nil {
 		return nil, err
 	}
-	guidedOnboardingPrintInitSummary(result.Response, result.AccountName, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Created project and initialized workspace")
+	guidedOnboardingPrintInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Created project and initialized workspace")
 
 	if req.AskPostCreateSetup {
 		repoRoot := resolveRepoRoot(req.WorkingDir)
@@ -166,8 +166,6 @@ func guidedOnboardingInitInput(req guidedOnboardingRequest, input initCollection
 	input.WorkingDir = req.WorkingDir
 	input.PromptIn = req.PromptIn
 	input.PromptOut = req.PromptOut
-	input.SaveConfig = false
-	input.SetDefault = false
 	input.WriteContext = true
 	return input
 }

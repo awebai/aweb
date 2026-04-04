@@ -66,7 +66,7 @@ default_account: acct
 			}
 
 			run := exec.CommandContext(ctx, bin, tc.args...)
-			run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+			run.Env = testCommandEnv(tmp)
 			run.Dir = tmp
 			out, err := run.CombinedOutput()
 			if err == nil {
@@ -137,7 +137,7 @@ default_account: acct
 	}
 
 	run := exec.CommandContext(ctx, bin, "lock", "list", "--mine")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

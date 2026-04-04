@@ -46,7 +46,7 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if sel.Custody == awid.CustodySelf {
-			return fmt.Errorf("identity %q is already self-custodial", sel.AccountName)
+			return fmt.Errorf("current identity is already self-custodial")
 		}
 		return runCustodialGraduation(sel)
 	}
@@ -174,8 +174,8 @@ func finalizeIDRotation(
 	} else if err := ensurePublicKeyMatchesPrivate(keyPath); err != nil {
 		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
-	if err := updateAccountIdentity(current.Selection.AccountName, pending.NewDID, awid.CustodySelf, keyPath); err != nil {
-		return fmt.Errorf("update account identity: %w. Retry `aw id rotate-key` to finish local promotion", err)
+	if err := updateAccountIdentity(pending.NewDID, awid.CustodySelf, keyPath); err != nil {
+		return fmt.Errorf("update local identity: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
 	if err := removePendingRotationState(rotationDir, current.StableID); err != nil {
 		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish local promotion", err)
@@ -229,7 +229,7 @@ func runCustodialGraduation(sel *awconfig.Selection) error {
 	}
 
 	// Update config.
-	if err := updateAccountIdentity(sel.AccountName, newDID, awid.CustodySelf, keyPath); err != nil {
+	if err := updateAccountIdentity(newDID, awid.CustodySelf, keyPath); err != nil {
 		return err
 	}
 	printOutput(idRotateOutput{
@@ -295,56 +295,7 @@ func resolveLocalSigningKeyPath(sel *awconfig.Selection) (string, error) {
 	return awconfig.WorktreeSigningKeyPath(wd), nil
 }
 
-func resolveCurrentAccountName(accountName string) (string, error) {
-	if strings.TrimSpace(accountName) != "" {
-		return strings.TrimSpace(accountName), nil
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	cfg, err := awconfig.LoadGlobal()
-	if err != nil {
-		return "", err
-	}
-	var ctx *awconfig.WorktreeContext
-	if loaded, _, loadErr := awconfig.LoadWorktreeContextFromDir(wd); loadErr == nil {
-		ctx = loaded
-	} else if !os.IsNotExist(loadErr) {
-		return "", loadErr
-	}
-	sel, err := awconfig.Resolve(cfg, awconfig.ResolveOptions{
-		ClientName: "aw",
-		Context:    ctx,
-	})
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(sel.AccountName), nil
-}
-
-// updateAccountIdentity updates DID, custody, and signing key path in the global config.
-func updateAccountIdentity(accountName, newDID, custody, signingKeyPath string) error {
-	resolvedAccountName, err := resolveCurrentAccountName(accountName)
-	if err != nil {
-		return err
-	}
-
-	configPath, err := defaultGlobalPath()
-	if err != nil {
-		return err
-	}
-	if err := awconfig.UpdateGlobalAt(configPath, func(cfg *awconfig.GlobalConfig) error {
-		acct := cfg.Accounts[resolvedAccountName]
-		acct.DID = newDID
-		acct.Custody = custody
-		acct.SigningKey = signingKeyPath
-		cfg.Accounts[resolvedAccountName] = acct
-		return nil
-	}); err != nil {
-		return err
-	}
-
+func updateAccountIdentity(newDID, custody, signingKeyPath string) error {
 	if wd, wdErr := os.Getwd(); wdErr == nil {
 		workspacePath := filepath.Join(wd, awconfig.DefaultWorktreeWorkspaceRelativePath())
 		identityPath := filepath.Join(wd, awconfig.DefaultWorktreeIdentityRelativePath())

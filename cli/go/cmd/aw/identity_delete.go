@@ -173,29 +173,7 @@ func cleanupDeletedIdentity(sel *awconfig.Selection) (configRemoved, contextRemo
 		keyRemoved = strings.TrimSpace(sel.SigningKey)
 	}
 
-	if strings.TrimSpace(sel.AccountName) != "" {
-		cfgPath, cfgErr := defaultGlobalPath()
-		if cfgErr != nil {
-			return "", "", keyRemoved, cfgErr
-		}
-		if err := awconfig.UpdateGlobalAt(cfgPath, func(cfg *awconfig.GlobalConfig) error {
-			if cfg.Accounts != nil {
-				delete(cfg.Accounts, sel.AccountName)
-			}
-			if strings.TrimSpace(cfg.DefaultAccount) == strings.TrimSpace(sel.AccountName) {
-				cfg.DefaultAccount = firstRemainingAccount(cfg)
-			}
-			if cfg.ClientDefaultAccounts != nil && strings.TrimSpace(cfg.ClientDefaultAccounts["aw"]) == strings.TrimSpace(sel.AccountName) {
-				delete(cfg.ClientDefaultAccounts, "aw")
-			}
-			return nil
-		}); err != nil {
-			return "", "", keyRemoved, err
-		}
-		configRemoved = strings.TrimSpace(sel.AccountName)
-	}
-
-	contextRemoved, err = removeCurrentContextBinding(strings.TrimSpace(sel.AccountName))
+	contextRemoved, err = removeCurrentContextBinding()
 	if err != nil {
 		return configRemoved, "", keyRemoved, err
 	}
@@ -208,11 +186,10 @@ func cleanupDeletedIdentity(sel *awconfig.Selection) (configRemoved, contextRemo
 }
 
 func removeLocalIdentityPins(sel *awconfig.Selection) error {
-	cfgPath, err := defaultGlobalPath()
+	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {
 		return err
 	}
-	pinPath := filepath.Join(filepath.Dir(cfgPath), "known_agents.yaml")
 	ps, err := awid.LoadPinStore(pinPath)
 	if err != nil {
 		return err
@@ -232,13 +209,6 @@ func removeLocalIdentityPins(sel *awconfig.Selection) error {
 	return nil
 }
 
-func firstRemainingAccount(cfg *awconfig.GlobalConfig) string {
-	for _, name := range sortedAccountNames(cfg) {
-		return name
-	}
-	return ""
-}
-
 func removeSigningKeyFiles(signingKeyPath string) error {
 	if err := os.Remove(signingKeyPath); err != nil && !os.IsNotExist(err) {
 		return err
@@ -250,7 +220,7 @@ func removeSigningKeyFiles(signingKeyPath string) error {
 	return nil
 }
 
-func removeCurrentContextBinding(accountName string) (string, error) {
+func removeCurrentContextBinding() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -268,37 +238,7 @@ func removeCurrentContextBinding(accountName string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-
-		if strings.TrimSpace(accountName) != "" {
-			if strings.TrimSpace(ctx.DefaultAccount) == accountName {
-				ctx.DefaultAccount = ""
-			}
-			for serverName, mappedAccount := range ctx.ServerAccounts {
-				if strings.TrimSpace(mappedAccount) == accountName {
-					delete(ctx.ServerAccounts, serverName)
-				}
-			}
-			for clientName, mappedAccount := range ctx.ClientDefaultAccounts {
-				if strings.TrimSpace(mappedAccount) == accountName {
-					delete(ctx.ClientDefaultAccounts, clientName)
-				}
-			}
-		}
-
-		if strings.TrimSpace(ctx.DefaultAccount) == "" {
-			for _, mappedAccount := range ctx.ServerAccounts {
-				ctx.DefaultAccount = mappedAccount
-				break
-			}
-		}
-		if strings.TrimSpace(ctx.DefaultAccount) == "" {
-			for _, mappedAccount := range ctx.ClientDefaultAccounts {
-				ctx.DefaultAccount = mappedAccount
-				break
-			}
-		}
-
-		if strings.TrimSpace(ctx.DefaultAccount) == "" && len(ctx.ServerAccounts) == 0 && len(ctx.ClientDefaultAccounts) == 0 && strings.TrimSpace(ctx.HumanAccount) == "" {
+		if strings.TrimSpace(ctx.HumanAccount) == "" {
 			if err := os.Remove(ctxPath); err != nil && !os.IsNotExist(err) {
 				return "", err
 			}

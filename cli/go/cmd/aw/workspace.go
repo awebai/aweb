@@ -221,14 +221,14 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
-	client, sel, err := resolveClientSelectionForDir(workingDir)
-	if err != nil {
-		return err
-	}
-
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {
 		return usageError("workspace add-worktree requires a git worktree")
+	}
+
+	client, sel, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
 	}
 
 	requested := ""
@@ -344,11 +344,8 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 				IdentityAlias: alias,
 				HumanName:     humanName,
 				AgentType:     "agent",
-				SaveConfig:    true,
-				SetDefault:    false,
 				WriteContext:  true,
 				InviteToken:   inviteToken,
-				AccountName:   "",
 				WorkspaceRole: role,
 				Lifetime:      awid.LifetimeEphemeral,
 			}

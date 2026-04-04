@@ -141,34 +141,21 @@ func TestAwProjectCreateAgainstHosted(t *testing.T) {
 		t.Fatalf("api_key=%v", resp["api_key"])
 	}
 
-	// Verify config was written.
-	cfgData, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
+	if workspace.APIKey != "aw_sk_headless_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
-	// Should have an account with the headless API key.
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_headless_test" {
-			found = true
-			if acct.IdentityHandle != "deploy-bot" {
-				t.Fatalf("agent_alias=%q", acct.IdentityHandle)
-			}
-			if acct.NamespaceSlug != "myteam" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			if !strings.Contains(acct.SigningKey, filepath.Join(".aw", "signing.key")) {
-				t.Fatalf("signing_key=%q, want .aw/signing.key", acct.SigningKey)
-			}
-			break
-		}
+	if workspace.IdentityHandle != "deploy-bot" {
+		t.Fatalf("identity_handle=%q", workspace.IdentityHandle)
 	}
-	if !found {
-		t.Fatalf("expected account with headless API key in config:\n%s", string(cfgData))
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
+	}
+	if !strings.Contains(workspace.SigningKey, filepath.Join(".aw", "signing.key")) {
+		t.Fatalf("signing_key=%q, want .aw/signing.key", workspace.SigningKey)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -267,26 +254,15 @@ func TestAwProjectCreateSupportsSeparateNamespaceSlug(t *testing.T) {
 		t.Fatalf("response namespace_slug=%v", resp["namespace_slug"])
 	}
 
-	cfgData, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
+	if workspace.APIKey != "aw_sk_headless_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_headless_test" {
-			found = true
-			if acct.NamespaceSlug != "acme" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected account with headless API key in config:\n%s", string(cfgData))
+	if workspace.NamespaceSlug != "acme" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
 	}
 }
 
@@ -628,26 +604,15 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 		t.Fatalf("response lifetime=%v", resp["lifetime"])
 	}
 
-	cfgData, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
+	if workspace.APIKey != "aw_sk_permanent_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_permanent_test" {
-			found = true
-			if acct.NamespaceSlug != "myteam" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected account with permanent API key in config:\n%s", string(cfgData))
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
 	}
 }
 

@@ -34,8 +34,6 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	initPermanent = false
 	initInjectDocs = false
 	initSetupHooks = false
-	initSaveConfig = true
-	initSetDefault = false
 	initWriteContext = true
 	initIsTTY = func() bool { return true }
 

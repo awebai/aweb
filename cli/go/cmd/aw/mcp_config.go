@@ -6,12 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
 var (
-	mcpConfigAll     bool
 	mcpConfigChannel bool
 )
 
@@ -19,10 +17,6 @@ var mcpConfigCmd = &cobra.Command{
 	Use:   "mcp-config",
 	Short: "Output MCP server configuration for the current identity",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if mcpConfigAll {
-			return mcpConfigAllAccounts()
-		}
-
 		if mcpConfigChannel {
 			wd, err := os.Getwd()
 			if err != nil {
@@ -64,41 +58,6 @@ var mcpConfigCmd = &cobra.Command{
 	},
 }
 
-func mcpConfigAllAccounts() error {
-	global, err := awconfig.LoadGlobal()
-	if err != nil {
-		return err
-	}
-
-	servers := map[string]any{}
-	for acctName, acct := range global.Accounts {
-		srv, ok := global.Servers[acct.Server]
-		if !ok || strings.TrimSpace(srv.URL) == "" {
-			continue
-		}
-		baseURL := strings.TrimRight(srv.URL, "/")
-
-		servers[acctName] = map[string]any{
-			"url": baseURL + "/mcp",
-			"headers": map[string]string{
-				"Authorization": "Bearer " + acct.APIKey,
-			},
-		}
-	}
-
-	if len(servers) == 0 {
-		return fmt.Errorf("no accounts with valid server URLs found in config")
-	}
-
-	cfg := map[string]any{"mcpServers": servers}
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	fmt.Println(string(out))
-	return nil
-}
-
 func channelMCPConfig(cwd string) map[string]any {
 	return map[string]any{
 		"mcpServers": map[string]any{
@@ -112,7 +71,6 @@ func channelMCPConfig(cwd string) map[string]any {
 }
 
 func init() {
-	mcpConfigCmd.Flags().BoolVar(&mcpConfigAll, "all", false, "Output config for all accounts")
 	mcpConfigCmd.Flags().BoolVar(&mcpConfigChannel, "channel", false, "Output stdio channel config instead of HTTP MCP config")
 	rootCmd.AddCommand(mcpConfigCmd)
 }
