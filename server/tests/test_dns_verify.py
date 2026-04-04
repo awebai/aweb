@@ -12,6 +12,7 @@ from aweb.dns_verify import (
     awid_txt_name,
     awid_txt_value,
     discover_authoritative_registry,
+    discover_registry_override,
     verify_domain,
 )
 
@@ -43,6 +44,7 @@ async def test_verify_domain_parses_awid_txt_record_with_explicit_registry(monke
     assert authority.registry_url == "https://registry.acme.test"
     assert authority.dns_name == "_awid.acme.com"
     assert authority.inherited is False
+    assert authority.registry_explicit is True
 
 
 @pytest.mark.asyncio
@@ -58,6 +60,7 @@ async def test_verify_domain_defaults_registry_when_field_absent(monkeypatch):
 
     assert authority.controller_did == did_key
     assert authority.registry_url == DEFAULT_AWID_REGISTRY_URL
+    assert authority.registry_explicit is False
 
 
 @pytest.mark.asyncio
@@ -76,6 +79,34 @@ async def test_discover_authoritative_registry_inherits_from_parent_record(monke
     registry_url = await discover_authoritative_registry("project.aweb.ai")
 
     assert registry_url == "https://registry.aweb.test"
+
+
+@pytest.mark.asyncio
+async def test_discover_registry_override_returns_only_explicit_registry_records(monkeypatch):
+    did_key = _did_key()
+
+    async def _resolve(qname: str, _rrtype: str):
+        if qname == "_awid.project.aweb.ai":
+            raise NXDOMAIN()
+        if qname == "_awid.aweb.ai":
+            return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://registry.aweb.test;")]
+        raise AssertionError(f"unexpected qname {qname}")
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
+
+    assert await discover_registry_override("project.aweb.ai") == "https://registry.aweb.test"
+
+
+@pytest.mark.asyncio
+async def test_discover_registry_override_returns_none_when_registry_field_absent(monkeypatch):
+    did_key = _did_key()
+
+    async def _resolve(_qname: str, _rrtype: str):
+        return [_TxtRecord(f"awid=v1; controller={did_key};")]
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
+
+    assert await discover_registry_override("acme.com") is None
 
 
 @pytest.mark.asyncio

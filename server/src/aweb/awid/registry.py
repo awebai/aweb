@@ -135,9 +135,22 @@ class RegistryClient:
             return self.registry_url
         if is_local_awid_registry_url(self.registry_url):
             return self.registry_url
-        from aweb.dns_verify import discover_authoritative_registry
+        default_registry_url = canonical_server_origin(self.registry_url)
+        from aweb.dns_verify import DnsVerificationError, discover_registry_override
 
-        return canonical_server_origin(await discover_authoritative_registry(domain))
+        try:
+            registry_override = await discover_registry_override(domain)
+        except DnsVerificationError:
+            logger.debug(
+                "AWID registry override lookup failed for %s; using configured registry %s",
+                domain,
+                default_registry_url,
+                exc_info=True,
+            )
+            return default_registry_url
+        if registry_override is None:
+            return default_registry_url
+        return canonical_server_origin(registry_override)
 
     async def _request_json(
         self,
@@ -750,6 +763,8 @@ class CachedRegistryClient(RegistryClient):
         )
 
     async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+        did_aw = stable_id_from_did_key(did_key)
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().register_did(did_key, signing_key, server_url)
         await self._invalidate_keys(self._did_key_cache_key(mapping.did_aw))
         return mapping
@@ -784,6 +799,7 @@ class CachedRegistryClient(RegistryClient):
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
     ) -> Namespace:
+        await self._invalidate_namespace_cache(domain)
         namespace = await super().register_namespace(
             domain,
             controller_did,
@@ -800,6 +816,7 @@ class CachedRegistryClient(RegistryClient):
         new_controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
     ) -> Namespace:
+        await self._invalidate_namespace_cache(domain)
         namespace = await super().rotate_namespace_controller(
             domain,
             new_controller_did,
@@ -818,6 +835,7 @@ class CachedRegistryClient(RegistryClient):
         reachability: str,
     ) -> Address:
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=[])
         address = await super().register_address(
             domain,
             name,
@@ -835,6 +853,7 @@ class CachedRegistryClient(RegistryClient):
         controller_signing_key: bytes,
         reachability: str | None = None,
     ) -> Address:
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=[])
         address = await super().update_address(domain, name, controller_signing_key, reachability)
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
         return address

@@ -29,6 +29,7 @@ class DomainAuthority:
     registry_url: str
     dns_name: str
     inherited: bool = False
+    registry_explicit: bool = False
 
 
 class DnsVerificationError(Exception):
@@ -56,6 +57,14 @@ async def discover_authoritative_registry(domain: str) -> str:
     authority = await _lookup_domain_authority(domain, allow_ancestors=True)
     if authority is None:
         return DEFAULT_AWID_REGISTRY_URL
+    return authority.registry_url
+
+
+async def discover_registry_override(domain: str) -> str | None:
+    """Return an explicit per-domain registry override if one is declared."""
+    authority = await _lookup_domain_authority(domain, allow_ancestors=True)
+    if authority is None or not authority.registry_explicit:
+        return None
     return authority.registry_url
 
 
@@ -107,6 +116,7 @@ async def _lookup_domain_authority(domain: str, *, allow_ancestors: bool) -> Dom
                 registry_url=authority.registry_url,
                 dns_name=authority.dns_name,
                 inherited=True,
+                registry_explicit=authority.registry_explicit,
             )
         return authority
 
@@ -171,6 +181,7 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         raise DnsVerificationError(f"Invalid controller DID: {controller} (must be did:key Ed25519)")
 
     registry = fields.get("registry")
+    registry_explicit = registry is not None
     if registry:
         try:
             registry = _validate_registry_origin(registry)
@@ -184,6 +195,7 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         registry_url=registry,
         dns_name=dns_name,
         inherited=False,
+        registry_explicit=registry_explicit,
     )
 
 

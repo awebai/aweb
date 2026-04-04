@@ -182,6 +182,13 @@ These are the shapes most developers usually need first.
 | `GET` | `/v1/did/{did_aw}/log` | `-` | `200: inline-json, 422: HTTPValidationError` |
 | `PUT` | `/v1/did/{did_aw}` | `DidUpdateRequest` | `200: inline-json, 422: HTTPValidationError` |
 
+Operational note:
+
+- If you use `CachedRegistryClient`, Redis becomes a trusted cache for DID and
+  address resolution state. Anyone with Redis write access can poison cached
+  resolution results until expiry, so Redis must remain on a trusted operator
+  boundary with authentication and network isolation.
+
 ## Addresses
 
 | Method | Path | Request | Responses |
