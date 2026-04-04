@@ -257,6 +257,109 @@ func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	}
 }
 
+func TestAwIDRotateKeyPreservesPendingStateOnRegistryNetworkError(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	address := "myteam.aweb.ai/alice"
+	createEntry := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("a", 64))
+
+	var serverURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/resolve/myteam.aweb.ai/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":        oldDID,
+				"stable_id":  stableID,
+				"address":    address,
+				"handle":     "alice",
+				"server":     serverURL,
+				"custody":    "self",
+				"lifetime":   "persistent",
+				"public_key": base64.RawStdEncoding.EncodeToString(oldPub),
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": oldDID,
+				"log_head":        didLogJSON(createEntry),
+			})
+		case "/v1/did/" + stableID + "/full":
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("response writer does not support hijacking")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWID_REGISTRY_URL=local",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected rotate-key to fail on registry network error:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "EOF") && !strings.Contains(string(out), "connection reset") && !strings.Contains(string(out), "broken pipe") {
+		t.Fatalf("expected network error output, got:\n%s", string(out))
+	}
+
+	keysDir := awconfig.KeysDir(cfgPath)
+	pending, err := loadPendingRotationState(keysDir, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("pending rotation state missing after registry failure")
+	}
+	if pending.OldDID != oldDID {
+		t.Fatalf("pending old_did=%s want %s", pending.OldDID, oldDID)
+	}
+	if pending.NewDID == "" {
+		t.Fatal("pending new_did missing after registry failure")
+	}
+	if pending.PendingKey == "" {
+		t.Fatal("pending key path missing after registry failure")
+	}
+	if _, err := os.Stat(pending.PendingKey); err != nil {
+		t.Fatalf("pending signing key missing: %v", err)
+	}
+	if _, err := os.Stat(awid.PublicKeyPath(pending.PendingKey)); err != nil {
+		t.Fatalf("pending public key missing: %v", err)
+	}
+
+	cfg := loadConfigForTest(t, cfgPath)
+	if cfg.Accounts["acct"].DID != oldDID {
+		t.Fatalf("config DID changed on registry failure: %s", cfg.Accounts["acct"].DID)
+	}
+}
+
 func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	t.Parallel()
 

@@ -147,7 +147,7 @@ func loadRotationSigningKey(keysDir, address string, pending *pendingRotationSta
 	activeKeyPath := awid.SigningKeyPath(keysDir, address)
 	activePriv, activeErr := awid.LoadSigningKey(activeKeyPath)
 	if activeErr != nil {
-		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+		return nil, false, fmt.Errorf("load active signing key: %w", activeErr)
 	}
 	if strings.TrimSpace(awid.ComputeDIDKey(activePriv.Public().(ed25519.PublicKey))) != strings.TrimSpace(pending.NewDID) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
