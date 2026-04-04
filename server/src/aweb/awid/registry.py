@@ -13,7 +13,6 @@ from aweb.awid.did import did_from_public_key, stable_id_from_did_key
 from aweb.awid.log import canonical_server_origin, log_entry_payload, state_hash
 from aweb.awid.signing import canonical_json_bytes, sign_message
 from aweb.config import is_local_awid_registry_url
-from aweb.dns_verify import discover_authoritative_registry
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
@@ -121,6 +120,8 @@ class RegistryClient:
             return self.registry_url
         if is_local_awid_registry_url(self.registry_url):
             return self.registry_url
+        from aweb.dns_verify import discover_authoritative_registry
+
         return canonical_server_origin(await discover_authoritative_registry(domain))
 
     async def _request_json(

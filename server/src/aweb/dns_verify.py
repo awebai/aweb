@@ -198,8 +198,8 @@ def _validate_registry_origin(registry_url: str) -> str:
     if not host:
         raise ValueError("registry URL must include a host")
 
-    if _is_production_environment() and url.scheme != "https":
-        raise ValueError("registry URL must use https in production")
+    if url.scheme != "https" and not _is_explicit_development_environment():
+        raise ValueError("registry URL must use https unless APP_ENV=development")
 
     if host == "localhost" or host.endswith(".localhost"):
         raise ValueError("registry URL must not target localhost")
@@ -224,9 +224,9 @@ def _validate_registry_origin(registry_url: str) -> str:
     return canonical
 
 
-def _is_production_environment() -> bool:
+def _is_explicit_development_environment() -> bool:
     for name in ("APP_ENV", "ENVIRONMENT"):
         value = (os.getenv(name) or "").strip().lower()
         if value:
-            return value in {"prod", "production"}
+            return value in {"dev", "development", "local"}
     return False

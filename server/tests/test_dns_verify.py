@@ -4,6 +4,7 @@ import pytest
 from dns.exception import Timeout
 from dns.resolver import NXDOMAIN, NoNameservers
 
+import aweb.dns_verify as dns_verify
 from aweb.awid import did_from_public_key, generate_keypair
 from aweb.config import DEFAULT_AWID_REGISTRY_URL
 from aweb.dns_verify import (
@@ -97,7 +98,8 @@ async def test_discovery_caps_ancestor_walk_at_registered_domain_boundary(monkey
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
     monkeypatch.setattr(
-        "aweb.dns_verify._registered_domain_boundary",
+        dns_verify,
+        "_registered_domain_boundary",
         lambda _domain: "project.github.io",
     )
 
@@ -115,7 +117,7 @@ async def test_discovery_ignores_unrelated_txt_records_and_falls_back(monkeypatc
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
-    monkeypatch.setattr("aweb.dns_verify._registered_domain_boundary", lambda _domain: "aweb.ai")
+    monkeypatch.setattr(dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai")
 
     assert await discover_authoritative_registry("project.aweb.ai") == DEFAULT_AWID_REGISTRY_URL
 
@@ -166,7 +168,7 @@ async def test_discovery_treats_timeout_as_hard_failure(monkeypatch):
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
-    monkeypatch.setattr("aweb.dns_verify._registered_domain_boundary", lambda _domain: "aweb.ai")
+    monkeypatch.setattr(dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai")
 
     with pytest.raises(DnsVerificationError, match="DNS lookup failed"):
         await discover_authoritative_registry("project.aweb.ai")
@@ -221,3 +223,33 @@ async def test_verify_domain_requires_https_registry_in_production(monkeypatch):
 
     with pytest.raises(DnsVerificationError, match="Invalid registry origin"):
         await verify_domain("acme.com")
+
+
+@pytest.mark.asyncio
+async def test_verify_domain_rejects_http_registry_by_default(monkeypatch):
+    did_key = _did_key()
+
+    async def _resolve(_qname: str, _rrtype: str):
+        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=http://registry.example;")]
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+    with pytest.raises(DnsVerificationError, match="Invalid registry origin"):
+        await verify_domain("acme.com")
+
+
+@pytest.mark.asyncio
+async def test_verify_domain_allows_http_registry_in_explicit_development(monkeypatch):
+    did_key = _did_key()
+
+    async def _resolve(_qname: str, _rrtype: str):
+        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=http://registry.example;")]
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
+    monkeypatch.setenv("APP_ENV", "development")
+
+    authority = await verify_domain("acme.com")
+
+    assert authority.registry_url == "http://registry.example"
