@@ -835,6 +835,7 @@ class CachedRegistryClient(RegistryClient):
         reachability: str,
     ) -> Address:
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=[])
         address = await super().register_address(
             domain,
             name,

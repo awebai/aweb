@@ -1209,6 +1209,105 @@ async def test_cached_registry_client_invalidates_namespace_cache_on_rotate():
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_address_cache_on_register():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+    address_name = {"value": "stale"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": subject_did_aw,
+                    "current_did_key": subject_did_key,
+                    "log_head": None,
+                },
+            )
+        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": address_name["value"],
+                    "did_aw": subject_did_aw,
+                    "current_did_key": subject_did_key,
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "POST" and request.url.path == "/v1/namespaces/acme.com/addresses":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["did_aw"] == subject_did_aw
+            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            timestamp = request.headers["x-aweb-timestamp"]
+            assert auth_did_key == controller_did
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=canonical_json_bytes(
+                    {
+                        "domain": "acme.com",
+                        "name": "support",
+                        "operation": "register_address",
+                        "timestamp": timestamp,
+                    }
+                ),
+                signature_b64=signature,
+            )
+            address_name["value"] = "support"
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "support",
+                    "did_aw": subject_did_aw,
+                    "current_did_key": subject_did_key,
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client._write_cache_entry(
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai"),
+        value=registry_module.Address(
+            address_id="addr-1",
+            domain="acme.com",
+            name="stale",
+            did_aw=subject_did_aw,
+            current_did_key=subject_did_key,
+            reachability="public",
+            created_at="2026-04-03T00:00:00Z",
+        ),
+        ttl_seconds=300,
+        encode=registry_module._address_to_json,
+    )
+
+    created = await client.register_address(
+        "acme.com",
+        "support",
+        subject_did_aw,
+        controller_signing_key,
+        "public",
+    )
+    refreshed = await client.resolve_address("acme.com", "support")
+
+    assert created.name == "support"
+    assert refreshed is not None
+    assert refreshed.name == "support"
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_invalidates_did_cache_before_update_server():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
