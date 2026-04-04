@@ -116,7 +116,6 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 		if sel.StableID != "" {
 			c.SetStableID(sel.StableID)
 		}
-		c.SetResolver(&awid.ServerResolver{Client: c.Client})
 
 		// Load TOFU pin store for sender identity verification.
 		cfgPath, err := defaultGlobalPath()
@@ -130,6 +129,18 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 			ps = awid.NewPinStore()
 		}
 		c.SetPinStore(ps, pinPath)
+		registry := awid.NewRegistryResolver(c.Client.HTTPClient(), nil)
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), "local") {
+			if err := registry.SetFallbackRegistryURL(baseURL); err != nil {
+				return nil, nil, fmt.Errorf("invalid embedded registry base URL: %w", err)
+			}
+		}
+		c.SetResolver(&awid.ChainResolver{
+			DIDKey:   &awid.DIDKeyResolver{},
+			Registry: registry,
+			Server:   &awid.ServerResolver{Client: c.Client},
+			Pin:      &awid.PinResolver{Store: ps},
+		})
 	} else {
 		var err error
 		c, err = aweb.NewWithAPIKey(baseURL, sel.APIKey)

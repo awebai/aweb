@@ -16,6 +16,7 @@ from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from .logging import configure_logging
 from .mutation_hooks import create_mutation_handler
+from .ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
@@ -115,6 +116,7 @@ def _make_standalone_lifespan():
             # Phase 2: Only assign to app.state after ALL initialization succeeds
             app.state.redis = redis
             app.state.db = default_db_infra
+            app.state.rate_limiter = build_rate_limiter(redis=redis)
             app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
             await _mount_mcp_app(app, default_db_infra, redis)
@@ -163,6 +165,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         # Use externally provided connections - no initialization needed
         app.state.redis = redis
         app.state.db = db_infra
+        app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
         await _mount_mcp_app(app, db_infra, redis)

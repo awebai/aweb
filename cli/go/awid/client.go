@@ -172,6 +172,9 @@ func (c *Client) SetSSEClient(httpClient *http.Client) {
 	c.sseClient = httpClient
 }
 
+// HTTPClient returns the HTTP client used for standard JSON API calls.
+func (c *Client) HTTPClient() *http.Client { return c.httpClient }
+
 // SigningKey returns the client's signing key, or nil for legacy/custodial clients.
 func (c *Client) SigningKey() ed25519.PrivateKey { return c.signingKey }
 
@@ -281,8 +284,35 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
 		isContact = nil
 	}
+	status = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
 	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta)
 	return status, isContact
+}
+
+func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) VerificationStatus {
+	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
+		return status
+	}
+	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
+		return status
+	}
+	verifier, ok := c.resolver.(StableIdentityVerifier)
+	if !ok {
+		return status
+	}
+	result := verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
+	if result == nil {
+		return status
+	}
+	switch result.Outcome {
+	case StableIdentityVerified:
+		if strings.TrimSpace(result.CurrentDIDKey) != "" && result.CurrentDIDKey != fromDID {
+			return IdentityMismatch
+		}
+	case StableIdentityHardError:
+		return IdentityMismatch
+	}
+	return status
 }
 
 // CheckTOFUPin checks a verified message against the TOFU pin store.

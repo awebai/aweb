@@ -527,11 +527,13 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 				"address":        "myteam.aweb.ai/maintainer",
 				"api_key":        "aw_sk_permanent_test",
 				"did":            "did:key:z6MkPermanent",
-				"stable_id":      "stable-permanent",
+				"stable_id":      "did:aw:stable-permanent",
 				"custody":        "self",
 				"lifetime":       "persistent",
 				"created":        true,
 			})
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -571,6 +573,7 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_API_KEY=",
 		"AWEB_ALIAS=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -610,6 +613,82 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected account with permanent API key in config:\n%s", string(cfgData))
+	}
+}
+
+func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "maintainer", "roles": []string{}})
+		case "/api/v1/create-project":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_id":     "proj-1",
+				"project_slug":   "default",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-1",
+				"alias":          "maintainer",
+				"address":        "myteam.aweb.ai/maintainer",
+				"api_key":        "aw_sk_permanent_test",
+				"did":            "did:key:z6MkPermanent",
+				"stable_id":      "did:aw:stable-permanent",
+				"custody":        "self",
+				"lifetime":       "persistent",
+				"created":        true,
+			})
+		case "/v1/did":
+			http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	run := exec.CommandContext(ctx, bin, "project", "create",
+		"--project", "myteam",
+		"--permanent",
+		"--name", "maintainer",
+		"--json",
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Stdin = strings.NewReader("")
+	run.Env = append(os.Environ(),
+		"AWEB_URL="+server.URL,
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_API_KEY=",
+		"AWEB_ALIAS=",
+		"AWID_REGISTRY_URL=local",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Warning: could not register identity at awid.ai:") {
+		t.Fatalf("expected registration warning in output:\n%s", string(out))
 	}
 }
 

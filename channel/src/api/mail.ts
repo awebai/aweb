@@ -1,5 +1,6 @@
 import type { APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
+import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
 import { verifyMessage, verifySignedPayload } from "../identity/signing.js";
 
 export interface InboxMessage {
@@ -22,6 +23,9 @@ export interface InboxMessage {
   signature?: string;
   signing_key_id?: string;
   signed_payload?: string;
+  rotation_announcement?: RotationAnnouncement;
+  replacement_announcement?: ReplacementAnnouncement;
+  is_contact?: boolean;
   verification_status?: VerificationStatus;
 }
 

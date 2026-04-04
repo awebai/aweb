@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveConfig } from "./config.js";
@@ -13,6 +13,8 @@ import { streamAgentEvents, type AgentEvent } from "./api/events.js";
 import { fetchInbox, ackMessage, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore } from "./identity/pinstore.js";
+import { RegistryResolver } from "./identity/registry.js";
+import { SenderTrustManager } from "./identity/trust.js";
 
 const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 const MAX_DISPATCHED_IDS = 2000;
@@ -23,47 +25,6 @@ async function loadPinStore(): Promise<PinStore> {
     return PinStore.fromYAML(content);
   } catch {
     return new PinStore();
-  }
-}
-
-async function savePinStore(store: PinStore): Promise<void> {
-  await writeFile(PIN_STORE_PATH, store.toYAML(), { mode: 0o600 });
-}
-
-interface TOFUResult {
-  status: string | undefined;
-  stored: boolean;
-}
-
-function checkTOFUPin(
-  store: PinStore,
-  verificationStatus: string | undefined,
-  fromAlias: string,
-  fromDID: string | undefined,
-  fromStableID: string | undefined,
-): TOFUResult {
-  if (!verificationStatus || verificationStatus !== "verified" || !fromDID || !fromAlias) {
-    return { status: verificationStatus, stored: false };
-  }
-
-  const pinKey = fromStableID?.startsWith("did:aw:") ? fromStableID : fromDID;
-  const result = store.checkPin(fromAlias, pinKey, "persistent");
-
-  switch (result) {
-    case "new":
-      store.storePin(pinKey, fromAlias, "", "");
-      if (fromStableID?.startsWith("did:aw:")) {
-        const pin = store.pins.get(pinKey)!;
-        pin.stable_id = fromStableID;
-        pin.did_key = fromDID;
-      }
-      return { status: verificationStatus, stored: true };
-    case "ok":
-      return { status: verificationStatus, stored: false };
-    case "mismatch":
-      return { status: "identity_mismatch", stored: false };
-    case "skipped":
-      return { status: verificationStatus, stored: false };
   }
 }
 
@@ -84,6 +45,10 @@ async function main() {
 
   const client = new APIClient(config.baseURL, config.apiKey);
   const pinStore = await loadPinStore();
+  const registry = new RegistryResolver(fetch, undefined, undefined, {
+    fallbackRegistryURL: embeddedRegistryFallbackURL(config.baseURL),
+  });
+  const trust = new SenderTrustManager(client, registry, config.address, config.did);
 
   const mcp = new Server(
     { name: "aweb", version: "0.1.0" },
@@ -93,7 +58,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Read them and act if needed. Acknowledge with: aw mail ack <message_id>
+Mail events (type="mail") are async. Read them and act if needed. Delivery through this channel already acknowledges receipt, so there is no separate ack command.
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.
@@ -111,13 +76,20 @@ Control events (type="control") are operational signals. On "pause", stop curren
   process.on("SIGINT", () => abort.abort());
   process.on("SIGTERM", () => abort.abort());
 
-  await startEventLoop(mcp, client, pinStore, config.alias, abort.signal);
+  await startEventLoop(mcp, client, pinStore, trust, config.alias, abort.signal);
+}
+
+function embeddedRegistryFallbackURL(baseURL: string): string | undefined {
+  return (process.env.AWID_REGISTRY_URL || "").trim().toLowerCase() === "local"
+    ? baseURL
+    : undefined;
 }
 
 async function startEventLoop(
   mcp: Server,
   client: APIClient,
   pinStore: PinStore,
+  trust: SenderTrustManager,
   selfAlias: string,
   signal: AbortSignal,
 ): Promise<void> {
@@ -125,7 +97,7 @@ async function startEventLoop(
 
   for await (const event of streamAgentEvents(client, signal)) {
     try {
-      await dispatchEvent(mcp, client, pinStore, selfAlias, dispatched, event);
+      await dispatchEvent(mcp, client, pinStore, trust, selfAlias, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err) {
       console.error(`[aw-channel] dispatch error: ${err}`);
@@ -137,6 +109,7 @@ export async function dispatchEvent(
   mcp: Server,
   client: APIClient,
   pinStore: PinStore,
+  trust: SenderTrustManager,
   selfAlias: string,
   dispatched: Set<string>,
   event: AgentEvent,
@@ -149,9 +122,16 @@ export async function dispatchEvent(
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        const from = msg.from_alias || msg.from_address || "";
-        const tofu = checkTOFUPin(
-          pinStore, msg.verification_status, from, msg.from_did, msg.from_stable_id,
+        const from = msg.from_address || msg.from_alias || "";
+        const tofu = await trust.normalizeTrust(
+          pinStore,
+          msg.verification_status,
+          from,
+          msg.from_did,
+          msg.from_stable_id,
+          msg.to_did,
+          msg.rotation_announcement,
+          msg.replacement_announcement,
         );
         msg.verification_status = tofu.status as InboxMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
@@ -175,7 +155,7 @@ export async function dispatchEvent(
           console.error(`[aw-channel] ack failed: ${err}`),
         );
       }
-      if (pinsDirty) await savePinStore(pinStore);
+      if (pinsDirty) await pinStore.save(PIN_STORE_PATH);
       break;
     }
 
@@ -189,15 +169,23 @@ export async function dispatchEvent(
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        const tofu = checkTOFUPin(
-          pinStore, msg.verification_status, msg.from_agent, msg.from_did, msg.from_stable_id,
+        const from = msg.from_address || msg.from_agent;
+        const tofu = await trust.normalizeTrust(
+          pinStore,
+          msg.verification_status,
+          from,
+          msg.from_did,
+          msg.from_stable_id,
+          msg.to_did,
+          msg.rotation_announcement,
+          msg.replacement_announcement,
         );
         msg.verification_status = tofu.status as ChatMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
 
         const meta: Record<string, string> = {
           type: "chat",
-          from: msg.from_agent,
+          from,
           session_id: event.session_id,
           message_id: msg.message_id,
         };
@@ -220,7 +208,7 @@ export async function dispatchEvent(
         );
       }
 
-      if (pinsDirty) await savePinStore(pinStore);
+      if (pinsDirty) await pinStore.save(PIN_STORE_PATH);
       break;
     }
 
