@@ -44,13 +44,16 @@ def _server_url(request: Request) -> str:
 
 
 def _registry_client_for_request(request: Request) -> RegistryClient:
+    cached_client = getattr(request.app.state, "awid_registry_client", None)
+    if cached_client is not None:
+        return cached_client
+
     registry_url = get_awid_registry_url()
     redis = getattr(request.app.state, "redis", None)
     if is_local_awid_registry_url(registry_url):
         client_class = CachedRegistryClient if redis is not None else RegistryClient
         client_kwargs = {
             "registry_url": registry_url,
-            "base_url": _server_url(request),
             "transport": ASGITransport(app=request.app),
         }
         if redis is not None:

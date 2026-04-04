@@ -5,10 +5,12 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from httpx import ASGITransport
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
+from .awid import CachedRegistryClient, RegistryClient
 from .config import get_settings, is_local_awid_registry_url
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
@@ -70,6 +72,18 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
+def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
+    settings = get_settings()
+    registry_url = settings.awid_registry_url
+    client_class = CachedRegistryClient if redis is not None else RegistryClient
+    client_kwargs = {"registry_url": registry_url}
+    if is_local_awid_registry_url(registry_url):
+        client_kwargs["transport"] = ASGITransport(app=app)
+    if redis is not None:
+        return client_class(redis_client=redis, **client_kwargs)
+    return client_class(**client_kwargs)
+
+
 def _make_standalone_lifespan():
     """Create lifespan for standalone mode (creates own DB and Redis connections)."""
 
@@ -102,6 +116,7 @@ def _make_standalone_lifespan():
             app.state.redis = redis
             app.state.db = default_db_infra
             app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
+            app.state.awid_registry_client = _build_awid_registry_client(app, redis)
             await _mount_mcp_app(app, default_db_infra, redis)
 
         except Exception:
@@ -149,6 +164,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.redis = redis
         app.state.db = db_infra
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
+        app.state.awid_registry_client = _build_awid_registry_client(app, redis)
         await _mount_mcp_app(app, db_infra, redis)
 
         try:

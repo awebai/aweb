@@ -108,6 +108,10 @@ def test_init_response_includes_identity_id():
 
 def test_registry_client_factory_uses_cached_client_when_redis_available(monkeypatch):
     monkeypatch.setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+    singleton = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=object(),
+    )
     request = Request(
         {
             "type": "http",
@@ -118,13 +122,15 @@ def test_registry_client_factory_uses_cached_client_when_redis_available(monkeyp
             "query_string": b"",
             "server": ("api.example", 443),
             "client": ("127.0.0.1", 12345),
-            "app": SimpleNamespace(state=SimpleNamespace(redis=object())),
+            "app": SimpleNamespace(
+                state=SimpleNamespace(redis=object(), awid_registry_client=singleton)
+            ),
         }
     )
 
     client = _registry_client_for_request(request)
 
-    assert isinstance(client, CachedRegistryClient)
+    assert client is singleton
 
 
 def test_registry_client_factory_uses_plain_client_without_redis(monkeypatch):

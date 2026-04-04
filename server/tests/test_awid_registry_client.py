@@ -894,6 +894,57 @@ async def test_cached_registry_client_serves_stale_then_refreshes_in_background(
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_uses_address_ttl_for_list_addresses(monkeypatch):
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+    now = {"value": 0}
+    current_name = {"value": "support"}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/acme.com/addresses"
+        return httpx.Response(
+            200,
+            json={
+                "addresses": [
+                    {
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": current_name["value"],
+                        "did_aw": subject_did_aw,
+                        "current_did_key": subject_did_key,
+                        "reachability": "public",
+                        "created_at": "2026-04-03T00:00:00Z",
+                    }
+                ]
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    fresh = await client.list_addresses("acme.com")
+    assert [item.name for item in fresh] == ["support"]
+
+    current_name["value"] = "ops"
+    now["value"] = 301
+    stale = await client.list_addresses("acme.com")
+    assert [item.name for item in stale] == ["support"]
+
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    refreshed = await client.list_addresses("acme.com")
+    assert [item.name for item in refreshed] == ["ops"]
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_invalidates_address_reads_on_update():
     controller_signing_key, controller_public_key = generate_keypair()
     controller_did = did_from_public_key(controller_public_key)
@@ -967,6 +1018,148 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
     assert request_counts["/v1/namespaces/acme.com/addresses/support"] == 3
     assert request_counts["/v1/namespaces/acme.com/addresses"] == 2
     assert request_counts[f"/v1/did/{subject_did_aw}/addresses"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_did_cache_before_update_server():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    head = {"seq": 3, "entry_hash": "head-3"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": did_key,
+                    "log_head": {
+                        "seq": head["seq"],
+                        "operation": "update_server",
+                        "previous_did_key": did_key,
+                        "new_did_key": did_key,
+                        "prev_entry_hash": "prev",
+                        "entry_hash": head["entry_hash"],
+                        "state_hash": "state",
+                        "authorized_by": did_key,
+                        "signature": "sig",
+                        "timestamp": "2026-04-03T00:00:00Z",
+                    },
+                },
+            )
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
+            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            timestamp = request.headers["x-aweb-timestamp"]
+            assert auth_did_key == did_key
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=f"{timestamp}\nGET\n{request.url.path}".encode("utf-8"),
+                signature_b64=signature,
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": did_key,
+                    "server": "https://old.example",
+                    "address": "",
+                    "handle": None,
+                    "created_at": "2026-04-03T00:00:00Z",
+                    "updated_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "PUT" and request.url.path == f"/v1/did/{did_aw}":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["seq"] == 8
+            assert payload["prev_entry_hash"] == "head-7"
+            return httpx.Response(200, json={"updated": True})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.resolve_key(did_aw)
+    head["seq"] = 7
+    head["entry_hash"] = "head-7"
+
+    await client.update_server(did_aw, "https://new.example", signing_key)
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_did_cache_before_rotate_key():
+    old_signing_key, old_public_key = generate_keypair()
+    old_did_key = did_from_public_key(old_public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    did_aw = stable_id_from_did_key(old_did_key)
+    head = {"seq": 2, "entry_hash": "head-2"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": old_did_key,
+                    "log_head": {
+                        "seq": head["seq"],
+                        "operation": "update_server",
+                        "previous_did_key": old_did_key,
+                        "new_did_key": old_did_key,
+                        "prev_entry_hash": "prev",
+                        "entry_hash": head["entry_hash"],
+                        "state_hash": "state",
+                        "authorized_by": old_did_key,
+                        "signature": "sig",
+                        "timestamp": "2026-04-03T00:00:00Z",
+                    },
+                },
+            )
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
+            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            timestamp = request.headers["x-aweb-timestamp"]
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=f"{timestamp}\nGET\n{request.url.path}".encode("utf-8"),
+                signature_b64=signature,
+            )
+            response_did_key = new_did_key if auth_did_key == new_did_key else old_did_key
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": response_did_key,
+                    "server": "https://old.example",
+                    "address": "",
+                    "handle": None,
+                    "created_at": "2026-04-03T00:00:00Z",
+                    "updated_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "PUT" and request.url.path == f"/v1/did/{did_aw}":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["seq"] == 6
+            assert payload["prev_entry_hash"] == "head-5"
+            return httpx.Response(200, json={"updated": True})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.resolve_key(did_aw)
+    head["seq"] = 5
+    head["entry_hash"] = "head-5"
+
+    mapping = await client.rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
+
+    assert mapping.current_did_key == new_did_key
 
 
 @pytest.mark.asyncio

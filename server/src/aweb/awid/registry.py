@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
 _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
+# Keep stale entries for one additional TTL window so callers can get
+# stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
 
 
@@ -722,7 +724,7 @@ class CachedRegistryClient(RegistryClient):
         registry_url = await self._registry_url_for_domain(domain)
         return await self._cached_read(
             cache_key=self._domain_addresses_cache_key(domain, registry_url=registry_url),
-            ttl_seconds=_NAMESPACE_CACHE_TTL_SECONDS,
+            ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
             fetcher=lambda: super(CachedRegistryClient, self).list_addresses(domain),
             encode=lambda value: [_address_to_json(item) for item in value],
             decode=lambda payload: [_address_from_json(item) for item in payload],
@@ -759,6 +761,7 @@ class CachedRegistryClient(RegistryClient):
         old_signing_key: bytes,
         new_signing_key: bytes,
     ) -> DIDMapping:
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         return mapping
@@ -769,6 +772,7 @@ class CachedRegistryClient(RegistryClient):
         server_url: str,
         signing_key: bytes,
     ) -> DIDMapping:
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().update_server(did_aw, server_url, signing_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         return mapping
@@ -813,6 +817,7 @@ class CachedRegistryClient(RegistryClient):
         controller_signing_key: bytes,
         reachability: str,
     ) -> Address:
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
         address = await super().register_address(
             domain,
             name,
@@ -840,7 +845,12 @@ class CachedRegistryClient(RegistryClient):
         name: str,
         controller_signing_key: bytes,
     ) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
         previous = await super().resolve_address(domain, name)
+        if previous is None:
+            previous = await self._peek_cached_address(
+                self._address_cache_key(domain, name, registry_url=registry_url)
+            )
         await super().delete_address(domain, name, controller_signing_key)
         did_aws = [previous.did_aw] if previous is not None else []
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=did_aws)
@@ -852,6 +862,7 @@ class CachedRegistryClient(RegistryClient):
         new_did_aw: str,
         controller_signing_key: bytes,
     ) -> Address:
+        await self._invalidate_keys(self._did_key_cache_key(new_did_aw))
         previous = await super().resolve_address(domain, name)
         address = await super().reassign_address(domain, name, new_did_aw, controller_signing_key)
         did_aws = [address.did_aw]
@@ -973,6 +984,15 @@ class CachedRegistryClient(RegistryClient):
             )
         except Exception:
             logger.debug("AWID cache refresh failed for %s", cache_key, exc_info=True)
+
+    async def _peek_cached_address(self, cache_key: str) -> Address | None:
+        cached_payload = await self._read_cache_entry(
+            cache_key,
+            decode=lambda payload: None if payload is None else _address_from_json(payload),
+        )
+        if cached_payload is None:
+            return None
+        return cached_payload["value"]
 
     async def _invalidate_namespace_cache(self, domain: str) -> None:
         registry_url = await self._registry_url_for_domain(domain)
