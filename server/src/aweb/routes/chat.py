@@ -354,7 +354,7 @@ async def create_or_send(
             FROM {{tables.chat_messages}}
             WHERE session_id = $1 AND message_id = $2
             """,
-            session_uuid,
+            session_id,
             uuid_mod.UUID(payload.reply_to_message_id),
         )
         if reply_target is None:
