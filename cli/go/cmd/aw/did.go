@@ -120,9 +120,9 @@ func continuePendingIDRotation(
 	if current == nil || pending == nil {
 		return fmt.Errorf("missing rotation context")
 	}
-	newPriv, err := awid.LoadSigningKey(pending.PendingKey)
+	newPriv, promoted, err := loadRotationSigningKey(keysDir, current.Address, pending)
 	if err != nil {
-		return fmt.Errorf("load pending rotation key: %w", err)
+		return err
 	}
 	newPub := newPriv.Public().(ed25519.PublicKey)
 	newDID := awid.ComputeDIDKey(newPub)
@@ -130,7 +130,7 @@ func continuePendingIDRotation(
 		return fmt.Errorf("pending rotation key does not match recorded new did:key")
 	}
 	if strings.TrimSpace(current.DID) == strings.TrimSpace(newDID) {
-		return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "synced")
+		return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "synced", promoted)
 	}
 	if strings.TrimSpace(current.DID) != strings.TrimSpace(pending.OldDID) {
 		return fmt.Errorf("current did:key %s does not match pending rotation state (%s → %s)", current.DID, pending.OldDID, pending.NewDID)
@@ -154,8 +154,10 @@ func continuePendingIDRotation(
 		}, formatIDRotate)
 		return nil
 	}
-	_ = resp
-	return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "rotated")
+	if strings.TrimSpace(resp.NewDID) != newDID {
+		return fmt.Errorf("server rotation returned unexpected did:key %s; retry `aw id rotate-key` to finish syncing", resp.NewDID)
+	}
+	return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "rotated", promoted)
 }
 
 func finalizeIDRotation(
@@ -166,19 +168,26 @@ func finalizeIDRotation(
 	oldDID string,
 	pending *pendingRotationState,
 	status string,
+	promoted bool,
 ) error {
-	if err := awid.ArchiveKey(keysDir, oldDID, oldPub, oldPriv); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to archive old key: %v\n", err)
-	}
-	keyPath, err := promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey)
-	if err != nil {
-		return fmt.Errorf("activate rotated keypair: %w", err)
+	keyPath := awid.SigningKeyPath(keysDir, current.Address)
+	if !promoted {
+		if err := awid.ArchiveKey(keysDir, oldDID, oldPub, oldPriv); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to archive old key: %v\n", err)
+		}
+		var err error
+		keyPath, err = promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey)
+		if err != nil {
+			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
+		}
+	} else if err := ensurePublicKeyMatchesPrivate(keyPath); err != nil {
+		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
 	}
 	if err := updateAccountIdentity(current.Selection.AccountName, pending.NewDID, awid.CustodySelf, keyPath); err != nil {
-		return err
+		return fmt.Errorf("update account identity: %w. Retry `aw id rotate-key` to finish syncing", err)
 	}
 	if err := removePendingRotationState(keysDir, current.StableID); err != nil {
-		return err
+		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish syncing", err)
 	}
 
 	printOutput(idRotateOutput{
@@ -235,10 +244,11 @@ func runCustodialGraduation(sel *awconfig.Selection) error {
 	if err := updateAccountIdentity(sel.AccountName, newDID, awid.CustodySelf, keyPath); err != nil {
 		return err
 	}
-
-	fmt.Printf("Graduated to self-custody.\n")
-	fmt.Printf("  old DID: %s\n", resp.OldDID)
-	fmt.Printf("  new DID: %s\n", resp.NewDID)
+	printOutput(idRotateOutput{
+		Status: "graduated",
+		OldDID: resp.OldDID,
+		NewDID: resp.NewDID,
+	}, formatIDRotate)
 
 	return nil
 }

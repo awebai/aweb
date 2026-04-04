@@ -298,6 +298,53 @@ func TestAwIDRotateKeyPersistsPendingRetryAndRecovers(t *testing.T) {
 	}
 }
 
+func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T) {
+	t.Parallel()
+
+	keysDir := t.TempDir()
+	address := "myteam.aweb.ai/alice"
+	newPub, newPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDID := awid.ComputeDIDKey(newPub)
+	pendingKeyPath, err := savePendingRotationKeypair(keysDir, newDID, newPub, newPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(awid.PublicKeyPath(activeKeyPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected missing active public key before recovery, got %v", err)
+	}
+
+	gotKeyPath, err := promotePendingRotationKeypair(keysDir, address, pendingKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKeyPath != activeKeyPath {
+		t.Fatalf("active key path=%q want %q", gotKeyPath, activeKeyPath)
+	}
+
+	gotPriv, err := awid.LoadSigningKey(activeKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDID := awid.ComputeDIDKey(gotPriv.Public().(ed25519.PublicKey)); gotDID != newDID {
+		t.Fatalf("active did:key=%s want %s", gotDID, newDID)
+	}
+	gotPub, err := awid.LoadPublicKey(awid.PublicKeyPath(activeKeyPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotPub) != string(newPub) {
+		t.Fatalf("active public key did not recover from private key")
+	}
+}
+
 func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
 	t.Helper()
 	keysDir := awconfig.KeysDir(cfgPath)

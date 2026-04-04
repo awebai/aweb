@@ -145,6 +145,10 @@ func (c *RegistryClient) GetNamespace(ctx context.Context, domain string) (*Regi
 	if err != nil {
 		return nil, "", err
 	}
+	return c.GetNamespaceAt(ctx, registryURL, domain)
+}
+
+func (c *RegistryClient) GetNamespaceAt(ctx context.Context, registryURL, domain string) (*RegistryNamespace, string, error) {
 	var out RegistryNamespace
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/namespaces/"+urlPathEscape(canonicalizeDomain(domain)), nil, nil, &out); err != nil {
 		return nil, "", err
@@ -157,6 +161,10 @@ func (c *RegistryClient) ListNamespaceAddresses(ctx context.Context, domain stri
 	if err != nil {
 		return nil, "", err
 	}
+	return c.ListNamespaceAddressesAt(ctx, registryURL, domain)
+}
+
+func (c *RegistryClient) ListNamespaceAddressesAt(ctx context.Context, registryURL, domain string) ([]RegistryAddress, string, error) {
 	var out RegistryAddressList
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/namespaces/"+urlPathEscape(canonicalizeDomain(domain))+"/addresses", nil, nil, &out); err != nil {
 		return nil, "", err

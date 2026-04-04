@@ -93,12 +93,50 @@ func cleanupPendingRotationKeypair(keyPath string) error {
 
 func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath string) (string, error) {
 	activeKeyPath := awid.SigningKeyPath(keysDir, address)
-	activePubPath := awid.PublicKeyPath(activeKeyPath)
+	if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err == nil {
+		return activeKeyPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
 		return "", err
 	}
-	if err := os.Rename(awid.PublicKeyPath(pendingKeyPath), activePubPath); err != nil {
+	if err := os.Rename(awid.PublicKeyPath(pendingKeyPath), awid.PublicKeyPath(activeKeyPath)); err != nil {
+		if recoverErr := ensurePublicKeyMatchesPrivate(activeKeyPath); recoverErr == nil {
+			return activeKeyPath, nil
+		}
 		return "", err
 	}
 	return activeKeyPath, nil
+}
+
+func ensurePublicKeyMatchesPrivate(signingKeyPath string) error {
+	priv, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return err
+	}
+	pub := priv.Public().(ed25519.PublicKey)
+	return awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, priv)
+}
+
+func loadRotationSigningKey(keysDir, address string, pending *pendingRotationState) (ed25519.PrivateKey, bool, error) {
+	if pending == nil {
+		return nil, false, fmt.Errorf("missing pending rotation state")
+	}
+	newPriv, err := awid.LoadSigningKey(pending.PendingKey)
+	if err == nil {
+		return newPriv, false, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+	}
+	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+	activePriv, activeErr := awid.LoadSigningKey(activeKeyPath)
+	if activeErr != nil {
+		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+	}
+	if strings.TrimSpace(awid.ComputeDIDKey(activePriv.Public().(ed25519.PublicKey))) != strings.TrimSpace(pending.NewDID) {
+		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+	}
+	return activePriv, true, nil
 }

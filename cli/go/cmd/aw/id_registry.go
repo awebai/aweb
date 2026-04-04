@@ -312,11 +312,15 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	domain := strings.TrimSpace(args[0])
-	namespace, registryURL, err := registry.GetNamespace(ctx, domain)
+	registryURL, err := registry.DiscoverRegistry(ctx, domain)
 	if err != nil {
 		return err
 	}
-	addresses, _, err := registry.ListNamespaceAddresses(ctx, domain)
+	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, domain)
+	if err != nil {
+		return err
+	}
+	addresses, _, err := registry.ListNamespaceAddressesAt(ctx, registryURL, domain)
 	if err != nil {
 		return err
 	}
