@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +58,15 @@ func extractJSON(t *testing.T, out []byte) []byte {
 		t.Fatalf("no JSON object in output:\n%s", string(out))
 	}
 	return out[idx:]
+}
+
+func stableIDFromDidForTest(t *testing.T, did string) string {
+	t.Helper()
+	pub, err := awid.ExtractPublicKey(did)
+	if err != nil {
+		t.Fatalf("ExtractPublicKey(%q): %v", did, err)
+	}
+	return awid.ComputeStableID(pub)
 }
 
 func TestAwIntrospect(t *testing.T) {
@@ -2983,6 +2994,8 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
 	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -2992,6 +3005,8 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status":         "ok",
 				"project_id":     "proj-1",
@@ -3003,17 +3018,17 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 				"address":        "myteam.aweb.ai/Alice",
 				"api_key":        "aw_sk_new",
 				"created":        true,
-				"did":            "did:key:z6MkPermanentProjectKey",
-				"stable_id":      "did:aw:stable-project-key",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
 				"custody":        "self",
 				"lifetime":       "persistent",
 			})
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/did:aw:stable-project-key/full":
+		case "/v1/did/" + bootstrappedStableID + "/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          "did:aw:stable-project-key",
-				"current_did_key": "did:key:z6MkPermanentProjectKey",
+				"did_aw":          bootstrappedStableID,
+				"current_did_key": bootstrappedDID,
 				"server":          serverURL,
 				"address":         "myteam.aweb.ai/Alice",
 				"handle":          "Alice",
@@ -3103,11 +3118,237 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 			if acct["lifetime"] != "persistent" {
 				t.Fatalf("lifetime=%v, want persistent", acct["lifetime"])
 			}
+			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
+				t.Fatalf("signing_key=%v, want .aw/signing.key", acct["signing_key"])
+			}
 			break
 		}
 	}
 	if !found {
 		t.Fatalf("no account with api_key=aw_sk_new in config:\n%s", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+		t.Fatalf("identity.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
+	}
+}
+
+func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	address := "myteam.aweb.ai/alice"
+
+	var gotBody map[string]any
+	var didCreateCalls int
+	var didUpdateCalls int
+	currentRegistryServer := ""
+	var serverURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
+		case "/v1/workspaces/init":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"project_id":     "proj-1",
+				"project_slug":   "default",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-existing",
+				"name":           "alice",
+				"address":        address,
+				"api_key":        "aw_sk_existing",
+				"created":        false,
+				"did":            did,
+				"stable_id":      stableID,
+				"custody":        "self",
+				"lifetime":       "persistent",
+			})
+		case "/v1/did":
+			didCreateCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/" + stableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"server":          currentRegistryServer,
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"log_head": map[string]any{
+					"seq":           1,
+					"operation":     "create",
+					"new_did_key":   did,
+					"entry_hash":    strings.Repeat("a", 64),
+					"state_hash":    strings.Repeat("b", 64),
+					"authorized_by": did,
+					"signature":     "sig",
+					"timestamp":     "2026-04-04T00:00:00Z",
+				},
+			})
+		case "/v1/did/" + stableID:
+			if r.Method != http.MethodPut {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			didUpdateCalls++
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["operation"] != "update_server" {
+				t.Fatalf("operation=%v", payload["operation"])
+			}
+			if payload["new_did_key"] != did {
+				t.Fatalf("new_did_key=%v want %v", payload["new_did_key"], did)
+			}
+			currentRegistryServer, _ = payload["server"].(string)
+			if currentRegistryServer != serverURL {
+				t.Fatalf("server=%q want %q", currentRegistryServer, serverURL)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    serverURL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "init",
+		"--server-url", server.URL,
+		"--permanent",
+		"--json",
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_URL=",
+		"AWEB_API_KEY=aw_sk_project",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	if gotBody["name"] != "alice" {
+		t.Fatalf("name=%v", gotBody["name"])
+	}
+	if gotBody["did"] != did {
+		t.Fatalf("did=%v want %v", gotBody["did"], did)
+	}
+	if gotBody["public_key"] != base64.RawStdEncoding.EncodeToString(pub) {
+		t.Fatalf("public_key=%v", gotBody["public_key"])
+	}
+	if gotBody["alias"] != nil {
+		t.Fatalf("alias=%v want nil", gotBody["alias"])
+	}
+	if didCreateCalls != 0 {
+		t.Fatalf("did create calls=%d want 0", didCreateCalls)
+	}
+	if didUpdateCalls != 1 {
+		t.Fatalf("did update calls=%d want 1", didUpdateCalls)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Accounts map[string]map[string]any `yaml:"accounts"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml: %v\n%s", err, string(data))
+	}
+	var found bool
+	for _, acct := range cfg.Accounts {
+		if acct["api_key"] == "aw_sk_existing" {
+			found = true
+			if acct["did"] != did {
+				t.Fatalf("did=%v want %v", acct["did"], did)
+			}
+			if acct["stable_id"] != stableID {
+				t.Fatalf("stable_id=%v want %v", acct["stable_id"], stableID)
+			}
+			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
+				t.Fatalf("signing_key=%v, want .aw/signing.key", acct["signing_key"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no account with api_key=aw_sk_existing in config:\n%s", string(data))
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.RegistryStatus != "registered" {
+		t.Fatalf("registry_status=%q", identity.RegistryStatus)
+	}
+	if identity.RegistryURL != serverURL {
+		t.Fatalf("registry_url=%q want %q", identity.RegistryURL, serverURL)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if resp["did"] != did {
+		t.Fatalf("response did=%v want %v", resp["did"], did)
 	}
 }
 

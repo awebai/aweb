@@ -22,7 +22,7 @@ func init() {
 	projectCreateCmd.Flags().StringVar(&initNamespaceSlug, "namespace", "", "Authoritative namespace slug when it differs from the project slug (default: project slug)")
 	projectCreateCmd.Flags().StringVar(&initNamespaceSlug, "namespace-slug", "", "Authoritative namespace slug (alias for --namespace)")
 	projectCreateCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
-	projectCreateCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
+	projectCreateCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)")
 	projectCreateCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
 	projectCreateCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	projectCreateCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")

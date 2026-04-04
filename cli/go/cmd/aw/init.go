@@ -148,7 +148,7 @@ func init() {
 	initCmd.Flags().StringVar(&initServerURL, "server-url", "", "Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).")
 	initCmd.Flags().StringVar(&initServerURL, "server", "", "Base URL for the aweb server (alias for --server-url)")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
-	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
+	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
@@ -577,6 +577,18 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 	alias := ""
 	aliasExplicit := false
 	name := strings.TrimSpace(input.Name)
+	if input.Permanent {
+		existingHandle, exists, err := detectExistingPersistentIdentityHandle(input.WorkingDir)
+		if err != nil {
+			return initOptions{}, err
+		}
+		if exists {
+			if name != "" && name != existingHandle {
+				return initOptions{}, usageError("--name %q does not match existing .aw/identity.yaml name %q", name, existingHandle)
+			}
+			name = existingHandle
+		}
+	}
 	inviteAliasOptional := flow == flowInvite && !input.Interactive
 	deferAliasPrompt := input.DeferAliasPrompt && flow == flowHeadless && !input.Permanent
 	if !input.Permanent {
@@ -702,22 +714,25 @@ func executeInit(opts initOptions) (*initResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		return nil, err
-	}
-	did := awid.ComputeDIDKey(pub)
-	pubKeyB64 := base64.RawStdEncoding.EncodeToString(pub)
-
 	lifetime := strings.TrimSpace(opts.Lifetime)
 	if lifetime == "" {
 		lifetime = resolveInitLifetime(initPermanent)
 	}
 
+	identityMaterial, err := prepareInitIdentityMaterial(opts, lifetime)
+	if err != nil {
+		return nil, err
+	}
+	pub := identityMaterial.PublicKey
+	priv := identityMaterial.SigningKey
+	did := identityMaterial.DID
+	pubKeyB64 := base64.RawStdEncoding.EncodeToString(pub)
+
+	bootstrapAlias, bootstrapName := initBootstrapHandleValues(opts, identityMaterial, lifetime)
 	var resp *awid.BootstrapIdentityResponse
 	switch opts.Flow {
 	case flowInvite:
-		resp, err = acceptInviteViaCloud(ctx, opts.BaseURL, opts.InviteToken, opts.IdentityAlias, opts.IdentityName, opts.AddressReachability, opts.HumanName, opts.AgentType, did, pubKeyB64, lifetime)
+		resp, err = acceptInviteViaCloud(ctx, opts.BaseURL, opts.InviteToken, bootstrapAlias, bootstrapName, opts.AddressReachability, opts.HumanName, opts.AgentType, did, pubKeyB64, lifetime)
 
 	case flowProjectKey:
 		var client *aweb.Client
@@ -737,12 +752,12 @@ func executeInit(opts initOptions) (*initResult, error) {
 			Lifetime:            lifetime,
 			AddressReachability: opts.AddressReachability,
 		}
-		if strings.TrimSpace(opts.IdentityAlias) != "" {
-			alias := strings.TrimSpace(opts.IdentityAlias)
+		if strings.TrimSpace(bootstrapAlias) != "" {
+			alias := strings.TrimSpace(bootstrapAlias)
 			req.Alias = &alias
 		}
-		if strings.TrimSpace(opts.IdentityName) != "" {
-			name := strings.TrimSpace(opts.IdentityName)
+		if strings.TrimSpace(bootstrapName) != "" {
+			name := strings.TrimSpace(bootstrapName)
 			req.Name = &name
 		}
 		resp, err = client.InitWorkspace(ctx, req)
@@ -764,12 +779,12 @@ func executeInit(opts initOptions) (*initResult, error) {
 			Lifetime:            lifetime,
 			AddressReachability: opts.AddressReachability,
 		}
-		if strings.TrimSpace(opts.IdentityAlias) != "" {
-			alias := strings.TrimSpace(opts.IdentityAlias)
+		if strings.TrimSpace(bootstrapAlias) != "" {
+			alias := strings.TrimSpace(bootstrapAlias)
 			createReq.Alias = &alias
 		}
-		if strings.TrimSpace(opts.IdentityName) != "" {
-			name := strings.TrimSpace(opts.IdentityName)
+		if strings.TrimSpace(bootstrapName) != "" {
+			name := strings.TrimSpace(bootstrapName)
 			createReq.Name = &name
 		}
 		resp, err = client.CreateProject(ctx, createReq)
@@ -807,32 +822,21 @@ func executeInit(opts initOptions) (*initResult, error) {
 		promptOut = os.Stderr
 	}
 	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
-		fallbackURL := opts.BaseURL
-		if strings.TrimSpace(fallbackURL) == "" {
-			fallbackURL = attachURL
-		}
-		registry, err := newConfiguredRegistryResolver(nil, fallbackURL)
-		if err != nil {
+		if err := validatePersistentBootstrapResponse(identityMaterial, resp); err != nil {
 			return nil, err
 		}
-		registryDomain := strings.TrimSpace(resp.Namespace)
-		if registryDomain == "" {
-			registryDomain = strings.TrimSpace(resp.NamespaceSlug)
+	}
+
+	registryURL := strings.TrimSpace(identityMaterial.RegistryURL)
+	registryStatus := ""
+	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		var syncErr error
+		registryURL, registryStatus, syncErr = syncPersistentIdentityRegistry(ctx, opts, resp, identityMaterial, attachURL)
+		if syncErr != nil {
+			fmt.Fprintf(promptOut, "Warning: could not sync identity at awid.ai: %v\n", syncErr)
 		}
-		registryBaseURL, err := registry.DiscoverRegistry(ctx, registryDomain)
-		if err != nil {
-			fmt.Fprintf(promptOut, "Warning: could not discover identity registry: %v\n", err)
-		} else if err := awid.RegisterSelfCustodialDID(
-			ctx,
-			registryBaseURL,
-			attachURL,
-			strings.TrimSpace(resp.Address),
-			handleFromAddress(resp.Address),
-			did,
-			strings.TrimSpace(resp.StableID),
-			priv,
-		); err != nil {
-			fmt.Fprintf(promptOut, "Warning: could not register identity at awid.ai: %v\n", err)
+		if err := persistPermanentInitIdentity(identityMaterial, resp, registryURL, firstNonEmpty(registryStatus, "pending")); err != nil {
+			return nil, err
 		}
 	}
 	authClient, authClientErr := aweb.NewWithAPIKey(attachURL, resp.APIKey)
@@ -868,14 +872,19 @@ func executeInit(opts initOptions) (*initResult, error) {
 	if address == "" {
 		address = deriveIdentityAddress(namespaceSlug, "", handle)
 	}
+	var signingKeyPath string
 	cfgPath, err := defaultGlobalPath()
 	if err != nil {
 		return nil, err
 	}
-	keysDir := awconfig.KeysDir(cfgPath)
-	signingKeyPath := awid.SigningKeyPath(keysDir, address)
-	if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
-		return nil, err
+	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		signingKeyPath = identityMaterial.SigningKeyPath
+	} else {
+		keysDir := awconfig.KeysDir(cfgPath)
+		signingKeyPath = awid.SigningKeyPath(keysDir, address)
+		if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
+			return nil, err
+		}
 	}
 
 	stableID := strings.TrimSpace(resp.StableID)
@@ -1025,6 +1034,16 @@ func maybeReplaceInitialCreateProjectIdentity(
 		}
 		return replacementResp, pub, priv, nil
 	}
+}
+
+func initBootstrapHandleValues(opts initOptions, identity *initIdentityMaterial, lifetime string) (string, string) {
+	if strings.TrimSpace(lifetime) == awid.LifetimePersistent {
+		if identity != nil && strings.TrimSpace(identity.Handle) != "" {
+			return "", strings.TrimSpace(identity.Handle)
+		}
+		return "", strings.TrimSpace(opts.IdentityName)
+	}
+	return strings.TrimSpace(opts.IdentityAlias), ""
 }
 
 func shouldWarnOnWorkspaceAttach(err error) bool {

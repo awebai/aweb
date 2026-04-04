@@ -72,7 +72,7 @@ Flags:
 - `-h, --help                  help for init`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent)`
+- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
 - `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`
@@ -106,7 +106,7 @@ Flags:
 - `-h, --help                    help for create`
 - `--human-name string       Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs             Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string             Permanent identity name (required with --permanent)`
+- `--name string             Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--namespace string        Authoritative namespace slug when it differs from the project slug (default: project slug)`
 - `--namespace-slug string   Authoritative namespace slug (alias for --namespace)`
 - `--permanent               Create a durable self-custodial identity instead of the default ephemeral identity`
@@ -184,7 +184,7 @@ Flags:
 - `-h, --help                  help for accept-invite`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent)`
+- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
 - `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`

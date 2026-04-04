@@ -470,12 +470,16 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/spawn/accept-invite":
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-1",
 				"project_slug":   "myteam",
@@ -486,8 +490,8 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 				"address":        "myteam.aweb.ai/maintainer",
 				"api_key":        "aw_sk_invited",
 				"server_url":     "https://app.aweb.ai/api",
-				"did":            "did:key:z6MkInvite",
-				"stable_id":      "did:aw:invite",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
 				"custody":        "self",
 				"lifetime":       "persistent",
 				"access_mode":    "open",
@@ -499,10 +503,10 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/did:aw:invite/full":
+		case "/v1/did/" + bootstrappedStableID + "/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          "did:aw:invite",
-				"current_did_key": "did:key:z6MkInvite",
+				"did_aw":          bootstrappedStableID,
+				"current_did_key": bootstrappedDID,
 				"server":          "https://app.aweb.ai",
 				"address":         "myteam.aweb.ai/maintainer",
 				"handle":          "maintainer",

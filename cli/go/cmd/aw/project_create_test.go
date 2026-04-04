@@ -508,6 +508,8 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
 	var serverURL string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -518,6 +520,8 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-1",
 				"project_slug":   "default",
@@ -527,18 +531,18 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 				"alias":          "maintainer",
 				"address":        "myteam.aweb.ai/maintainer",
 				"api_key":        "aw_sk_permanent_test",
-				"did":            "did:key:z6MkPermanent",
-				"stable_id":      "did:aw:stable-permanent",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
 				"custody":        "self",
 				"lifetime":       "persistent",
 				"created":        true,
 			})
 		case "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/did:aw:stable-permanent/full":
+		case "/v1/did/" + bootstrappedStableID + "/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          "did:aw:stable-permanent",
-				"current_did_key": "did:key:z6MkPermanent",
+				"did_aw":          bootstrappedStableID,
+				"current_did_key": bootstrappedDID,
 				"server":          serverURL,
 				"address":         "myteam.aweb.ai/maintainer",
 				"handle":          "maintainer",
@@ -631,11 +635,19 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
 	t.Parallel()
 
+	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents/suggest-alias-prefix":
 			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "maintainer", "roles": []string{}})
 		case "/api/v1/create-project":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-1",
 				"project_slug":   "default",
@@ -645,8 +657,8 @@ func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
 				"alias":          "maintainer",
 				"address":        "myteam.aweb.ai/maintainer",
 				"api_key":        "aw_sk_permanent_test",
-				"did":            "did:key:z6MkPermanent",
-				"stable_id":      "did:aw:stable-permanent",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
 				"custody":        "self",
 				"lifetime":       "persistent",
 				"created":        true,
@@ -699,7 +711,7 @@ func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Warning: could not register identity at awid.ai:") {
+	if !strings.Contains(string(out), "Warning: could not sync identity at awid.ai:") {
 		t.Fatalf("expected registration warning in output:\n%s", string(out))
 	}
 }

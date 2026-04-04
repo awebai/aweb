@@ -156,7 +156,7 @@ func init() {
 	spawnAcceptInviteCmd.Flags().StringVar(&initServerURL, "server-url", "", "Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).")
 	spawnAcceptInviteCmd.Flags().StringVar(&initServerURL, "server", "", "Base URL for the aweb server (alias for --server-url)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: invite or server-suggested)")
-	spawnAcceptInviteCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent)")
+	spawnAcceptInviteCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)")
 	spawnAcceptInviteCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	spawnAcceptInviteCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
