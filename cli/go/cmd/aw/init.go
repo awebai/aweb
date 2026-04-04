@@ -873,22 +873,22 @@ func executeInit(opts initOptions) (*initResult, error) {
 		address = deriveIdentityAddress(namespaceSlug, "", handle)
 	}
 	var signingKeyPath string
-	cfgPath, err := defaultGlobalPath()
-	if err != nil {
-		return nil, err
-	}
-	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
-		signingKeyPath = identityMaterial.SigningKeyPath
-	} else {
-		keysDir := awconfig.KeysDir(cfgPath)
-		signingKeyPath = awid.SigningKeyPath(keysDir, address)
-		if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
+	if strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		signingKeyPath = strings.TrimSpace(identityMaterial.SigningKeyPath)
+		if signingKeyPath == "" {
+			signingKeyPath = awconfig.WorktreeSigningKeyPath(opts.WorkingDir)
+		}
+		if err := awid.SaveSigningKey(signingKeyPath, priv); err != nil {
 			return nil, err
 		}
 	}
 
 	stableID := strings.TrimSpace(resp.StableID)
 	if opts.SaveConfig {
+		cfgPath, err := defaultGlobalPath()
+		if err != nil {
+			return nil, err
+		}
 		if err := awconfig.UpdateGlobalAt(cfgPath, func(cfg *awconfig.GlobalConfig) error {
 			if cfg.Servers == nil {
 				cfg.Servers = map[string]awconfig.Server{}

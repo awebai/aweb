@@ -27,6 +27,17 @@ Typical contents include:
 
 The keys directory lives alongside this file under `keys/`.
 
+## Worktree Signing Key: `.aw/signing.key`
+
+Self-custodial workspace identities store their active private signing key in:
+
+```text
+.aw/signing.key
+```
+
+The global config points at this file, but the key material itself is
+worktree-local.
+
 ## Directory Binding: `.aw/context`
 
 `.aw/context` is a non-secret pointer from the current directory to a saved

@@ -57,9 +57,10 @@ func prepareInitIdentityMaterial(opts initOptions, lifetime string) (*initIdenti
 		return nil, err
 	}
 	return &initIdentityMaterial{
-		PublicKey:  pub,
-		SigningKey: priv,
-		DID:        awid.ComputeDIDKey(pub),
+		PublicKey:      pub,
+		SigningKey:     priv,
+		DID:            awid.ComputeDIDKey(pub),
+		SigningKeyPath: awconfig.WorktreeSigningKeyPath(opts.WorkingDir),
 	}, nil
 }
 
@@ -78,7 +79,7 @@ func createNewPersistentInitIdentity(workingDir, handle string) (*initIdentityMa
 		StableID:       awid.ComputeStableID(pub),
 		Handle:         strings.TrimSpace(handle),
 		IdentityPath:   filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-		SigningKeyPath: filepath.Join(workingDir, ".aw", "signing.key"),
+		SigningKeyPath: awconfig.WorktreeSigningKeyPath(workingDir),
 		CreatedAt:      now,
 	}, nil
 }
@@ -104,7 +105,7 @@ func loadExistingPersistentInitIdentity(workingDir string) (*initIdentityMateria
 	}
 
 	root := awconfig.WorktreeRootFromIdentityPath(identityPath)
-	signingKeyPath := filepath.Join(root, ".aw", "signing.key")
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(root)
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("load worktree signing key: %w", err)

@@ -64,6 +64,7 @@ aw init --server-url "$AWEB_URL"
 The bootstrap commands can write three different kinds of local state:
 
 - `~/.config/aw/config.yaml`: saved servers, accounts, and default selection.
+- `.aw/signing.key`: worktree-local private signing key for self-custodial identities.
 - `.aw/context`: non-secret pointer telling this directory which account to
   use.
 - `.aw/workspace.yaml`: repo/worktree coordination metadata for this specific
@@ -81,4 +82,3 @@ That means the normal first-project or spawn flow is:
 - create or join a project
 - get an ephemeral alias
 - start coordinating immediately
-

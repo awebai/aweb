@@ -24,6 +24,14 @@ func DefaultWorktreeIdentityRelativePath() string {
 	return filepath.Join(".aw", "identity.yaml")
 }
 
+func DefaultWorktreeSigningKeyRelativePath() string {
+	return filepath.Join(".aw", "signing.key")
+}
+
+func WorktreeSigningKeyPath(root string) string {
+	return filepath.Join(filepath.Clean(root), DefaultWorktreeSigningKeyRelativePath())
+}
+
 func FindWorktreeIdentityPath(startDir string) (string, error) {
 	p := filepath.Join(filepath.Clean(startDir), DefaultWorktreeIdentityRelativePath())
 	if _, err := os.Stat(p); err == nil {

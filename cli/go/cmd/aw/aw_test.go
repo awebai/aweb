@@ -2559,10 +2559,16 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 			if acct["identity_handle"] != "coordinator" {
 				t.Fatalf("accounts.%s.identity_handle=%v, want coordinator", name, acct["identity_handle"])
 			}
+			if !strings.Contains(fmt.Sprint(acct["signing_key"]), filepath.Join(".aw", "signing.key")) {
+				t.Fatalf("accounts.%s.signing_key=%v, want .aw/signing.key", name, acct["signing_key"])
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("no account with api_key=aw_sk_new in config:\n%s", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
 	}
 }
 

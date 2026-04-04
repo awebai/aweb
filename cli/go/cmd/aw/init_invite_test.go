@@ -147,10 +147,16 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 			if acct.NamespaceSlug != "myteam" {
 				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
 			}
+			if !strings.Contains(acct.SigningKey, filepath.Join(".aw", "signing.key")) {
+				t.Fatalf("signing_key=%q, want .aw/signing.key", acct.SigningKey)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("missing invited account in config:\n%s", string(cfgData))
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
 	}
 }
 

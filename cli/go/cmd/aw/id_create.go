@@ -180,7 +180,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*idCreatePlan
 	}
 
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
-	signingKeyPath := filepath.Join(workingDir, ".aw", "signing.key")
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
 	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
 		return nil, nil, err
