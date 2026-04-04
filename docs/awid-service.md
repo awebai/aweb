@@ -158,6 +158,25 @@ BYOD namespaces (non-aweb.ai domains) still require DNS TXT verification.
 aweb-cloud holds the controller private key and signs registration requests
 on behalf of the project.
 
+### DNS TXT Record Format
+
+The DNS TXT record for a namespace lives at `_awid.{domain}`:
+
+```
+_awid.acme.com TXT "awid=v1; controller=did:key:z...; registry=https://api.awid.ai;"
+```
+
+Fields:
+
+- `awid=v1` — format version (required)
+- `controller=did:key:z...` — namespace controller DID (required)
+- `registry=https://...` — authoritative registry URL (optional, defaults to
+  `https://api.awid.ai`)
+
+The `registry` field enables federation: self-hosted deployments declare their
+own registry via DNS. Clients resolve the authoritative registry from DNS
+before querying it.
+
 ## Replacement Model
 
 Replacement announcements record when a public address is reassigned from one
