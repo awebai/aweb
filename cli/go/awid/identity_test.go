@@ -500,6 +500,56 @@ func TestRegistryResolverResolvesPermanentAddress(t *testing.T) {
 	}
 }
 
+func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/probeproj.aweb.local/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "probeproj.aweb.local",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "private",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := resolver.Resolve(context.Background(), "probeproj.aweb.local/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ServerURL != server.URL {
+		t.Fatalf("ServerURL=%q", identity.ServerURL)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q", identity.DID)
+	}
+}
+
 func TestRegistryResolverRejectsKeyDidAWMismatch(t *testing.T) {
 	t.Parallel()
 

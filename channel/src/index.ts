@@ -45,7 +45,9 @@ async function main() {
 
   const client = new APIClient(config.baseURL, config.apiKey);
   const pinStore = await loadPinStore();
-  const registry = new RegistryResolver();
+  const registry = new RegistryResolver(fetch, undefined, undefined, {
+    fallbackRegistryURL: embeddedRegistryFallbackURL(config.baseURL),
+  });
   const trust = new SenderTrustManager(client, registry, config.address, config.did);
 
   const mcp = new Server(
@@ -75,6 +77,12 @@ Control events (type="control") are operational signals. On "pause", stop curren
   process.on("SIGTERM", () => abort.abort());
 
   await startEventLoop(mcp, client, pinStore, trust, config.alias, abort.signal);
+}
+
+function embeddedRegistryFallbackURL(baseURL: string): string | undefined {
+  return (process.env.AWID_REGISTRY_URL || "").trim().toLowerCase() === "local"
+    ? baseURL
+    : undefined;
 }
 
 async function startEventLoop(

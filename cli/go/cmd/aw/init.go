@@ -802,6 +802,38 @@ func executeInit(opts initOptions) (*initResult, error) {
 	if v := strings.TrimSpace(resp.ServerURL); v != "" {
 		attachURL = v
 	}
+	if lifetime == awid.LifetimePersistent && strings.TrimSpace(resp.Custody) == awid.CustodySelf {
+		registry := awid.NewRegistryResolver(nil, nil)
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), "local") {
+			fallbackURL := opts.BaseURL
+			if strings.TrimSpace(fallbackURL) == "" {
+				fallbackURL = attachURL
+			}
+			if err := registry.SetFallbackRegistryURL(fallbackURL); err != nil {
+				return nil, fmt.Errorf("invalid embedded registry base URL: %w", err)
+			}
+		}
+		registryDomain := strings.TrimSpace(resp.Namespace)
+		if registryDomain == "" {
+			registryDomain = strings.TrimSpace(resp.NamespaceSlug)
+		}
+		registryBaseURL, err := registry.DiscoverRegistry(ctx, registryDomain)
+		if err != nil {
+			return nil, fmt.Errorf("discover authoritative registry: %w", err)
+		}
+		if err := awid.RegisterSelfCustodialDID(
+			ctx,
+			registryBaseURL,
+			attachURL,
+			strings.TrimSpace(resp.Address),
+			handleFromAddress(resp.Address),
+			did,
+			strings.TrimSpace(resp.StableID),
+			priv,
+		); err != nil {
+			return nil, fmt.Errorf("register stable identity: %w", err)
+		}
+	}
 	authClient, authClientErr := aweb.NewWithAPIKey(attachURL, resp.APIKey)
 
 	workspaceRole := strings.TrimSpace(opts.WorkspaceRole)

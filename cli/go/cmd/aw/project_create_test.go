@@ -532,6 +532,8 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 				"lifetime":       "persistent",
 				"created":        true,
 			})
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -571,6 +573,7 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_API_KEY=",
 		"AWEB_ALIAS=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

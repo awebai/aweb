@@ -198,6 +198,41 @@ describe("registry resolver", () => {
     expect(result.outcome).toBe("OK_DEGRADED");
   });
 
+  test("uses embedded fallback registry when DNS TXT is missing", async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8000/v1/namespaces/probeproj.aweb.local/addresses/alice") {
+        return jsonResponse({
+          address_id: "addr-1",
+          domain: "probeproj.aweb.local",
+          name: "alice",
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          reachability: "private",
+          created_at: "2026-04-04T00:00:00Z",
+        });
+      }
+      if (url === `http://127.0.0.1:8000/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
+        return jsonResponse({
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+
+    const resolver = new RegistryResolver(fetchImpl, vi.fn(async () => {
+      throw txtNotFound();
+    }), () => Date.now(), {
+      fallbackRegistryURL: "http://127.0.0.1:8000",
+    });
+
+    await expect(resolver.resolveAddressIdentity("probeproj.aweb.local/alice")).resolves.toEqual({
+      did: identityLogVectors.mapping.rotated_did_key,
+      stableID: identityLogVectors.mapping.did_aw,
+    });
+  });
+
   test("fails hard when /key returns a different stable identity", async () => {
     const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
     const fetchImpl: typeof fetch = vi.fn(async (input) => {

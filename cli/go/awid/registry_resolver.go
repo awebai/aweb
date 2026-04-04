@@ -61,6 +61,7 @@ type RegistryResolver struct {
 	HTTPClient  *http.Client
 	DNSResolver TXTResolver
 	Now         func() time.Time
+	fallbackRegistryURL string
 
 	mu            sync.Mutex
 	registryCache map[string]cachedValue[DomainAuthority]
@@ -85,6 +86,20 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
 	}
+}
+
+func (r *RegistryResolver) SetFallbackRegistryURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		r.fallbackRegistryURL = ""
+		return nil
+	}
+	canonical, err := canonicalRegistryServerOrigin(raw)
+	if err != nil {
+		return err
+	}
+	r.fallbackRegistryURL = canonical
+	return nil
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
@@ -251,6 +266,10 @@ func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) 
 	return authority.RegistryURL, nil
 }
 
+func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) (string, error) {
+	return r.discoverRegistry(ctx, domain)
+}
+
 func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
 	domain = canonicalizeDomain(domain)
 	if cached, ok := r.loadRegistryCache(domain); ok {
@@ -262,6 +281,9 @@ func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string)
 	}
 	if strings.TrimSpace(authority.RegistryURL) == "" {
 		authority.RegistryURL = DefaultAWIDRegistryURL
+	}
+	if r.fallbackRegistryURL != "" {
+		authority.RegistryURL = r.fallbackRegistryURL
 	}
 	r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
 	return authority, nil

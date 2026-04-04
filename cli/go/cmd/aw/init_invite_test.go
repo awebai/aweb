@@ -50,6 +50,8 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case "/v1/workspaces/register", "/v1/workspaces/attach":
 			w.WriteHeader(http.StatusNotFound)
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -84,6 +86,7 @@ func TestAwInitInviteAcceptWritesConfigAndUsesServerAliasFlag(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
 		"AWEB_API_KEY=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	run.Stdin = strings.NewReader("developer\n")
@@ -393,6 +396,8 @@ func TestAwInitInviteAcceptUsesServerProvidedAliasHint(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case "/v1/workspaces/register", "/v1/workspaces/attach":
 			w.WriteHeader(http.StatusNotFound)
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -425,6 +430,7 @@ func TestAwInitInviteAcceptUsesServerProvidedAliasHint(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
 		"AWEB_API_KEY=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	run.Stdin = strings.NewReader("\ndeveloper\n")
@@ -471,6 +477,8 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case "/v1/workspaces/register", "/v1/workspaces/attach":
 			w.WriteHeader(http.StatusNotFound)
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -504,6 +512,7 @@ func TestAwInitInviteAcceptPermanentUsesExplicitName(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
 		"AWEB_API_KEY=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	run.Stdin = strings.NewReader("\ndeveloper\n\n")

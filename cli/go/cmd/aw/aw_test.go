@@ -3012,6 +3012,8 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 				"custody":        "self",
 				"lifetime":       "persistent",
 			})
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -3051,6 +3053,7 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_URL=",
 		"AWEB_API_KEY=aw_sk_project",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

@@ -88,17 +88,27 @@ interface CacheEntry<T> {
 
 type ResolveTxt = (hostname: string) => Promise<string[][]>;
 
+interface RegistryResolverOptions {
+  fallbackRegistryURL?: string;
+}
+
 export class RegistryResolver {
-  private registryCache = new Map<string, CacheEntry<string>>();
+  private registryCache = new Map<string, CacheEntry<DomainAuthority>>();
   private addressCache = new Map<string, CacheEntry<{ registryURL: string; response: AddressResponse }>>();
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
   private headCache = new Map<string, VerifiedLogHead>();
+  private readonly fallbackRegistryURL: string;
 
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly resolveTxtImpl: ResolveTxt = dns.resolveTxt,
     private readonly now: () => number = () => Date.now(),
-  ) {}
+    options?: RegistryResolverOptions,
+  ) {
+    this.fallbackRegistryURL = options?.fallbackRegistryURL
+      ? canonicalServerOrigin(options.fallbackRegistryURL)
+      : "";
+  }
 
   async verifyStableIdentity(
     address: string,
@@ -152,7 +162,7 @@ export class RegistryResolver {
     if (!split) {
       throw new Error(`invalid address ${address}`);
     }
-    const authority = await discoverAuthoritativeRegistry(split.domain, this.resolveTxtImpl);
+    const authority = await this.discoverAuthority(split.domain);
     const resolvedAddress = await this.resolveAddress(split.domain, split.name);
     const resolution = await this.resolveDidKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw);
     if (resolution.did_aw !== resolvedAddress.response.did_aw) {
@@ -189,14 +199,31 @@ export class RegistryResolver {
     domain = canonicalizeDomain(domain);
     const cached = this.registryCache.get(domain);
     if (cached && this.now() <= cached.expiresAt) {
-      return cached.value;
+      return cached.value.registryURL;
     }
-    const authority = await discoverAuthoritativeRegistry(domain, this.resolveTxtImpl);
+    const authority = await this.discoverAuthority(domain);
     this.registryCache.set(domain, {
-      value: authority.registryURL,
+      value: authority,
       expiresAt: this.now() + REGISTRY_DISCOVERY_TTL_MS,
     });
     return authority.registryURL;
+  }
+
+  private async discoverAuthority(domain: string): Promise<DomainAuthority> {
+    domain = canonicalizeDomain(domain);
+    const cached = this.registryCache.get(domain);
+    if (cached && this.now() <= cached.expiresAt) {
+      return cached.value;
+    }
+    const authority = await discoverAuthoritativeRegistry(domain, this.resolveTxtImpl);
+    const resolvedAuthority = this.fallbackRegistryURL
+      ? { ...authority, registryURL: this.fallbackRegistryURL }
+      : authority;
+    this.registryCache.set(domain, {
+      value: resolvedAuthority,
+      expiresAt: this.now() + REGISTRY_DISCOVERY_TTL_MS,
+    });
+    return resolvedAuthority;
   }
 
   private async resolveAddress(domain: string, name: string): Promise<{ registryURL: string; response: AddressResponse }> {
@@ -235,6 +262,7 @@ export class RegistryResolver {
     const response = await this.fetchImpl(`${baseURL.replace(/\/+$/, "")}${path}`, {
       method: "GET",
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
       throw new Error(await response.text().catch(() => `${response.status}`));

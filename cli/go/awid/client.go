@@ -293,6 +293,9 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
 		return status
 	}
+	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
+		return status
+	}
 	verifier, ok := c.resolver.(StableIdentityVerifier)
 	if !ok {
 		return status
