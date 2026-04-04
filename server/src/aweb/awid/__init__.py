@@ -50,6 +50,7 @@ from aweb.awid.registry import (
     RegistryError,
 )
 from aweb.awid.signing import (
+    AgentSignatureVerification,
     SIGNED_FIELDS,
     VerifyResult,
     canonical_json_bytes,
@@ -68,6 +69,7 @@ __all__ = [
     "IDENTITY_CUSTODY_MODES",
     "IDENTITY_LIFETIMES",
     "Address",
+    "AgentSignatureVerification",
     "AlreadyRegisteredError",
     "CachedRegistryClient",
     "DIDKeyEvidence",

@@ -326,6 +326,7 @@ async def create_or_send(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
+    signature_verification = None
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -389,7 +390,7 @@ async def create_or_send(
     else:
         signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
         try:
-            await verify_agent_did_key_signature(
+            signature_verification = await verify_agent_did_key_signature(
                 request=request,
                 db=db,
                 agent_id=actor_id,
@@ -399,7 +400,8 @@ async def create_or_send(
             )
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_signing_key_id = payload.from_did
+        msg_from_did = signature_verification.did_key
+        msg_signing_key_id = signature_verification.did_key
         msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
@@ -461,15 +463,15 @@ async def create_or_send(
         if str(r["agent_id"]) in waiting_set and str(r["agent_id"]) in set(target_ids)
     ]
 
-    await fire_mutation_hook(
-        request,
-        "chat.message_sent",
-        {
-            "session_id": str(session_id),
-            "message_id": str(msg_row["message_id"]),
-            "from_agent_id": actor_id,
-        },
-    )
+    hook_context = {
+        "session_id": str(session_id),
+        "message_id": str(msg_row["message_id"]),
+        "from_agent_id": actor_id,
+    }
+    if signature_verification is not None:
+        hook_context["signature_verification_status"] = signature_verification.status
+        hook_context["signature_verification_source"] = signature_verification.source
+    await fire_mutation_hook(request, "chat.message_sent", hook_context)
 
     return CreateSessionResponse(
         session_id=str(session_id),
@@ -1277,6 +1279,7 @@ async def send_message(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
+    signature_verification = None
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -1333,7 +1336,7 @@ async def send_message(
     else:
         signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
         try:
-            await verify_agent_did_key_signature(
+            signature_verification = await verify_agent_did_key_signature(
                 request=request,
                 db=db,
                 agent_id=actor_id,
@@ -1343,7 +1346,8 @@ async def send_message(
             )
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_signing_key_id = payload.from_did
+        msg_from_did = signature_verification.did_key
+        msg_signing_key_id = signature_verification.did_key
         msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
@@ -1375,15 +1379,15 @@ async def send_message(
     if msg_row is None:
         raise HTTPException(status_code=500, detail="Failed to send message")
 
-    await fire_mutation_hook(
-        request,
-        "chat.message_sent",
-        {
-            "session_id": str(session_uuid),
-            "message_id": str(msg_row["message_id"]),
-            "from_agent_id": actor_id,
-        },
-    )
+    hook_context = {
+        "session_id": str(session_uuid),
+        "message_id": str(msg_row["message_id"]),
+        "from_agent_id": actor_id,
+    }
+    if signature_verification is not None:
+        hook_context["signature_verification_status"] = signature_verification.status
+        hook_context["signature_verification_source"] = signature_verification.source
+    await fire_mutation_hook(request, "chat.message_sent", hook_context)
 
     return SendMessageResponse(
         message_id=str(msg_row["message_id"]),

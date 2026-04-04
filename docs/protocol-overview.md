@@ -71,6 +71,9 @@ permanent identities, potentially with reachability controls such as
 - `agents.did` and `agents.public_key` are cache/display fields for this path,
   not the primary source of truth; they are used only when registry lookup is
   unavailable or no stable identity exists
+- That fallback is intentionally `OK_DEGRADED`: if a stable identity rotated
+  directly at `awid.ai` and the registry is unreachable, the server may
+  temporarily accept the last cached local key until connectivity returns
 - Messages may carry:
   - `signature`
   - `signing_key_id`

@@ -520,6 +520,9 @@ For message-level continuity:
 - `agents.did` and `agents.public_key` remain local cache/display fields and
   are only used as a last resort when registry lookup is unavailable or the
   sender has no stable identity
+- this fallback is explicitly `OK_DEGRADED`: if a stable identity rotated
+  outside the local server and `awid.ai` is unavailable, the server may accept
+  the last cached local key until registry connectivity returns
 
 Ephemeral alias reuse does not carry the same continuity semantics and should
 not be marketed as if it does.
