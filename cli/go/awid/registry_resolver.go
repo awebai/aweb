@@ -53,8 +53,8 @@ type didKeyResolutionWire struct {
 }
 
 type registryAddressCacheValue struct {
-	registryURL string
-	response    *registryAddressResponse
+	authority DomainAuthority
+	response  *registryAddressResponse
 }
 
 type RegistryResolver struct {
@@ -63,7 +63,7 @@ type RegistryResolver struct {
 	Now         func() time.Time
 
 	mu            sync.Mutex
-	registryCache map[string]cachedValue[string]
+	registryCache map[string]cachedValue[DomainAuthority]
 	addressCache  map[string]cachedValue[*registryAddressCacheValue]
 	keyCache      map[string]cachedValue[*DidKeyResolution]
 	headCache     map[string]*VerifiedLogHead
@@ -80,7 +80,7 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		HTTPClient:    httpClient,
 		DNSResolver:   dnsResolver,
 		Now:           time.Now,
-		registryCache: make(map[string]cachedValue[string]),
+		registryCache: make(map[string]cachedValue[DomainAuthority]),
 		addressCache:  make(map[string]cachedValue[*registryAddressCacheValue]),
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
@@ -96,7 +96,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 	if err != nil {
 		return nil, err
 	}
-	keyRes, err := r.resolveKey(ctx, address.registryURL, address.response.DIDAW)
+	keyRes, err := r.resolveKey(ctx, address.authority.RegistryURL, address.response.DIDAW)
 	if err != nil {
 		return nil, err
 	}
@@ -123,15 +123,17 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 		return nil, fmt.Errorf("RegistryResolver: invalid current did:key: %w", err)
 	}
 	return &ResolvedIdentity{
-		DID:         keyRes.CurrentDIDKey,
-		StableID:    keyRes.DIDAW,
-		Address:     domain + "/" + name,
-		Handle:      name,
-		PublicKey:   ed25519.PublicKey(pub),
-		ServerURL:   address.registryURL,
-		Lifetime:    LifetimePersistent,
-		ResolvedAt:  r.now().UTC(),
-		ResolvedVia: "registry",
+		DID:           keyRes.CurrentDIDKey,
+		StableID:      keyRes.DIDAW,
+		Address:       domain + "/" + name,
+		Handle:        name,
+		ControllerDID: address.authority.ControllerDID,
+		PublicKey:     ed25519.PublicKey(pub),
+		ServerURL:     address.authority.RegistryURL,
+		Custody:       CustodySelf,
+		Lifetime:      LifetimePersistent,
+		ResolvedAt:    r.now().UTC(),
+		ResolvedVia:   "registry",
 	}, nil
 }
 
@@ -153,7 +155,7 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 			Error:   "registry address did:aw mismatch",
 		}
 	}
-	keyRes, err := r.resolveKey(ctx, addr.registryURL, stableID)
+	keyRes, err := r.resolveKey(ctx, addr.authority.RegistryURL, stableID)
 	if err != nil {
 		return &StableIdentityVerification{
 			Outcome: StableIdentityDegraded,
@@ -195,17 +197,17 @@ func (r *RegistryResolver) resolveAddress(ctx context.Context, domain, name stri
 	if cached, ok := r.loadAddressCache(cacheKey); ok {
 		return cached, nil
 	}
-	registryURL, err := r.discoverRegistry(ctx, domain)
+	authority, err := r.discoverAuthority(ctx, domain)
 	if err != nil {
 		return nil, err
 	}
 	var resp registryAddressResponse
-	if err := r.getJSON(ctx, registryURL, "/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name), &resp); err != nil {
+	if err := r.getJSON(ctx, authority.RegistryURL, "/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name), &resp); err != nil {
 		return nil, err
 	}
 	value := &registryAddressCacheValue{
-		registryURL: registryURL,
-		response:    &resp,
+		authority: authority,
+		response:  &resp,
 	}
 	r.storeAddressCache(cacheKey, value, registryAddressTTL)
 	return value, nil
@@ -242,20 +244,27 @@ func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW st
 }
 
 func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) (string, error) {
+	authority, err := r.discoverAuthority(ctx, domain)
+	if err != nil {
+		return "", err
+	}
+	return authority.RegistryURL, nil
+}
+
+func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
 	domain = canonicalizeDomain(domain)
 	if cached, ok := r.loadRegistryCache(domain); ok {
 		return cached, nil
 	}
 	authority, err := DiscoverAuthoritativeRegistry(ctx, r.DNSResolver, domain)
 	if err != nil {
-		return "", err
+		return DomainAuthority{}, err
 	}
-	registryURL := strings.TrimSpace(authority.RegistryURL)
-	if registryURL == "" {
-		registryURL = DefaultAWIDRegistryURL
+	if strings.TrimSpace(authority.RegistryURL) == "" {
+		authority.RegistryURL = DefaultAWIDRegistryURL
 	}
-	r.storeRegistryCache(domain, registryURL, registryDiscoveryTTL)
-	return registryURL, nil
+	r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
+	return authority, nil
 }
 
 func (r *RegistryResolver) getJSON(ctx context.Context, baseURL, path string, out any) error {
@@ -313,21 +322,21 @@ func splitRegistryAddress(identifier string) (string, string, bool) {
 	return domain, name, true
 }
 
-func (r *RegistryResolver) loadRegistryCache(domain string) (string, bool) {
+func (r *RegistryResolver) loadRegistryCache(domain string) (DomainAuthority, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	entry, ok := r.registryCache[domain]
 	if !ok || r.now().After(entry.expiresAt) {
 		delete(r.registryCache, domain)
-		return "", false
+		return DomainAuthority{}, false
 	}
 	return entry.value, true
 }
 
-func (r *RegistryResolver) storeRegistryCache(domain, registryURL string, ttl time.Duration) {
+func (r *RegistryResolver) storeRegistryCache(domain string, authority DomainAuthority, ttl time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.registryCache[domain] = cachedValue[string]{value: registryURL, expiresAt: r.now().Add(ttl)}
+	r.registryCache[domain] = cachedValue[DomainAuthority]{value: authority, expiresAt: r.now().Add(ttl)}
 }
 
 func (r *RegistryResolver) loadAddressCache(key string) (*registryAddressCacheValue, bool) {

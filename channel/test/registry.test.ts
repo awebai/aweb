@@ -155,7 +155,7 @@ describe("registry resolver", () => {
           created_at: "2026-04-04T00:00:00Z",
         });
       }
-      if (url === `https://registry.example.com/v1/did/${encodeURIComponent(identityLogVectors.mapping.did_aw)}/key`) {
+      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
         return jsonResponse({
           did_aw: identityLogVectors.mapping.did_aw,
           current_did_key: identityLogVectors.mapping.rotated_did_key,
@@ -213,7 +213,7 @@ describe("registry resolver", () => {
           created_at: "2026-04-04T00:00:00Z",
         });
       }
-      if (url === `https://registry.example.com/v1/did/${encodeURIComponent(identityLogVectors.mapping.did_aw)}/key`) {
+      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
         return jsonResponse({
           did_aw: "did:aw:SomeoneElse",
           current_did_key: identityLogVectors.mapping.rotated_did_key,
@@ -238,5 +238,38 @@ describe("registry resolver", () => {
     const result = await resolver.verifyStableIdentity("acme.com/alice", identityLogVectors.mapping.did_aw);
     expect(result.outcome).toBe("HARD_ERROR");
     expect(result.error).toContain("registry key did:aw mismatch");
+  });
+
+  test("uses path-safe encoding for did:aw lookups", async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
+        return jsonResponse({
+          address_id: "addr-1",
+          domain: "acme.com",
+          name: "alice",
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+          reachability: "public",
+          created_at: "2026-04-04T00:00:00Z",
+        });
+      }
+      if (url === "https://registry.example.com/v1/did/did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2/key") {
+        return jsonResponse({
+          did_aw: identityLogVectors.mapping.did_aw,
+          current_did_key: identityLogVectors.mapping.rotated_did_key,
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+    const resolveTxt = vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]);
+
+    const resolver = new RegistryResolver(fetchImpl, resolveTxt);
+    await resolver.resolveAddressIdentity("acme.com/alice");
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://registry.example.com/v1/did/did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2/key",
+      expect.anything(),
+    );
   });
 });

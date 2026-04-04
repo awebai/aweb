@@ -59,6 +59,10 @@ export interface ResolvedRegistryIdentity {
   lifetime: "persistent";
 }
 
+function pathSafeSegment(value: string): string {
+  return encodeURIComponent(value).replace(/%3A/gi, ":");
+}
+
 interface VerifiedLogHead {
   seq: number;
   entryHash: string;
@@ -204,7 +208,7 @@ export class RegistryResolver {
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON<AddressResponse>(
       registryURL,
-      `/v1/namespaces/${encodeURIComponent(domain)}/addresses/${encodeURIComponent(name)}`,
+      `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
@@ -218,7 +222,7 @@ export class RegistryResolver {
     }
     const response = await this.getJSON<DidKeyResolution>(
       registryURL,
-      `/v1/did/${encodeURIComponent(stableID)}/key`,
+      `/v1/did/${pathSafeSegment(stableID)}/key`,
     );
     this.keyCache.set(stableID, {
       value: response,

@@ -478,8 +478,8 @@ func TestRegistryResolverResolvesPermanentAddress(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
-	resolver.registryCache["acme.com"] = cachedValue[string]{
-		value:     server.URL,
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL, ControllerDID: did},
 		expiresAt: time.Now().Add(time.Minute),
 	}
 	identity, err := resolver.Resolve(context.Background(), "acme.com/alice")
@@ -494,6 +494,9 @@ func TestRegistryResolverResolvesPermanentAddress(t *testing.T) {
 	}
 	if identity.ResolvedVia != "registry" {
 		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
+	}
+	if identity.ControllerDID != did {
+		t.Fatalf("ControllerDID=%q", identity.ControllerDID)
 	}
 }
 
@@ -532,8 +535,8 @@ func TestRegistryResolverRejectsKeyDidAWMismatch(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
-	resolver.registryCache["acme.com"] = cachedValue[string]{
-		value:     server.URL,
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
 	}
 	_, err = resolver.Resolve(context.Background(), "acme.com/alice")
@@ -576,8 +579,8 @@ func TestChainResolverAddressUsesRegistry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
-	registry.registryCache["acme.com"] = cachedValue[string]{
-		value:     server.URL,
+	registry.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
 	}
 	cr := &ChainResolver{
@@ -628,8 +631,8 @@ func TestRegistryResolverVerifyStableIdentityRejectsKeyDidAWMismatch(t *testing.
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
-	resolver.registryCache["acme.com"] = cachedValue[string]{
-		value:     server.URL,
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
 	}
 
