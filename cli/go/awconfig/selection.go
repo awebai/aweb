@@ -18,6 +18,7 @@ type Selection struct {
 	DefaultProject string
 	IdentityID     string
 	IdentityHandle string
+	Address        string
 	Email          string
 	NamespaceSlug  string
 	DID            string
@@ -119,6 +120,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 	defaultProject := ""
 	identityHandle := ""
 	identityID := ""
+	address := ""
 	did := ""
 	stableID := ""
 	signingKey := ""
@@ -142,6 +144,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 		}
 	}
 	if identity != nil {
+		if v := strings.TrimSpace(identity.Address); v != "" {
+			address = v
+		}
 		if v := strings.TrimSpace(identity.DID); v != "" {
 			did = v
 		}
@@ -167,6 +172,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 		DefaultProject: defaultProject,
 		IdentityID:     identityID,
 		IdentityHandle: identityHandle,
+		Address:        address,
 		NamespaceSlug:  namespaceSlug,
 		DID:            did,
 		StableID:       stableID,

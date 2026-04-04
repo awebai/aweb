@@ -427,7 +427,7 @@ func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, sel *
 		return "", fmt.Errorf("missing registry client")
 	}
 	if sel != nil && strings.TrimSpace(sel.StableID) == strings.TrimSpace(didAW) {
-		address := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		address := selectionAddress(sel)
 		if domain, _, ok := cutIdentityAddress(address); ok && strings.TrimSpace(domain) != "" {
 			return registry.DiscoverRegistry(ctx, domain)
 		}

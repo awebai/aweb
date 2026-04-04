@@ -105,7 +105,7 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid identity configuration: %w", err)
 		}
-		c.SetAddress(deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle))
+		c.SetAddress(selectionAddress(sel))
 		c.SetProjectSlug(sel.DefaultProject)
 		if sel.StableID != "" {
 			c.SetStableID(sel.StableID)
@@ -727,6 +727,16 @@ func deriveIdentityAddress(namespaceSlug, projectSlug, handle string) string {
 		return projectSlug + "/" + handle
 	}
 	return handle
+}
+
+func selectionAddress(sel *awconfig.Selection) string {
+	if sel == nil {
+		return ""
+	}
+	if address := strings.TrimSpace(sel.Address); address != "" {
+		return address
+	}
+	return deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.DefaultProject), strings.TrimSpace(sel.IdentityHandle))
 }
 
 func handleFromAddress(address string) string {

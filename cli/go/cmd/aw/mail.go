@@ -57,7 +57,7 @@ var mailSendCmd = &cobra.Command{
 			Dir:       "send",
 			Channel:   "mail",
 			MessageID: resp.MessageID,
-			From:      deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle),
+			From:      selectionAddress(sel),
 			To:        mailSendTo,
 			Subject:   mailSendSubject,
 			Body:      mailSendBody,

@@ -41,7 +41,7 @@ func commLogNameForSelection(sel *awconfig.Selection) string {
 	candidates := []string{
 		strings.TrimSpace(sel.StableID),
 		strings.TrimSpace(sel.DID),
-		deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.DefaultProject), strings.TrimSpace(sel.IdentityHandle)),
+		selectionAddress(sel),
 		strings.TrimSpace(sel.IdentityHandle),
 		strings.TrimSpace(sel.IdentityID),
 	}
