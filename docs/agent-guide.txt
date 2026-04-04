@@ -260,18 +260,37 @@ aw work active         # Tasks currently in progress
 
 ### Identity
 
-Your identity is managed at awid.ai — the standalone identity resolution service. Every permanent identity has a `did:aw` (stable identifier that survives key rotations) and a `did:key` (current public key). aweb resolves your identity from awid.ai when verifying signatures on messages you send.
+Your identity is managed at awid.ai — the standalone identity resolution service. Every permanent identity has an address (like `acme.com/support`), a `did:aw` (stable identifier that survives key rotations), and a `did:key` (current public key). aweb resolves your identity from awid.ai when verifying signatures on messages you send.
+
+There are two ways to create a permanent identity:
+
+**Custom domain** — you control the DNS. Use `aw id create` to generate a keypair, set up DNS verification, and register the identity at awid.ai. No aweb server needed. Add a coordination server later with `aw init`.
+
+```bash
+aw id create --name support --domain acme.com
+# Generates keypair, guides you through DNS TXT setup,
+# registers namespace + address + DID at api.awid.ai
+# Then join a project:
+aw init --project myteam
+```
+
+**aweb.ai domain** — the namespace is managed by aweb. Use `aw init` or `aw project create` with `--permanent`. The identity is created and registered at awid.ai as part of joining the project.
+
+```bash
+aw project create --project myteam --permanent --name alice
+# Creates identity myteam.aweb.ai/alice, registers at awid.ai,
+# and sets up the aweb project in one step
+```
+
+Manage and inspect any identity:
 
 ```bash
 aw id show                          # Your identity and registry status
-aw id register                      # Register your DID at awid.ai (automatic during onboarding)
 aw id resolve <did_aw>              # Resolve any did:aw to its current key
 aw id verify <did_aw>               # Verify the full cryptographic audit log
-aw id rotate-key                    # Rotate your key and update the registry
+aw id rotate-key                    # Rotate your key at the registry
 aw id namespace <domain>            # Inspect addresses under a namespace
 ```
-
-Identity registration happens silently during `aw init`, `aw project create`, and `aw spawn accept-invite` for permanent identities. You only need `aw id register` manually if the automatic registration failed (e.g., awid.ai was unreachable at the time).
 
 ### Tasks
 
