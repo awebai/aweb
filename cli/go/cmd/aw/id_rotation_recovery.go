@@ -12,10 +12,11 @@ import (
 )
 
 type pendingRotationState struct {
-	StableID   string `yaml:"stable_id"`
-	OldDID     string `yaml:"old_did"`
-	NewDID     string `yaml:"new_did"`
-	PendingKey string `yaml:"pending_key"`
+	StableID    string `yaml:"stable_id"`
+	OldDID      string `yaml:"old_did"`
+	NewDID      string `yaml:"new_did"`
+	RegistryURL string `yaml:"registry_url,omitempty"`
+	PendingKey  string `yaml:"pending_key"`
 }
 
 func rotationStateDirForCurrentWorktree() (string, error) {

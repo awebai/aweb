@@ -77,6 +77,9 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if pending != nil {
+		if v := strings.TrimSpace(pending.RegistryURL); v != "" {
+			registryURL = v
+		}
 		return continuePendingIDRotation(ctx, current, rotationDir, registryURL, pending)
 	}
 
@@ -90,10 +93,11 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save pending rotation keypair: %w", err)
 	}
 	pending = &pendingRotationState{
-		StableID:   current.StableID,
-		OldDID:     awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey)),
-		NewDID:     newDID,
-		PendingKey: pendingKeyPath,
+		StableID:    current.StableID,
+		OldDID:      awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey)),
+		NewDID:      newDID,
+		RegistryURL: registryURL,
+		PendingKey:  pendingKeyPath,
 	}
 	if err := savePendingRotationState(rotationDir, pending); err != nil {
 		_ = cleanupPendingRotationKeypair(pendingKeyPath)

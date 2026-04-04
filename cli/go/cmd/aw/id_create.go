@@ -124,6 +124,9 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 	if err != nil {
 		return idCreateOutput{}, err
 	}
+	if err := registry.SetFallbackRegistryURL(plan.RegistryURL); err != nil {
+		return idCreateOutput{}, fmt.Errorf("invalid planned registry URL: %w", err)
+	}
 
 	registryStatus := "registered"
 	registryErr := ""

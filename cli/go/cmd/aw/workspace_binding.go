@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 type workspaceBindingInput struct {
@@ -67,20 +68,23 @@ func persistWorkspaceBinding(input workspaceBindingInput) error {
 		state.IdentityHandle = v
 		state.Alias = v
 	}
-	if v := strings.TrimSpace(input.DID); v != "" {
-		state.DID = v
-	}
-	if v := strings.TrimSpace(input.StableID); v != "" {
-		state.StableID = v
-	}
-	if v := strings.TrimSpace(input.SigningKey); v != "" {
-		state.SigningKey = v
-	}
-	if v := strings.TrimSpace(input.Custody); v != "" {
-		state.Custody = v
-	}
-	if v := strings.TrimSpace(input.Lifetime); v != "" {
-		state.Lifetime = v
+	lifetime := strings.TrimSpace(input.Lifetime)
+	if lifetime != awid.LifetimePersistent {
+		if v := strings.TrimSpace(input.DID); v != "" {
+			state.DID = v
+		}
+		if v := strings.TrimSpace(input.StableID); v != "" {
+			state.StableID = v
+		}
+		if v := strings.TrimSpace(input.SigningKey); v != "" {
+			state.SigningKey = v
+		}
+		if v := strings.TrimSpace(input.Custody); v != "" {
+			state.Custody = v
+		}
+		if lifetime != "" {
+			state.Lifetime = lifetime
+		}
 	}
 	if humanName := strings.TrimSpace(input.HumanName); humanName != "" {
 		state.HumanName = humanName

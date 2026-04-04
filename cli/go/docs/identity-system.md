@@ -119,18 +119,6 @@ Spawn is delegated creation of another workspace identity in the same project.
 - `aw spawn accept-invite --permanent --name <name>` allows explicit
   self-custodial permanent spawn
 
-### `aw connect`
-
-Imports an already-existing identity context from `AWEB_URL` and
-`AWEB_API_KEY`.
-
-- It introspects the server state.
-- It writes local config and workspace context.
-- It does not silently create, claim, or upgrade the identity class.
-
-If the imported identity is a self-custodial permanent identity and no local
-signing key is available, the CLI warns instead of inventing a new identity.
-
 ## Lifecycle
 
 ### Ephemeral identities
@@ -182,29 +170,31 @@ Trust continuity attaches to permanent addresses, not ephemeral aliases.
 
 ## Local State
 
-### Global config
+### User state
 
-`~/.config/aw/config.yaml` stores:
+`~/.config/aw/` still stores user-level runtime data such as:
 
-- servers
-- accounts
-- API keys
-- identity metadata such as DID, stable ID, custody, lifetime, and signing key
+- `known_agents.yaml`
+- `run.json`
 
 ### Workspace context
 
 `.aw/workspace.yaml` stores the local workspace binding and coordination state.
 
-- `aw init`, `aw project create`, `aw spawn accept-invite`, `aw connect`, and
-  `aw use` update it
+- `aw init`, `aw project create`, and `aw spawn accept-invite` update it
 - `aw reset` removes it together with `.aw/context`
 - `aw id delete --confirm` removes or updates it as part of local
   cleanup
 
-`.aw/context` still stores the local directory's selected saved account name.
+`.aw/context` stores small local coordination context.
 - the same bootstrap commands update it by default
 - `aw reset` removes it
 - `aw id delete --confirm` removes or updates it as part of local cleanup
+
+### Permanent identity state
+
+`.aw/identity.yaml` stores permanent-identity fields such as DID, stable ID,
+address, custody, lifetime, and registry metadata.
 
 ### Local signing keys
 

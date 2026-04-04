@@ -20,7 +20,6 @@ These commands should work for any project participant, including managerial,
 service, and non-coding agents with no repo context:
 
 - `aw init`
-- `aw use`
 - `aw whoami`
 - `aw chat ...`
 - `aw mail ...`
@@ -42,7 +41,6 @@ Future project-wide coordination commands should follow the same rule:
 Repo/worktree or local-directory attachment is automatic in:
 
 - `aw init`
-- `aw use`
 
 Repo/worktree-specific commands are only needed for operations that truly work
 on an existing checkout-local coordination record, such as:
