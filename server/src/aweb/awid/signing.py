@@ -5,11 +5,17 @@ from __future__ import annotations
 import base64
 import enum
 import json
+import logging
+from uuid import UUID
+
+import httpx
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
-from aweb.awid.did import public_key_from_did
+from aweb.awid.did import decode_public_key, did_from_public_key, public_key_from_did
+
+logger = logging.getLogger(__name__)
 
 SIGNED_FIELDS = frozenset(
     {
@@ -52,21 +58,19 @@ def sign_message(private_key: bytes, payload: bytes) -> str:
     return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
 
 
-def verify_signature(did: str | None, payload: bytes, signature_b64: str | None) -> VerifyResult:
-    if not did or not signature_b64:
-        return VerifyResult.UNVERIFIED
+def _decode_signature(signature_b64: str) -> bytes:
+    padded = signature_b64 + "=" * (-len(signature_b64) % 4)
+    return base64.urlsafe_b64decode(padded)
 
-    if not did.startswith("did:key:z"):
+
+def verify_signature_with_public_key(
+    public_key: bytes, payload: bytes, signature_b64: str | None
+) -> VerifyResult:
+    if not signature_b64:
         return VerifyResult.UNVERIFIED
 
     try:
-        public_key = public_key_from_did(did)
-    except Exception:
-        return VerifyResult.FAILED
-
-    try:
-        padded = signature_b64 + "=" * (-len(signature_b64) % 4)
-        sig_bytes = base64.urlsafe_b64decode(padded)
+        sig_bytes = _decode_signature(signature_b64)
     except Exception:
         return VerifyResult.FAILED
 
@@ -80,7 +84,95 @@ def verify_signature(did: str | None, payload: bytes, signature_b64: str | None)
         return VerifyResult.FAILED
 
 
+def verify_signature(did: str | None, payload: bytes, signature_b64: str | None) -> VerifyResult:
+    if not did or not signature_b64:
+        return VerifyResult.UNVERIFIED
+
+    if not did.startswith("did:key:z"):
+        return VerifyResult.UNVERIFIED
+
+    try:
+        public_key = public_key_from_did(did)
+    except Exception:
+        return VerifyResult.FAILED
+
+    return verify_signature_with_public_key(public_key, payload, signature_b64)
+
+
 def verify_did_key_signature(*, did_key: str, payload: bytes, signature_b64: str) -> None:
     result = verify_signature(did_key, payload, signature_b64)
+    if result != VerifyResult.VERIFIED:
+        raise ValueError("invalid signature")
+
+
+async def _resolve_agent_verification_material(
+    *, request, db, agent_id: str
+) -> tuple[bytes, str]:
+    from aweb.awid.registry import RegistryError
+
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT stable_id, did, public_key
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND deleted_at IS NULL
+        """,
+        UUID(agent_id),
+    )
+    if row is None:
+        raise ValueError("sender agent not found")
+
+    stable_id = (row.get("stable_id") or "").strip() or None
+    cached_did = (row.get("did") or "").strip() or None
+    cached_public_key = (row.get("public_key") or "").strip() or None
+
+    registry_client = getattr(request.app.state, "awid_registry_client", None)
+    if stable_id is not None and registry_client is not None:
+        try:
+            resolution = await registry_client.resolve_key(stable_id)
+            return public_key_from_did(resolution.current_did_key), resolution.current_did_key
+        except RegistryError as exc:
+            if exc.status_code < 500:
+                raise ValueError("sender key lookup failed") from exc
+            logger.warning(
+                "AWID registry unavailable resolving %s; falling back to cached agent key",
+                stable_id,
+                exc_info=True,
+            )
+        except httpx.HTTPError:
+            logger.warning(
+                "AWID registry transport error resolving %s; falling back to cached agent key",
+                stable_id,
+                exc_info=True,
+            )
+
+    if cached_public_key is not None:
+        public_key = decode_public_key(cached_public_key)
+        resolved_did = cached_did or did_from_public_key(public_key)
+        return public_key, resolved_did
+
+    if cached_did is not None and cached_did.startswith("did:key:z"):
+        return public_key_from_did(cached_did), cached_did
+
+    raise ValueError("sender key unavailable")
+
+
+async def verify_agent_did_key_signature(
+    *,
+    request,
+    db,
+    agent_id: str,
+    did_key: str,
+    payload: bytes,
+    signature_b64: str,
+) -> None:
+    public_key, expected_did = await _resolve_agent_verification_material(
+        request=request,
+        db=db,
+        agent_id=agent_id,
+    )
+    if did_key != expected_did:
+        raise ValueError("from_did does not match current sender did:key")
+    result = verify_signature_with_public_key(public_key, payload, signature_b64)
     if result != VerifyResult.VERIFIED:
         raise ValueError("invalid signature")

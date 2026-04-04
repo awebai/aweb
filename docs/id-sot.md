@@ -515,6 +515,11 @@ For message-level continuity:
 - old-key authorization proves **rotation**
 - controller authorization proves **replacement**
 - otherwise the client must keep the event in **identity mismatch**
+- server-side verification of signed self-custodial ingress resolves the
+  sender's current `did:key` from `awid.ai` when a stable `did:aw` exists
+- `agents.did` and `agents.public_key` remain local cache/display fields and
+  are only used as a last resort when registry lookup is unavailable or the
+  sender has no stable identity
 
 Ephemeral alias reuse does not carry the same continuity semantics and should
 not be marketed as if it does.

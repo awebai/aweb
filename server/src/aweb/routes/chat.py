@@ -38,6 +38,7 @@ from aweb.messaging.contacts import get_contact_addresses, is_address_in_contact
 from aweb.awid.custody import sign_on_behalf
 from aweb.awid.did import validate_stable_id
 from aweb.awid.replacement import get_sender_delivery_metadata
+from aweb.awid.signing import canonical_payload, verify_agent_did_key_signature
 from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
@@ -104,6 +105,35 @@ def _chat_to_address(participant_rows: list[dict[str, Any]], *, from_agent_id: s
     ]
     refs.sort()
     return ",".join(refs)
+
+
+def _chat_signature_fields(
+    *,
+    from_address: str,
+    message_id: UUID,
+    to_address: str,
+    to_did: str | None,
+    body: str,
+    created_at: datetime,
+    from_stable_id: str | None,
+    to_stable_id: str | None,
+) -> dict[str, str]:
+    fields: dict[str, str] = {
+        "from": from_address,
+        "from_did": "",
+        "message_id": str(message_id),
+        "to": to_address,
+        "to_did": to_did or "",
+        "type": "chat",
+        "subject": "",
+        "body": body,
+        "timestamp": _utc_iso(created_at),
+    }
+    if from_stable_id:
+        fields["from_stable_id"] = from_stable_id
+    if to_stable_id:
+        fields["to_stable_id"] = to_stable_id
+    return fields
 
 
 def _group_participants_by_session(
@@ -331,30 +361,24 @@ async def create_or_send(
         if reply_target is None:
             raise HTTPException(status_code=404, detail="Replied-to message not found")
 
+    cross_project = any(r.project_slug != sender_scope.project_slug for r in resolved_targets)
+    msg_from_stable_id = sender_stable_id
+    msg_to_stable_id = expected_to_stable_id
+    to_address = ",".join(sorted(payload.to_aliases))
+    message_fields = _chat_signature_fields(
+        from_address=(
+            f"{sender_scope.project_slug}~{sender['alias']}" if cross_project else sender["alias"]
+        ),
+        message_id=pre_message_id,
+        to_address=to_address,
+        to_did=payload.to_did,
+        body=payload.message,
+        created_at=msg_created_at,
+        from_stable_id=msg_from_stable_id,
+        to_stable_id=msg_to_stable_id,
+    )
+
     if payload.signature is None:
-        cross_project = any(r.project_slug != sender_scope.project_slug for r in resolved_targets)
-        msg_from_stable_id = sender_stable_id
-        msg_to_stable_id = expected_to_stable_id
-        to_address = ",".join(sorted(payload.to_aliases))
-        message_fields: dict[str, str] = {
-            "from": (
-                f"{sender_scope.project_slug}~{sender['alias']}"
-                if cross_project
-                else sender["alias"]
-            ),
-            "from_did": "",
-            "message_id": str(pre_message_id),
-            "to": to_address,
-            "to_did": payload.to_did or "",
-            "type": "chat",
-            "subject": "",
-            "body": payload.message,
-            "timestamp": _utc_iso(msg_created_at),
-        }
-        if msg_from_stable_id:
-            message_fields["from_stable_id"] = msg_from_stable_id
-        if msg_to_stable_id:
-            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
             message_fields,
@@ -362,6 +386,21 @@ async def create_or_send(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
+    else:
+        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
+        try:
+            await verify_agent_did_key_signature(
+                request=request,
+                db=db,
+                agent_id=actor_id,
+                did_key=payload.from_did or "",
+                payload=signed_payload_bytes,
+                signature_b64=payload.signature,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        msg_signing_key_id = payload.from_did
+        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         msg_row = await send_in_session(
@@ -1261,35 +1300,29 @@ async def send_message(
             status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
         )
 
+    sender_row = next(r for r in participant_rows if str(r["agent_id"]) == actor_id)
+    cross_project = any(
+        r["project_slug"] != sender_row["project_slug"]
+        for r in participant_rows
+        if str(r["agent_id"]) != actor_id
+    )
+    msg_from_stable_id = sender_stable_id
+    msg_to_stable_id = expected_to_stable_id
+    to_address = _chat_to_address(participant_rows, from_agent_id=actor_id)
+    message_fields = _chat_signature_fields(
+        from_address=(
+            f"{sender_row['project_slug']}~{canonical_alias}" if cross_project else canonical_alias
+        ),
+        message_id=pre_message_id,
+        to_address=to_address,
+        to_did=payload.to_did,
+        body=payload.body,
+        created_at=msg_created_at,
+        from_stable_id=msg_from_stable_id,
+        to_stable_id=msg_to_stable_id,
+    )
+
     if payload.signature is None:
-        sender_row = next(r for r in participant_rows if str(r["agent_id"]) == actor_id)
-        cross_project = any(
-            r["project_slug"] != sender_row["project_slug"]
-            for r in participant_rows
-            if str(r["agent_id"]) != actor_id
-        )
-        msg_from_stable_id = sender_stable_id
-        msg_to_stable_id = expected_to_stable_id
-        to_address = _chat_to_address(participant_rows, from_agent_id=actor_id)
-        message_fields: dict[str, str] = {
-            "from": (
-                f"{sender_row['project_slug']}~{canonical_alias}"
-                if cross_project
-                else canonical_alias
-            ),
-            "from_did": "",
-            "message_id": str(pre_message_id),
-            "to": to_address,
-            "to_did": payload.to_did or "",
-            "type": "chat",
-            "subject": "",
-            "body": payload.body,
-            "timestamp": _utc_iso(msg_created_at),
-        }
-        if msg_from_stable_id:
-            message_fields["from_stable_id"] = msg_from_stable_id
-        if msg_to_stable_id:
-            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
             message_fields,
@@ -1297,6 +1330,21 @@ async def send_message(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
+    else:
+        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
+        try:
+            await verify_agent_did_key_signature(
+                request=request,
+                db=db,
+                agent_id=actor_id,
+                did_key=payload.from_did or "",
+                payload=signed_payload_bytes,
+                signature_b64=payload.signature,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        msg_signing_key_id = payload.from_did
+        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         msg_row = await send_in_session(

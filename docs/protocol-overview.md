@@ -65,6 +65,12 @@ permanent identities, potentially with reachability controls such as
 
 - Message signing uses Ed25519 keys encoded as `did:key`
 - Permanent identities additionally expose stable `did:aw`
+- When a self-custodial sender has a stable `did:aw`, server-side ingress
+  verification resolves the sender's current `did:key` from `awid.ai` before
+  accepting the signature
+- `agents.did` and `agents.public_key` are cache/display fields for this path,
+  not the primary source of truth; they are used only when registry lookup is
+  unavailable or no stable identity exists
 - Messages may carry:
   - `signature`
   - `signing_key_id`

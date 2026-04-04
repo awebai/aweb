@@ -20,6 +20,7 @@ from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.awid.custody import sign_on_behalf
 from aweb.awid.did import validate_stable_id
 from aweb.awid.replacement import get_sender_delivery_metadata
+from aweb.awid.signing import canonical_payload, verify_agent_did_key_signature
 from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
 from aweb.deps import get_db
@@ -51,6 +52,36 @@ def _parse_signed_timestamp(value: str) -> datetime:
     if dt.microsecond != 0:
         raise HTTPException(status_code=422, detail="timestamp must be second precision")
     return dt
+
+
+def _mail_signature_fields(
+    *,
+    from_address: str,
+    message_id: UUID,
+    to_address: str,
+    to_did: str | None,
+    subject: str,
+    body: str,
+    created_at: datetime,
+    from_stable_id: str | None,
+    to_stable_id: str | None,
+) -> dict[str, str]:
+    fields: dict[str, str] = {
+        "from": from_address,
+        "from_did": "",
+        "message_id": str(message_id),
+        "to": to_address,
+        "to_did": to_did or "",
+        "type": "mail",
+        "subject": subject,
+        "body": body,
+        "timestamp": _utc_iso(created_at),
+    }
+    if from_stable_id:
+        fields["from_stable_id"] = from_stable_id
+    if to_stable_id:
+        fields["to_stable_id"] = to_stable_id
+    return fields
 
 
 class SendMessageRequest(BaseModel):
@@ -315,42 +346,40 @@ async def send_message(
             status_code=403, detail="to_stable_id does not match recipient stable_id"
         )
 
+    ns_row = await aweb_db.fetch_one(
+        """
+        SELECT p.slug AS sender_project_slug, rp.slug AS recipient_project_slug
+        FROM {{tables.projects}} p
+        JOIN {{tables.projects}} rp ON rp.project_id = $2
+        WHERE p.project_id = $1 AND p.deleted_at IS NULL AND rp.deleted_at IS NULL
+        """,
+        UUID(project_id),
+        UUID(recipient_project_id),
+    )
+    if not ns_row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from_address = format_local_address(
+        base_project_slug=ns_row["recipient_project_slug"],
+        target_project_slug=ns_row["sender_project_slug"],
+        alias=sender["alias"],
+    )
+    to_address = recipient_ref or ""
+    msg_from_stable_id = sender_stable_id
+    msg_to_stable_id = recipient_stable_id
+    message_fields = _mail_signature_fields(
+        from_address=from_address,
+        message_id=pre_message_id,
+        to_address=to_address,
+        to_did=payload.to_did,
+        subject=payload.subject,
+        body=payload.body,
+        created_at=created_at,
+        from_stable_id=msg_from_stable_id,
+        to_stable_id=msg_to_stable_id,
+    )
+
     if payload.signature is None:
-        ns_row = await aweb_db.fetch_one(
-            """
-            SELECT p.slug AS sender_project_slug, rp.slug AS recipient_project_slug
-            FROM {{tables.projects}} p
-            JOIN {{tables.projects}} rp ON rp.project_id = $2
-            WHERE p.project_id = $1 AND p.deleted_at IS NULL AND rp.deleted_at IS NULL
-            """,
-            UUID(project_id),
-            UUID(recipient_project_id),
-        )
-        if not ns_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-        from_address = format_local_address(
-            base_project_slug=ns_row["recipient_project_slug"],
-            target_project_slug=ns_row["sender_project_slug"],
-            alias=sender["alias"],
-        )
-        to_address = recipient_ref or ""
-        msg_from_stable_id = sender_stable_id
-        msg_to_stable_id = recipient_stable_id
-        message_fields: dict[str, str] = {
-            "from": from_address,
-            "from_did": "",
-            "message_id": str(pre_message_id),
-            "to": to_address,
-            "to_did": payload.to_did or "",
-            "type": "mail",
-            "subject": payload.subject,
-            "body": payload.body,
-            "timestamp": _utc_iso(created_at),
-        }
-        if msg_from_stable_id:
-            message_fields["from_stable_id"] = msg_from_stable_id
-        if msg_to_stable_id:
-            message_fields["to_stable_id"] = msg_to_stable_id
         sign_result = await sign_on_behalf(
             actor_id,
             message_fields,
@@ -358,6 +387,21 @@ async def send_message(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
+    else:
+        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
+        try:
+            await verify_agent_did_key_signature(
+                request=request,
+                db=db,
+                agent_id=actor_id,
+                did_key=payload.from_did or "",
+                payload=signed_payload_bytes,
+                signature_b64=payload.signature,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        msg_signing_key_id = payload.from_did
+        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         message_id, created_at = await deliver_message(
