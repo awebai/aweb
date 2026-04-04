@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+import json
+import logging
+import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 import httpx
 from nacl.signing import SigningKey
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from aweb.awid.did import did_from_public_key, stable_id_from_did_key
 from aweb.awid.log import canonical_server_origin, log_entry_payload, state_hash
@@ -16,6 +22,13 @@ from aweb.config import is_local_awid_registry_url
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
+
+logger = logging.getLogger(__name__)
+
+_ADDRESS_CACHE_TTL_SECONDS = 5 * 60
+_NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
+_DID_KEY_CACHE_TTL_SECONDS = 5 * 60
+_STALE_MULTIPLIER = 2
 
 
 @dataclass(frozen=True)
@@ -660,8 +673,369 @@ class RegistryClient:
         }
 
 
+class CachedRegistryClient(RegistryClient):
+    """Redis-backed caching wrapper for RegistryClient reads."""
+
+    redis_client: Redis
+    _refresh_tasks: dict[str, asyncio.Task[None]]
+
+    def __init__(
+        self,
+        registry_url: str,
+        redis_client: Redis,
+        *,
+        timeout_seconds: float = 5.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        base_url: str | None = None,
+        domain_registry_resolver: DomainRegistryResolver | None = None,
+    ) -> None:
+        super().__init__(
+            registry_url=registry_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+            base_url=base_url,
+            domain_registry_resolver=domain_registry_resolver,
+        )
+        object.__setattr__(self, "redis_client", redis_client)
+        object.__setattr__(self, "_refresh_tasks", {})
+
+    async def resolve_key(self, did_aw: str) -> KeyResolution:
+        return await self._cached_read(
+            cache_key=self._did_key_cache_key(did_aw),
+            ttl_seconds=_DID_KEY_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).resolve_key(did_aw),
+            encode=lambda value: _key_resolution_to_json(value),
+            decode=lambda payload: _key_resolution_from_json(payload),
+        )
+
+    async def get_namespace(self, domain: str) -> Namespace | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        return await self._cached_read(
+            cache_key=self._namespace_cache_key(domain, registry_url=registry_url),
+            ttl_seconds=_NAMESPACE_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).get_namespace(domain),
+            encode=lambda value: None if value is None else _namespace_to_json(value),
+            decode=lambda payload: None if payload is None else _namespace_from_json(payload),
+        )
+
+    async def list_addresses(self, domain: str) -> list[Address]:
+        registry_url = await self._registry_url_for_domain(domain)
+        return await self._cached_read(
+            cache_key=self._domain_addresses_cache_key(domain, registry_url=registry_url),
+            ttl_seconds=_NAMESPACE_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).list_addresses(domain),
+            encode=lambda value: [_address_to_json(item) for item in value],
+            decode=lambda payload: [_address_from_json(item) for item in payload],
+        )
+
+    async def resolve_address(self, domain: str, name: str) -> Address | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        return await self._cached_read(
+            cache_key=self._address_cache_key(domain, name, registry_url=registry_url),
+            ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).resolve_address(domain, name),
+            encode=lambda value: None if value is None else _address_to_json(value),
+            decode=lambda payload: None if payload is None else _address_from_json(payload),
+        )
+
+    async def list_did_addresses(self, did_aw: str) -> list[Address]:
+        return await self._cached_read(
+            cache_key=self._did_addresses_cache_key(did_aw),
+            ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).list_did_addresses(did_aw),
+            encode=lambda value: [_address_to_json(item) for item in value],
+            decode=lambda payload: [_address_from_json(item) for item in payload],
+        )
+
+    async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+        mapping = await super().register_did(did_key, signing_key, server_url)
+        await self._invalidate_keys(self._did_key_cache_key(mapping.did_aw))
+        return mapping
+
+    async def rotate_key(
+        self,
+        did_aw: str,
+        new_did_key: str,
+        old_signing_key: bytes,
+        new_signing_key: bytes,
+    ) -> DIDMapping:
+        mapping = await super().rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
+        return mapping
+
+    async def update_server(
+        self,
+        did_aw: str,
+        server_url: str,
+        signing_key: bytes,
+    ) -> DIDMapping:
+        mapping = await super().update_server(did_aw, server_url, signing_key)
+        await self._invalidate_keys(self._did_key_cache_key(did_aw))
+        return mapping
+
+    async def register_namespace(
+        self,
+        domain: str,
+        controller_did: str,
+        controller_signing_key: bytes,
+        parent_signing_key: bytes | None = None,
+    ) -> Namespace:
+        namespace = await super().register_namespace(
+            domain,
+            controller_did,
+            controller_signing_key,
+            parent_signing_key,
+        )
+        await self._invalidate_namespace_cache(domain)
+        return namespace
+
+    async def rotate_namespace_controller(
+        self,
+        domain: str,
+        new_controller_did: str,
+        new_controller_signing_key: bytes,
+        parent_signing_key: bytes | None = None,
+    ) -> Namespace:
+        namespace = await super().rotate_namespace_controller(
+            domain,
+            new_controller_did,
+            new_controller_signing_key,
+            parent_signing_key,
+        )
+        await self._invalidate_namespace_cache(domain)
+        return namespace
+
+    async def register_address(
+        self,
+        domain: str,
+        name: str,
+        did_aw: str,
+        controller_signing_key: bytes,
+        reachability: str,
+    ) -> Address:
+        address = await super().register_address(
+            domain,
+            name,
+            did_aw,
+            controller_signing_key,
+            reachability,
+        )
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
+        return address
+
+    async def update_address(
+        self,
+        domain: str,
+        name: str,
+        controller_signing_key: bytes,
+        reachability: str | None = None,
+    ) -> Address:
+        address = await super().update_address(domain, name, controller_signing_key, reachability)
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
+        return address
+
+    async def delete_address(
+        self,
+        domain: str,
+        name: str,
+        controller_signing_key: bytes,
+    ) -> None:
+        previous = await super().resolve_address(domain, name)
+        await super().delete_address(domain, name, controller_signing_key)
+        did_aws = [previous.did_aw] if previous is not None else []
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=did_aws)
+
+    async def reassign_address(
+        self,
+        domain: str,
+        name: str,
+        new_did_aw: str,
+        controller_signing_key: bytes,
+    ) -> Address:
+        previous = await super().resolve_address(domain, name)
+        address = await super().reassign_address(domain, name, new_did_aw, controller_signing_key)
+        did_aws = [address.did_aw]
+        if previous is not None and previous.did_aw != address.did_aw:
+            did_aws.append(previous.did_aw)
+        await self._invalidate_address_cache(domain=domain, name=name, did_aws=did_aws)
+        return address
+
+    async def _cached_read(
+        self,
+        *,
+        cache_key: str,
+        ttl_seconds: int,
+        fetcher: Callable[[], Awaitable[Any]],
+        encode: Callable[[Any], Any],
+        decode: Callable[[Any], Any],
+    ) -> Any:
+        cached_payload = await self._read_cache_entry(cache_key, decode=decode)
+        if cached_payload is not None:
+            if cached_payload["fresh"]:
+                return cached_payload["value"]
+            if self._schedule_refresh(
+                cache_key=cache_key,
+                ttl_seconds=ttl_seconds,
+                fetcher=fetcher,
+                encode=encode,
+            ):
+                return cached_payload["value"]
+
+        fresh_value = await fetcher()
+        await self._write_cache_entry(
+            cache_key,
+            value=fresh_value,
+            ttl_seconds=ttl_seconds,
+            encode=encode,
+        )
+        return fresh_value
+
+    async def _read_cache_entry(
+        self,
+        cache_key: str,
+        *,
+        decode: Callable[[Any], Any],
+    ) -> dict[str, Any] | None:
+        raw = await self._redis_get(cache_key)
+        if raw is None:
+            return None
+        try:
+            payload = json.loads(raw)
+            value = decode(payload["value"])
+            return {
+                "fresh": payload["fresh_until"] > _cache_now(),
+                "value": value,
+            }
+        except Exception:
+            logger.warning("Invalid AWID cache payload for %s; dropping entry", cache_key)
+            await self._invalidate_keys(cache_key)
+            return None
+
+    async def _write_cache_entry(
+        self,
+        cache_key: str,
+        *,
+        value: Any,
+        ttl_seconds: int,
+        encode: Callable[[Any], Any],
+    ) -> None:
+        payload = json.dumps(
+            {
+                "fresh_until": _cache_now() + ttl_seconds,
+                "value": encode(value),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        await self._redis_set(cache_key, payload, ex=ttl_seconds * _STALE_MULTIPLIER)
+
+    def _schedule_refresh(
+        self,
+        *,
+        cache_key: str,
+        ttl_seconds: int,
+        fetcher: Callable[[], Awaitable[Any]],
+        encode: Callable[[Any], Any],
+    ) -> bool:
+        existing = self._refresh_tasks.get(cache_key)
+        if existing is not None and not existing.done():
+            return True
+        try:
+            task = asyncio.create_task(
+                self._refresh_cache_entry(
+                    cache_key=cache_key,
+                    ttl_seconds=ttl_seconds,
+                    fetcher=fetcher,
+                    encode=encode,
+                )
+            )
+        except RuntimeError:
+            return False
+        self._refresh_tasks[cache_key] = task
+        task.add_done_callback(lambda _task, key=cache_key: self._refresh_tasks.pop(key, None))
+        return True
+
+    async def _refresh_cache_entry(
+        self,
+        *,
+        cache_key: str,
+        ttl_seconds: int,
+        fetcher: Callable[[], Awaitable[Any]],
+        encode: Callable[[Any], Any],
+    ) -> None:
+        try:
+            fresh_value = await fetcher()
+            await self._write_cache_entry(
+                cache_key,
+                value=fresh_value,
+                ttl_seconds=ttl_seconds,
+                encode=encode,
+            )
+        except Exception:
+            logger.debug("AWID cache refresh failed for %s", cache_key, exc_info=True)
+
+    async def _invalidate_namespace_cache(self, domain: str) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
+        await self._invalidate_keys(self._namespace_cache_key(domain, registry_url=registry_url))
+
+    async def _invalidate_address_cache(self, *, domain: str, name: str, did_aws: list[str]) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
+        keys = [
+            self._address_cache_key(domain, name, registry_url=registry_url),
+            self._domain_addresses_cache_key(domain, registry_url=registry_url),
+        ]
+        keys.extend(self._did_addresses_cache_key(did_aw) for did_aw in did_aws)
+        await self._invalidate_keys(*keys)
+
+    async def _invalidate_keys(self, *keys: str) -> None:
+        unique_keys = tuple(dict.fromkeys(key for key in keys if key))
+        if not unique_keys:
+            return
+        try:
+            await self.redis_client.delete(*unique_keys)
+        except (RedisError, OSError):
+            logger.debug("AWID cache invalidation skipped because Redis is unavailable", exc_info=True)
+
+    async def _redis_get(self, key: str) -> str | None:
+        try:
+            value = await self.redis_client.get(key)
+        except (RedisError, OSError):
+            logger.debug("AWID cache read skipped because Redis is unavailable", exc_info=True)
+            return None
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+
+    async def _redis_set(self, key: str, value: str, *, ex: int) -> None:
+        try:
+            await self.redis_client.set(key, value, ex=ex)
+        except (RedisError, OSError):
+            logger.debug("AWID cache write skipped because Redis is unavailable", exc_info=True)
+
+    def _did_key_cache_key(self, did_aw: str) -> str:
+        return f"awid:registry_cache:v1:did_key:{self.registry_url}:{did_aw}"
+
+    def _did_addresses_cache_key(self, did_aw: str) -> str:
+        return f"awid:registry_cache:v1:did_addresses:{self.registry_url}:{did_aw}"
+
+    def _namespace_cache_key(self, domain: str, *, registry_url: str) -> str:
+        return f"awid:registry_cache:v1:namespace:{registry_url}:{domain}"
+
+    def _domain_addresses_cache_key(self, domain: str, *, registry_url: str) -> str:
+        return f"awid:registry_cache:v1:domain_addresses:{registry_url}:{domain}"
+
+    def _address_cache_key(self, domain: str, name: str, *, registry_url: str) -> str:
+        return f"awid:registry_cache:v1:address:{registry_url}:{domain}:{name}"
+
+
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _cache_now() -> int:
+    return int(time.time())
 
 
 def _did_key_from_signing_key(signing_key: bytes) -> str:
@@ -733,3 +1107,19 @@ def _address_from_json(data: dict[str, Any]) -> Address:
         reachability=data["reachability"],
         created_at=data["created_at"],
     )
+
+
+def _key_resolution_to_json(value: KeyResolution) -> dict[str, Any]:
+    return {
+        "did_aw": value.did_aw,
+        "current_did_key": value.current_did_key,
+        "log_head": None if value.log_head is None else asdict(value.log_head),
+    }
+
+
+def _namespace_to_json(value: Namespace) -> dict[str, Any]:
+    return asdict(value)
+
+
+def _address_to_json(value: Address) -> dict[str, Any]:
+    return asdict(value)

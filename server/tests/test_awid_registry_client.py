@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 import pytest
+from redis.exceptions import RedisError
 
 from aweb.awid import (
     AlreadyRegisteredError,
+    CachedRegistryClient,
     RegistryError,
     RegistryClient,
     did_from_public_key,
@@ -14,6 +17,7 @@ from aweb.awid import (
     stable_id_from_did_key,
     verify_did_key_signature,
 )
+import aweb.awid.registry as registry_module
 from aweb.awid.log import log_entry_payload
 from aweb.awid.signing import canonical_json_bytes
 
@@ -22,6 +26,32 @@ def _authorization_parts(header: str) -> tuple[str, str]:
     scheme, did_key, signature = header.split(" ")
     assert scheme == "DIDKey"
     return did_key, signature
+
+
+class _FakeRedis:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str):
+        if self.fail:
+            raise RedisError("redis unavailable")
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, *, ex: int | None = None):
+        if self.fail:
+            raise RedisError("redis unavailable")
+        self.values[key] = value
+        return True
+
+    async def delete(self, *keys: str):
+        if self.fail:
+            raise RedisError("redis unavailable")
+        deleted = 0
+        for key in keys:
+            deleted += int(key in self.values)
+            self.values.pop(key, None)
+        return deleted
 
 
 @pytest.mark.asyncio
@@ -782,3 +812,190 @@ async def test_local_registry_mode_uses_http_transport_when_provided():
 
     assert namespace is not None
     assert namespace.domain == "example.com"
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_reuses_cached_resolve_key():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    request_count = {"value": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/did/{did_aw}/key"
+        request_count["value"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": did_key,
+                "log_head": None,
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = await client.resolve_key(did_aw)
+    second = await client.resolve_key(did_aw)
+
+    assert first.current_did_key == did_key
+    assert second.current_did_key == did_key
+    assert request_count["value"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_serves_stale_then_refreshes_in_background(monkeypatch):
+    signing_key, public_key = generate_keypair()
+    old_did_key = did_from_public_key(public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    did_aw = stable_id_from_did_key(old_did_key)
+    now = {"value": 0}
+    current_key = {"value": old_did_key}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/did/{did_aw}/key"
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": current_key["value"],
+                "log_head": None,
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    fresh = await client.resolve_key(did_aw)
+    assert fresh.current_did_key == old_did_key
+
+    current_key["value"] = new_did_key
+    now["value"] = 301
+    stale = await client.resolve_key(did_aw)
+    assert stale.current_did_key == old_did_key
+
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    refreshed = await client.resolve_key(did_aw)
+    assert refreshed.current_did_key == new_did_key
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_address_reads_on_update():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+    reachability = {"value": "private"}
+    request_counts: dict[str, int] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        request_counts[request.url.path] = request_counts.get(request.url.path, 0) + 1
+        address_payload = {
+            "address_id": "addr-1",
+            "domain": "acme.com",
+            "name": "support",
+            "did_aw": subject_did_aw,
+            "current_did_key": subject_did_key,
+            "reachability": reachability["value"],
+            "created_at": "2026-04-03T00:00:00Z",
+        }
+        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            return httpx.Response(200, json=address_payload)
+        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses":
+            return httpx.Response(200, json={"addresses": [address_payload]})
+        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/addresses":
+            return httpx.Response(200, json={"addresses": [address_payload]})
+        if request.method == "PUT" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            reachability["value"] = "public"
+            address_payload["reachability"] = "public"
+            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            timestamp = request.headers["x-aweb-timestamp"]
+            assert auth_did_key == controller_did
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=canonical_json_bytes(
+                    {
+                        "domain": "acme.com",
+                        "name": "support",
+                        "operation": "update_address",
+                        "timestamp": timestamp,
+                    }
+                ),
+                signature_b64=signature,
+            )
+            return httpx.Response(200, json=address_payload)
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    before_address = await client.resolve_address("acme.com", "support")
+    before_domain = await client.list_addresses("acme.com")
+    before_reverse = await client.list_did_addresses(subject_did_aw)
+    updated = await client.update_address("acme.com", "support", controller_signing_key, "public")
+    after_address = await client.resolve_address("acme.com", "support")
+    after_domain = await client.list_addresses("acme.com")
+    after_reverse = await client.list_did_addresses(subject_did_aw)
+
+    assert before_address is not None
+    assert before_address.reachability == "private"
+    assert [item.reachability for item in before_domain] == ["private"]
+    assert [item.reachability for item in before_reverse] == ["private"]
+    assert updated.reachability == "public"
+    assert after_address is not None
+    assert after_address.reachability == "public"
+    assert [item.reachability for item in after_domain] == ["public"]
+    assert [item.reachability for item in after_reverse] == ["public"]
+    assert request_counts["/v1/namespaces/acme.com/addresses/support"] == 3
+    assert request_counts["/v1/namespaces/acme.com/addresses"] == 2
+    assert request_counts[f"/v1/did/{subject_did_aw}/addresses"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_passthrough_when_redis_is_down():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    request_count = {"value": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/did/{did_aw}/key"
+        request_count["value"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": did_key,
+                "log_head": None,
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(fail=True),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.resolve_key(did_aw)
+    await client.resolve_key(did_aw)
+
+    assert request_count["value"] == 2
