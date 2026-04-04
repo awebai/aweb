@@ -7,6 +7,7 @@ import httpx
 import pytest
 from redis.exceptions import RedisError
 
+import aweb.dns_verify as dns_verify_module
 from aweb.awid import (
     AlreadyRegisteredError,
     CachedRegistryClient,
@@ -282,7 +283,7 @@ async def test_registry_url_for_domain_uses_explicit_registry_url_by_default(mon
         assert domain == "example.com"
         return None
 
-    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _no_override_lookup)
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _no_override_lookup)
 
     client = RegistryClient(registry_url="https://registry.example")
 
@@ -295,7 +296,7 @@ async def test_registry_url_for_domain_allows_dns_override_of_explicit_default(m
         assert domain == "example.com"
         return "https://override.example"
 
-    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _override_lookup)
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _override_lookup)
 
     client = RegistryClient(registry_url="https://registry.example")
 
@@ -311,7 +312,7 @@ async def test_registry_url_for_domain_falls_back_to_configured_registry_when_dn
 
         raise DnsVerificationError("dns unavailable")
 
-    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _failing_override_lookup)
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _failing_override_lookup)
 
     client = RegistryClient(registry_url="https://registry.example")
 
