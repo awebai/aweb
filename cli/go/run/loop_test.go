@@ -1201,7 +1201,7 @@ func TestLoopEventBusInterruptDuringRun(t *testing.T) {
 	// The interrupt should cancel the run and pause.
 	time.Sleep(200 * time.Millisecond)
 
-	// Send /resume to unpause, then cancel.
+	// Send /quit to exit after the interrupt.
 	controller.events <- ControlEvent{Type: ControlQuit}
 	controller.events <- ControlEvent{Type: ControlExitConfirm}
 
