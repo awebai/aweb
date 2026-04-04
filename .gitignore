@@ -12,6 +12,14 @@ __pycache__/
 *.egg-info/
 .aw/
 .claude/settings*
+.claude/worktrees/
+
+# Secrets — never commit
+.env
+.env.*
+**/.env
+**/.env.*
+.emacs-bu/
 
 # server/
 server/.venv/
