@@ -11,22 +11,30 @@ import aweb
 from awid_service.migrate import migrate_from_aweb
 
 
-@pytest.mark.asyncio
-async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
-    monkeypatch,
-    shared_test_pool,
-    caplog,
-):
+async def _prepare_source_schema(shared_test_pool, *, module_name: str) -> AsyncDatabaseManager:
     source = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
     await source.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
     aweb_path = __import__("pathlib").Path(aweb.__file__).resolve().parent
     migrations = AsyncMigrationManager(
         source,
         migrations_path=str(aweb_path / "migrations" / "aweb"),
-        module_name="awid-migrate-source",
+        module_name=module_name,
         migrations_table="schema_migrations",
     )
     await migrations.apply_pending_migrations()
+    return source
+
+
+@pytest.mark.asyncio
+async def test_migrate_from_aweb_backfills_controller_did_from_replacements(
+    monkeypatch,
+    shared_test_pool,
+    caplog,
+):
+    source = await _prepare_source_schema(
+        shared_test_pool,
+        module_name="awid-migrate-source",
+    )
     await source.execute(
         'ALTER TABLE "aweb".dns_namespaces DROP CONSTRAINT chk_dns_namespaces_type_fields'
     )
@@ -163,16 +171,10 @@ async def test_migrate_from_aweb_logs_nothing_when_no_signing_keys_dropped(
     shared_test_pool,
     caplog,
 ):
-    source = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
-    await source.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
-    aweb_path = __import__("pathlib").Path(aweb.__file__).resolve().parent
-    migrations = AsyncMigrationManager(
-        source,
-        migrations_path=str(aweb_path / "migrations" / "aweb"),
+    source = await _prepare_source_schema(
+        shared_test_pool,
         module_name="awid-migrate-source-zero-drops",
-        migrations_table="schema_migrations",
     )
-    await migrations.apply_pending_migrations()
 
     now = datetime.now(timezone.utc)
     project_id = uuid4()
@@ -204,3 +206,60 @@ async def test_migrate_from_aweb_logs_nothing_when_no_signing_keys_dropped(
     caplog.set_level("WARNING")
     await migrate_from_aweb(source_schema="aweb", target_schema="awid")
     assert "Dropping" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_migrate_from_aweb_dry_run_reports_counts_without_creating_target_schema(
+    monkeypatch,
+    shared_test_pool,
+):
+    source = await _prepare_source_schema(
+        shared_test_pool,
+        module_name="awid-migrate-source-dry-run",
+    )
+
+    now = datetime.now(timezone.utc)
+    project_id = uuid4()
+    agent_id = uuid4()
+    monkeypatch.setenv("AWID_DATABASE_URL", source.config.get_dsn())
+
+    await source.execute(
+        """
+        INSERT INTO {{tables.projects}} (project_id, slug, name, created_at)
+        VALUES ($1, $2, $3, $4)
+        """,
+        project_id,
+        "proj-dry-run",
+        "proj-dry-run",
+        now,
+    )
+    await source.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, project_id, alias, human_name, agent_type, access_mode, lifetime, status, signing_key_enc, created_at)
+        VALUES ($1, $2, $3, '', 'agent', 'open', 'persistent', 'active', NULL, $4)
+        """,
+        agent_id,
+        project_id,
+        "agent-dry-run",
+        now,
+    )
+
+    result = await migrate_from_aweb(
+        source_schema="aweb",
+        target_schema="awid_dry_run",
+        dry_run=True,
+    )
+
+    assert result.projects == 1
+    assert result.agents == 1
+
+    schema_row = await shared_test_pool.fetchrow(
+        """
+        SELECT schema_name
+        FROM information_schema.schemata
+        WHERE schema_name = $1
+        """,
+        "awid_dry_run",
+    )
+    assert schema_row is None

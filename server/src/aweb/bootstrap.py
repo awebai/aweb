@@ -531,7 +531,7 @@ async def _sync_registry_identity(
     if current_mapping.current_did_key != did_key:
         raise ValueError("Registry current did:key does not match the local identity")
 
-    existing_mapping = await registry_client._get_did_full(did_aw, signing_key)
+    existing_mapping = await registry_client.get_mapping(did_aw, signing_key)
     if existing_mapping.server == server_url:
         return
 

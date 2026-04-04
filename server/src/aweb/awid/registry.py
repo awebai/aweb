@@ -176,7 +176,7 @@ class RegistryClient:
                 return None
             raise
 
-    async def _get_did_full(self, did_aw: str, signing_key: bytes) -> DIDMapping:
+    async def get_mapping(self, did_aw: str, signing_key: bytes) -> DIDMapping:
         path = f"/v1/did/{did_aw}/full"
         return _did_mapping_from_json(
             await self._request_json(
@@ -241,7 +241,7 @@ class RegistryClient:
             except RegistryError:
                 raise exc
             raise AlreadyRegisteredError(did_aw=did_aw, existing_did_key=existing.current_did_key)
-        return await self._get_did_full(did_aw, signing_key)
+        return await self.get_mapping(did_aw, signing_key)
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return _key_resolution_from_json(await self._request_json("GET", f"/v1/did/{did_aw}/key"))
@@ -257,7 +257,7 @@ class RegistryClient:
         if _did_key_from_signing_key(new_signing_key) != new_did_key:
             raise ValueError("new_signing_key must match new_did_key")
 
-        current_mapping = await self._get_did_full(did_aw, old_signing_key)
+        current_mapping = await self.get_mapping(did_aw, old_signing_key)
         if current_mapping.current_did_key != old_did_key:
             raise ValueError("old_signing_key does not match the current did:key")
 
@@ -303,7 +303,7 @@ class RegistryClient:
                 "signature": signature,
             },
         )
-        return await self._get_did_full(did_aw, new_signing_key)
+        return await self.get_mapping(did_aw, new_signing_key)
 
     async def update_server(
         self,
@@ -312,7 +312,7 @@ class RegistryClient:
         signing_key: bytes,
     ) -> DIDMapping:
         current_did_key = _did_key_from_signing_key(signing_key)
-        current_mapping = await self._get_did_full(did_aw, signing_key)
+        current_mapping = await self.get_mapping(did_aw, signing_key)
         if current_mapping.current_did_key != current_did_key:
             raise ValueError("signing_key does not match the current did:key")
 
@@ -360,7 +360,7 @@ class RegistryClient:
                 "signature": signature,
             },
         )
-        return await self._get_did_full(did_aw, signing_key)
+        return await self.get_mapping(did_aw, signing_key)
 
     async def register_namespace(
         self,
