@@ -306,6 +306,7 @@ func TestAwIdentityCommandSurface(t *testing.T) {
 
 	identityText := string(identityOut)
 	for _, want := range []string{
+		"create",
 		"register",
 		"show",
 		"resolve",

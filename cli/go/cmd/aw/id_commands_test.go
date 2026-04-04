@@ -145,6 +145,197 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	}
 }
 
+func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
+	t.Parallel()
+
+	var createdDIDAW string
+	var createdDIDKey string
+	var registryURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			createdDIDAW, _ = payload["did_aw"].(string)
+			createdDIDKey, _ = payload["did_key"].(string)
+			if payload["server"] != "" {
+				t.Fatalf("server=%v want empty string", payload["server"])
+			}
+			if payload["address"] != "" {
+				t.Fatalf("address=%v want empty string", payload["address"])
+			}
+			if payload["handle"] != nil {
+				t.Fatalf("handle=%v want nil", payload["handle"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/" + createdDIDAW + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          createdDIDAW,
+				"current_did_key": createdDIDKey,
+				"server":          "",
+				"address":         "",
+				"handle":          nil,
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	registryURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--json")
+	run.Env = append(os.Environ(), "AWID_REGISTRY_URL="+registryURL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id create failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "created" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["registry_status"] != "registered" {
+		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+
+	identityPath := filepath.Join(tmp, ".aw", "identity.yaml")
+	signingKeyPath := filepath.Join(tmp, ".aw", "signing.key")
+	if _, err := os.Stat(identityPath); err != nil {
+		t.Fatalf("identity.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(signingKeyPath); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("workspace.yaml should not exist, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.pub")); !os.IsNotExist(err) {
+		t.Fatalf("signing.pub should not exist, err=%v", err)
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.DID != got["did_key"] {
+		t.Fatalf("identity did=%q want %q", identity.DID, got["did_key"])
+	}
+	if identity.StableID != got["did_aw"] {
+		t.Fatalf("identity stable_id=%q want %q", identity.StableID, got["did_aw"])
+	}
+	if identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity custody=%q", identity.Custody)
+	}
+	if identity.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("identity lifetime=%q", identity.Lifetime)
+	}
+
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		t.Fatalf("LoadSigningKey: %v", err)
+	}
+	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); did != identity.DID {
+		t.Fatalf("stored signing key did=%q want %q", did, identity.DID)
+	}
+}
+
+func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       "did:key:z6MkkExisting",
+		StableID:  "did:aw:existing",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected id create to fail when identity exists:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "standalone identity already exists") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("response writer does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.Close()
+	}))
+	registryURL := server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--json")
+	run.Env = append(os.Environ(), "AWID_REGISTRY_URL="+registryURL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id create failed unexpectedly: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Warning: could not register identity at awid.ai") {
+		t.Fatalf("expected warning in output:\n%s", string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["registry_status"] != "unreachable" {
+		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+	if got["registry_error"] == "" {
+		t.Fatalf("expected registry_error in output: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+		t.Fatalf("identity.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
+	}
+}
+
 func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	t.Parallel()
 

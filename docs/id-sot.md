@@ -735,6 +735,7 @@ Notable help/usage details:
 Subcommands:
 
 - `aw id access-mode [open|contacts_only]`: get or set identity access mode
+- `aw id create --name <name>`: create a standalone permanent identity in `.aw/` and register it at awid.ai
 - `aw id delete`: delete the current ephemeral identity
 - `aw id log [address]`: show an identity log
 - `aw id reachability [private|org-visible|contacts-only|public]`: get or set permanent address reachability

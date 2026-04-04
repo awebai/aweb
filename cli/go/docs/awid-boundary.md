@@ -176,6 +176,7 @@ delegate to the awid library.
 | `network.go` | `aw directory` |
 | `agents.go` | `aw identities`, `aw id access-mode`, `aw id reachability`, `aw id delete` |
 | `contacts.go` | `aw contacts` |
+| `id_create.go` | `aw id create` |
 | `did.go` | `aw id log`, `aw id rotate-key`, `aw id register`, `aw id show`, `aw id resolve`, `aw id verify`, `aw id namespace` |
 | `heartbeat.go` | `aw heartbeat` |
 | `introspect.go` | `aw whoami` |

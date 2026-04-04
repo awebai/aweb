@@ -154,7 +154,10 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
         _enforce_timestamp_skew(req.timestamp)
-        canonical_server = require_canonical_server_origin(req.server)
+        if req.server.strip():
+            canonical_server = require_canonical_server_origin(req.server)
+        else:
+            canonical_server = ""
         if req.seq != 1 or req.prev_entry_hash is not None:
             raise ValueError("seq must be 1 and prev_entry_hash must be null on create")
         if req.authorized_by != req.did_key:

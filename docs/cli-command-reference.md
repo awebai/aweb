@@ -266,14 +266,26 @@ Flags:
 ### `identity`
 
 Subcommands:
+- `create       Create a standalone permanent identity in .aw/`
 - `access-mode  Get or set identity access mode`
 - `delete       Delete the current ephemeral identity`
 - `log          Show an identity log`
 - `reachability Get or set permanent address reachability`
+- `register     Register the current permanent identity at awid.ai`
+- `resolve      Resolve a did:aw to its current did:key`
+- `show         Show the current identity and registry status`
+- `namespace    Inspect a namespace and its registered addresses`
 - `rotate-key   Rotate the identity signing key`
+- `verify       Verify the full audit log for a did:aw`
 
 Flags:
 - `-h, --help   help for identity`
+
+### `identity create`
+
+Flags:
+- `-h, --help      help for create`
+- `--name string   Permanent identity name`
 
 ### `identity access-mode`
 
@@ -291,6 +303,26 @@ Flags:
 Flags:
 - `-h, --help   help for log`
 
+### `identity namespace`
+
+Flags:
+- `-h, --help   help for namespace`
+
+### `identity register`
+
+Flags:
+- `-h, --help   help for register`
+
+### `identity resolve`
+
+Flags:
+- `-h, --help   help for resolve`
+
+### `identity show`
+
+Flags:
+- `-h, --help   help for show`
+
 ### `identity reachability`
 
 Flags:
@@ -301,6 +333,11 @@ Flags:
 Flags:
 - `-h, --help           help for rotate-key`
 - `--self-custody   Graduate from custodial to self-custody`
+
+### `identity verify`
+
+Flags:
+- `-h, --help   help for verify`
 
 ## `mcp-config`
 

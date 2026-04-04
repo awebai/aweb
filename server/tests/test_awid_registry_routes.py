@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from aweb.awid import did_from_public_key, generate_keypair, sign_message, stable_id_from_did_key
+from aweb.awid.log import log_entry_payload, state_hash
 from aweb.awid.signing import canonical_json_bytes
 from aweb.db import get_db_infra
 from aweb.deps import get_domain_verifier
@@ -166,6 +167,67 @@ def _signed_parent_registration_headers(
         "X-AWEB-Parent-Authorization": f"DIDKey {did_key} {signature}",
         "X-AWEB-Parent-Timestamp": timestamp,
     }
+
+
+@pytest.mark.asyncio
+async def test_register_did_allows_unbound_identity(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=did_key,
+        server="",
+        address="",
+        handle=None,
+    )
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="create",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=mapping_state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/did",
+            json={
+                "did_aw": did_aw,
+                "did_key": did_key,
+                "server": "",
+                "address": "",
+                "handle": None,
+                "seq": 1,
+                "prev_entry_hash": None,
+                "state_hash": mapping_state_hash,
+                "authorized_by": did_key,
+                "timestamp": timestamp,
+                "proof": proof,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    row = await aweb_db.fetch_one(
+        "SELECT did_aw, current_did_key, server_url, address, handle FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        did_aw,
+    )
+    assert row is not None
+    assert row["did_aw"] == did_aw
+    assert row["current_did_key"] == did_key
+    assert row["server_url"] == ""
+    assert row["address"] == ""
+    assert row["handle"] is None
 
 
 @pytest.mark.asyncio

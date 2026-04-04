@@ -348,7 +348,14 @@ func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid
 }
 
 func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) error) error {
-	if !strings.EqualFold(strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")), "local") {
+	registryValue := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	if registryValue == "" {
+		return nil
+	}
+	if !strings.EqualFold(registryValue, "local") {
+		if err := setFallback(registryValue); err != nil {
+			return fmt.Errorf("invalid AWID_REGISTRY_URL: %w", err)
+		}
 		return nil
 	}
 	if err := setFallback(baseURL); err != nil {
