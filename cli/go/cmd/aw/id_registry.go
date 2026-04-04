@@ -347,7 +347,10 @@ func resolveCurrentIdentityContext(ctx context.Context, requireSigning bool) (*c
 	}
 
 	if current.Handle != "" {
-		current.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, current.Handle)
+		current.Address = selectionAddress(sel)
+		if strings.TrimSpace(current.Address) == "" {
+			current.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, current.Handle)
+		}
 	}
 	if current.Address != "" {
 		resolved, resolveErr := (&awid.ServerResolver{Client: client.Client}).Resolve(ctx, current.Address)
