@@ -125,8 +125,5 @@ func formatIDRotate(v any) string {
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
 	}
-	if strings.TrimSpace(out.Warning) != "" {
-		sb.WriteString(fmt.Sprintf("Warning:     %s\n", out.Warning))
-	}
 	return sb.String()
 }

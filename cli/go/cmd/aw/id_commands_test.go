@@ -145,7 +145,7 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	}
 }
 
-func TestAwIDRotateKeyPersistsPendingRetryAndRecovers(t *testing.T) {
+func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	t.Parallel()
 
 	oldPub, oldPriv, err := awid.GenerateKeypair()
@@ -157,27 +157,23 @@ func TestAwIDRotateKeyPersistsPendingRetryAndRecovers(t *testing.T) {
 	address := "myteam.aweb.ai/alice"
 
 	currentRegistryDID := oldDID
-	currentServerDID := oldDID
 	createEntry := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("a", 64))
 	currentHead := createEntry
 	var registryRotateCalls atomic.Int32
-	var serverRotateCalls atomic.Int32
-	serverShouldFail := atomic.Bool{}
-	serverShouldFail.Store(true)
 	var serverURL string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents/resolve/myteam.aweb.ai/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":        currentServerDID,
+				"did":        currentRegistryDID,
 				"stable_id":  stableID,
 				"address":    address,
 				"handle":     "alice",
 				"server":     serverURL,
 				"custody":    "self",
 				"lifetime":   "persistent",
-				"public_key": base64.RawStdEncoding.EncodeToString(extractPublicKeyForTest(t, currentServerDID)),
+				"public_key": base64.RawStdEncoding.EncodeToString(extractPublicKeyForTest(t, currentRegistryDID)),
 			})
 		case "/v1/did/" + stableID + "/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -204,24 +200,6 @@ func TestAwIDRotateKeyPersistsPendingRetryAndRecovers(t *testing.T) {
 			currentRegistryDID = payload["new_did_key"].(string)
 			currentHead = testDidLogEntry(t, stableID, oldPriv, currentRegistryDID, "rotate_key", &oldDID, &createEntry.EntryHash, 2, strings.Repeat("b", 64))
 			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
-		case "/v1/agents/me/rotate":
-			serverRotateCalls.Add(1)
-			if serverShouldFail.Load() {
-				http.Error(w, "server update failed", http.StatusInternalServerError)
-				return
-			}
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			currentServerDID = payload["new_did"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "rotated",
-				"old_did":        oldDID,
-				"new_did":        currentServerDID,
-				"new_public_key": payload["new_public_key"],
-				"custody":        "self",
-			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -259,42 +237,145 @@ func TestAwIDRotateKeyPersistsPendingRetryAndRecovers(t *testing.T) {
 	}
 
 	first := runJSON("id", "rotate-key", "--json")
-	if first["status"] != "pending_server_update" {
+	if first["status"] != "rotated" {
 		t.Fatalf("first status=%v", first["status"])
 	}
 	keysDir := awconfig.KeysDir(cfgPath)
-	if pending, err := loadPendingRotationState(keysDir, stableID); err != nil || pending == nil {
-		t.Fatalf("pending rotation missing: %v", err)
+	if pending, err := loadPendingRotationState(keysDir, stableID); err != nil || pending != nil {
+		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
 	cfg := loadConfigForTest(t, cfgPath)
-	if cfg.Accounts["acct"].DID != oldDID {
-		t.Fatalf("config DID changed too early: %s", cfg.Accounts["acct"].DID)
+	if cfg.Accounts["acct"].DID != currentRegistryDID {
+		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, currentRegistryDID)
 	}
 	if registryRotateCalls.Load() != 1 {
 		t.Fatalf("registry rotate calls=%d", registryRotateCalls.Load())
 	}
+	rotatedKeyPath := filepath.Join(keysDir, "rotated", strings.ReplaceAll(oldDID, ":", "-")+".key")
+	if _, err := os.Stat(rotatedKeyPath); err != nil {
+		t.Fatalf("rotated key missing: %v", err)
+	}
+}
 
-	serverShouldFail.Store(false)
-	second := runJSON("id", "rotate-key", "--json")
-	if second["status"] != "rotated" {
-		t.Fatalf("second status=%v", second["status"])
+func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if registryRotateCalls.Load() != 1 {
-		t.Fatalf("registry rotate retried unexpectedly: %d", registryRotateCalls.Load())
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	address := "myteam.aweb.ai/alice"
+	createEntry := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("a", 64))
+
+	newPub, newPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if serverRotateCalls.Load() != 2 {
-		t.Fatalf("server rotate calls=%d", serverRotateCalls.Load())
+	newDID := awid.ComputeDIDKey(newPub)
+	rotateEntry := testDidLogEntry(t, stableID, oldPriv, newDID, "rotate_key", &oldDID, &createEntry.EntryHash, 2, strings.Repeat("b", 64))
+	currentRegistryDID := newDID
+	var registryRotateCalls atomic.Int32
+	var serverURL string
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/resolve/myteam.aweb.ai/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":        currentRegistryDID,
+				"stable_id":  stableID,
+				"address":    address,
+				"handle":     "alice",
+				"server":     serverURL,
+				"custody":    "self",
+				"lifetime":   "persistent",
+				"public_key": base64.RawStdEncoding.EncodeToString(extractPublicKeyForTest(t, currentRegistryDID)),
+			})
+		case "/v1/did/" + stableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentRegistryDID,
+				"server":          serverURL,
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentRegistryDID,
+				"log_head":        didLogJSON(rotateEntry),
+			})
+		case "/v1/did/" + stableID:
+			registryRotateCalls.Add(1)
+			t.Fatalf("unexpected registry re-rotation")
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+	buildAwBinary(t, ctx, bin)
+	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
+
+	keysDir := awconfig.KeysDir(cfgPath)
+	pendingKeyPath, err := savePendingRotationKeypair(keysDir, newDID, newPub, newPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := savePendingRotationState(keysDir, &pendingRotationState{
+		StableID:   stableID,
+		OldDID:     oldDID,
+		NewDID:     newDID,
+		PendingKey: pendingKeyPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = append(os.Environ(),
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWID_REGISTRY_URL=local",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rotate-key failed: %v\n%s", err, string(out))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "rotated" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if registryRotateCalls.Load() != 0 {
+		t.Fatalf("registry rotate calls=%d", registryRotateCalls.Load())
 	}
 	if pending, err := loadPendingRotationState(keysDir, stableID); err != nil || pending != nil {
 		t.Fatalf("pending rotation not cleaned up: %v %#v", err, pending)
 	}
-	cfg = loadConfigForTest(t, cfgPath)
-	if cfg.Accounts["acct"].DID != currentServerDID {
-		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, currentServerDID)
+	cfg := loadConfigForTest(t, cfgPath)
+	if cfg.Accounts["acct"].DID != newDID {
+		t.Fatalf("config DID=%s want %s", cfg.Accounts["acct"].DID, newDID)
 	}
-	rotatedKeyPath := filepath.Join(keysDir, "rotated", strings.ReplaceAll(oldDID, ":", "-")+".key")
-	if _, err := os.Stat(rotatedKeyPath); err != nil {
-		t.Fatalf("rotated key missing: %v", err)
+	activeKeyPath := awid.SigningKeyPath(keysDir, address)
+	gotPriv, err := awid.LoadSigningKey(activeKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDID := awid.ComputeDIDKey(gotPriv.Public().(ed25519.PublicKey)); gotDID != newDID {
+		t.Fatalf("active did:key=%s want %s", gotDID, newDID)
 	}
 }
 
@@ -321,7 +402,7 @@ func TestPromotePendingRotationKeypairRecoversInterruptedPromotion(t *testing.T)
 		t.Fatalf("expected missing active public key before recovery, got %v", err)
 	}
 
-	gotKeyPath, err := promotePendingRotationKeypair(keysDir, address, pendingKeyPath)
+	gotKeyPath, err := promotePendingRotationKeypair(keysDir, address, pendingKeyPath, newDID)
 	if err != nil {
 		t.Fatal(err)
 	}

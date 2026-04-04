@@ -6,12 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
+
+type pendingRotationState struct {
+	StableID   string `yaml:"stable_id"`
+	OldDID     string `yaml:"old_did"`
+	NewDID     string `yaml:"new_did"`
+	PendingKey string `yaml:"pending_key"`
+}
 
 func keysDirForCurrentConfig() (string, error) {
 	configPath, err := defaultGlobalPath()
@@ -55,9 +61,6 @@ func savePendingRotationState(keysDir string, state *pendingRotationState) error
 	if state == nil {
 		return fmt.Errorf("nil pending rotation state")
 	}
-	if strings.TrimSpace(state.CreatedAt) == "" {
-		state.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
 	data, err := yaml.Marshal(state)
 	if err != nil {
 		return err
@@ -91,11 +94,14 @@ func cleanupPendingRotationKeypair(keyPath string) error {
 	return nil
 }
 
-func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath string) (string, error) {
+func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath string, expectedDID string) (string, error) {
 	activeKeyPath := awid.SigningKeyPath(keysDir, address)
-	if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err == nil {
+	if matches, err := activeKeyMatchesDID(activeKeyPath, expectedDID); err == nil && matches {
+		if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err != nil {
+			return "", err
+		}
 		return activeKeyPath, nil
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
@@ -108,6 +114,14 @@ func promotePendingRotationKeypair(keysDir, address string, pendingKeyPath strin
 		return "", err
 	}
 	return activeKeyPath, nil
+}
+
+func activeKeyMatchesDID(signingKeyPath, expectedDID string) (bool, error) {
+	priv, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))) == strings.TrimSpace(expectedDID), nil
 }
 
 func ensurePublicKeyMatchesPrivate(signingKeyPath string) error {

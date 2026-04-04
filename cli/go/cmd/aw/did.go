@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -17,7 +16,7 @@ import (
 var identityRotateKeyCmd = &cobra.Command{
 	Use:   "rotate-key",
 	Short: "Rotate the identity signing key",
-	Long:  "Generate a new Ed25519 keypair, sign the rotation with the old key, and update the server and local config.",
+	Long:  "Generate a new Ed25519 keypair, rotate the did:key at awid.ai, and promote the local keypair.",
 	RunE:  runDidRotateKey,
 }
 
@@ -66,17 +65,17 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	oldPriv := current.SigningKey
-	oldPub := oldPriv.Public().(ed25519.PublicKey)
-	oldDID := current.DID
 	registryURL, err := current.registryURL(ctx)
 	if err != nil {
 		return err
 	}
 
-	if pending, err := loadPendingRotationState(keysDir, current.StableID); err != nil {
+	pending, err := loadPendingRotationState(keysDir, current.StableID)
+	if err != nil {
 		return err
-	} else if pending != nil {
-		return continuePendingIDRotation(ctx, current, keysDir, oldPriv, oldPub, oldDID, pending)
+	}
+	if pending != nil {
+		return continuePendingIDRotation(ctx, current, keysDir, registryURL, pending)
 	}
 
 	newPub, newPriv, err := awid.GenerateKeypair()
@@ -88,33 +87,24 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("save pending rotation keypair: %w", err)
 	}
-	pending := &pendingRotationState{
-		StableID:    current.StableID,
-		Address:     current.Address,
-		OldDID:      oldDID,
-		NewDID:      newDID,
-		RegistryURL: registryURL,
-		PendingKey:  pendingKeyPath,
+	pending = &pendingRotationState{
+		StableID:   current.StableID,
+		OldDID:     awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey)),
+		NewDID:     newDID,
+		PendingKey: pendingKeyPath,
 	}
 	if err := savePendingRotationState(keysDir, pending); err != nil {
 		_ = cleanupPendingRotationKeypair(pendingKeyPath)
 		return err
 	}
-	if _, err := current.Registry.RotateDIDKey(ctx, registryURL, current.StableID, oldPriv, newPriv); err != nil {
-		_ = removePendingRotationState(keysDir, current.StableID)
-		_ = cleanupPendingRotationKeypair(pendingKeyPath)
-		return err
-	}
-	return continuePendingIDRotation(ctx, current, keysDir, oldPriv, oldPub, oldDID, pending)
+	return continuePendingIDRotation(ctx, current, keysDir, registryURL, pending)
 }
 
 func continuePendingIDRotation(
 	ctx context.Context,
 	current *currentIdentityContext,
 	keysDir string,
-	oldPriv ed25519.PrivateKey,
-	oldPub ed25519.PublicKey,
-	oldDID string,
+	registryURL string,
 	pending *pendingRotationState,
 ) error {
 	if current == nil || pending == nil {
@@ -124,76 +114,69 @@ func continuePendingIDRotation(
 	if err != nil {
 		return err
 	}
-	newPub := newPriv.Public().(ed25519.PublicKey)
-	newDID := awid.ComputeDIDKey(newPub)
-	if strings.TrimSpace(newDID) != strings.TrimSpace(pending.NewDID) {
+	newDID := awid.ComputeDIDKey(newPriv.Public().(ed25519.PublicKey))
+	if newDID != pending.NewDID {
 		return fmt.Errorf("pending rotation key does not match recorded new did:key")
 	}
-	if strings.TrimSpace(current.DID) == strings.TrimSpace(newDID) {
-		return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "synced", promoted)
-	}
-	if strings.TrimSpace(current.DID) != strings.TrimSpace(pending.OldDID) {
-		return fmt.Errorf("current did:key %s does not match pending rotation state (%s → %s)", current.DID, pending.OldDID, pending.NewDID)
-	}
 
-	resp, err := current.Client.RotateKey(ctx, &awid.RotateKeyRequest{
-		NewDID:       newDID,
-		NewPublicKey: newPub,
-		Custody:      awid.CustodySelf,
-	})
+	resolution, err := current.Registry.ResolveKeyAt(ctx, registryURL, pending.StableID)
 	if err != nil {
-		warning := fmt.Sprintf("registry rotation succeeded, but the server update failed: %v. Retry `aw id rotate-key` to finish syncing the server.", err)
-		fmt.Fprintln(os.Stderr, "Warning:", warning)
-		printOutput(idRotateOutput{
-			Status:       "pending_server_update",
-			RegistryURL:  pending.RegistryURL,
-			OldDID:       pending.OldDID,
-			NewDID:       pending.NewDID,
-			Warning:      warning,
-			PendingRetry: true,
-		}, formatIDRotate)
-		return nil
+		return err
 	}
-	if strings.TrimSpace(resp.NewDID) != newDID {
-		return fmt.Errorf("server rotation returned unexpected did:key %s; retry `aw id rotate-key` to finish syncing", resp.NewDID)
+	switch resolution.CurrentDIDKey {
+	case pending.OldDID:
+		oldDID := awid.ComputeDIDKey(current.SigningKey.Public().(ed25519.PublicKey))
+		if oldDID != pending.OldDID {
+			return fmt.Errorf("current signing key does not match pending rotation state (%s → %s)", pending.OldDID, pending.NewDID)
+		}
+		if _, err := current.Registry.RotateDIDKey(ctx, registryURL, pending.StableID, current.SigningKey, newPriv); err != nil {
+			return err
+		}
+	case pending.NewDID:
+		// Registry rotation already succeeded; finish local promotion.
+	default:
+		return fmt.Errorf("registry did:key %s does not match pending rotation state (%s → %s)", resolution.CurrentDIDKey, pending.OldDID, pending.NewDID)
 	}
-	return finalizeIDRotation(current, keysDir, oldPriv, oldPub, oldDID, pending, "rotated", promoted)
+	return finalizeIDRotation(current, keysDir, registryURL, pending, promoted)
 }
 
 func finalizeIDRotation(
 	current *currentIdentityContext,
 	keysDir string,
-	oldPriv ed25519.PrivateKey,
-	oldPub ed25519.PublicKey,
-	oldDID string,
+	registryURL string,
 	pending *pendingRotationState,
-	status string,
 	promoted bool,
 ) error {
 	keyPath := awid.SigningKeyPath(keysDir, current.Address)
 	if !promoted {
+		oldPriv := current.SigningKey
+		oldDID := awid.ComputeDIDKey(oldPriv.Public().(ed25519.PublicKey))
+		if oldDID != pending.OldDID {
+			return fmt.Errorf("current signing key does not match pending rotation state (%s → %s)", pending.OldDID, pending.NewDID)
+		}
+		oldPub := oldPriv.Public().(ed25519.PublicKey)
 		if err := awid.ArchiveKey(keysDir, oldDID, oldPub, oldPriv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to archive old key: %v\n", err)
 		}
 		var err error
-		keyPath, err = promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey)
+		keyPath, err = promotePendingRotationKeypair(keysDir, current.Address, pending.PendingKey, pending.NewDID)
 		if err != nil {
-			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
+			return fmt.Errorf("activate rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 		}
 	} else if err := ensurePublicKeyMatchesPrivate(keyPath); err != nil {
-		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish syncing", err)
+		return fmt.Errorf("repair rotated keypair: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
 	if err := updateAccountIdentity(current.Selection.AccountName, pending.NewDID, awid.CustodySelf, keyPath); err != nil {
-		return fmt.Errorf("update account identity: %w. Retry `aw id rotate-key` to finish syncing", err)
+		return fmt.Errorf("update account identity: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
 	if err := removePendingRotationState(keysDir, current.StableID); err != nil {
-		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish syncing", err)
+		return fmt.Errorf("clear pending rotation state: %w. Retry `aw id rotate-key` to finish local promotion", err)
 	}
 
 	printOutput(idRotateOutput{
-		Status:      status,
-		RegistryURL: pending.RegistryURL,
-		OldDID:      oldDID,
+		Status:      "rotated",
+		RegistryURL: registryURL,
+		OldDID:      pending.OldDID,
 		NewDID:      pending.NewDID,
 	}, formatIDRotate)
 	return nil
