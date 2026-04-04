@@ -23,7 +23,6 @@ type guidedOnboardingRequest struct {
 	PromptOut          io.Writer
 	ServerURL          string
 	ServerName         string
-	AccountName        string
 	ProjectSlug        string
 	NamespaceSlug      string
 	Alias              string
@@ -31,11 +30,7 @@ type guidedOnboardingRequest struct {
 	Reachability       string
 	HumanName          string
 	AgentType          string
-	SaveConfig         bool
-	SetDefault         bool
-	WriteContext       bool
 	Role               string
-	Permanent          bool
 	AuthToken          string
 	AskPostCreateSetup bool
 }
@@ -65,28 +60,24 @@ func executeGuidedExistingProjectInit(req guidedOnboardingRequest) (*guidedOnboa
 		return nil, err
 	}
 
-	opts, err := collectInitOptionsWithInput(flowProjectKey, initCollectionInput{
+	opts, err := collectInitOptionsWithInput(flowProjectKey, guidedOnboardingInitInput(req, initCollectionInput{
 		WorkingDir:   req.WorkingDir,
 		Interactive:  true,
 		PromptIn:     req.PromptIn,
 		PromptOut:    req.PromptOut,
 		ServerURL:    serverURL,
 		ServerName:   req.ServerName,
-		AccountName:  req.AccountName,
 		Alias:        req.Alias,
 		Name:         req.Name,
 		Reachability: req.Reachability,
 		HumanName:    req.HumanName,
 		AgentType:    req.AgentType,
-		SaveConfig:   req.SaveConfig,
-		SetDefault:   req.SetDefault,
-		WriteContext: req.WriteContext,
 		Role:         req.Role,
 		Permanent:    permanent,
 		PromptRole:   true,
 		PromptName:   true,
 		AuthToken:    strings.TrimSpace(req.AuthToken),
-	})
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -114,14 +105,13 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 		return nil, err
 	}
 
-	opts, err := collectInitOptionsWithInput(flowHeadless, initCollectionInput{
+	opts, err := collectInitOptionsWithInput(flowHeadless, guidedOnboardingInitInput(req, initCollectionInput{
 		WorkingDir:       req.WorkingDir,
 		Interactive:      true,
 		PromptIn:         req.PromptIn,
 		PromptOut:        req.PromptOut,
 		ServerURL:        serverURL,
 		ServerName:       req.ServerName,
-		AccountName:      req.AccountName,
 		ProjectSlug:      sanitizeSlug(projectSlug),
 		NamespaceSlug:    req.NamespaceSlug,
 		Alias:            "",
@@ -129,15 +119,12 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 		Reachability:     req.Reachability,
 		HumanName:        req.HumanName,
 		AgentType:        req.AgentType,
-		SaveConfig:       req.SaveConfig,
-		SetDefault:       req.SetDefault,
-		WriteContext:     req.WriteContext,
 		Role:             req.Role,
 		Permanent:        permanent,
 		PromptName:       true,
 		DeferAliasPrompt: true,
 		DeferRolePrompt:  true,
-	})
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +160,16 @@ func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingR
 	}
 
 	return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else."}, nil
+}
+
+func guidedOnboardingInitInput(req guidedOnboardingRequest, input initCollectionInput) initCollectionInput {
+	input.WorkingDir = req.WorkingDir
+	input.PromptIn = req.PromptIn
+	input.PromptOut = req.PromptOut
+	input.SaveConfig = false
+	input.SetDefault = false
+	input.WriteContext = true
+	return input
 }
 
 func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Writer) (bool, error) {

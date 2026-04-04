@@ -468,8 +468,6 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 			ServerName:         serverFlag,
 			HumanName:          resolveHumanName(),
 			AgentType:          resolveAgentType(),
-			SaveConfig:         true,
-			WriteContext:       true,
 			ProjectSlug:        sanitizeSlug(filepath.Base(workingDir)),
 			AuthToken:          strings.TrimSpace(os.Getenv("AWEB_API_KEY")),
 			AskPostCreateSetup: true,

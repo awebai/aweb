@@ -619,6 +619,15 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	if capturedOpts.WorkspaceRole != "developer" {
 		t.Fatalf("expected prompted role to be used, got %+v", capturedOpts)
 	}
+	if capturedOpts.SaveConfig {
+		t.Fatalf("expected guided onboarding to stay local-only, got %+v", capturedOpts)
+	}
+	if capturedOpts.SetDefault {
+		t.Fatalf("expected guided onboarding not to touch global defaults, got %+v", capturedOpts)
+	}
+	if !capturedOpts.WriteContext {
+		t.Fatalf("expected guided onboarding to keep local workspace context, got %+v", capturedOpts)
+	}
 	if resolveCalls != 1 {
 		t.Fatalf("expected client resolution after onboarding, got %d calls", resolveCalls)
 	}
@@ -758,6 +767,15 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	}
 	if !capturedOpts.PromptRoleAfterBootstrap {
 		t.Fatalf("expected post-bootstrap role prompt to be enabled, got %+v", capturedOpts)
+	}
+	if capturedOpts.SaveConfig {
+		t.Fatalf("expected guided onboarding to stay local-only, got %+v", capturedOpts)
+	}
+	if capturedOpts.SetDefault {
+		t.Fatalf("expected guided onboarding not to touch global defaults, got %+v", capturedOpts)
+	}
+	if !capturedOpts.WriteContext {
+		t.Fatalf("expected guided onboarding to keep local workspace context, got %+v", capturedOpts)
 	}
 	if strings.TrimSpace(capturedLoopOpts.InitialPrompt) != "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else." {
 		t.Fatalf("expected onboarding guide prompt, got %q", capturedLoopOpts.InitialPrompt)

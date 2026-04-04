@@ -210,7 +210,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				PromptOut:     os.Stderr,
 				ServerURL:     initServerURL,
 				ServerName:    serverFlag,
-				AccountName:   strings.TrimSpace(accountFlag),
 				ProjectSlug:   firstNonEmpty(resolveProjectSlug(), sanitizeSlug(filepath.Base(wd))),
 				NamespaceSlug: resolveExplicitNamespaceSlug(),
 				Alias: func() string {
@@ -223,11 +222,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				Reachability:       strings.TrimSpace(initReachability),
 				HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 				AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-				SaveConfig:         initSaveConfig,
-				SetDefault:         initSetDefault,
-				WriteContext:       initWriteContext,
 				Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-				Permanent:          initPermanent,
 				AskPostCreateSetup: true,
 			})
 			if err != nil {
