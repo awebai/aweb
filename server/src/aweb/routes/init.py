@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from aweb.address_reachability import normalize_address_reachability
 from aweb.aweb_introspection import get_identity_from_auth
-from aweb.awid import CachedRegistryClient, RegistryClient
+from aweb.awid import RegistryClient
 from aweb.auth import validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, BootstrapIdentityResult, bootstrap_identity
 from aweb.coordination.project_registry import ensure_server_project_row
@@ -49,18 +49,11 @@ def _registry_client_for_request(request: Request) -> RegistryClient:
         return cached_client
 
     registry_url = get_awid_registry_url()
-    redis = getattr(request.app.state, "redis", None)
     if is_local_awid_registry_url(registry_url):
-        client_class = CachedRegistryClient if redis is not None else RegistryClient
-        client_kwargs = {
-            "registry_url": registry_url,
-            "transport": ASGITransport(app=request.app),
-        }
-        if redis is not None:
-            return client_class(redis_client=redis, **client_kwargs)
-        return client_class(**client_kwargs)
-    if redis is not None:
-        return CachedRegistryClient(registry_url=registry_url, redis_client=redis)
+        return RegistryClient(
+            registry_url=registry_url,
+            transport=ASGITransport(app=request.app),
+        )
     return RegistryClient(registry_url=registry_url)
 
 

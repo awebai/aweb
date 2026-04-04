@@ -277,6 +277,48 @@ async def test_get_namespace_uses_discovered_registry_for_domain():
 
 
 @pytest.mark.asyncio
+async def test_registry_url_for_domain_uses_explicit_registry_url_by_default(monkeypatch):
+    async def _no_override_lookup(domain: str):
+        assert domain == "example.com"
+        return None
+
+    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _no_override_lookup)
+
+    client = RegistryClient(registry_url="https://registry.example")
+
+    assert await client._registry_url_for_domain("example.com") == "https://registry.example"
+
+
+@pytest.mark.asyncio
+async def test_registry_url_for_domain_allows_dns_override_of_explicit_default(monkeypatch):
+    async def _override_lookup(domain: str):
+        assert domain == "example.com"
+        return "https://override.example"
+
+    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _override_lookup)
+
+    client = RegistryClient(registry_url="https://registry.example")
+
+    assert await client._registry_url_for_domain("example.com") == "https://override.example"
+
+
+@pytest.mark.asyncio
+async def test_registry_url_for_domain_falls_back_to_configured_registry_when_dns_override_lookup_fails(
+    monkeypatch,
+):
+    async def _failing_override_lookup(_domain: str):
+        from aweb.dns_verify import DnsVerificationError
+
+        raise DnsVerificationError("dns unavailable")
+
+    monkeypatch.setattr("aweb.dns_verify.discover_registry_override", _failing_override_lookup)
+
+    client = RegistryClient(registry_url="https://registry.example")
+
+    assert await client._registry_url_for_domain("example.com") == "https://registry.example"
+
+
+@pytest.mark.asyncio
 async def test_register_namespace_supports_parent_authorized_subdomains():
     parent_signing_key, parent_public_key = generate_keypair()
     parent_controller_did = did_from_public_key(parent_public_key)
@@ -1021,6 +1063,152 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_register_did_invalidates_stale_key_cache_on_conflict():
+    stale_signing_key, stale_public_key = generate_keypair()
+    stale_did_key = did_from_public_key(stale_public_key)
+    current_signing_key, current_public_key = generate_keypair()
+    current_did_key = did_from_public_key(current_public_key)
+    did_aw = stable_id_from_did_key(current_did_key)
+    redis = _FakeRedis()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/v1/did":
+            return httpx.Response(409, json={"detail": "did_aw already registered"})
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": current_did_key,
+                    "log_head": None,
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(handler),
+    )
+    await client._write_cache_entry(
+        client._did_key_cache_key(did_aw),
+        value=registry_module.KeyResolution(did_aw=did_aw, current_did_key=stale_did_key, log_head=None),
+        ttl_seconds=300,
+        encode=registry_module._key_resolution_to_json,
+    )
+
+    with pytest.raises(AlreadyRegisteredError) as exc_info:
+        await client.register_did(current_did_key, current_signing_key, "https://registry.example")
+
+    assert exc_info.value.existing_did_key == current_did_key
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_namespace_cache_on_register():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    redis = _FakeRedis()
+    current_controller = {"value": "did:key:zstale"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/namespaces/example.com":
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "example.com",
+                    "controller_did": current_controller["value"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "POST" and request.url.path == "/v1/namespaces":
+            current_controller["value"] = controller_did
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "example.com",
+                    "controller_did": controller_did,
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(handler),
+    )
+
+    stale = await client.get_namespace("example.com")
+    created = await client.register_namespace("example.com", controller_did, controller_signing_key)
+    refreshed = await client.get_namespace("example.com")
+
+    assert stale is not None
+    assert stale.controller_did == "did:key:zstale"
+    assert created.controller_did == controller_did
+    assert refreshed is not None
+    assert refreshed.controller_did == controller_did
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_namespace_cache_on_rotate():
+    stale_signing_key, stale_public_key = generate_keypair()
+    stale_did = did_from_public_key(stale_public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did = did_from_public_key(new_public_key)
+    current_controller = {"value": stale_did}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/namespaces/example.com":
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "example.com",
+                    "controller_did": current_controller["value"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "PUT" and request.url.path == "/v1/namespaces/example.com":
+            current_controller["value"] = new_did
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "example.com",
+                    "controller_did": new_did,
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    stale = await client.get_namespace("example.com")
+    rotated = await client.rotate_namespace_controller("example.com", new_did, new_signing_key)
+    refreshed = await client.get_namespace("example.com")
+
+    assert stale is not None
+    assert stale.controller_did == stale_did
+    assert rotated.controller_did == new_did
+    assert refreshed is not None
+    assert refreshed.controller_did == new_did
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_invalidates_did_cache_before_update_server():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
@@ -1160,6 +1348,182 @@ async def test_cached_registry_client_invalidates_did_cache_before_rotate_key():
     mapping = await client.rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
 
     assert mapping.current_did_key == new_did_key
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_from_cached_address():
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    deleted = {"value": False}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            return httpx.Response(404, json={"detail": "Address not found"})
+        if request.method == "DELETE" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            deleted["value"] = True
+            return httpx.Response(200, json={"status": "deleted"})
+        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/addresses":
+            addresses = []
+            if not deleted["value"]:
+                addresses.append(
+                    {
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": "support",
+                        "did_aw": subject_did_aw,
+                        "current_did_key": subject_did_key,
+                        "reachability": "public",
+                        "created_at": "2026-04-03T00:00:00Z",
+                    }
+                )
+            return httpx.Response(200, json={"addresses": addresses})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client._write_cache_entry(
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai"),
+        value=registry_module.Address(
+            address_id="addr-1",
+            domain="acme.com",
+            name="support",
+            did_aw=subject_did_aw,
+            current_did_key=subject_did_key,
+            reachability="public",
+            created_at="2026-04-03T00:00:00Z",
+        ),
+        ttl_seconds=300,
+        encode=registry_module._address_to_json,
+    )
+    await client._write_cache_entry(
+        client._did_addresses_cache_key(subject_did_aw),
+        value=[
+            registry_module.Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="support",
+                did_aw=subject_did_aw,
+                current_did_key=subject_did_key,
+                reachability="public",
+                created_at="2026-04-03T00:00:00Z",
+            )
+        ],
+        ttl_seconds=300,
+        encode=lambda value: [registry_module._address_to_json(item) for item in value],
+    )
+
+    await client.delete_address("acme.com", "support", controller_signing_key)
+    refreshed = await client.list_did_addresses(subject_did_aw)
+
+    assert refreshed == []
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidates_reassign_address_caches():
+    controller_signing_key, controller_public_key = generate_keypair()
+    controller_did = did_from_public_key(controller_public_key)
+    old_subject_signing_key, old_subject_public_key = generate_keypair()
+    old_did_key = did_from_public_key(old_subject_public_key)
+    old_did_aw = stable_id_from_did_key(old_did_key)
+    new_subject_signing_key, new_subject_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_subject_public_key)
+    new_did_aw = stable_id_from_did_key(new_did_key)
+    current_did_aw = {"value": old_did_aw}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses/support":
+            did_aw = current_did_aw["value"]
+            did_key = new_did_key if did_aw == new_did_aw else old_did_key
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "support",
+                    "did_aw": did_aw,
+                    "current_did_key": did_key,
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.method == "GET" and request.url.path == f"/v1/did/{new_did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": new_did_aw,
+                    "current_did_key": new_did_key,
+                    "log_head": None,
+                },
+            )
+        if request.method == "GET" and request.url.path == f"/v1/did/{old_did_aw}/addresses":
+            addresses = []
+            if current_did_aw["value"] == old_did_aw:
+                addresses.append(
+                    {
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": "support",
+                        "did_aw": old_did_aw,
+                        "current_did_key": old_did_key,
+                        "reachability": "public",
+                        "created_at": "2026-04-03T00:00:00Z",
+                    }
+                )
+            return httpx.Response(200, json={"addresses": addresses})
+        if request.method == "GET" and request.url.path == f"/v1/did/{new_did_aw}/addresses":
+            addresses = []
+            if current_did_aw["value"] == new_did_aw:
+                addresses.append(
+                    {
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": "support",
+                        "did_aw": new_did_aw,
+                        "current_did_key": new_did_key,
+                        "reachability": "public",
+                        "created_at": "2026-04-03T00:00:00Z",
+                    }
+                )
+            return httpx.Response(200, json={"addresses": addresses})
+        if request.method == "POST" and request.url.path == "/v1/namespaces/acme.com/addresses/support/reassign":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["current_did_key"] == new_did_key
+            current_did_aw["value"] = new_did_aw
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "support",
+                    "did_aw": new_did_aw,
+                    "current_did_key": new_did_key,
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    before_old = await client.list_did_addresses(old_did_aw)
+    reassigned = await client.reassign_address("acme.com", "support", new_did_aw, controller_signing_key)
+    after_old = await client.list_did_addresses(old_did_aw)
+    after_new = await client.list_did_addresses(new_did_aw)
+
+    assert [item.did_aw for item in before_old] == [old_did_aw]
+    assert reassigned.did_aw == new_did_aw
+    assert after_old == []
+    assert [item.did_aw for item in after_new] == [new_did_aw]
 
 
 @pytest.mark.asyncio
