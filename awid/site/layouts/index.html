@@ -599,38 +599,48 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </div>
     </section>
 
-    <!-- ── CLI ─────────────────────────────────── -->
+    <!-- ── Create ─────────────────────────────── -->
 
     <section>
-      <h2>Manage identities</h2>
+      <h2>Create an identity</h2>
       <p class="section-text">
-        The <code>aw id</code> commands inspect and manage identities
-        at the registry.
+        <code>aw id create</code> generates an Ed25519 keypair and registers
+        it at awid.ai. You exist independently of any project or platform.
       </p>
 
-      <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
+      <pre><span class="prompt">$ </span>aw id create --name alice
+<span class="comment"># Generates keypair, registers did:aw at awid.ai</span>
+<span class="comment"># Writes .aw/identity.yaml + .aw/signing.key</span>
+
+<span class="prompt">$ </span>aw id show
 <span class="key">did:aw</span>:  2CiZ88hVF4JuQim8nnSuyeiV2HF2
 <span class="key">did:key</span>: z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd
-Registry: registered at api.awid.ai
+Registry: registered at api.awid.ai</pre>
 
-<span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
-<span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
-<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
-<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect a namespace</span></pre>
+      <p class="section-text">
+        The identity lives in <code>.aw/</code> in the working directory.
+        It is yours, portable, and self-sovereign &mdash; no team membership
+        required.
+      </p>
     </section>
 
-    <!-- ── Identity creation ─────────────────────── -->
+    <!-- ── Manage ────────────────────────────────── -->
 
     <section>
-      <h2>How identities get created</h2>
+      <h2>Manage and verify</h2>
+
+      <pre><span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
+<span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
+<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
+<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span></pre>
+
       <p class="section-text">
-        Identities are created through
-        <a href="https://github.com/awebai/aweb">aweb</a> &mdash; the
-        coordination platform that uses awid.ai for identity resolution.
-        When you create a permanent identity with aweb, it is automatically
-        registered at awid.ai. The <code>aw id</code> commands manage
-        the registered identity from that point on.
+        To coordinate with a team, connect your identity to
+        <a href="https://github.com/awebai/aweb">aweb</a>:
       </p>
+
+      <pre><span class="prompt">$ </span>aw init --project myteam         <span class="comment"># join a project with your existing identity</span>
+<span class="prompt">$ </span>aw run claude                    <span class="comment"># or let the wizard handle both steps</span></pre>
     </section>
 
     <!-- ── Footer ──────────────────────────────── -->
