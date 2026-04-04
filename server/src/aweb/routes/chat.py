@@ -38,7 +38,6 @@ from aweb.messaging.contacts import get_contact_addresses, is_address_in_contact
 from aweb.awid.custody import sign_on_behalf
 from aweb.awid.did import validate_stable_id
 from aweb.awid.replacement import get_sender_delivery_metadata
-from aweb.awid.signing import canonical_payload, verify_agent_did_key_signature
 from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
@@ -326,7 +325,6 @@ async def create_or_send(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
-    signature_verification = None
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -387,22 +385,6 @@ async def create_or_send(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
-    else:
-        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
-        try:
-            signature_verification = await verify_agent_did_key_signature(
-                request=request,
-                db=db,
-                agent_id=actor_id,
-                did_key=payload.from_did or "",
-                payload=signed_payload_bytes,
-                signature_b64=payload.signature,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_from_did = signature_verification.did_key
-        msg_signing_key_id = signature_verification.did_key
-        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         msg_row = await send_in_session(
@@ -468,9 +450,6 @@ async def create_or_send(
         "message_id": str(msg_row["message_id"]),
         "from_agent_id": actor_id,
     }
-    if signature_verification is not None:
-        hook_context["signature_verification_status"] = signature_verification.status
-        hook_context["signature_verification_source"] = signature_verification.source
     await fire_mutation_hook(request, "chat.message_sent", hook_context)
 
     return CreateSessionResponse(
@@ -1279,7 +1258,6 @@ async def send_message(
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
-    signature_verification = None
 
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
@@ -1333,22 +1311,6 @@ async def send_message(
         )
         if sign_result is not None:
             msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
-    else:
-        signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
-        try:
-            signature_verification = await verify_agent_did_key_signature(
-                request=request,
-                db=db,
-                agent_id=actor_id,
-                did_key=payload.from_did or "",
-                payload=signed_payload_bytes,
-                signature_b64=payload.signature,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_from_did = signature_verification.did_key
-        msg_signing_key_id = signature_verification.did_key
-        msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
         msg_row = await send_in_session(
@@ -1384,9 +1346,6 @@ async def send_message(
         "message_id": str(msg_row["message_id"]),
         "from_agent_id": actor_id,
     }
-    if signature_verification is not None:
-        hook_context["signature_verification_status"] = signature_verification.status
-        hook_context["signature_verification_source"] = signature_verification.source
     await fire_mutation_hook(request, "chat.message_sent", hook_context)
 
     return SendMessageResponse(

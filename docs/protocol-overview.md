@@ -64,15 +64,6 @@ permanent identities, potentially with reachability controls such as
 
 - Message signing uses Ed25519 keys encoded as `did:key`
 - Permanent identities additionally expose stable `did:aw`
-- When a self-custodial sender has a stable `did:aw`, server-side ingress
-  verification resolves the sender's current `did:key` from `awid.ai` before
-  accepting the signature
-- `agents.did` and `agents.public_key` are cache/display fields for this path,
-  not the primary source of truth; they are used only when registry lookup is
-  unavailable or no stable identity exists
-- That fallback is intentionally `OK_DEGRADED`: if a stable identity rotated
-  directly at `awid.ai` and the registry is unreachable, the server may
-  temporarily accept the last cached local key until connectivity returns
 - Messages may carry:
   - `signature`
   - `signing_key_id`
