@@ -216,8 +216,23 @@ async def test_register_did_allows_unbound_identity(aweb_cloud_db):
                 "proof": proof,
             },
         )
+        full_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        full_path = f"/v1/did/{did_aw}/full"
+        full_signature = sign_message(
+            signing_key,
+            f"{full_timestamp}\nGET\n{full_path}".encode("utf-8"),
+        )
+        full_response = await client.get(
+            full_path,
+            headers={
+                "Authorization": f"DIDKey {did_key} {full_signature}",
+                "X-AWEB-Timestamp": full_timestamp,
+            },
+        )
 
     assert response.status_code == 200, response.text
+    assert full_response.status_code == 200, full_response.text
+    assert full_response.json()["server"] == ""
     row = await aweb_db.fetch_one(
         "SELECT did_aw, current_did_key, server_url, address, handle FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
         did_aw,

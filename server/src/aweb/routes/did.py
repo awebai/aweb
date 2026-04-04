@@ -30,7 +30,7 @@ _AUTH_TIMESTAMP_SKEW_SECONDS = 300
 class DidRegisterRequest(BaseModel):
     did_aw: str = Field(..., max_length=256)
     did_key: str = Field(..., max_length=256)
-    server: str = Field(..., max_length=512)
+    server: str | None = Field(default=None, max_length=512)
     address: str = Field(..., max_length=256)
     handle: str | None = Field(default=None, max_length=256)
     seq: int = Field(default=1, ge=1)
@@ -154,7 +154,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
         _enforce_timestamp_skew(req.timestamp)
-        if req.server.strip():
+        if (req.server or "").strip():
             canonical_server = require_canonical_server_origin(req.server)
         else:
             canonical_server = ""
@@ -430,10 +430,14 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
 
-    try:
-        server_url = require_canonical_server_origin(row["server_url"])
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    raw_server_url = (row["server_url"] or "").strip()
+    if raw_server_url:
+        try:
+            server_url = require_canonical_server_origin(raw_server_url)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        server_url = ""
 
     return DidFullResponse(
         did_aw=row["did_aw"],
