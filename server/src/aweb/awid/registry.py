@@ -214,13 +214,18 @@ class RegistryClient:
             )
         )
 
-    async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+    async def register_did(
+        self,
+        did_key: str,
+        signing_key: bytes,
+        server_url: str | None = None,
+    ) -> DIDMapping:
         signer_did = _did_key_from_signing_key(signing_key)
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
         did_aw = stable_id_from_did_key(did_key)
-        canonical_server = canonical_server_origin(server_url)
+        canonical_server = "" if server_url is None or not server_url.strip() else canonical_server_origin(server_url)
         timestamp = _utc_timestamp()
         mapping_state_hash = state_hash(
             did_aw=did_aw,
@@ -775,7 +780,12 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: [_address_from_json(item) for item in payload],
         )
 
-    async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+    async def register_did(
+        self,
+        did_key: str,
+        signing_key: bytes,
+        server_url: str | None = None,
+    ) -> DIDMapping:
         did_aw = stable_id_from_did_key(did_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().register_did(did_key, signing_key, server_url)

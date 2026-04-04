@@ -30,8 +30,8 @@ _AUTH_TIMESTAMP_SKEW_SECONDS = 300
 class DidRegisterRequest(BaseModel):
     did_aw: str = Field(..., max_length=256)
     did_key: str = Field(..., max_length=256)
-    server: str = Field(..., max_length=512)
-    address: str = Field(..., max_length=256)
+    server: str | None = Field(default=None, max_length=512)
+    address: str | None = Field(default=None, max_length=256)
     handle: str | None = Field(default=None, max_length=256)
     seq: int = Field(default=1, ge=1)
     prev_entry_hash: str | None = Field(default=None, max_length=128)
@@ -149,12 +149,27 @@ def _request_timestamp_header(request: Request) -> str:
     return value
 
 
+def _normalize_mapping_server(server: str | None) -> str:
+    if server is None:
+        return ""
+    if not server.strip():
+        return ""
+    return require_canonical_server_origin(server)
+
+
+def _normalize_mapping_address(address: str | None) -> str:
+    if address is None:
+        return ""
+    return address.strip()
+
+
 @router.post("", dependencies=[Depends(rate_limit_dep("did_register"))])
 async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
         _enforce_timestamp_skew(req.timestamp)
-        canonical_server = require_canonical_server_origin(req.server)
+        canonical_server = _normalize_mapping_server(req.server)
+        address = _normalize_mapping_address(req.address)
         if req.seq != 1 or req.prev_entry_hash is not None:
             raise ValueError("seq must be 1 and prev_entry_hash must be null on create")
         if req.authorized_by != req.did_key:
@@ -182,7 +197,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             did_aw=req.did_aw,
             current_did_key=req.did_key,
             server=canonical_server,
-            address=req.address,
+            address=address,
             handle=req.handle,
         )
         if state_hash != req.state_hash:
@@ -215,7 +230,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             req.did_aw,
             req.did_key,
             canonical_server,
-            req.address,
+            address,
             req.handle,
             created_at,
             updated_at,
@@ -542,10 +557,18 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
 
         try:
             if req.operation == "update_server":
-                assert req.server is not None
+                if req.server is None or not req.server.strip():
+                    raise HTTPException(status_code=400, detail="server is required for update_server")
                 server_url = require_canonical_server_origin(req.server)
             else:
-                server_url = require_canonical_server_origin(row["server_url"])
+                stored_server = row["server_url"]
+                server_url = (
+                    require_canonical_server_origin(stored_server)
+                    if stored_server and stored_server.strip()
+                    else ""
+                )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
