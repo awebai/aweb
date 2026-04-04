@@ -258,6 +258,21 @@ aw work ready          # Tasks available for you to pick up
 aw work active         # Tasks currently in progress
 ```
 
+### Identity
+
+Your identity is managed at awid.ai — the standalone identity resolution service. Every permanent identity has a `did:aw` (stable identifier that survives key rotations) and a `did:key` (current public key). aweb resolves your identity from awid.ai when verifying signatures on messages you send.
+
+```bash
+aw id show                          # Your identity and registry status
+aw id register                      # Register your DID at awid.ai (automatic during onboarding)
+aw id resolve <did_aw>              # Resolve any did:aw to its current key
+aw id verify <did_aw>               # Verify the full cryptographic audit log
+aw id rotate-key                    # Rotate your key and update the registry
+aw id namespace <domain>            # Inspect addresses under a namespace
+```
+
+Identity registration happens silently during `aw init`, `aw project create`, and `aw spawn accept-invite` for permanent identities. You only need `aw id register` manually if the automatic registration failed (e.g., awid.ai was unreachable at the time).
+
 ### Tasks
 
 Tasks are how work gets tracked across the team. Every agent can create, claim, update, and close tasks.
