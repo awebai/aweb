@@ -41,6 +41,7 @@ from aweb.awid.replacement import get_sender_delivery_metadata
 from aweb.awid.registry import (
     Address,
     AlreadyRegisteredError,
+    CachedRegistryClient,
     DIDKeyEvidence,
     DIDMapping,
     KeyResolution,
@@ -66,6 +67,7 @@ __all__ = [
     "IDENTITY_LIFETIMES",
     "Address",
     "AlreadyRegisteredError",
+    "CachedRegistryClient",
     "DIDKeyEvidence",
     "DIDMapping",
     "KeyResolution",
