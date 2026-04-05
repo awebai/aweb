@@ -10,6 +10,7 @@ from aweb.db import get_db_infra
 from aweb.ratelimit import rate_limit_dep
 from aweb.awid.did import (
     public_key_from_did,
+    stable_id_from_did_key,
     stable_id_from_public_key,
     validate_stable_id,
 )
@@ -441,6 +442,8 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     )
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    if did_key != row["current_did_key"] and stable_id_from_did_key(did_key) != did_aw:
+        raise HTTPException(status_code=403, detail="forbidden")
 
     raw_server_url = (row["server_url"] or "").strip()
     if raw_server_url:

@@ -267,8 +267,9 @@ def create_app(
             redis: Redis = request.app.state.redis
             await redis.ping()
             checks["redis"] = "ok"
-        except Exception as e:
-            checks["redis"] = f"error: {e}"
+        except Exception:
+            logger.error("Health check failed for Redis", exc_info=True)
+            checks["redis"] = "error"
             healthy = False
 
         # Check Database
@@ -277,8 +278,9 @@ def create_app(
             db = db_infra.get_manager("server")
             await db.fetch_value("SELECT 1")
             checks["database"] = "ok"
-        except Exception as e:
-            checks["database"] = f"error: {e}"
+        except Exception:
+            logger.error("Health check failed for database", exc_info=True)
+            checks["database"] = "error"
             healthy = False
 
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}

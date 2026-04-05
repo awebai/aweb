@@ -246,6 +246,125 @@ async def test_register_did_allows_unbound_identity(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_register_did_accepts_empty_handle_with_null_equivalent_state_hash(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=did_key,
+        server="",
+        address="",
+        handle=None,
+    )
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="create",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=mapping_state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/did",
+            json={
+                "did_aw": did_aw,
+                "did_key": did_key,
+                "server": "",
+                "address": "",
+                "handle": "",
+                "seq": 1,
+                "prev_entry_hash": None,
+                "state_hash": mapping_state_hash,
+                "authorized_by": did_key,
+                "timestamp": timestamp,
+                "proof": proof,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_get_full_requires_current_or_owning_did_key(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=did_key,
+        server="https://app.aweb.ai",
+        address="acme.com/alice",
+        handle="alice",
+    )
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="create",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=mapping_state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+    attacker_signing_key, attacker_public_key = generate_keypair()
+    attacker_did_key = did_from_public_key(attacker_public_key)
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        create_response = await client.post(
+            "/v1/did",
+            json={
+                "did_aw": did_aw,
+                "did_key": did_key,
+                "server": "https://app.aweb.ai",
+                "address": "acme.com/alice",
+                "handle": "alice",
+                "seq": 1,
+                "prev_entry_hash": None,
+                "state_hash": mapping_state_hash,
+                "authorized_by": did_key,
+                "timestamp": timestamp,
+                "proof": proof,
+            },
+        )
+        full_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        full_path = f"/v1/did/{did_aw}/full"
+        full_signature = sign_message(
+            attacker_signing_key,
+            f"{full_timestamp}\nGET\n{full_path}".encode("utf-8"),
+        )
+        full_response = await client.get(
+            full_path,
+            headers={
+                "Authorization": f"DIDKey {attacker_did_key} {full_signature}",
+                "X-AWEB-Timestamp": full_timestamp,
+            },
+        )
+
+    assert create_response.status_code == 200, create_response.text
+    assert full_response.status_code == 403, full_response.text
+    assert full_response.json() == {"detail": "forbidden"}
+
+
+@pytest.mark.asyncio
 async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     subject_signing_key, subject_public_key = generate_keypair()
