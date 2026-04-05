@@ -10,6 +10,7 @@ from aweb.awid.custody import (
     destroy_signing_key,
     encrypt_signing_key,
     get_custody_key,
+    reset_custody_key_cache,
     sign_on_behalf,
 )
 from aweb.awid.contract import (
@@ -51,19 +52,15 @@ from aweb.awid.registry import (
 )
 from aweb.awid.signing import (
     SIGNED_FIELDS,
-    VerifyResult,
     canonical_json_bytes,
     canonical_payload,
     sign_message,
     verify_did_key_signature,
-    verify_signature,
-    verify_signature_with_public_key,
 )
 from aweb.awid.stable_id import backfill_missing_stable_ids, ensure_agent_stable_ids
 
 __all__ = [
     "SIGNED_FIELDS",
-    "VerifyResult",
     "IDENTITY_CUSTODY_MODES",
     "IDENTITY_LIFETIMES",
     "Address",
@@ -92,6 +89,7 @@ __all__ = [
     "get_sender_delivery_metadata",
     "log_entry_payload",
     "public_key_from_did",
+    "reset_custody_key_cache",
     "require_canonical_server_origin",
     "resolve_identity_contract",
     "assert_permanent_identity",
@@ -104,6 +102,4 @@ __all__ = [
     "validate_did",
     "validate_stable_id",
     "verify_did_key_signature",
-    "verify_signature",
-    "verify_signature_with_public_key",
 ]

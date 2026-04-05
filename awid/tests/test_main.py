@@ -89,6 +89,20 @@ async def test_did_routes_use_redis_rate_limiter(client, fake_redis):
 
 
 @pytest.mark.asyncio
+async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, fake_redis):
+    fake_redis.eval_calls.clear()
+
+    namespace_resp = await client.get("/v1/namespaces")
+    address_list_resp = await client.get("/v1/namespaces/example.com/addresses")
+    address_get_resp = await client.get("/v1/namespaces/example.com/addresses/alice")
+
+    assert namespace_resp.status_code == 200
+    assert address_list_resp.status_code == 404
+    assert address_get_resp.status_code == 404
+    assert len(fake_redis.eval_calls) >= 3
+
+
+@pytest.mark.asyncio
 async def test_namespace_mutation_routes_use_overridden_domain_verifier(client, controller_identity):
     signing_key, controller_did = controller_identity
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

@@ -10,6 +10,7 @@ from aweb.db import get_db_infra
 from aweb.ratelimit import rate_limit_dep
 from aweb.awid.did import (
     public_key_from_did,
+    stable_id_from_did_key,
     stable_id_from_public_key,
     validate_stable_id,
 )
@@ -21,10 +22,9 @@ from aweb.awid.log import (
 )
 from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
 from aweb.routes.dns_addresses import AddressListResponse, AddressResponse
+from aweb.routes.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 
 router = APIRouter(prefix="/v1/did", tags=["did"])
-
-_AUTH_TIMESTAMP_SKEW_SECONDS = 300
 
 
 class DidRegisterRequest(BaseModel):
@@ -114,41 +114,6 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _parse_rfc3339(ts: str) -> datetime:
-    ts = ts.strip()
-    if ts.endswith("Z"):
-        ts = ts[:-1] + "+00:00"
-    dt = datetime.fromisoformat(ts)
-    if dt.tzinfo is None:
-        raise ValueError("timestamp must include timezone offset (e.g. Z or +00:00)")
-    if dt.microsecond != 0:
-        raise ValueError("timestamp must be second precision (no fractional seconds)")
-    return dt.astimezone(timezone.utc)
-
-
-def _enforce_timestamp_skew(ts: str) -> None:
-    dt = _parse_rfc3339(ts)
-    delta = abs((_now() - dt).total_seconds())
-    if delta > _AUTH_TIMESTAMP_SKEW_SECONDS:
-        raise ValueError("timestamp outside allowed skew window")
-
-
-def _parse_didkey_auth(authorization: str | None) -> tuple[str, str]:
-    if not authorization:
-        raise ValueError("missing Authorization")
-    parts = authorization.split(" ")
-    if len(parts) != 3 or parts[0] != "DIDKey":
-        raise ValueError("Authorization must be: DIDKey <did:key> <signature>")
-    return parts[1], parts[2]
-
-
-def _request_timestamp_header(request: Request) -> str:
-    value = request.headers.get("X-AWEB-Timestamp")
-    if not value:
-        raise ValueError("missing X-AWEB-Timestamp")
-    return value
-
-
 def _normalize_mapping_server(server: str | None) -> str:
     if server is None:
         return ""
@@ -167,7 +132,7 @@ def _normalize_mapping_address(address: str | None) -> str:
 async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
-        _enforce_timestamp_skew(req.timestamp)
+        enforce_timestamp_skew(req.timestamp)
         canonical_server = _normalize_mapping_server(req.server)
         address = _normalize_mapping_address(req.address)
         if req.seq != 1 or req.prev_entry_hash is not None:
@@ -420,9 +385,9 @@ async def get_head(request: Request, did_aw: str) -> DidHeadResponse:
 async def get_full(request: Request, did_aw: str, authorization: str | None = Header(default=None)):
     try:
         did_aw = validate_stable_id(did_aw)
-        did_key, sig = _parse_didkey_auth(authorization)
-        timestamp = _request_timestamp_header(request)
-        _enforce_timestamp_skew(timestamp)
+        did_key, sig = parse_didkey_auth(authorization)
+        timestamp = require_timestamp(request)
+        enforce_timestamp_skew(timestamp)
         signing_payload = f"{timestamp}\n{request.method}\n{request.url.path}".encode("utf-8")
         verify_did_key_signature(did_key=did_key, payload=signing_payload, signature_b64=sig)
     except HTTPException:
@@ -441,6 +406,8 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     )
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    if did_key != row["current_did_key"]:
+        raise HTTPException(status_code=403, detail="forbidden")
 
     raw_server_url = (row["server_url"] or "").strip()
     if raw_server_url:
@@ -507,14 +474,14 @@ async def get_log(request: Request, did_aw: str) -> list[DidLogEntry]:
 async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -> dict:
     try:
         did_aw = validate_stable_id(did_aw)
-        _enforce_timestamp_skew(req.timestamp)
+        enforce_timestamp_skew(req.timestamp)
         public_key_from_did(req.new_did_key)
         if req.operation == "update_server":
             if req.server is None:
                 raise ValueError("update_server requires a server URL")
             require_canonical_server_origin(req.server)
         elif req.server is not None:
-            require_canonical_server_origin(req.server)
+            raise ValueError("rotate_key must not include server")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

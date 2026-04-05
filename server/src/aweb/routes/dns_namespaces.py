@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.deps import DomainVerifier, get_db, get_domain_verifier
 from aweb.dns_verify import DnsVerificationError
+from aweb.pagination import encode_cursor, validate_pagination_params
 from aweb.ratelimit import rate_limit_dep
 from aweb.routes.dns_auth import validate_did_key as _validate_did_key
 from aweb.routes.dns_auth import verify_signed_json_request
@@ -152,6 +153,8 @@ class NamespaceResponse(BaseModel):
 
 class NamespaceListResponse(BaseModel):
     namespaces: list[NamespaceResponse]
+    has_more: bool
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +165,7 @@ class NamespaceListResponse(BaseModel):
 @router.post(
     "",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("did_register"))],
+    dependencies=[Depends(rate_limit_dep("namespace_register"))],
 )
 async def register_namespace(
     request: Request,
@@ -253,7 +256,11 @@ async def register_namespace(
     )
 
 
-@router.get("/{domain}", response_model=NamespaceResponse)
+@router.get(
+    "/{domain}",
+    response_model=NamespaceResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_get"))],
+)
 async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceResponse:
     """Query a namespace's status by domain."""
     db = db_infra.get_manager("aweb")
@@ -272,7 +279,11 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
     return _namespace_response(row)
 
 
-@router.put("/{domain}", response_model=NamespaceResponse)
+@router.put(
+    "/{domain}",
+    response_model=NamespaceResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+)
 async def rotate_namespace_controller(
     request: Request,
     domain: str,
@@ -341,40 +352,77 @@ async def rotate_namespace_controller(
     return _namespace_response(row)
 
 
-@router.get("", response_model=NamespaceListResponse)
+@router.get(
+    "",
+    response_model=NamespaceListResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_list"))],
+)
 async def list_namespaces(
     controller_did: Optional[str] = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    cursor: str | None = Query(default=None),
     db_infra=Depends(get_db),
 ) -> NamespaceListResponse:
     """List registered namespaces, optionally filtered by controller DID."""
     db = db_infra.get_manager("aweb")
+    try:
+        validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    where_clauses = ["deleted_at IS NULL"]
+    params: list[object] = []
     if controller_did:
-        rows = await db.fetch_all(
-            """
-            SELECT namespace_id, domain, controller_did, verification_status,
-                   last_verified_at, created_at
-            FROM {{tables.dns_namespaces}}
-            WHERE controller_did = $1 AND deleted_at IS NULL
-            ORDER BY created_at
-            """,
-            controller_did,
+        params.append(controller_did)
+        where_clauses.append(f"controller_did = ${len(params)}")
+    if decoded_cursor is not None:
+        cursor_created_at = decoded_cursor.get("created_at")
+        cursor_namespace_id = decoded_cursor.get("namespace_id")
+        if not isinstance(cursor_created_at, str) or not isinstance(cursor_namespace_id, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor: missing pagination fields")
+        try:
+            cursor_created_at_value = datetime.fromisoformat(
+                cursor_created_at.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor: bad created_at") from exc
+        params.extend([cursor_created_at_value, cursor_namespace_id])
+        where_clauses.append(
+            f"(created_at, namespace_id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
         )
-    else:
-        rows = await db.fetch_all(
-            """
-            SELECT namespace_id, domain, controller_did, verification_status,
-                   last_verified_at, created_at
-            FROM {{tables.dns_namespaces}}
-            WHERE deleted_at IS NULL
-            ORDER BY created_at
-            """,
+    params.append(validated_limit + 1)
+    query = (
+        """
+        SELECT namespace_id, domain, controller_did, verification_status,
+               last_verified_at, created_at
+        FROM {{tables.dns_namespaces}}
+        WHERE """
+        + " AND ".join(where_clauses)
+        + f"""
+        ORDER BY created_at, namespace_id
+        LIMIT ${len(params)}
+        """
+    )
+    rows = await db.fetch_all(query, *params)
+    has_more = len(rows) > validated_limit
+    page_rows = rows[:validated_limit]
+    next_cursor = None
+    if has_more and page_rows:
+        last_row = page_rows[-1]
+        next_cursor = encode_cursor(
+            {
+                "created_at": last_row["created_at"].isoformat(),
+                "namespace_id": str(last_row["namespace_id"]),
+            }
         )
     return NamespaceListResponse(
-        namespaces=[_namespace_response(r) for r in rows],
+        namespaces=[_namespace_response(r) for r in page_rows],
+        has_more=has_more,
+        next_cursor=next_cursor,
     )
 
 
-@router.delete("/{domain}")
+@router.delete("/{domain}", dependencies=[Depends(rate_limit_dep("namespace_delete"))])
 async def delete_namespace(
     request: Request,
     domain: str,

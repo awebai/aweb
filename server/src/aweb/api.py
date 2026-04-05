@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from .awid import CachedRegistryClient, RegistryClient
+from .awid import CachedRegistryClient, RegistryClient, get_custody_key
 from .config import get_settings, is_local_awid_registry_url
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
@@ -73,6 +73,14 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
+async def _shutdown_awid_registry_client(app: FastAPI) -> None:
+    registry_client = getattr(app.state, "awid_registry_client", None)
+    if registry_client is None:
+        return
+    await registry_client.aclose()
+    app.state.awid_registry_client = None
+
+
 def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
@@ -110,7 +118,8 @@ def _make_standalone_lifespan():
             db_initialized = True
             logger.info("Database initialized")
 
-            if not os.environ.get("AWEB_CUSTODY_KEY"):
+            custody_key = get_custody_key()
+            if custody_key is None:
                 logger.warning(_MISSING_CUSTODY_KEY_WARNING)
 
             # Phase 2: Only assign to app.state after ALL initialization succeeds
@@ -140,6 +149,7 @@ def _make_standalone_lifespan():
         finally:
             logger.info("Shutting down aweb coordination server")
             await _shutdown_mcp_app(app)
+            await _shutdown_awid_registry_client(app)
             await redis.aclose()
             await default_db_infra.close()
 
@@ -156,7 +166,8 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         configure_logging(log_level=log_level, json_format=json_format)
         logger.info("Starting aweb coordination server (library mode)")
 
-        if not os.environ.get("AWEB_CUSTODY_KEY"):
+        custody_key = get_custody_key()
+        if custody_key is None:
             logger.warning(
                 "AWEB_CUSTODY_KEY not configured — custodial agent signing disabled. "
                 "Set AWEB_CUSTODY_KEY to a 64-char hex string to enable."
@@ -175,6 +186,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         finally:
             # Don't close connections in library mode - caller manages them
             await _shutdown_mcp_app(app)
+            await _shutdown_awid_registry_client(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
     return lifespan
@@ -267,8 +279,9 @@ def create_app(
             redis: Redis = request.app.state.redis
             await redis.ping()
             checks["redis"] = "ok"
-        except Exception as e:
-            checks["redis"] = f"error: {e}"
+        except Exception:
+            logger.error("Health check failed for Redis", exc_info=True)
+            checks["redis"] = "error"
             healthy = False
 
         # Check Database
@@ -277,8 +290,9 @@ def create_app(
             db = db_infra.get_manager("server")
             await db.fetch_value("SELECT 1")
             checks["database"] = "ok"
-        except Exception as e:
-            checks["database"] = f"error: {e}"
+        except Exception:
+            logger.error("Health check failed for database", exc_info=True)
+            checks["database"] = "error"
             healthy = False
 
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}

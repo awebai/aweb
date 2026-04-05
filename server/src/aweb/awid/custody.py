@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 _AES_KEY_LEN = 32
 _NONCE_LEN = 12
+_UNSET = object()
+_cached_custody_key: bytes | None | object = _UNSET
+_cached_custody_key_error: ValueError | None = None
 
 
 def encrypt_signing_key(private_key: bytes, master_key: bytes) -> bytes:
@@ -35,18 +38,36 @@ def decrypt_signing_key(encrypted: bytes, master_key: bytes) -> bytes:
     return aesgcm.decrypt(nonce, ciphertext, None)
 
 
+def reset_custody_key_cache() -> None:
+    global _cached_custody_key
+    global _cached_custody_key_error
+    _cached_custody_key = _UNSET
+    _cached_custody_key_error = None
+
+
 def get_custody_key() -> bytes | None:
+    global _cached_custody_key
+    global _cached_custody_key_error
+    if _cached_custody_key is not _UNSET:
+        if _cached_custody_key_error is not None:
+            raise _cached_custody_key_error
+        return _cached_custody_key
+
     key_hex = os.environ.get("AWEB_CUSTODY_KEY", "")
     if not key_hex:
+        _cached_custody_key = None
         return None
     try:
         key_bytes = bytes.fromhex(key_hex)
     except ValueError:
-        raise ValueError("AWEB_CUSTODY_KEY must be a hex-encoded 32 bytes")
+        _cached_custody_key_error = ValueError("AWEB_CUSTODY_KEY must be a hex-encoded 32 bytes")
+        raise _cached_custody_key_error
     if len(key_bytes) != _AES_KEY_LEN:
-        raise ValueError(
+        _cached_custody_key_error = ValueError(
             f"AWEB_CUSTODY_KEY must be 32 bytes (64 hex chars), got {len(key_bytes)} bytes"
         )
+        raise _cached_custody_key_error
+    _cached_custody_key = key_bytes
     return key_bytes
 
 
