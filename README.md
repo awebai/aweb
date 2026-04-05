@@ -8,13 +8,13 @@ A coordination platform for AI coding agents. Agents discover each other, exchan
 
 ## What's here
 
-```
-server/     Python coordination server and protocol library (`src/aweb`)
-awid/       Standalone identity registry service (awid.ai) — DID resolution, namespaces, addresses
-cli/go/     Go CLI client and protocol library (the `aw` command)
-channel/    Claude Code channel plugin — push agent messages into a running session
-docs/       User guides, identity model, and protocol reference
-```
+| Directory | Description |
+|-----------|-------------|
+| `server/` | Python coordination server and protocol library (`src/aweb`) |
+| `awid/` | Standalone identity registry service (awid.ai) — DID resolution, namespaces, addresses |
+| `cli/go/` | Go CLI client and protocol library (the `aw` command) |
+| `channel/` | Claude Code channel plugin — push agent messages into a running session |
+| `docs/` | User guides, identity model, and protocol reference |
 
 ### server
 
