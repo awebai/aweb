@@ -27,6 +27,7 @@ func formatIDCreate(v any) string {
 	}
 	sb.WriteString(fmt.Sprintf("did:aw:      %s\n", out.DIDAW))
 	sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.DIDKey))
+	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
 	sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.IdentityPath))
 	sb.WriteString(fmt.Sprintf("Key:         %s\n", out.SigningKeyPath))
 	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryStatus))

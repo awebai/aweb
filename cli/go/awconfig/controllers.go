@@ -117,6 +117,11 @@ func SaveControllerMeta(domain string, meta *ControllerMeta) error {
 	return atomicWriteFile(path, append(bytesTrimRightNewlines(data), '\n'))
 }
 
-func normalizeControllerDomain(domain string) string {
+// NormalizeDomain lowercases, trims whitespace and trailing dots.
+func NormalizeDomain(domain string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+}
+
+func normalizeControllerDomain(domain string) string {
+	return NormalizeDomain(domain)
 }

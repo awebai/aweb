@@ -24,6 +24,7 @@ type idCreateOutput struct {
 	Address        string `json:"address"`
 	DIDAW          string `json:"did_aw"`
 	DIDKey         string `json:"did_key"`
+	ControllerDID  string `json:"controller_did"`
 	IdentityPath   string `json:"identity_path"`
 	SigningKeyPath string `json:"signing_key_path"`
 	RegistryStatus string `json:"registry_status"`
@@ -173,6 +174,7 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 		Address:        plan.Address,
 		DIDAW:          plan.DIDAW,
 		DIDKey:         plan.DIDKey,
+		ControllerDID:  plan.ControllerDID,
 		IdentityPath:   plan.IdentityPath,
 		SigningKeyPath: plan.SigningKeyPath,
 		RegistryStatus: registryStatus,
@@ -439,6 +441,11 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 		RegistryURL:   registryURL,
 		CreatedAt:     createdAt,
 	}); err != nil {
+		// Clean up the key file so the next retry starts fresh
+		keyPath, _ := awconfig.ControllerKeyPath(domain)
+		if keyPath != "" {
+			_ = os.Remove(keyPath)
+		}
 		return nil, "", false, err
 	}
 	return key, controllerDID, true, nil
@@ -509,7 +516,7 @@ func normalizeIDCreateName(value string) (string, error) {
 }
 
 func normalizeIDCreateDomain(value string) (string, error) {
-	value = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	value = awconfig.NormalizeDomain(value)
 	switch {
 	case value == "":
 		return "", usageError("--domain is required")
