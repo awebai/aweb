@@ -109,8 +109,10 @@ async def sign_on_behalf(
     try:
         private_key = decrypt_signing_key(bytes(row["signing_key_enc"]), master_key)
     except Exception:
-        logger.error("Failed to decrypt signing key for agent %s", agent_id)
-        return None
+        raise RuntimeError(
+            f"Failed to decrypt signing key for custodial agent {agent_id} — "
+            f"AWEB_CUSTODY_KEY may have been rotated"
+        )
 
     from_did = row["did"] or ""
     signing_key_id = from_did
