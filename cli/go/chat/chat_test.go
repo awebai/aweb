@@ -173,6 +173,7 @@ func TestExtendWait(t *testing.T) {
 
 func TestOpen(t *testing.T) {
 	t.Parallel()
+	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
