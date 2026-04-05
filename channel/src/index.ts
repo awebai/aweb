@@ -122,16 +122,17 @@ export async function dispatchEvent(
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        const from = msg.from_address || msg.from_alias || "";
+        const from = senderDisplayAddress(msg.from_alias, msg.from_address);
         const tofu = await trust.normalizeTrust(
           pinStore,
           msg.verification_status,
-          from,
+          senderTrustAddress(msg.from_alias, msg.from_address),
           msg.from_did,
           msg.from_stable_id,
           msg.to_did,
           msg.rotation_announcement,
           msg.replacement_announcement,
+          msg.from_address || msg.from_alias || "",
         );
         msg.verification_status = tofu.status as InboxMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
@@ -169,16 +170,17 @@ export async function dispatchEvent(
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
-        const from = msg.from_address || msg.from_agent;
+        const from = senderDisplayAddress(msg.from_agent, msg.from_address);
         const tofu = await trust.normalizeTrust(
           pinStore,
           msg.verification_status,
-          from,
+          senderTrustAddress(msg.from_agent, msg.from_address),
           msg.from_did,
           msg.from_stable_id,
           msg.to_did,
           msg.rotation_announcement,
           msg.replacement_announcement,
+          msg.from_address || msg.from_agent || "",
         );
         msg.verification_status = tofu.status as ChatMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
@@ -277,6 +279,18 @@ export async function dispatchEvent(
     default:
       break;
   }
+}
+
+function senderDisplayAddress(alias: string | undefined, address: string | undefined): string {
+  const qualified = (address || "").trim();
+  if (qualified) return qualified;
+  return (alias || "").trim();
+}
+
+function senderTrustAddress(alias: string | undefined, address: string | undefined): string {
+  const handle = (alias || "").trim();
+  if (handle) return handle;
+  return (address || "").trim();
 }
 
 export function isDirectExecution(moduleURL: string): boolean {

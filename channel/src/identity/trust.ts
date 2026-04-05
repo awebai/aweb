@@ -78,6 +78,7 @@ export class SenderTrustManager {
     toDID: string | undefined,
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
+    verificationAddress?: string,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID);
     if (!status || !rawAddress.trim()) {
@@ -86,7 +87,12 @@ export class SenderTrustManager {
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = await this.resolveAgentMeta(rawAddress);
-    status = await this.checkStableIdentityRegistry(status, trustAddress, fromDID, fromStableID);
+    status = await this.checkStableIdentityRegistry(
+      status,
+      (verificationAddress || rawAddress).trim(),
+      fromDID,
+      fromStableID,
+    );
     return this.checkTOFUPinWithMeta(
       store,
       status,

@@ -157,8 +157,55 @@ describe("dispatchEvent", () => {
         },
       },
     });
-    expect(pinStore.addresses.get("acme.com/alice")).toBe(vectors.stableID);
+    expect(pinStore.addresses.get("alice")).toBe(vectors.stableID);
     expect(pinStore.pins.get(vectors.stableID)?.did_key).toBe(vectors.did);
+  });
+
+  test("passes local alias to trust while preserving public sender address in notifications", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-local-trust")] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const normalizeTrust = vi.fn(async () => ({ status: "verified", stored: false }));
+    const trust = { normalizeTrust } as unknown as SenderTrustManager;
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      "eve",
+      new Set(),
+      { type: "mail_message", message_id: "msg-local-trust" } satisfies AgentEvent,
+    );
+
+    expect(normalizeTrust).toHaveBeenCalledWith(
+      pinStore,
+      "verified",
+      "alice",
+      vectors.did,
+      vectors.stableID,
+      undefined,
+      undefined,
+      undefined,
+      "acme.com/alice",
+    );
+    expect(notification).toHaveBeenCalledWith({
+      method: "notifications/claude/channel",
+      params: {
+        content: "world",
+        meta: {
+          type: "mail",
+          from: "acme.com/alice",
+          message_id: "msg-local-trust",
+          subject: "hello",
+          verified: "true",
+        },
+      },
+    });
   });
 
   test("marks mail as identity mismatch on registry hard error", async () => {

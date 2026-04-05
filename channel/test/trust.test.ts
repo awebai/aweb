@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -166,6 +166,49 @@ describe("SenderTrustManager", () => {
     );
     expect(result.status).toBe("verified");
     expect(store.addresses.get("acme.com/alice")).toBe(newIdentity.did);
+  });
+
+  test("pins the local namespace address when registry verification degrades for a public address", async () => {
+    const { did } = await didFromSeed(9);
+    const stableID = "did:aw:test";
+    const store = new PinStore();
+    const client = {
+      get: vi.fn(async (path: string) => {
+        expect(path).toBe("/v1/agents/resolve/myteam/alice");
+        return {
+          did,
+          stable_id: stableID,
+          address: "myteam/alice",
+          lifetime: "persistent",
+          custody: "self",
+        };
+      }),
+    };
+    const registry = {
+      verifyStableIdentity: vi.fn(async (address: string, stable: string) => {
+        expect(address).toBe("acme.com/alice");
+        expect(stable).toBe(stableID);
+        return { outcome: "OK_DEGRADED" };
+      }),
+    };
+    const trust = new SenderTrustManager(client as never, registry as never, "myteam/self", "");
+
+    const result = await trust.normalizeTrust(
+      store,
+      "verified",
+      "alice",
+      did,
+      stableID,
+      undefined,
+      undefined,
+      undefined,
+      "acme.com/alice",
+    );
+
+    expect(result.status).toBe("verified");
+    expect(store.addresses.get("myteam/alice")).toBe(stableID);
+    expect(store.addresses.has("acme.com/alice")).toBe(false);
+    expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
 });
 
