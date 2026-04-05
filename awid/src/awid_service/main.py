@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import version as pkg_version
 from typing import Optional
 
 from fastapi import FastAPI, Request
@@ -109,11 +110,16 @@ def create_app(
         assert redis is not None
         lifespan = _make_library_lifespan(db_infra, redis, rate_limiter)
 
-    app = FastAPI(title="awid.ai registry", version="0.1.0", lifespan=lifespan)
+    try:
+        service_version = pkg_version("awid-service")
+    except Exception:
+        service_version = "dev"
+
+    app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
     @app.get("/", tags=["ops"])
     async def root() -> dict:
-        return {"service": "awid", "status": "ok"}
+        return {"service": "awid", "version": service_version, "status": "ok"}
 
     async def _health_payload(request: Request) -> dict:
         checks: dict[str, str] = {}
@@ -137,7 +143,7 @@ def create_app(
 
         checks["schema"] = str(getattr(request.app.state, "db_schema", "awid"))
         checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
-        return {"status": "ok" if healthy else "unhealthy", "checks": checks}
+        return {"status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks}
 
     @app.get("/health", tags=["ops"])
     async def health(request: Request) -> dict:
