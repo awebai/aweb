@@ -60,3 +60,42 @@ func TestSaveWorktreeIdentityToWrites0600(t *testing.T) {
 		t.Fatalf("mode=%#o want %#o", got, 0o600)
 	}
 }
+
+func TestResolveIdentityReadsStandaloneIdentityWithoutWorkspace(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, ".aw", "identity.yaml")
+	if err := SaveWorktreeIdentityTo(path, &WorktreeIdentity{
+		DID:            "did:key:z6MkkResolve",
+		StableID:       "did:aw:resolve",
+		Address:        "acme.com/support",
+		Custody:        "self",
+		Lifetime:       "persistent",
+		RegistryURL:    "https://registry.example.com",
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-05T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := ResolveIdentity(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.IdentityPath != path {
+		t.Fatalf("IdentityPath=%q want %q", resolved.IdentityPath, path)
+	}
+	if resolved.SigningKeyPath != filepath.Join(tmp, ".aw", "signing.key") {
+		t.Fatalf("SigningKeyPath=%q", resolved.SigningKeyPath)
+	}
+	if resolved.Handle != "support" {
+		t.Fatalf("Handle=%q", resolved.Handle)
+	}
+	if resolved.Domain != "acme.com" {
+		t.Fatalf("Domain=%q", resolved.Domain)
+	}
+	if resolved.RegistryURL != "https://registry.example.com" {
+		t.Fatalf("RegistryURL=%q", resolved.RegistryURL)
+	}
+}

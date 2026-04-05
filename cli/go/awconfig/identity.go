@@ -9,6 +9,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ResolvedIdentity struct {
+	WorkingDir     string
+	IdentityPath   string
+	SigningKeyPath string
+	DID            string
+	StableID       string
+	Address        string
+	Handle         string
+	Domain         string
+	Custody        string
+	Lifetime       string
+	RegistryURL    string
+	RegistryStatus string
+	CreatedAt      string
+}
+
 type WorktreeIdentity struct {
 	DID            string `yaml:"did"`
 	StableID       string `yaml:"stable_id"`
@@ -80,4 +96,53 @@ func WorktreeRootFromIdentityPath(path string) string {
 		return ""
 	}
 	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
+}
+
+func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
+	workingDir = strings.TrimSpace(workingDir)
+	if workingDir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		workingDir = wd
+	}
+
+	identity, identityPath, err := LoadWorktreeIdentityFromDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	root := WorktreeRootFromIdentityPath(identityPath)
+	if strings.TrimSpace(root) == "" {
+		root = workingDir
+	}
+
+	resolved := &ResolvedIdentity{
+		WorkingDir:     root,
+		IdentityPath:   identityPath,
+		SigningKeyPath: WorktreeSigningKeyPath(root),
+		DID:            strings.TrimSpace(identity.DID),
+		StableID:       strings.TrimSpace(identity.StableID),
+		Address:        strings.TrimSpace(identity.Address),
+		Custody:        strings.TrimSpace(identity.Custody),
+		Lifetime:       strings.TrimSpace(identity.Lifetime),
+		RegistryURL:    strings.TrimSpace(identity.RegistryURL),
+		RegistryStatus: strings.TrimSpace(identity.RegistryStatus),
+		CreatedAt:      strings.TrimSpace(identity.CreatedAt),
+	}
+	if domain, handle, ok := CutIdentityAddress(resolved.Address); ok {
+		resolved.Domain = domain
+		resolved.Handle = handle
+	} else if resolved.Address != "" {
+		resolved.Handle = resolved.Address
+	}
+	return resolved, nil
+}
+
+func CutIdentityAddress(address string) (string, string, bool) {
+	domain, handle, ok := strings.Cut(strings.TrimSpace(address), "/")
+	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(handle) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(domain), strings.TrimSpace(handle), true
 }

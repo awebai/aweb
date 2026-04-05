@@ -36,7 +36,7 @@ func TestResolvePrefersIdentityAddressForPermanentBYOD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sel, err := Resolve(ResolveOptions{WorkingDir: tmp})
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
 	if err != nil {
 		t.Fatal(err)
 	}
