@@ -406,7 +406,7 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     )
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
-    if did_key != row["current_did_key"] and stable_id_from_did_key(did_key) != did_aw:
+    if did_key != row["current_did_key"]:
         raise HTTPException(status_code=403, detail="forbidden")
 
     raw_server_url = (row["server_url"] or "").strip()

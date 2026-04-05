@@ -297,7 +297,7 @@ async def test_register_did_accepts_empty_handle_with_null_equivalent_state_hash
 
 
 @pytest.mark.asyncio
-async def test_get_full_requires_current_or_owning_did_key(aweb_cloud_db):
+async def test_get_full_rejects_non_current_did_key(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
@@ -360,6 +360,116 @@ async def test_get_full_requires_current_or_owning_did_key(aweb_cloud_db):
         )
 
     assert create_response.status_code == 200, create_response.text
+    assert full_response.status_code == 403, full_response.text
+    assert full_response.json() == {"detail": "forbidden"}
+
+
+@pytest.mark.asyncio
+async def test_get_full_rejects_rotated_away_did_key(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    old_signing_key, old_public_key = generate_keypair()
+    old_did_key = did_from_public_key(old_public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    did_aw = stable_id_from_did_key(old_did_key)
+    created_at = datetime.now(timezone.utc)
+    initial_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=old_did_key,
+        server="https://app.aweb.ai",
+        address="acme.com/alice",
+        handle="alice",
+    )
+    initial_timestamp = created_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    initial_payload = log_entry_payload(
+        did_aw=did_aw,
+        seq=1,
+        operation="create",
+        previous_did_key=None,
+        new_did_key=old_did_key,
+        prev_entry_hash=None,
+        state_hash=initial_state_hash,
+        authorized_by=old_did_key,
+        timestamp=initial_timestamp,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.did_aw_mappings}}
+            (did_aw, current_did_key, server_url, address, handle, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $6)
+        """,
+        did_aw,
+        old_did_key,
+        "https://app.aweb.ai",
+        "acme.com/alice",
+        "alice",
+        created_at,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.did_aw_log}}
+            (did_aw, seq, operation, previous_did_key, new_did_key, prev_entry_hash, entry_hash,
+             state_hash, authorized_by, signature, timestamp, created_at)
+        VALUES ($1, 1, 'create', NULL, $2, NULL, $3, $4, $2, $5, $6, $7)
+        """,
+        did_aw,
+        old_did_key,
+        "entry-hash-1",
+        initial_state_hash,
+        sign_message(old_signing_key, initial_payload),
+        initial_timestamp,
+        created_at,
+    )
+    rotate_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    rotated_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=new_did_key,
+        server="https://app.aweb.ai",
+        address="acme.com/alice",
+        handle="alice",
+    )
+    rotate_payload = log_entry_payload(
+        did_aw=did_aw,
+        seq=2,
+        operation="rotate_key",
+        previous_did_key=old_did_key,
+        new_did_key=new_did_key,
+        prev_entry_hash="entry-hash-1",
+        state_hash=rotated_state_hash,
+        authorized_by=old_did_key,
+        timestamp=rotate_timestamp,
+    )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rotate_response = await client.put(
+            f"/v1/did/{did_aw}",
+            json={
+                "operation": "rotate_key",
+                "new_did_key": new_did_key,
+                "seq": 2,
+                "prev_entry_hash": "entry-hash-1",
+                "state_hash": rotated_state_hash,
+                "authorized_by": old_did_key,
+                "timestamp": rotate_timestamp,
+                "signature": sign_message(old_signing_key, rotate_payload),
+            },
+        )
+        full_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        full_path = f"/v1/did/{did_aw}/full"
+        full_signature = sign_message(
+            old_signing_key,
+            f"{full_timestamp}\nGET\n{full_path}".encode("utf-8"),
+        )
+        full_response = await client.get(
+            full_path,
+            headers={
+                "Authorization": f"DIDKey {old_did_key} {full_signature}",
+                "X-AWEB-Timestamp": full_timestamp,
+            },
+        )
+
+    assert rotate_response.status_code == 200, rotate_response.text
     assert full_response.status_code == 403, full_response.text
     assert full_response.json() == {"detail": "forbidden"}
 
