@@ -85,12 +85,13 @@ def state_hash(
 ) -> str:
     normalized_server = "" if server is None else server
     normalized_address = "" if address is None else address
+    normalized_handle = "" if handle is None else handle
     payload = canonical_json_bytes(
         {
             "address": normalized_address,
             "current_did_key": current_did_key,
             "did_aw": did_aw,
-            "handle": handle,
+            "handle": normalized_handle,
             "server": normalized_server,
         }
     )

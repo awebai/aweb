@@ -13,6 +13,7 @@ from aweb.address_reachability import normalize_address_reachability
 from aweb.awid.did import validate_stable_id
 from aweb.deps import DomainVerifier, get_db, get_domain_verifier
 from aweb.dns_verify import DnsVerificationError
+from aweb.ratelimit import rate_limit_dep
 from aweb.routes.dns_auth import validate_did_key as _validate_dns_did_key
 from aweb.routes.dns_auth import verify_signed_json_request
 
@@ -224,7 +225,11 @@ def _address_response(row, domain: str) -> AddressResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("", response_model=AddressResponse)
+@router.post(
+    "",
+    response_model=AddressResponse,
+    dependencies=[Depends(rate_limit_dep("address_register"))],
+)
 async def register_address(
     request: Request,
     domain: str,
@@ -297,7 +302,11 @@ async def register_address(
     )
 
 
-@router.get("/{name}", response_model=AddressResponse)
+@router.get(
+    "/{name}",
+    response_model=AddressResponse,
+    dependencies=[Depends(rate_limit_dep("address_get"))],
+)
 async def get_address(
     domain: str,
     name: str,
@@ -322,7 +331,11 @@ async def get_address(
     return _address_response(row, domain)
 
 
-@router.get("", response_model=AddressListResponse)
+@router.get(
+    "",
+    response_model=AddressListResponse,
+    dependencies=[Depends(rate_limit_dep("address_list"))],
+)
 async def list_addresses(
     domain: str,
     db_infra=Depends(get_db),
@@ -346,7 +359,11 @@ async def list_addresses(
     )
 
 
-@router.put("/{name}", response_model=AddressResponse)
+@router.put(
+    "/{name}",
+    response_model=AddressResponse,
+    dependencies=[Depends(rate_limit_dep("address_update"))],
+)
 async def update_address(
     request: Request,
     domain: str,
@@ -423,7 +440,7 @@ async def update_address(
     )
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", dependencies=[Depends(rate_limit_dep("address_delete"))])
 async def delete_address(
     request: Request,
     domain: str,
@@ -467,7 +484,11 @@ async def delete_address(
     return {"status": "deleted", "domain": domain, "name": name}
 
 
-@router.post("/{name}/reassign", response_model=AddressResponse)
+@router.post(
+    "/{name}/reassign",
+    response_model=AddressResponse,
+    dependencies=[Depends(rate_limit_dep("address_reassign"))],
+)
 async def reassign_address(
     request: Request,
     domain: str,

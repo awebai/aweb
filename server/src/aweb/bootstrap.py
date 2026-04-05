@@ -305,9 +305,16 @@ async def bootstrap_identity(
                 ):
                     master_key = get_custody_key()
                     if master_key is not None:
-                        effective_registry_signing_key = decrypt_signing_key(
-                            agent["signing_key_enc"], master_key
-                        )
+                        try:
+                            effective_registry_signing_key = decrypt_signing_key(
+                                agent["signing_key_enc"], master_key
+                            )
+                        except Exception:
+                            logger.error(
+                                "Failed to decrypt signing key during bootstrap re-init for agent %s",
+                                agent_id,
+                                exc_info=True,
+                            )
             else:
                 if reinit_without_key_material:
                     raise ValueError("Self-custodial identities require both did and public_key")

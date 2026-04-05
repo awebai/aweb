@@ -4,7 +4,13 @@ import uuid
 
 import pytest
 
-from aweb.awid import AlreadyRegisteredError, did_from_public_key, encode_public_key, generate_keypair
+from aweb.awid import (
+    AlreadyRegisteredError,
+    did_from_public_key,
+    encode_public_key,
+    generate_keypair,
+    reset_custody_key_cache,
+)
 from aweb.bootstrap import bootstrap_identity
 
 
@@ -177,3 +183,62 @@ async def test_bootstrap_identity_skips_registry_sync_for_self_custodial_without
     assert registry_client.register_calls == []
     assert registry_client.update_calls == []
     assert "Skipping registry sync for self-custodial permanent identity" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_identity_reinit_ignores_custody_key_decrypt_failure(
+    aweb_cloud_db, caplog, monkeypatch
+):
+    db_infra = _DbInfra(aweb_cloud_db.aweb_db, aweb_cloud_db.oss_db)
+    aweb_db = aweb_cloud_db.aweb_db
+    slug = f"registry-decrypt-{uuid.uuid4().hex[:8]}"
+    project = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.projects}} (slug, name)
+        VALUES ($1, $2)
+        RETURNING project_id
+        """,
+        slug,
+        slug,
+    )
+    assert project is not None
+    monkeypatch.setenv("AWEB_CUSTODY_KEY", "11" * 32)
+    reset_custody_key_cache()
+    agent = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}}
+            (project_id, alias, human_name, agent_type, did, public_key, stable_id,
+             custody, signing_key_enc, lifetime, access_mode)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'custodial', $8, 'persistent', 'open')
+        RETURNING agent_id
+        """,
+        project["project_id"],
+        "durable-custodial",
+        "Durable Custodial",
+        "human",
+        "did:key:z6Mktestexisting",
+        "test-public-key",
+        "did:aw:testexisting",
+        b"not-a-real-encrypted-key",
+    )
+    assert agent is not None
+    registry_client = _FakeRegistryClient()
+
+    with caplog.at_level("ERROR"):
+        result = await bootstrap_identity(
+            db_infra,
+            project_slug=slug,
+            alias="durable-custodial",
+            human_name="Durable Custodial",
+            agent_type="human",
+            custody="self",
+            lifetime="persistent",
+            mint_api_key=False,
+            registry_client=registry_client,
+            registry_server_url="https://aweb.example",
+        )
+
+    assert result.agent_id == str(agent["agent_id"])
+    assert registry_client.register_calls == []
+    assert registry_client.update_calls == []
+    assert "Failed to decrypt signing key during bootstrap re-init" in caplog.text

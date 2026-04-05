@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from aweb.awid.custody import encrypt_signing_key, sign_on_behalf
+from aweb.awid.custody import encrypt_signing_key, reset_custody_key_cache, sign_on_behalf
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair
 
 
@@ -74,6 +74,13 @@ MESSAGE_FIELDS = {
     "body": "hello",
     "timestamp": "2026-04-02T00:00:00Z",
 }
+
+
+@pytest.fixture(autouse=True)
+def _reset_custody_key():
+    reset_custody_key_cache()
+    yield
+    reset_custody_key_cache()
 
 
 @pytest.mark.asyncio
