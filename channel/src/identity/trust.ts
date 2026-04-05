@@ -78,6 +78,7 @@ export class SenderTrustManager {
     toDID: string | undefined,
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
+    verificationAddress?: string,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID);
     if (!status || !rawAddress.trim()) {
@@ -86,7 +87,12 @@ export class SenderTrustManager {
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = await this.resolveAgentMeta(rawAddress);
-    status = await this.checkStableIdentityRegistry(status, trustAddress, fromDID, fromStableID);
+    status = await this.checkStableIdentityRegistry(
+      status,
+      (verificationAddress || rawAddress).trim(),
+      fromDID,
+      fromStableID,
+    );
     return this.checkTOFUPinWithMeta(
       store,
       status,
@@ -356,12 +362,6 @@ export class SenderTrustManager {
     const cached = this.metaCache.get(trustAddress);
     if (cached) return cached;
 
-    const fallback: AgentMeta = {
-      lifetime: "persistent",
-      custody: "self",
-      resolved: true,
-    };
-
     try {
       const identity = await this.resolveIdentity(rawAddress);
       const meta: AgentMeta = {
@@ -373,10 +373,7 @@ export class SenderTrustManager {
       this.metaCache.set(trustAddress, meta);
       return meta;
     } catch {
-      if (rawAddress !== trustAddress) {
-        return { lifetime: "persistent", custody: "self", resolved: false };
-      }
-      return fallback;
+      return { lifetime: "persistent", custody: "self", resolved: false };
     }
   }
 
