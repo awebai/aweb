@@ -6,7 +6,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from aweb.db import get_db_infra
@@ -24,6 +24,7 @@ from aweb.awid.log import (
     state_hash as awid_state_hash,
 )
 from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.pagination import encode_cursor, validate_pagination_params
 from aweb.routes.dns_addresses import AddressListResponse, AddressResponse
 from aweb.routes.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 
@@ -294,27 +295,48 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     response_model=AddressListResponse,
     dependencies=[Depends(rate_limit_dep("did_addresses"))],
 )
-async def list_did_addresses(request: Request, did_aw: str) -> AddressListResponse:
+async def list_did_addresses(
+    request: Request,
+    did_aw: str,
+    limit: int | None = Query(default=None, ge=1),
+    cursor: str | None = Query(default=None),
+) -> AddressListResponse:
     try:
         did_aw = validate_stable_id(did_aw)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    try:
+        validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     db = _db(request)
-    rows = await db.fetch_all(
-        """
-        SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, pa.current_did_key,
-               pa.reachability, pa.created_at
-        FROM {{tables.public_addresses}} pa
-        JOIN {{tables.dns_namespaces}} ns
-          ON ns.namespace_id = pa.namespace_id
-        WHERE pa.did_aw = $1
-          AND pa.deleted_at IS NULL
-          AND ns.deleted_at IS NULL
-        ORDER BY ns.domain ASC, pa.name ASC
-        """,
-        did_aw,
+    params: list[object] = [did_aw]
+    where_clauses = ["pa.did_aw = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
+    if decoded_cursor is not None:
+        cursor_domain = decoded_cursor.get("domain")
+        cursor_name = decoded_cursor.get("name")
+        if not isinstance(cursor_domain, str) or not isinstance(cursor_name, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        params.append(cursor_domain)
+        params.append(cursor_name)
+        where_clauses.append(f"(ns.domain, pa.name) > (${len(params) - 1}, ${len(params)})")
+    params.append(validated_limit + 1)
+    query = (
+        "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, pa.current_did_key,"
+        " pa.reachability, pa.created_at"
+        " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
+        " WHERE " + " AND ".join(where_clauses)
+        + f" ORDER BY ns.domain ASC, pa.name ASC LIMIT ${len(params)}"
     )
+    rows = await db.fetch_all(query, *params)
+    has_more = len(rows) > validated_limit
+    page_rows = rows[:validated_limit]
+    next_cursor = None
+    if has_more and page_rows:
+        next_cursor = encode_cursor({"domain": page_rows[-1]["domain"], "name": page_rows[-1]["name"]})
     return AddressListResponse(
         addresses=[
             AddressResponse(
@@ -326,8 +348,10 @@ async def list_did_addresses(request: Request, did_aw: str) -> AddressListRespon
                 reachability=str(row.get("reachability") or "private"),
                 created_at=row["created_at"].isoformat(),
             )
-            for row in rows
-        ]
+            for row in page_rows
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
     )
 
 
