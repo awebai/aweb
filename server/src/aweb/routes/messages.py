@@ -518,8 +518,6 @@ async def inbox(
         )
         ann_data = announcements.get(str(r["from_agent_id"]))
         ann = RotationAnnouncement(**ann_data) if ann_data else None
-        replacement_data = sender_meta.get("replacement_announcement")
-        replacement = ReplacementAnnouncement(**replacement_data) if replacement_data else None
         messages.append(
             InboxMessage(
                 message_id=str(r["message_id"]),
@@ -541,7 +539,6 @@ async def inbox(
                 signing_key_id=r["signing_key_id"],
                 signed_payload=r.get("signed_payload"),
                 rotation_announcement=ann,
-                replacement_announcement=replacement,
                 is_contact=is_address_in_contacts(
                     from_address,
                     contact_addrs,

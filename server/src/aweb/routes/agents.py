@@ -577,13 +577,13 @@ async def resolve_agent(
     )
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry client not configured")
+    address = resolved.registry_address
+    if address is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
     try:
-        address = await registry_client.resolve_address(namespace, alias)
         namespace_state = await registry_client.get_namespace(namespace)
     except RegistryError as exc:
         raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
-    if address is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
 
     row = await aweb_db.fetch_one(
         """

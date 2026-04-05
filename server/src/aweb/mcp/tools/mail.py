@@ -195,7 +195,12 @@ async def send_mail(
 
 
 async def check_inbox(
-    db_infra, *, unread_only: bool = True, limit: int = 50, include_bodies: bool = True
+    db_infra,
+    *,
+    registry_client=None,
+    unread_only: bool = True,
+    limit: int = 50,
+    include_bodies: bool = True,
 ) -> str:
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
@@ -340,9 +345,6 @@ async def check_inbox(
         announcement = announcements.get(str(r["from_agent_id"]))
         if announcement:
             msg["rotation_announcement"] = announcement
-        replacement_announcement = sender_meta.get("replacement_announcement")
-        if replacement_announcement:
-            msg["replacement_announcement"] = replacement_announcement
         messages.append(msg)
 
     return json.dumps({"messages": messages})

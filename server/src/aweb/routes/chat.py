@@ -661,7 +661,6 @@ async def history(
                 "signature": m["signature"],
                 "signing_key_id": m["signing_key_id"],
                 "signed_payload": m.get("signed_payload"),
-                "replacement_announcement": sender_meta.get("replacement_announcement"),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -867,7 +866,6 @@ async def _sse_events(
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                     "signed_payload": r.get("signed_payload"),
-                    "replacement_announcement": sender_meta.get("replacement_announcement"),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
@@ -1009,7 +1007,6 @@ async def _sse_events(
                         "signature": r["signature"],
                         "signing_key_id": r["signing_key_id"],
                         "signed_payload": r.get("signed_payload"),
-                        "replacement_announcement": sender_meta.get("replacement_announcement"),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }
                     yield f"event: message\ndata: {json.dumps(payload)}\n\n"

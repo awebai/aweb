@@ -202,6 +202,7 @@ def register_tools(
     ) -> str:
         return await _check_inbox_impl(
             db_infra,
+            registry_client=registry_client,
             unread_only=unread_only,
             limit=limit,
             include_bodies=include_bodies,

@@ -17,6 +17,8 @@ from aweb.awid.registry import RegistryError
 from aweb.db import get_db_infra
 from aweb.mcp.auth import AuthContext, _auth_context
 from aweb.mcp.tools.identity import whoami
+from aweb.mcp.tools.mail import check_inbox
+from aweb.messaging.messages import deliver_message
 from aweb.redis_client import get_redis
 from aweb.routes.agents import router as agents_router
 from aweb.routes.init import bootstrap_router, router as init_router
@@ -352,6 +354,59 @@ async def test_whoami_falls_back_to_empty_addresses_on_registry_error(aweb_cloud
 
 
 @pytest.mark.asyncio
+async def test_mcp_check_inbox_uses_registry_client_with_messages(aweb_cloud_db):
+    db = _DbInfra(aweb_db=aweb_cloud_db.aweb_db)
+    project_id = await _create_project(aweb_cloud_db.aweb_db, slug=f"inbox-{uuid.uuid4().hex[:8]}")
+    sender_stable_id = f"did:aw:{uuid.uuid4().hex}"
+    recipient_stable_id = f"did:aw:{uuid.uuid4().hex}"
+    sender_agent_id = await _create_agent(
+        aweb_cloud_db.aweb_db,
+        project_id=project_id,
+        alias="alice",
+        stable_id=sender_stable_id,
+    )
+    recipient_agent_id = await _create_agent(
+        aweb_cloud_db.aweb_db,
+        project_id=project_id,
+        alias="bob",
+        stable_id=recipient_stable_id,
+    )
+    registry_client = _FakeRegistryClient(
+        did_addresses_by_did={
+            sender_stable_id: [
+                _FakeAddress(domain="team.example", name="alice", did_aw=sender_stable_id),
+            ]
+        }
+    )
+
+    await deliver_message(
+        db,
+        project_id=project_id,
+        from_agent_id=sender_agent_id,
+        from_alias="alice",
+        to_agent_id=recipient_agent_id,
+        subject="hello",
+        body="world",
+        priority="normal",
+        thread_id=None,
+        from_stable_id=sender_stable_id,
+        to_stable_id=recipient_stable_id,
+    )
+
+    token = _auth_context.set(
+        AuthContext(project_id=project_id, agent_id=recipient_agent_id),
+    )
+    try:
+        result = json.loads(await check_inbox(db, registry_client=registry_client))
+    finally:
+        _auth_context.reset(token)
+
+    assert result["messages"][0]["from_address"] == "team.example/alice"
+    assert result["messages"][0]["subject"] == "hello"
+    assert registry_client.did_calls == [sender_stable_id]
+
+
+@pytest.mark.asyncio
 async def test_resolve_agent_route_uses_registry_lookup(aweb_cloud_db):
     recipient_stable_id = f"did:aw:{uuid.uuid4().hex}"
     registry_client = _FakeRegistryClient(
@@ -417,7 +472,7 @@ async def test_resolve_agent_route_uses_registry_lookup(aweb_cloud_db):
     assert payload["stable_id"] == recipient_stable_id
     assert payload["address"] == "team.example/bob"
     assert payload["controller_did"] == "did:key:z-controller"
-    assert registry_client.resolve_calls == [("team.example", "bob"), ("team.example", "bob")]
+    assert registry_client.resolve_calls == [("team.example", "bob")]
 
 
 @pytest.mark.asyncio

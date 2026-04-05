@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException
 
 from aweb.awid import RegistryClient
+from aweb.awid.registry import Address
 from aweb.awid.registry import RegistryError
 from aweb.auth import validate_agent_alias, validate_project_slug
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
@@ -36,6 +38,7 @@ class ResolvedRecipient:
     agent_alias: str
     project_id: str
     project_slug: str
+    registry_address: Optional[Address] = None
 
 
 def parse_recipient_ref(value: str) -> RecipientRef:
@@ -109,7 +112,9 @@ async def resolve_local_recipient(
             raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
 
         row = None
+        registry_address = None
         if address is not None:
+            registry_address = address
             row = await aweb_db.fetch_one(
                 """
                 SELECT a.agent_id, a.alias, p.project_id, p.slug AS project_slug,
@@ -182,6 +187,7 @@ async def resolve_local_recipient(
         agent_alias=row["alias"],
         project_id=str(row["project_id"]),
         project_slug=row["project_slug"],
+        registry_address=registry_address if parsed.domain is not None else None,
     )
     return recipient
 
