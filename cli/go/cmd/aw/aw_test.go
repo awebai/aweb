@@ -88,7 +88,6 @@ func TestAwIntrospect(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -101,18 +100,7 @@ func TestAwIntrospect(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -157,7 +145,6 @@ func TestAwIntrospectUsesBYODAddressFromIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -170,18 +157,6 @@ func TestAwIntrospectUsesBYODAddressFromIdentity(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		ServerURL:      server.URL,
 		APIKey:         "aw_sk_test",
@@ -241,7 +216,6 @@ func TestAwIntrospectTextOutput(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -254,19 +228,15 @@ func TestAwIntrospectTextOutput(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    namespace_slug: testns
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "testns",
+		ProjectSlug:    "testns",
+		WorkspaceID:    "workspace-1",
+	})
 
 	// Run WITHOUT --json: should produce human-readable text.
 	run := exec.CommandContext(ctx, bin, "introspect")
@@ -310,7 +280,6 @@ func TestAwIntrospectIncludesIdentityFields(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -323,21 +292,18 @@ func TestAwIntrospectIncludesIdentityFields(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    did: "did:key:z6MkTestKey123"
-    custody: "self"
-    lifetime: "persistent"
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+		DID:            "did:key:z6MkTestKey123",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+	})
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -616,7 +582,6 @@ func TestAwIntrospectEnvOverridesConfig(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -629,18 +594,7 @@ func TestAwIntrospectEnvOverridesConfig(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_config
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "introspect", "--json")
 	run.Env = append(testCommandEnv(tmp),
@@ -786,7 +740,6 @@ func TestAwAgents(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -799,18 +752,7 @@ func TestAwAgents(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "identities", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -876,7 +818,6 @@ func TestAwLockRenew(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -889,18 +830,7 @@ func TestAwLockRenew(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "lock", "renew", "--resource-key", "my-lock", "--ttl-seconds", "3600", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -951,7 +881,6 @@ func TestAwNamespace(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -964,18 +893,7 @@ func TestAwNamespace(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "project", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1032,7 +950,6 @@ func TestAwLockRevoke(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1045,18 +962,7 @@ func TestAwLockRevoke(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "lock", "revoke", "--prefix", "test-", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1108,7 +1014,6 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1121,19 +1026,15 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "eve",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1186,7 +1087,7 @@ func TestAwChatSendAndWaitMissingArgs(t *testing.T) {
 
 	// No positional args at all
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH=/nonexistent")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1218,7 +1119,7 @@ func TestAwChatSendAndWaitExtraArgsRejected(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "bob", "hello", "extra-arg")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH=/nonexistent")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1413,7 +1314,6 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1426,19 +1326,15 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "eve",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1534,7 +1430,6 @@ func TestAwContactsList(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1547,18 +1442,7 @@ func TestAwContactsList(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "contacts", "list", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1613,7 +1497,6 @@ func TestAwContactsAdd(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1626,18 +1509,7 @@ func TestAwContactsAdd(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "contacts", "add", "bob@example.com", "--label", "Bob", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1693,7 +1565,6 @@ func TestAwContactsRemove(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1706,18 +1577,7 @@ func TestAwContactsRemove(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "contacts", "remove", "bob@example.com", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1760,7 +1620,6 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1773,18 +1632,7 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "contacts", "remove", "nobody@example.com")
 	run.Env = testCommandEnv(tmp)
@@ -1833,7 +1681,6 @@ func TestAwAgentAccessModeGet(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1846,18 +1693,15 @@ func TestAwAgentAccessModeGet(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "access-mode", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1913,7 +1757,6 @@ func TestAwAgentAccessModeSet(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -1926,18 +1769,15 @@ func TestAwAgentAccessModeSet(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "access-mode", "open", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2007,7 +1847,6 @@ func TestAwIntrospectVerificationRequired(t *testing.T) {
 
 			tmp := t.TempDir()
 			bin := filepath.Join(tmp, "aw")
-			cfgPath := filepath.Join(tmp, "config.yaml")
 
 			build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 			wd, err := os.Getwd()
@@ -2020,19 +1859,15 @@ func TestAwIntrospectVerificationRequired(t *testing.T) {
 				t.Fatalf("build failed: %v\n%s", err, string(out))
 			}
 
-			if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    email: test@example.com
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+				ServerURL:      server.URL,
+				APIKey:         "aw_sk_test",
+				IdentityID:     "agent-1",
+				IdentityHandle: "alice",
+				NamespaceSlug:  "demo",
+				ProjectSlug:    "demo",
+				WorkspaceID:    "workspace-1",
+			})
 
 			run := exec.CommandContext(ctx, bin, "introspect")
 			run.Env = testCommandEnv(tmp)
@@ -2105,7 +1940,6 @@ func TestAwIdentityReachabilityGet(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -2118,18 +1952,15 @@ func TestAwIdentityReachabilityGet(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "reachability", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2193,7 +2024,6 @@ func TestAwIdentityReachabilitySet(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -2206,18 +2036,15 @@ func TestAwIdentityReachabilitySet(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "reachability", "private", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2281,7 +2108,6 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -2294,18 +2120,7 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	// All address formats should go through /v1/messages.
 	for _, addr := range []string{"alice", "myteam.aweb.ai/deploy-bot", "@juanre"} {
@@ -2366,7 +2181,6 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -2377,10 +2191,6 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 	build.Env = os.Environ()
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
@@ -2466,11 +2276,7 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 	initGitRepoWithOrigin(t, repo, "https://github.com/acme/repo.git")
 
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	run := exec.CommandContext(ctx, bin, "init",
 		"--server-url", server.URL,
@@ -2724,7 +2530,6 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "init",
@@ -2733,11 +2538,7 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 		"--role", "developer",
 		"--json",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=aw_sk_project",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -2831,7 +2632,6 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -2844,10 +2644,6 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	run := exec.CommandContext(ctx, bin, "init",
 		"--server-url", server.URL,
 		"--permanent",
@@ -2856,9 +2652,7 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 		"--write-context=false",
 		"--print-exports=false",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project",
 		"AWID_REGISTRY_URL=local",
 	)
@@ -3004,7 +2798,6 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -3015,9 +2808,6 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 	build.Env = os.Environ()
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:            did,
@@ -3042,11 +2832,7 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 		"--write-context=false",
 		"--print-exports=false",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=aw_sk_project",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -3162,12 +2948,7 @@ func TestAwInitProjectKeyPermanentFailsWhenBootstrapReturnsDifferentDID(t *testi
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:            did,
 		StableID:       stableID,
@@ -3191,11 +2972,7 @@ func TestAwInitProjectKeyPermanentFailsWhenBootstrapReturnsDifferentDID(t *testi
 		"--write-context=false",
 		"--print-exports=false",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=aw_sk_project",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -3302,12 +3079,7 @@ func TestAwInitProjectKeyPermanentFallsBackToRegisterWhenUpdateServerIsMissing(t
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(""), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:            did,
 		StableID:       stableID,
@@ -3331,11 +3103,7 @@ func TestAwInitProjectKeyPermanentFallsBackToRegisterWhenUpdateServerIsMissing(t
 		"--write-context=false",
 		"--print-exports=false",
 	)
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=aw_sk_project",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -3414,11 +3182,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	keysDir := filepath.Join(tmp, "keys")
-	if err := os.MkdirAll(keysDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -3431,30 +3194,22 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	// Save the signing key to disk.
 	address := "myco/agent"
-	if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
-		t.Fatal(err)
-	}
-	keyPath := awid.SigningKeyPath(keysDir, address)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    did: "`+did+`"
-    signing_key: "`+keyPath+`"
-    custody: "self"
-    default_project: "myco"
-    identity_handle: "agent"
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "agent",
+		NamespaceSlug:  "myco",
+		ProjectSlug:    "myco",
+		WorkspaceID:    "workspace-1",
+		DID:            did,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		SigningKey:     priv,
+	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
 		"--to", "monitor",
@@ -3554,11 +3309,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	keysDir := filepath.Join(tmp, "keys")
-	if err := os.MkdirAll(keysDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -3571,32 +3321,22 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	// namespace_slug still determines the external address, but same-project
-	// local mail signs plain local names.
 	address := "acme/bot"
-	if err := awid.SaveKeypair(keysDir, address, pub, priv); err != nil {
-		t.Fatal(err)
-	}
-	keyPath := awid.SigningKeyPath(keysDir, address)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    did: "`+did+`"
-    signing_key: "`+keyPath+`"
-    custody: "self"
-    namespace_slug: "acme"
-    default_project: "fallback"
-    identity_handle: "bot"
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "bot",
+		NamespaceSlug:  "acme",
+		ProjectSlug:    "fallback",
+		WorkspaceID:    "workspace-1",
+		DID:            did,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		SigningKey:     priv,
+	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
 		"--to", "monitor",
@@ -3725,7 +3465,6 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -3738,18 +3477,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-log-test:
-    server: local
-    api_key: aw_sk_test
-default_account: acct-log-test
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
 		"--to", "eve",
@@ -3764,8 +3492,14 @@ default_account: acct-log-test
 	}
 
 	// Communication logs now live in the per-user state dir under ~/.config/aw/logs.
-	logFile := filepath.Join(tmp, ".config", "aw", "logs", "workspace.jsonl")
-	logData, err := os.ReadFile(logFile)
+	logMatches, err := filepath.Glob(filepath.Join(tmp, ".config", "aw", "logs", "*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob log files: %v", err)
+	}
+	if len(logMatches) != 1 {
+		t.Fatalf("expected one log file, got %v", logMatches)
+	}
+	logData, err := os.ReadFile(logMatches[0])
 	if err != nil {
 		t.Fatalf("log file not created: %v", err)
 	}
@@ -3802,15 +3536,11 @@ func TestResolveBaseURLForInitFallsBackToDefault(t *testing.T) {
 	// Cannot use t.Parallel() — needs env and cwd control.
 
 	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	origCfg := os.Getenv("AW_CONFIG_PATH")
 	origURL := os.Getenv("AWEB_URL")
 	origWd, _ := os.Getwd()
-	os.Setenv("AW_CONFIG_PATH", cfgPath)
+	os.Setenv("AW_CONFIG_PATH", "")
 	os.Setenv("AWEB_URL", "")
 	os.Chdir(tmp)
 	defer func() {
@@ -3869,10 +3599,6 @@ func TestInitDefaultServerUsedWhenNoURLProvided(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	buildAwBinary(t, ctx, bin)
 
@@ -3885,8 +3611,7 @@ func TestInitDefaultServerUsedWhenNoURLProvided(t *testing.T) {
 		"--write-context=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_URL="+server.URL,
 		"AW_DID_REGISTRY_URL=http://127.0.0.1:1",
 	)
@@ -3938,7 +3663,6 @@ func TestInitWorkspaceAttachNonFatal(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -3946,17 +3670,12 @@ func TestInitWorkspaceAttachNonFatal(t *testing.T) {
 	initGitRepoWithOrigin(t, repo, "https://github.com/acme/repo.git")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	run := exec.CommandContext(ctx, bin, "project", "create",
 		"--project", "demo",
 		"--alias", "alice",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
+	run.Env = append(testCommandEnv(tmp),
 		"AWEB_URL="+server.URL,
 		"AW_DID_REGISTRY_URL=http://127.0.0.1:1",
 	)
@@ -3978,20 +3697,15 @@ func TestMCPConfig(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  prod:
-    url: https://app.aweb.ai
-accounts:
-  acct:
-    server: prod
-    api_key: aw_sk_testkey123
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      "https://app.aweb.ai",
+		APIKey:         "aw_sk_testkey123",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	buildAwBinary(t, ctx, bin)
 

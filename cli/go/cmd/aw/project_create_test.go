@@ -62,7 +62,6 @@ func TestAwProjectCreateAgainstHosted(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -84,12 +83,7 @@ func TestAwProjectCreateAgainstHosted(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, server.URL, "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -202,7 +196,6 @@ func TestAwProjectCreateSupportsSeparateNamespaceSlug(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -224,12 +217,7 @@ func TestAwProjectCreateSupportsSeparateNamespaceSlug(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, server.URL, "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -334,7 +322,6 @@ func TestAwProjectCreateWithExplicitRoleAttachesRepoContext(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -351,11 +338,7 @@ func TestAwProjectCreateWithExplicitRoleAttachesRepoContext(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_URL=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, "", "")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -449,7 +432,6 @@ func TestAwProjectCreateWithoutRolesAllowsLocalAttach(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "project", "create",
@@ -460,11 +442,7 @@ func TestAwProjectCreateWithoutRolesAllowsLocalAttach(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_URL=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, "", "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -557,7 +535,6 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -579,13 +556,7 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-		"AWID_REGISTRY_URL=local",
-	)
+	run.Env = append(testCommandEnvWithAuth(tmp, server.URL, ""), "AWID_REGISTRY_URL=local")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -661,7 +632,6 @@ func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -683,13 +653,7 @@ func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-		"AWID_REGISTRY_URL=local",
-	)
+	run.Env = append(testCommandEnvWithAuth(tmp, server.URL, ""), "AWID_REGISTRY_URL=local")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -740,7 +704,6 @@ func TestAwInitIgnoresExistingConfigKeys(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -753,20 +716,6 @@ func TestAwInitIgnoresExistingConfigKeys(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	// Config has an existing aw_sk_ key — init should ignore it.
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  existing:
-    server: local
-    api_key: aw_sk_existing
-default_account: existing
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	run := exec.CommandContext(ctx, bin, "project", "create",
 		"--project", "myteam",
 		"--alias", "reviewer",
@@ -775,12 +724,7 @@ default_account: existing
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, server.URL, "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -830,7 +774,6 @@ func TestAwProjectCreateUsesCreateProjectOnSelfHosted(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -854,12 +797,7 @@ func TestAwProjectCreateUsesCreateProjectOnSelfHosted(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL=",
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, "", "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -915,7 +853,6 @@ func TestAwProjectCreateWithAPIMount(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -938,12 +875,7 @@ func TestAwProjectCreateWithAPIMount(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWEB_URL="+server.URL,
-		"AWEB_API_KEY=",
-		"AWEB_ALIAS=",
-	)
+	run.Env = testCommandEnvWithAuth(tmp, server.URL, "")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -104,17 +104,13 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", did, stableID, priv)
+	writeSelfCustodyConfig(t, tmp, server.URL, address, "myteam.aweb.ai", "alice", did, stableID, priv)
 
 	runJSON := func(args ...string) map[string]any {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = append(os.Environ(),
-			"AW_CONFIG_PATH="+cfgPath,
-			"AWID_REGISTRY_URL=local",
-		)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -612,17 +608,13 @@ func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
+	writeSelfCustodyConfig(t, tmp, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
 
 	runJSON := func(args ...string) map[string]any {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = append(os.Environ(),
-			"AW_CONFIG_PATH="+cfgPath,
-			"AWID_REGISTRY_URL=local",
-		)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -711,15 +703,11 @@ func TestAwIDRotateKeyPreservesPendingStateOnRegistryNetworkError(t *testing.T) 
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
+	writeSelfCustodyConfig(t, tmp, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWID_REGISTRY_URL=local",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -826,9 +814,8 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-	writeSelfCustodyConfig(t, cfgPath, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
+	writeSelfCustodyConfig(t, tmp, server.URL, address, "myteam.aweb.ai", "alice", oldDID, stableID, oldPriv)
 
 	rotationDir := filepath.Join(tmp, ".aw", "rotation")
 	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, newDID, newPub, newPriv)
@@ -845,10 +832,7 @@ func TestAwIDRotateKeyRecoversLocalPromotionAfterRegistryRotate(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
-		"AWID_REGISTRY_URL=local",
-	)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -957,27 +941,7 @@ func TestAwIDRotateKeySelfCustodyUsesWorktreeSigningKey(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	cfg := strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: agent-1
-    identity_handle: alice
-    namespace_slug: myteam.aweb.ai
-    custody: custodial
-    lifetime: persistent
-default_account: acct
-`) + "\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	awDir := filepath.Join(tmp, ".aw")
 	if err := os.MkdirAll(awDir, 0o755); err != nil {
@@ -1055,7 +1019,6 @@ default_account: acct
 
 func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testing.T) {
 	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
@@ -1063,7 +1026,7 @@ func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testi
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
-	writeSelfCustodyConfig(t, cfgPath, "https://app.aweb.ai", "acme.com/alice", "acme.com", "alice", did, stableID, priv)
+	writeSelfCustodyConfig(t, tmp, "https://app.aweb.ai", "acme.com/alice", "acme.com", "alice", did, stableID, priv)
 
 	awDir := filepath.Join(tmp, ".aw")
 	if err := os.MkdirAll(awDir, 0o755); err != nil {
@@ -1101,7 +1064,7 @@ func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testi
 		t.Fatal(err)
 	}
 
-	t.Setenv("AW_CONFIG_PATH", cfgPath)
+	t.Setenv("AW_CONFIG_PATH", "")
 	t.Setenv("AWEB_URL", "")
 	t.Setenv("AWEB_API_KEY", "")
 	originalWD, err := os.Getwd()
@@ -1147,10 +1110,9 @@ func TestUpdateAccountIdentityDoesNotRewriteWorkspaceWhenIdentityExists(t *testi
 	}
 }
 
-func writeSelfCustodyConfig(t *testing.T, cfgPath, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
+func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namespaceSlug, handle, did, stableID string, signingKey ed25519.PrivateKey) {
 	t.Helper()
 	pub := signingKey.Public().(ed25519.PublicKey)
-	workingDir := filepath.Dir(cfgPath)
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	if err := awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, signingKey); err != nil {
 		t.Fatal(err)
