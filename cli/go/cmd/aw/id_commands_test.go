@@ -696,6 +696,82 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 	}
 }
 
+func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
+	t.Parallel()
+
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/key") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:TestStableID",
+				"current_did_key": "did:key:z6MkTestKey",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	// Write only identity.yaml and signing.key — no workspace.yaml.
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        "acme.com/alice",
+		Custody:        "self",
+		Lifetime:       "persistent",
+		RegistryURL:    registryServer.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-05T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(awDir, "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id show failed: %v\n%s", err, string(out))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["did_key"] != did {
+		t.Fatalf("did_key=%v want %v", got["did_key"], did)
+	}
+	if got["did_aw"] != stableID {
+		t.Fatalf("did_aw=%v want %v", got["did_aw"], stableID)
+	}
+	if got["address"] != "acme.com/alice" {
+		t.Fatalf("address=%v", got["address"])
+	}
+	if got["alias"] != "alice" {
+		t.Fatalf("alias=%v", got["alias"])
+	}
+	if got["registry_status"] != "registered" {
+		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+}
+
 func TestVerifyIDCreateDomainAuthorityMatchesControllerAndRegistry(t *testing.T) {
 	t.Parallel()
 

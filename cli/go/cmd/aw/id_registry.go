@@ -177,9 +177,10 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	current, err := resolveCurrentIdentityContext(ctx, false)
-	if err != nil {
-		return err
+	// Try the full server-backed path first; fall back to standalone identity.
+	current, fullErr := resolveCurrentIdentityContext(ctx, false)
+	if fullErr != nil {
+		return runIDShowStandalone(ctx)
 	}
 	out := idShowOutput{
 		Alias:          current.Handle,
@@ -198,6 +199,54 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 		} else {
 			out.RegistryURL = registryURL
 			resolution, err := current.Registry.ResolveKeyAt(ctx, registryURL, current.StableID)
+			if err != nil {
+				if code, ok := registryStatusCode(err); ok && code == 404 {
+					out.RegistryStatus = "not_registered"
+				} else {
+					out.RegistryStatus = "unreachable"
+					out.RegistryError = err.Error()
+				}
+			} else {
+				out.RegistryStatus = "registered"
+				out.RegistryCurrentDIDKey = strings.TrimSpace(resolution.CurrentDIDKey)
+			}
+		}
+	}
+	printOutput(out, formatIDShow)
+	return nil
+}
+
+// runIDShowStandalone handles aw id show for directories with identity.yaml
+// but no workspace.yaml (standalone identity created by aw id create).
+func runIDShowStandalone(ctx context.Context) error {
+	sel, err := resolveSelectionForDir("")
+	if err != nil {
+		return err
+	}
+	out := idShowOutput{
+		Alias:          sel.IdentityHandle,
+		Address:        sel.Address,
+		DIDAW:          sel.StableID,
+		DIDKey:         sel.DID,
+		Custody:        sel.Custody,
+		Lifetime:       sel.Lifetime,
+		RegistryStatus: "not_applicable",
+	}
+	if sel.Lifetime == awid.LifetimePersistent && strings.TrimSpace(sel.StableID) != "" {
+		registry, regClientErr := newConfiguredRegistryClient(nil, "")
+		if regClientErr != nil {
+			out.RegistryStatus = "unreachable"
+			out.RegistryError = regClientErr.Error()
+		} else {
+			registryURL := strings.TrimSpace(registry.DefaultRegistryURL)
+			wd, _ := os.Getwd()
+			if identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd); identityErr == nil {
+				if v := strings.TrimSpace(identity.RegistryURL); v != "" {
+					registryURL = v
+				}
+			}
+			out.RegistryURL = registryURL
+			resolution, err := registry.ResolveKeyAt(ctx, registryURL, sel.StableID)
 			if err != nil {
 				if code, ok := registryStatusCode(err); ok && code == 404 {
 					out.RegistryStatus = "not_registered"

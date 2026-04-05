@@ -77,6 +77,10 @@ func Resolve(opts ResolveOptions) (*Selection, error) {
 				}
 				return finalizeWorkspaceSelection(workingDir, "", serverName, overrideBaseURL, overrideAPIKey, nil, nil), nil
 			}
+			// No workspace — check for a standalone identity (created by aw id create).
+			if identity, _, identityErr := LoadWorktreeIdentityFromDir(workingDir); identityErr == nil {
+				return finalizeStandaloneIdentitySelection(workingDir, identity), nil
+			}
 			return nil, errors.New("current directory is not initialized for aw; run `aw project create`, `aw init`, or `aw spawn accept-invite`")
 		}
 		return nil, fmt.Errorf("invalid worktree workspace: %w", err)
@@ -176,6 +180,34 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 		NamespaceSlug:  namespaceSlug,
 		DID:            did,
 		StableID:       stableID,
+		SigningKey:     signingKey,
+		Custody:        custody,
+		Lifetime:       lifetime,
+	}
+}
+
+func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeIdentity) *Selection {
+	did := strings.TrimSpace(identity.DID)
+	stableID := strings.TrimSpace(identity.StableID)
+	address := strings.TrimSpace(identity.Address)
+	custody := strings.TrimSpace(identity.Custody)
+	lifetime := strings.TrimSpace(identity.Lifetime)
+	signingKey := ""
+	if strings.EqualFold(custody, "self") {
+		signingKey = WorktreeSigningKeyPath(workingDir)
+	}
+	handle := ""
+	if address != "" {
+		if _, h, ok := strings.Cut(address, "/"); ok {
+			handle = h
+		}
+	}
+	return &Selection{
+		WorkingDir:     workingDir,
+		DID:            did,
+		StableID:       stableID,
+		Address:        address,
+		IdentityHandle: handle,
 		SigningKey:     signingKey,
 		Custody:        custody,
 		Lifetime:       lifetime,
