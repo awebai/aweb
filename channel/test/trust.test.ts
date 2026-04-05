@@ -210,6 +210,40 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.has("acme.com/alice")).toBe(false);
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
+
+  test("does not create a TOFU pin when public-address resolution fails", async () => {
+    const { did } = await didFromSeed(10);
+    const stableID = "did:aw:test";
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: vi.fn(async () => ({ outcome: "OK_DEGRADED" })),
+        resolveIdentity: vi.fn(async () => {
+          throw new Error("registry unavailable");
+        }),
+      } as never,
+      "myteam/self",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      store,
+      "verified",
+      "acme.com/alice",
+      did,
+      stableID,
+      undefined,
+      undefined,
+      undefined,
+      "acme.com/alice",
+    );
+
+    expect(result.status).toBe("verified");
+    expect(result.stored).toBe(false);
+    expect(store.pins.size).toBe(0);
+    expect(store.addresses.size).toBe(0);
+  });
 });
 
 describe("PinStore", () => {

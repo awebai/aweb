@@ -98,13 +98,13 @@ func (c *RegistryClient) RegisterAddress(
 	didAW string,
 	currentDIDKey string,
 	reachability string,
-	signingKey ed25519.PrivateKey,
+	controllerSigningKey ed25519.PrivateKey,
 ) (*RegistryAddress, string, error) {
 	registryURL, err := c.DiscoverRegistry(ctx, domain)
 	if err != nil {
 		return nil, "", err
 	}
-	address, err := c.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, reachability, signingKey)
+	address, err := c.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, reachability, controllerSigningKey)
 	return address, registryURL, err
 }
 
@@ -116,7 +116,7 @@ func (c *RegistryClient) RegisterAddressAt(
 	didAW string,
 	currentDIDKey string,
 	reachability string,
-	signingKey ed25519.PrivateKey,
+	controllerSigningKey ed25519.PrivateKey,
 ) (*RegistryAddress, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
@@ -138,8 +138,8 @@ func (c *RegistryClient) RegisterAddressAt(
 	if reachability == "" {
 		reachability = "private"
 	}
-	if err := requireSigningKeyMatchesDID(signingKey, currentDIDKey); err != nil {
-		return nil, err
+	if controllerSigningKey == nil {
+		return nil, fmt.Errorf("controller signing key is required")
 	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses"
@@ -149,7 +149,7 @@ func (c *RegistryClient) RegisterAddressAt(
 		http.MethodPost,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "register_address", signingKey),
+		signedAddressHeaders(domain, name, "register_address", controllerSigningKey),
 		addressRegisterRequest{
 			Name:          name,
 			DIDAW:         didAW,
