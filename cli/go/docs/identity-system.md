@@ -202,6 +202,11 @@ Self-custodial permanent identities store signing keys locally. The CLI must be
 able to tell the user where that key lives, because the workspace and key
 material are the self-custody boundary.
 
+The same local signing key also powers generic DIDKey-authenticated client
+operations:
+- `aw id sign`: sign a canonical JSON payload locally and print the credentials
+- `aw id request`: sign a payload and send the HTTP request with DIDKey headers
+
 ## Product Language
 
 Preferred CLI language:

@@ -3,6 +3,7 @@ package awid
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -83,6 +84,48 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 	payload := CanonicalJSON(env)
 	sig := ed25519.Sign(key, []byte(payload))
 	return base64.RawStdEncoding.EncodeToString(sig), nil
+}
+
+// CanonicalJSONValue builds canonical JSON for an arbitrary JSON-compatible
+// value. It is used for generic DIDKey-authenticated payload signing.
+func CanonicalJSONValue(v any) (string, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// SignArbitraryPayload signs a JSON object after injecting the required
+// timestamp field into the signed payload.
+func SignArbitraryPayload(key ed25519.PrivateKey, payload map[string]any, timestamp string) (didKey string, signature string, canonical string, err error) {
+	if key == nil {
+		return "", "", "", fmt.Errorf("signing key is required")
+	}
+	timestamp = strings.TrimSpace(timestamp)
+	if timestamp == "" {
+		return "", "", "", fmt.Errorf("timestamp is required")
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if _, exists := payload["timestamp"]; exists {
+		return "", "", "", fmt.Errorf("payload must not contain timestamp")
+	}
+
+	signedPayload := make(map[string]any, len(payload)+1)
+	for key, value := range payload {
+		signedPayload[key] = value
+	}
+	signedPayload["timestamp"] = timestamp
+
+	canonical, err = CanonicalJSONValue(signedPayload)
+	if err != nil {
+		return "", "", "", err
+	}
+	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	sig := ed25519.Sign(key, []byte(canonical))
+	return didKey, base64.RawStdEncoding.EncodeToString(sig), canonical, nil
 }
 
 // VerifyMessage checks the signature on a message envelope.
