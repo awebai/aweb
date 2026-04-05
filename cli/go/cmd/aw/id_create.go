@@ -267,7 +267,7 @@ func confirmAndVerifyIDCreateDNS(ctx context.Context, plan *idCreatePlan, opts i
 	if !proceed {
 		return usageError("DNS verification cancelled; rerun after publishing the TXT record or pass --skip-dns-verify")
 	}
-	return verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.DIDKey, plan.RegistryURL)
+	return verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.ControllerDID, plan.RegistryURL)
 }
 
 func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolver, domain, expectedControllerDID, expectedRegistryURL string) error {
