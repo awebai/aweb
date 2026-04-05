@@ -34,6 +34,10 @@ func DefaultLogsDir() (string, error) {
 	return PathInUserState("logs")
 }
 
+func DefaultControllersDir() (string, error) {
+	return PathInUserState("controllers")
+}
+
 // atomicWriteFile writes data to path using temp-file-and-rename
 // with 0600 permissions (suitable for secrets).
 func atomicWriteFile(path string, data []byte) error {

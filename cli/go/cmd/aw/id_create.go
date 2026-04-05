@@ -68,12 +68,20 @@ type idCreatePlan struct {
 	Address        string
 	DIDAW          string
 	DIDKey         string
+	ControllerDID  string
 	RegistryURL    string
 	DNSRecordName  string
 	DNSRecordValue string
 	IdentityPath   string
 	SigningKeyPath string
 	CreatedAt      string
+	NeedsDNSSetup  bool
+}
+
+type preparedIDCreate struct {
+	Plan          *idCreatePlan
+	IdentityKey   ed25519.PrivateKey
+	ControllerKey ed25519.PrivateKey
 }
 
 func runIDCreate(cmd *cobra.Command, args []string) error {
@@ -108,10 +116,11 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 }
 
 func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOptions) (idCreateOutput, error) {
-	plan, signingKey, err := prepareIDCreatePlan(workingDir, opts)
+	prepared, err := prepareIDCreatePlan(workingDir, opts)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
+	plan := prepared.Plan
 
 	if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
 		return idCreateOutput{}, err
@@ -130,7 +139,7 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 
 	registryStatus := "registered"
 	registryErr := ""
-	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, signingKey); err != nil {
+	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
 		if !isRegistryUnavailableError(err) {
 			return idCreateOutput{}, err
 		}
@@ -155,7 +164,7 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 	}); err != nil {
 		return idCreateOutput{}, err
 	}
-	if err := awid.SaveSigningKey(plan.SigningKeyPath, signingKey); err != nil {
+	if err := awid.SaveSigningKey(plan.SigningKeyPath, prepared.IdentityKey); err != nil {
 		return idCreateOutput{}, err
 	}
 
@@ -172,59 +181,74 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 	}, nil
 }
 
-func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*idCreatePlan, ed25519.PrivateKey, error) {
+func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCreate, error) {
 	name, err := normalizeIDCreateName(opts.Name)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	domain, err := normalizeIDCreateDomain(opts.Domain)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
 	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if strings.TrimSpace(opts.RegistryURL) != "" {
 		if err := registry.SetFallbackRegistryURL(opts.RegistryURL); err != nil {
-			return nil, nil, fmt.Errorf("invalid --registry: %w", err)
+			return nil, fmt.Errorf("invalid --registry: %w", err)
 		}
 	}
 
-	pub, signingKey, err := awid.GenerateKeypair()
-	if err != nil {
-		return nil, nil, err
-	}
-	didKey := awid.ComputeDIDKey(pub)
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
 	}
+
+	controllerKey, controllerDID, createdController, err := resolveOrCreateControllerKey(domain, strings.TrimSpace(registry.DefaultRegistryURL), now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+
+	pub, identityKey, err := awid.GenerateKeypair()
+	if err != nil {
+		return nil, err
+	}
+	didKey := awid.ComputeDIDKey(pub)
 	plan := &idCreatePlan{
 		Name:           name,
 		Domain:         domain,
 		Address:        domain + "/" + name,
 		DIDAW:          awid.ComputeStableID(pub),
 		DIDKey:         didKey,
+		ControllerDID:  controllerDID,
 		RegistryURL:    strings.TrimSpace(registry.DefaultRegistryURL),
 		DNSRecordName:  awid.AWIDTXTName(domain),
-		DNSRecordValue: idCreateDNSRecordValue(didKey, strings.TrimSpace(registry.DefaultRegistryURL)),
+		DNSRecordValue: idCreateDNSRecordValue(controllerDID, strings.TrimSpace(registry.DefaultRegistryURL)),
 		IdentityPath:   identityPath,
 		SigningKeyPath: signingKeyPath,
 		CreatedAt:      now().UTC().Format(time.RFC3339),
+		NeedsDNSSetup:  createdController,
 	}
-	return plan, signingKey, nil
+	return &preparedIDCreate{
+		Plan:          plan,
+		IdentityKey:   identityKey,
+		ControllerKey: controllerKey,
+	}, nil
 }
 
 func confirmAndVerifyIDCreateDNS(ctx context.Context, plan *idCreatePlan, opts idCreateOptions) error {
+	if !plan.NeedsDNSSetup {
+		return nil
+	}
 	if opts.SkipDNSVerify {
 		return nil
 	}
@@ -261,7 +285,7 @@ func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolve
 }
 
 func printIDCreateDNSInstructions(plan *idCreatePlan, out io.Writer) error {
-	if out == nil {
+	if out == nil || !plan.NeedsDNSSetup {
 		return nil
 	}
 	_, err := fmt.Fprintf(out,
@@ -284,26 +308,27 @@ func ensureStandaloneRegistryRegistration(
 	ctx context.Context,
 	registry *awid.RegistryClient,
 	plan *idCreatePlan,
-	signingKey ed25519.PrivateKey,
+	controllerKey ed25519.PrivateKey,
+	identityKey ed25519.PrivateKey,
 ) error {
-	if err := ensureStandaloneNamespace(ctx, registry, plan, signingKey); err != nil {
+	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
 		return err
 	}
-	if err := ensureStandaloneAddress(ctx, registry, plan, signingKey); err != nil {
+	if err := ensureStandaloneAddress(ctx, registry, plan, controllerKey); err != nil {
 		return err
 	}
-	return ensureStandaloneDID(ctx, registry, plan, signingKey)
+	return ensureStandaloneDID(ctx, registry, plan, identityKey)
 }
 
 func ensureStandaloneNamespace(
 	ctx context.Context,
 	registry *awid.RegistryClient,
 	plan *idCreatePlan,
-	signingKey ed25519.PrivateKey,
+	controllerKey ed25519.PrivateKey,
 ) error {
 	namespace, _, err := registry.GetNamespaceAt(ctx, plan.RegistryURL, plan.Domain)
 	if err == nil {
-		if strings.TrimSpace(namespace.ControllerDID) != plan.DIDKey {
+		if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
 			return fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, namespace.ControllerDID)
 		}
 		return nil
@@ -311,21 +336,21 @@ func ensureStandaloneNamespace(
 	if code, ok := registryStatusCode(err); !ok || code != http.StatusNotFound {
 		return err
 	}
-	namespace, err = registry.RegisterNamespaceAt(ctx, plan.RegistryURL, plan.Domain, plan.DIDKey, signingKey)
+	namespace, err = registry.RegisterNamespaceAt(ctx, plan.RegistryURL, plan.Domain, plan.ControllerDID, controllerKey)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
 			namespace, _, err = registry.GetNamespaceAt(ctx, plan.RegistryURL, plan.Domain)
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(namespace.ControllerDID) != plan.DIDKey {
+			if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
 				return fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, namespace.ControllerDID)
 			}
 			return nil
 		}
 		return err
 	}
-	if strings.TrimSpace(namespace.ControllerDID) != plan.DIDKey {
+	if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
 		return fmt.Errorf("namespace %s registered unexpected controller %s", plan.Domain, namespace.ControllerDID)
 	}
 	return nil
@@ -335,7 +360,7 @@ func ensureStandaloneAddress(
 	ctx context.Context,
 	registry *awid.RegistryClient,
 	plan *idCreatePlan,
-	signingKey ed25519.PrivateKey,
+	controllerKey ed25519.PrivateKey,
 ) error {
 	address, _, err := registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
 	if err == nil {
@@ -350,7 +375,7 @@ func ensureStandaloneAddress(
 	if code, ok := registryStatusCode(err); !ok || code != http.StatusNotFound {
 		return err
 	}
-	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, "public", signingKey)
+	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, "public", controllerKey)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
 			address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
@@ -371,6 +396,52 @@ func ensureStandaloneAddress(
 		return fmt.Errorf("address %s registered unexpected did:aw %s", plan.Address, address.DIDAW)
 	}
 	return nil
+}
+
+func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed25519.PrivateKey, string, bool, error) {
+	exists, err := awconfig.ControllerKeyExists(domain)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if exists {
+		key, err := awconfig.LoadControllerKey(domain)
+		if err != nil {
+			return nil, "", false, err
+		}
+		controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+		if _, err := awconfig.LoadControllerMeta(domain); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, "", false, err
+			}
+			if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
+				Domain:        domain,
+				ControllerDID: controllerDID,
+				RegistryURL:   registryURL,
+				CreatedAt:     createdAt,
+			}); err != nil {
+				return nil, "", false, err
+			}
+		}
+		return key, controllerDID, false, nil
+	}
+
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		return nil, "", false, err
+	}
+	controllerDID := awid.ComputeDIDKey(pub)
+	if err := awconfig.SaveControllerKey(domain, key); err != nil {
+		return nil, "", false, err
+	}
+	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
+		Domain:        domain,
+		ControllerDID: controllerDID,
+		RegistryURL:   registryURL,
+		CreatedAt:     createdAt,
+	}); err != nil {
+		return nil, "", false, err
+	}
+	return key, controllerDID, true, nil
 }
 
 func ensureStandaloneDID(

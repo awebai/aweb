@@ -20,6 +20,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"gopkg.in/yaml.v3"
 )
 
 func TestAwIDCommandsHappyPath(t *testing.T) {
@@ -148,6 +149,9 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 
 	var createdDIDAW string
 	var createdDIDKey string
+	var controllerDID string
+	var namespaceAuthDID string
+	var addressAuthDID string
 	var namespaceCreated atomic.Bool
 	var addressCreated atomic.Bool
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +166,7 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"namespace_id":        "ns-1",
 					"domain":              "acme.com",
-					"controller_did":      createdDIDKey,
+					"controller_did":      controllerDID,
 					"verification_status": "verified",
 					"last_verified_at":    "2026-04-04T00:00:00Z",
 					"created_at":          "2026-04-04T00:00:00Z",
@@ -174,6 +178,7 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
+			namespaceAuthDID = didFromRegistryAuthHeader(t, r)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
@@ -181,8 +186,7 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			if payload["domain"] != "acme.com" {
 				t.Fatalf("namespace domain=%v", payload["domain"])
 			}
-			controllerDID, _ := payload["controller_did"].(string)
-			createdDIDKey = controllerDID
+			controllerDID, _ = payload["controller_did"].(string)
 			verifyCanonicalRegistryAuth(t, r, map[string]string{
 				"domain":    "acme.com",
 				"operation": "register",
@@ -191,7 +195,7 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"namespace_id":        "ns-1",
 				"domain":              "acme.com",
-				"controller_did":      createdDIDKey,
+				"controller_did":      controllerDID,
 				"verification_status": "verified",
 				"last_verified_at":    "2026-04-04T00:00:00Z",
 				"created_at":          "2026-04-04T00:00:00Z",
@@ -217,11 +221,13 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
+			addressAuthDID = didFromRegistryAuthHeader(t, r)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
 			createdDIDAW, _ = payload["did_aw"].(string)
+			createdDIDKey, _ = payload["current_did_key"].(string)
 			if payload["name"] != "alice" {
 				t.Fatalf("address name=%v", payload["name"])
 			}
@@ -252,7 +258,9 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				t.Fatal(err)
 			}
 			createdDIDAW, _ = payload["did_aw"].(string)
-			createdDIDKey, _ = payload["did_key"].(string)
+			if payload["did_key"] != createdDIDKey {
+				t.Fatalf("did_key=%v want %v", payload["did_key"], createdDIDKey)
+			}
 			if payload["server"] != "" {
 				t.Fatalf("server=%v want empty string", payload["server"])
 			}
@@ -286,6 +294,7 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "Acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -310,6 +319,15 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	}
 	if got["registry_url"] != server.URL {
 		t.Fatalf("registry_url=%v want %v", got["registry_url"], server.URL)
+	}
+	if namespaceAuthDID == "" || addressAuthDID == "" {
+		t.Fatalf("missing controller auth DID: namespace=%q address=%q", namespaceAuthDID, addressAuthDID)
+	}
+	if namespaceAuthDID != addressAuthDID {
+		t.Fatalf("namespace auth DID=%q address auth DID=%q", namespaceAuthDID, addressAuthDID)
+	}
+	if namespaceAuthDID == createdDIDKey {
+		t.Fatalf("controller DID should differ from identity DID %q", createdDIDKey)
 	}
 
 	identityPath := filepath.Join(tmp, ".aw", "identity.yaml")
@@ -360,6 +378,25 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); did != identity.DID {
 		t.Fatalf("stored signing key did=%q want %q", did, identity.DID)
 	}
+	controllerKeyPath := filepath.Join(tmp, ".config", "aw", "controllers", "acme.com.key")
+	if _, err := os.Stat(controllerKeyPath); err != nil {
+		t.Fatalf("controller key missing: %v", err)
+	}
+	metaData, err := os.ReadFile(filepath.Join(tmp, ".config", "aw", "controllers", "acme.com.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta awconfig.ControllerMeta
+	if err := yaml.Unmarshal(metaData, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.ControllerDID != namespaceAuthDID {
+		t.Fatalf("controller_did=%q want %q", meta.ControllerDID, namespaceAuthDID)
+	}
+}
+
+func idCreateCommandEnv(home string) []string {
+	return append(os.Environ(), "HOME="+home, "AW_CONFIG_PATH=")
 }
 
 func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
@@ -383,6 +420,7 @@ func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "acme.com")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -417,6 +455,7 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "acme.com", "--registry", registryURL, "--skip-dns-verify", "--json")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -454,6 +493,205 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	}
 	if identity.Address != "acme.com/alice" {
 		t.Fatalf("identity address=%q", identity.Address)
+	}
+}
+
+func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
+	t.Parallel()
+
+	type didMapping struct {
+		didKey  string
+		address string
+		handle  string
+	}
+
+	var namespaceControllerDID string
+	namespacePosts := 0
+	addressPosts := 0
+	didMappings := map[string]didMapping{}
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/namespaces/acme.com" && r.Method == http.MethodGet:
+			if namespaceControllerDID == "" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      namespaceControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-05T00:00:00Z",
+				"created_at":          "2026-04-05T00:00:00Z",
+			})
+		case r.URL.Path == "/v1/namespaces" && r.Method == http.MethodPost:
+			namespacePosts++
+			namespaceControllerDID = didFromRegistryAuthHeader(t, r)
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["controller_did"] != namespaceControllerDID {
+				t.Fatalf("controller_did=%v want %s", payload["controller_did"], namespaceControllerDID)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      namespaceControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-05T00:00:00Z",
+				"created_at":          "2026-04-05T00:00:00Z",
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/namespaces/acme.com/addresses/") && r.Method == http.MethodGet:
+			name := strings.TrimPrefix(r.URL.Path, "/v1/namespaces/acme.com/addresses/")
+			for stableID, mapping := range didMappings {
+				if mapping.handle != name {
+					continue
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"address_id":      "addr-" + name,
+					"domain":          "acme.com",
+					"name":            name,
+					"did_aw":          stableID,
+					"current_did_key": mapping.didKey,
+					"reachability":    "public",
+					"created_at":      "2026-04-05T00:00:00Z",
+				})
+				return
+			}
+			http.NotFound(w, r)
+		case r.URL.Path == "/v1/namespaces/acme.com/addresses" && r.Method == http.MethodPost:
+			addressPosts++
+			authDID := didFromRegistryAuthHeader(t, r)
+			if authDID != namespaceControllerDID {
+				t.Fatalf("address auth DID=%s want namespace controller %s", authDID, namespaceControllerDID)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			stableID, _ := payload["did_aw"].(string)
+			didKey, _ := payload["current_did_key"].(string)
+			name, _ := payload["name"].(string)
+			didMappings[stableID] = didMapping{didKey: didKey, address: "acme.com/" + name, handle: name}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-" + name,
+				"domain":          "acme.com",
+				"name":            name,
+				"did_aw":          stableID,
+				"current_did_key": didKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-05T00:00:00Z",
+			})
+		case r.URL.Path == "/v1/did" && r.Method == http.MethodPost:
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			stableID, _ := payload["did_aw"].(string)
+			didKey, _ := payload["did_key"].(string)
+			address, _ := payload["address"].(string)
+			handle, _ := payload["handle"].(string)
+			didMappings[stableID] = didMapping{didKey: didKey, address: address, handle: handle}
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full") && r.Method == http.MethodGet:
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			mapping, ok := didMappings[stableID]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": mapping.didKey,
+				"server":          "",
+				"address":         mapping.address,
+				"handle":          mapping.handle,
+				"created_at":      "2026-04-05T00:00:00Z",
+				"updated_at":      "2026-04-05T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	aliceDir := filepath.Join(root, "alice")
+	bobDir := filepath.Join(root, "bob")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(aliceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	runCreate := func(dir, name string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, bin, "id", "create", "--name", name, "--domain", "acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
+		run.Env = idCreateCommandEnv(home)
+		run.Dir = dir
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s create failed: %v\n%s", name, err, string(out))
+		}
+		return string(out)
+	}
+
+	firstOut := runCreate(aliceDir, "alice")
+	secondOut := runCreate(bobDir, "bob")
+
+	if !strings.Contains(firstOut, "Create this DNS TXT record before continuing:") {
+		t.Fatalf("expected DNS instructions on first create:\n%s", firstOut)
+	}
+	if strings.Contains(secondOut, "Create this DNS TXT record before continuing:") {
+		t.Fatalf("did not expect DNS instructions on second create:\n%s", secondOut)
+	}
+	if namespacePosts != 1 {
+		t.Fatalf("namespace posts=%d want 1", namespacePosts)
+	}
+	if addressPosts != 2 {
+		t.Fatalf("address posts=%d want 2", addressPosts)
+	}
+	if namespaceControllerDID == "" {
+		t.Fatal("namespace controller DID missing")
+	}
+	aliceIdentity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(aliceDir, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobIdentity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(bobDir, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliceIdentity.Address != "acme.com/alice" {
+		t.Fatalf("alice address=%q", aliceIdentity.Address)
+	}
+	if bobIdentity.Address != "acme.com/bob" {
+		t.Fatalf("bob address=%q", bobIdentity.Address)
+	}
+	if aliceIdentity.DID == bobIdentity.DID {
+		t.Fatal("identities should have distinct signing keys")
+	}
+	controllerMetaData, err := os.ReadFile(filepath.Join(home, ".config", "aw", "controllers", "acme.com.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var controllerMeta awconfig.ControllerMeta
+	if err := yaml.Unmarshal(controllerMetaData, &controllerMeta); err != nil {
+		t.Fatal(err)
+	}
+	if controllerMeta.ControllerDID != namespaceControllerDID {
+		t.Fatalf("controller meta did=%q want %q", controllerMeta.ControllerDID, namespaceControllerDID)
 	}
 }
 
@@ -1223,6 +1461,19 @@ func verifyCanonicalRegistryAuth(t *testing.T, r *http.Request, fields map[strin
 	if !ed25519.Verify(extractPublicKeyForTest(t, parts[1]), payload, sig) {
 		t.Fatalf("invalid signature for payload %s", string(payload))
 	}
+}
+
+func didFromRegistryAuthHeader(t *testing.T, r *http.Request) string {
+	t.Helper()
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	parts := strings.Split(auth, " ")
+	if len(parts) != 3 || parts[0] != "DIDKey" {
+		t.Fatalf("unexpected Authorization header %q", auth)
+	}
+	return parts[1]
 }
 
 func cloneStringMap(src map[string]string) map[string]string {
