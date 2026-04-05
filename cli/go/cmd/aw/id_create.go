@@ -125,14 +125,12 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 
-	// Start the network timeout after the interactive prompt, not before.
-	// The user may take arbitrary time reading DNS instructions and responding.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := confirmAndVerifyIDCreateDNS(ctx, plan, opts); err != nil {
+	if err := confirmAndVerifyIDCreateDNS(plan, opts); err != nil {
 		return idCreateOutput{}, err
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -251,7 +249,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 	}, nil
 }
 
-func confirmAndVerifyIDCreateDNS(ctx context.Context, plan *idCreatePlan, opts idCreateOptions) error {
+func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error {
 	if !plan.NeedsDNSSetup {
 		return nil
 	}
@@ -266,14 +264,22 @@ func confirmAndVerifyIDCreateDNS(ctx context.Context, plan *idCreatePlan, opts i
 	if promptOut == nil {
 		promptOut = os.Stderr
 	}
-	proceed, err := promptYesNoWithIO("Verify this DNS TXT record now?", true, promptIn, promptOut)
-	if err != nil {
-		return err
+	for {
+		proceed, err := promptYesNoWithIO("Verify this DNS TXT record now?", true, promptIn, promptOut)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return usageError("DNS verification cancelled; rerun after publishing the TXT record or pass --skip-dns-verify")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err = verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.ControllerDID, plan.RegistryURL)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		fmt.Fprintf(promptOut, "%v\n", err)
 	}
-	if !proceed {
-		return usageError("DNS verification cancelled; rerun after publishing the TXT record or pass --skip-dns-verify")
-	}
-	return verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.ControllerDID, plan.RegistryURL)
 }
 
 func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolver, domain, expectedControllerDID, expectedRegistryURL string) error {

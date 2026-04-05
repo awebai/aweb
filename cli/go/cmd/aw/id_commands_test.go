@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -778,6 +779,49 @@ func TestVerifyIDCreateDomainAuthorityFailsWhenTXTRecordMissing(t *testing.T) {
 	}
 }
 
+func TestConfirmAndVerifyIDCreateDNSRetriesOnFailure(t *testing.T) {
+	t.Parallel()
+
+	did := "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+	var calls int
+	resolver := &countingTXTResolver{
+		failUntil: 1,
+		records: map[string][]string{
+			"_awid.acme.com": {idCreateDNSRecordValue(did, "https://api.awid.ai")},
+		},
+	}
+
+	// Simulate user answering "y" twice (first attempt fails, second succeeds).
+	// Wrap in bufio.Reader so the buffer is reused across prompt calls.
+	input := bufio.NewReader(strings.NewReader("y\ny\n"))
+	var output strings.Builder
+
+	plan := &idCreatePlan{
+		NeedsDNSSetup:  true,
+		Domain:         "acme.com",
+		ControllerDID:  did,
+		RegistryURL:    "https://api.awid.ai",
+		DNSRecordName:  "_awid.acme.com",
+		DNSRecordValue: idCreateDNSRecordValue(did, "https://api.awid.ai"),
+	}
+	err := confirmAndVerifyIDCreateDNS(plan, idCreateOptions{
+		SkipDNSVerify: false,
+		PromptIn:      input,
+		PromptOut:     &output,
+		TXTResolver:   resolver,
+	})
+	if err != nil {
+		t.Fatalf("expected success after retry, got: %v", err)
+	}
+	calls = resolver.calls
+	if calls != 2 {
+		t.Fatalf("expected 2 DNS lookups, got %d", calls)
+	}
+	if !strings.Contains(output.String(), "lookup _awid.acme.com") {
+		t.Fatalf("expected error message in output, got: %s", output.String())
+	}
+}
+
 func TestAwIDRotateKeyRotatesRegistryAndUpdatesLocalConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1488,6 +1532,23 @@ type staticTXTResolver map[string][]string
 
 func (r staticTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
 	if records, ok := r[name]; ok {
+		return records, nil
+	}
+	return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
+}
+
+type countingTXTResolver struct {
+	failUntil int
+	calls     int
+	records   map[string][]string
+}
+
+func (r *countingTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	r.calls++
+	if r.calls <= r.failUntil {
+		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
+	}
+	if records, ok := r.records[name]; ok {
 		return records, nil
 	}
 	return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
