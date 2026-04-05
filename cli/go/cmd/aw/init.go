@@ -221,7 +221,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		return usageError("aw init now initializes a workspace in an existing project; set AWEB_API_KEY to a project-scoped key or use `aw project create`")
+		return usageError("this directory already has a workspace; set AWEB_API_KEY to reinitialize or use `aw project create` to start a new project")
 	}
 
 	opts, err := collectInitOptionsForFlow(flowProjectKey)
