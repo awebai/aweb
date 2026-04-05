@@ -32,11 +32,12 @@ aw mail inbox
 ```
 
 How to tell whether this directory is already initialized:
-- `.aw/context` exists: this directory is bound to an account.
-- `.aw/workspace.yaml` exists: this worktree has repo-local coordination state.
-- `aw whoami` succeeds: the current account resolves.
+- `.aw/workspace.yaml` exists: this worktree has a project binding.
+- `.aw/identity.yaml` exists: this worktree has a permanent identity.
+- `.aw/signing.key` exists: this worktree has a signing key (both permanent and ephemeral).
+- `aw whoami` succeeds: the identity resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/context` and `.aw/workspace.yaml` are absent, or `aw whoami` cannot resolve an account, the directory is uninitialized. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard that creates the project and identity. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
+- If `.aw/workspace.yaml` is absent, the directory is uninitialized. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard that creates the project and identity. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
 
 ## How aw run works
 
@@ -268,8 +269,13 @@ There are two ways to create a permanent identity:
 
 ```bash
 aw id create --name support --domain acme.com
-# Generates keypair, guides you through DNS TXT setup,
-# registers namespace + address + DID at api.awid.ai
+# First time: generates controller + identity keypairs,
+# guides you through DNS TXT setup, registers at awid.ai
+
+aw id create --name ops --domain acme.com
+# Second time: reuses the controller key, skips DNS,
+# generates a new identity keypair for ops
+
 # Then join a project:
 aw init
 ```
@@ -393,10 +399,12 @@ aw lock list --mine
 
 ### Local files
 
-aweb stores its state in a few local files:
+Everything lives in `.aw/` in the working directory:
 
-- `.aw/context` — selects the account for this directory.
-- `.aw/workspace.yaml` — stores repo/worktree-local coordination state (your identity, project binding, assigned role).
+- `.aw/identity.yaml` — permanent identity: did:aw, did:key, address, custody mode. Only present for permanent identities.
+- `.aw/signing.key` — Ed25519 private key. Present for both permanent and ephemeral identities.
+- `.aw/workspace.yaml` — project binding: server URL, API key, project ID, alias, role.
+- `~/.config/aw/controllers/<domain>.key` — namespace controller key for BYOD domains. Shared across worktrees on the same machine. Created by `aw id create` on first identity for a domain.
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
 - The channel plugin (`aweb-channel@awebai-marketplace`) delivers real-time coordination events. Install via `/plugin install` in Claude Code, or use `aw init --setup-channel` for the MCP server alternative. See [Channel](#channel-real-time-events-in-claude-code) above.
