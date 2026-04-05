@@ -271,7 +271,7 @@ aw id create --name support --domain acme.com
 # Generates keypair, guides you through DNS TXT setup,
 # registers namespace + address + DID at api.awid.ai
 # Then join a project:
-aw init --project myteam
+aw init
 ```
 
 **aweb.ai domain** — the namespace is managed by aweb. Use `aw init` or `aw project create` with `--permanent`. The identity is created and registered at awid.ai as part of joining the project.

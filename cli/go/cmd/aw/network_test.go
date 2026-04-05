@@ -320,7 +320,6 @@ func TestMailSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -330,18 +329,7 @@ func TestMailSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "acme/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -395,7 +383,6 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -405,18 +392,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "bob", "--body", "hello local", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -470,7 +446,6 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -480,19 +455,7 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "acme/bot", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -547,7 +510,6 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -557,19 +519,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: eve
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--start-conversation", "aweb/merlin", "hello")
 	run.Env = testCommandEnv(tmp)
@@ -609,7 +559,6 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -619,18 +568,7 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
 	run.Env = testCommandEnv(tmp)
@@ -679,7 +617,6 @@ func TestDirectorySearch(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -689,18 +626,7 @@ func TestDirectorySearch(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
 	run := exec.CommandContext(ctx, bin, "directory", "--capability", "translate", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -749,7 +675,6 @@ func TestDirectoryGetByAddress(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, _ := os.Getwd()
@@ -759,18 +684,7 @@ func TestDirectoryGetByAddress(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`/api
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
 	run := exec.CommandContext(ctx, bin, "directory", "acme/researcher", "--json")
 	run.Env = testCommandEnv(tmp)

@@ -1,24 +1,32 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
-	"gopkg.in/yaml.v3"
+	"github.com/awebai/aw/awid"
 )
 
 func testCommandEnv(home string) []string {
-	mirrorLegacyConfigFixture(home)
 	mirrorLegacyKnownAgentsFixture(home)
-	baseURL, apiKey := legacyEnvOverrides(home)
 	return append(os.Environ(),
 		"HOME="+home,
 		"AW_CONFIG_PATH=",
-		"AWEB_URL="+baseURL,
-		"AWEB_API_KEY="+apiKey,
 	)
+}
+
+func testCommandEnvWithAuth(home, baseURL, apiKey string) []string {
+	env := testCommandEnv(home)
+	if baseURL != "" {
+		env = append(env, "AWEB_URL="+baseURL)
+	}
+	if apiKey != "" {
+		env = append(env, "AWEB_API_KEY="+apiKey)
+	}
+	return env
 }
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
@@ -65,151 +73,63 @@ func writeDefaultWorkspaceBindingForTest(t *testing.T, workingDir, serverURL str
 	return writeWorkspaceBindingForTest(t, workingDir, defaultWorkspaceBinding(serverURL))
 }
 
-type legacyTestConfig struct {
-	Servers        map[string]legacyTestServer  `yaml:"servers"`
-	Accounts       map[string]legacyTestAccount `yaml:"accounts"`
-	DefaultAccount string                       `yaml:"default_account"`
+type testSelectionFixture struct {
+	ServerURL      string
+	APIKey         string
+	IdentityID     string
+	IdentityHandle string
+	NamespaceSlug  string
+	ProjectSlug    string
+	WorkspaceID    string
+	DID            string
+	StableID       string
+	Address        string
+	Custody        string
+	Lifetime       string
+	SigningKey     ed25519.PrivateKey
+	CreatedAt      string
 }
 
-type legacyTestServer struct {
-	URL string `yaml:"url"`
-}
+func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testSelectionFixture) {
+	t.Helper()
+	workspace := awconfig.WorktreeWorkspace{
+		ServerURL:      fixture.ServerURL,
+		APIKey:         fixture.APIKey,
+		IdentityID:     fixture.IdentityID,
+		IdentityHandle: fixture.IdentityHandle,
+		NamespaceSlug:  fixture.NamespaceSlug,
+		ProjectSlug:    fixture.ProjectSlug,
+		WorkspaceID:    fixture.WorkspaceID,
+	}
+	if workspace.WorkspaceID == "" {
+		workspace.WorkspaceID = fixture.IdentityID
+	}
+	if workspace.ProjectSlug == "" {
+		workspace.ProjectSlug = fixture.NamespaceSlug
+	}
+	writeWorkspaceBindingForTest(t, workingDir, workspace)
 
-type legacyTestAccount struct {
-	Server         string `yaml:"server"`
-	APIKey         string `yaml:"api_key"`
-	IdentityID     string `yaml:"identity_id"`
-	IdentityHandle string `yaml:"identity_handle"`
-	NamespaceSlug  string `yaml:"namespace_slug"`
-	DID            string `yaml:"did"`
-	StableID       string `yaml:"stable_id"`
-	SigningKey     string `yaml:"signing_key"`
-	Custody        string `yaml:"custody"`
-	Lifetime       string `yaml:"lifetime"`
-	ProjectSlug    string `yaml:"project_slug"`
-	WorkspaceID    string `yaml:"workspace_id"`
-}
-
-func mirrorLegacyConfigFixture(workingDir string) {
-	cfgPath := filepath.Join(workingDir, "config.yaml")
-	if _, err := os.Stat(cfgPath); err != nil {
+	if fixture.DID == "" && fixture.StableID == "" && fixture.Custody == "" && fixture.Lifetime == "" && fixture.Address == "" {
 		return
 	}
 
-	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	createdAt := fixture.CreatedAt
+	if createdAt == "" {
+		createdAt = "2026-04-04T00:00:00Z"
+	}
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:       fixture.DID,
+		StableID:  fixture.StableID,
+		Address:   fixture.Address,
+		Custody:   fixture.Custody,
+		Lifetime:  fixture.Lifetime,
+		CreatedAt: createdAt,
+	})
 
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return
-	}
-
-	var cfg legacyTestConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return
-	}
-
-	accountName := cfg.DefaultAccount
-	if accountName == "" {
-		for name := range cfg.Accounts {
-			accountName = name
-			break
+	if fixture.SigningKey != nil {
+		if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), fixture.SigningKey); err != nil {
+			t.Fatalf("write signing key: %v", err)
 		}
-	}
-	acct, ok := cfg.Accounts[accountName]
-	if !ok {
-		return
-	}
-	serverURL := acct.Server
-	if srv, ok := cfg.Servers[acct.Server]; ok && srv.URL != "" {
-		serverURL = srv.URL
-	}
-
-	ws := awconfig.WorktreeWorkspace{
-		ServerURL:      serverURL,
-		APIKey:         acct.APIKey,
-		IdentityID:     acct.IdentityID,
-		IdentityHandle: acct.IdentityHandle,
-		NamespaceSlug:  acct.NamespaceSlug,
-		DID:            acct.DID,
-		StableID:       acct.StableID,
-		SigningKey:     acct.SigningKey,
-		Custody:        acct.Custody,
-		Lifetime:       acct.Lifetime,
-		WorkspaceID:    acct.WorkspaceID,
-		ProjectSlug:    acct.ProjectSlug,
-	}
-	if ws.WorkspaceID == "" {
-		ws.WorkspaceID = acct.IdentityID
-	}
-	if ws.ProjectSlug == "" {
-		ws.ProjectSlug = acct.NamespaceSlug
-	}
-	if existing, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil {
-		if existing.ServerURL == "" {
-			existing.ServerURL = ws.ServerURL
-		}
-		if existing.APIKey == "" {
-			existing.APIKey = ws.APIKey
-		}
-		if existing.IdentityID == "" {
-			existing.IdentityID = ws.IdentityID
-		}
-		if existing.IdentityHandle == "" {
-			existing.IdentityHandle = ws.IdentityHandle
-		}
-		if existing.NamespaceSlug == "" {
-			existing.NamespaceSlug = ws.NamespaceSlug
-		}
-		if existing.WorkspaceID == "" {
-			existing.WorkspaceID = ws.WorkspaceID
-		}
-		if existing.ProjectSlug == "" {
-			existing.ProjectSlug = ws.ProjectSlug
-		}
-		if existing.SigningKey == "" {
-			existing.SigningKey = ws.SigningKey
-		}
-		if existing.Custody == "" {
-			existing.Custody = ws.Custody
-		}
-		if existing.Lifetime == "" {
-			existing.Lifetime = ws.Lifetime
-		}
-		ws = *existing
-	}
-	_ = awconfig.SaveWorktreeWorkspaceTo(workspacePath, &ws)
-
-	if acct.DID == "" && acct.StableID == "" && acct.Custody == "" && acct.Lifetime == "" {
-		return
-	}
-
-	identity := awconfig.WorktreeIdentity{
-		DID:       acct.DID,
-		StableID:  acct.StableID,
-		Custody:   acct.Custody,
-		Lifetime:  acct.Lifetime,
-		CreatedAt: "2026-04-04T00:00:00Z",
-	}
-	_ = awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()), &identity)
-
-	if acct.Custody == "self" {
-		targetPath := awconfig.WorktreeSigningKeyPath(workingDir)
-		if _, err := os.Stat(targetPath); err == nil {
-			return
-		}
-		sourcePath := acct.SigningKey
-		if sourcePath == "" {
-			sourcePath = ws.SigningKey
-		}
-		if sourcePath == "" {
-			return
-		}
-		keyData, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return
-		}
-		_ = os.MkdirAll(filepath.Dir(targetPath), 0o700)
-		_ = os.WriteFile(targetPath, keyData, 0o600)
 	}
 }
 
@@ -231,34 +151,4 @@ func mirrorLegacyKnownAgentsFixture(workingDir string) {
 	}
 	_ = os.MkdirAll(filepath.Dir(targetPath), 0o700)
 	_ = os.WriteFile(targetPath, data, 0o600)
-}
-
-func legacyEnvOverrides(workingDir string) (string, string) {
-	cfgPath := filepath.Join(workingDir, "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return "", ""
-	}
-
-	var cfg legacyTestConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", ""
-	}
-
-	accountName := cfg.DefaultAccount
-	if accountName == "" {
-		for name := range cfg.Accounts {
-			accountName = name
-			break
-		}
-	}
-	acct, ok := cfg.Accounts[accountName]
-	if !ok {
-		return "", ""
-	}
-	baseURL := acct.Server
-	if srv, ok := cfg.Servers[acct.Server]; ok && srv.URL != "" {
-		baseURL = srv.URL
-	}
-	return baseURL, acct.APIKey
 }

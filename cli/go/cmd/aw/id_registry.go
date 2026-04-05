@@ -347,7 +347,10 @@ func resolveCurrentIdentityContext(ctx context.Context, requireSigning bool) (*c
 	}
 
 	if current.Handle != "" {
-		current.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, current.Handle)
+		current.Address = selectionAddress(sel)
+		if strings.TrimSpace(current.Address) == "" {
+			current.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, current.Handle)
+		}
 	}
 	if current.Address != "" {
 		resolved, resolveErr := (&awid.ServerResolver{Client: client.Client}).Resolve(ctx, current.Address)
@@ -427,7 +430,7 @@ func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, sel *
 		return "", fmt.Errorf("missing registry client")
 	}
 	if sel != nil && strings.TrimSpace(sel.StableID) == strings.TrimSpace(didAW) {
-		address := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		address := selectionAddress(sel)
 		if domain, _, ok := cutIdentityAddress(address); ok && strings.TrimSpace(domain) != "" {
 			return registry.DiscoverRegistry(ctx, domain)
 		}

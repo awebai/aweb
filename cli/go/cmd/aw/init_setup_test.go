@@ -59,7 +59,6 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
@@ -81,8 +80,9 @@ func TestAwInitInjectDocsAndSetupHooks(t *testing.T) {
 		"--print-exports=false",
 	)
 	run.Env = append(os.Environ(),
+		"HOME="+tmp,
 		"AWEB_URL="+server.URL,
-		"AW_CONFIG_PATH="+cfgPath,
+		"AW_CONFIG_PATH=",
 		"AWEB_API_KEY=",
 		"AWEB_ALIAS=",
 	)
