@@ -39,7 +39,7 @@ type ResolveOptions struct {
 	AllowEnvOverrides bool
 }
 
-func Resolve(opts ResolveOptions) (*Selection, error) {
+func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	workingDir := strings.TrimSpace(opts.WorkingDir)
 	if workingDir == "" {
 		wd, err := os.Getwd()
