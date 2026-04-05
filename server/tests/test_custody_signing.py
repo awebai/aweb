@@ -173,3 +173,35 @@ async def test_custodial_agent_signs_when_properly_configured(aweb_cloud_db):
             os.environ["AWEB_CUSTODY_KEY"] = env_backup
         else:
             os.environ.pop("AWEB_CUSTODY_KEY", None)
+
+
+@pytest.mark.asyncio
+async def test_custodial_agent_raises_when_did_missing(aweb_cloud_db):
+    """Custodial agent with no did:key must raise instead of returning an empty signer."""
+    master_key = bytes.fromhex("bb" * 32)
+    db = _DbInfra(aweb_cloud_db.aweb_db)
+    project_id = await _create_project(aweb_cloud_db.aweb_db)
+    agent_id, seed = await _create_agent(aweb_cloud_db.aweb_db, project_id)
+
+    encrypted = encrypt_signing_key(seed, master_key)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET signing_key_enc = $1,
+            did = ''
+        WHERE agent_id = $2
+        """,
+        encrypted,
+        uuid.UUID(agent_id),
+    )
+
+    env_backup = os.environ.get("AWEB_CUSTODY_KEY")
+    os.environ["AWEB_CUSTODY_KEY"] = master_key.hex()
+    try:
+        with pytest.raises(RuntimeError, match="did:key"):
+            await sign_on_behalf(agent_id, MESSAGE_FIELDS, db)
+    finally:
+        if env_backup is not None:
+            os.environ["AWEB_CUSTODY_KEY"] = env_backup
+        else:
+            os.environ.pop("AWEB_CUSTODY_KEY", None)
