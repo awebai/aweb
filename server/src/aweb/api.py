@@ -52,13 +52,23 @@ _MISSING_CUSTODY_KEY_WARNING = (
 )
 
 
-async def _mount_mcp_app(app: FastAPI, db_infra: DatabaseInfra, redis: Redis) -> None:
+async def _mount_mcp_app(
+    app: FastAPI,
+    db_infra: DatabaseInfra,
+    redis: Redis,
+    registry_client: RegistryClient,
+) -> None:
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
         return
 
     from .mcp import create_mcp_app
 
-    mcp_app = create_mcp_app(db_infra=db_infra, redis=redis, streamable_http_path="/")
+    mcp_app = create_mcp_app(
+        db_infra=db_infra,
+        redis=redis,
+        registry_client=registry_client,
+        streamable_http_path="/",
+    )
     await mcp_app.startup()
     app.state.mcp_app = mcp_app
     app.mount("/mcp", mcp_app)
@@ -129,7 +139,7 @@ def _make_standalone_lifespan():
             app.state.rate_limiter = build_rate_limiter(redis=redis)
             app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
-            await _mount_mcp_app(app, default_db_infra, redis)
+            await _mount_mcp_app(app, default_db_infra, redis, app.state.awid_registry_client)
 
         except Exception:
             # Log which phase failed
@@ -180,7 +190,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
-        await _mount_mcp_app(app, db_infra, redis)
+        await _mount_mcp_app(app, db_infra, redis, app.state.awid_registry_client)
 
         try:
             yield

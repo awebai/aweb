@@ -41,6 +41,7 @@ async def _project_slug_map(db_infra, *, project_ids: set[str]) -> dict[str, str
 async def send_mail(
     db_infra,
     *,
+    registry_client,
     to: str,
     subject: str = "",
     body: str,
@@ -70,6 +71,7 @@ async def send_mail(
             sender_project_id=auth.project_id,
             sender_agent_id=auth.agent_id,
             ref=recipient_ref,
+            registry_client=registry_client,
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None)

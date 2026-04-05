@@ -6,10 +6,11 @@ import json
 from uuid import UUID
 
 from aweb.address_scope import get_project_scope
+from aweb.awid.registry import RegistryError
 from aweb.mcp.auth import get_auth
 
 
-async def whoami(db_infra) -> str:
+async def whoami(db_infra, *, registry_client) -> str:
     """Return the authenticated agent's identity."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
@@ -31,18 +32,13 @@ async def whoami(db_infra) -> str:
     }
     if agent:
         scope = await get_project_scope(db_infra, project_id=auth.project_id)
-        assigned_addresses = await aweb_db.fetch_all(
-            """
-            SELECT ns.domain, pa.name
-            FROM {{tables.public_addresses}} pa
-            JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
-            WHERE pa.did_aw = $1
-              AND pa.deleted_at IS NULL
-              AND ns.deleted_at IS NULL
-            ORDER BY ns.domain, pa.name
-            """,
-            agent.get("stable_id"),
-        )
+        assigned_addresses = []
+        stable_id = (agent.get("stable_id") or "").strip()
+        if stable_id:
+            try:
+                assigned_addresses = await registry_client.list_did_addresses(stable_id)
+            except RegistryError:
+                assigned_addresses = []
         result["alias"] = agent["alias"]
         result["human_name"] = agent.get("human_name") or ""
         result["agent_type"] = agent.get("agent_type") or "agent"
@@ -59,9 +55,7 @@ async def whoami(db_infra) -> str:
             "owner_type": scope.owner_type,
             "owner_ref": scope.owner_ref,
         }
-        result["addresses"] = [
-            f"{row['domain']}/{row['name']}" for row in assigned_addresses
-        ]
+        result["addresses"] = [f"{address.domain}/{address.name}" for address in assigned_addresses]
         ctx = agent.get("context")
         if isinstance(ctx, str):
             try:

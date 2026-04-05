@@ -20,6 +20,7 @@ from aweb.auth import (
     verify_workspace_access,
 )
 from aweb.aweb_introspection import get_project_from_auth
+from aweb.awid.registry import RegistryError
 from aweb.awid.did import (
     decode_public_key,
     did_from_public_key,
@@ -566,34 +567,37 @@ async def resolve_agent(
     project_id = await get_project_from_auth(request, db_infra)
     actor_id = await get_actor_agent_id_from_auth(request, db_infra, manager_name="aweb")
     aweb_db = db_infra.get_manager("aweb")
+    registry_client = getattr(request.app.state, "awid_registry_client", None)
     resolved = await resolve_local_recipient(
         db_infra,
         sender_project_id=project_id,
         sender_agent_id=actor_id,
         ref=f"{namespace}/{alias}",
+        registry_client=registry_client,
     )
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry client not configured")
+    try:
+        address = await registry_client.resolve_address(namespace, alias)
+        namespace_state = await registry_client.get_namespace(namespace)
+    except RegistryError as exc:
+        raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
+    if address is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
     row = await aweb_db.fetch_one(
         """
         SELECT a.agent_id, a.alias, a.human_name, a.did, a.stable_id, a.public_key,
-               a.custody, a.lifetime, a.status,
-               pn.domain, pn.controller_did, pa.name AS address_name
-        FROM {{tables.public_addresses}} pa
-        JOIN {{tables.dns_namespaces}} pn ON pa.namespace_id = pn.namespace_id
-            AND pn.deleted_at IS NULL
-        JOIN {{tables.agents}} a ON a.stable_id = pa.did_aw
-            AND a.deleted_at IS NULL
+               a.custody, a.lifetime, a.status
+        FROM {{tables.agents}} a
         JOIN {{tables.projects}} p ON a.project_id = p.project_id
-            AND p.deleted_at IS NULL
         WHERE a.agent_id = $1
           AND p.project_id = $2
-          AND pn.domain = $3
-          AND pa.name = $4
-          AND pa.deleted_at IS NULL
+          AND a.deleted_at IS NULL
+          AND p.deleted_at IS NULL
         """,
         UUID(resolved.agent_id),
         UUID(resolved.project_id),
-        namespace,
-        alias,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -601,12 +605,12 @@ async def resolve_agent(
     return ResolveAgentResponse(
         did=row["did"],
         stable_id=row.get("stable_id"),
-        address=f"{row['domain']}/{row['address_name']}",
+        address=f"{address.domain}/{address.name}",
         agent_id=str(row["agent_id"]),
         human_name=row.get("human_name"),
         public_key=row["public_key"],
         server=os.environ.get("AWEB_SERVER_URL", ""),
-        controller_did=row.get("controller_did"),
+        controller_did=namespace_state.controller_did if namespace_state is not None else None,
         custody=row["custody"],
         lifetime=row["lifetime"],
         status=row["status"],
@@ -1121,6 +1125,7 @@ async def _retire_agent(
     agent_uuid: UUID,
     project_id: str,
     payload: RetireAgentRequest,
+    registry_client,
 ) -> RetireAgentResponse:
     import base64 as _base64
     import json as _json
@@ -1174,17 +1179,16 @@ async def _retire_agent(
         )
     successor_did = successor["did"]
 
-    pub_row = await aweb_db.fetch_one(
-        """
-        SELECT pn.domain, pa.name
-        FROM {{tables.public_addresses}} pa
-        JOIN {{tables.dns_namespaces}} pn ON pa.namespace_id = pn.namespace_id
-            AND pn.deleted_at IS NULL
-        WHERE pa.did_aw = $1 AND pa.deleted_at IS NULL
-        """,
-        stable_id_from_did_key(successor_did),
-    )
-    successor_address = f"{pub_row['domain']}/{pub_row['name']}" if pub_row else successor["alias"]
+    successor_stable_id = stable_id_from_did_key(successor_did)
+    successor_address = successor["alias"]
+    if registry_client is not None:
+        try:
+            successor_addresses = await registry_client.list_did_addresses(successor_stable_id)
+        except RegistryError as exc:
+            raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
+        if successor_addresses:
+            primary_address = successor_addresses[0]
+            successor_address = f"{primary_address.domain}/{primary_address.name}"
 
     timestamp = payload.timestamp or ""
     canonical = _json.dumps(
@@ -1296,6 +1300,7 @@ async def retire_agent(
         agent_uuid=UUID(agent_id),
         project_id=project_id,
         payload=payload,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
     )
 
 
@@ -1320,6 +1325,7 @@ async def retire_agent_by_id(
         agent_uuid=UUID(agent_id),
         project_id=project_id,
         payload=payload,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
     )
 
 

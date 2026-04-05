@@ -231,6 +231,7 @@ async def send_message(
             sender_project_id=project_id,
             sender_agent_id=actor_id,
             ref=payload.to_alias,
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
         )
         to_agent_id = resolved.agent_id
         recipient_project_id = resolved.project_id

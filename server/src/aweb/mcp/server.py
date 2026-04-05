@@ -17,6 +17,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from redis.asyncio import Redis
 
+from aweb.awid import RegistryClient
+from aweb.config import get_awid_registry_url, is_local_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
@@ -130,7 +132,12 @@ class ManagedMCPApp:
         await self.app(normalized_scope, receive, send)
 
 
-def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]) -> None:
+def register_tools(
+    mcp: FastMCP,
+    db_infra: DatabaseInfra,
+    redis: Optional[Redis],
+    registry_client: RegistryClient,
+) -> None:
     """Register all aweb MCP tools on *mcp*.
 
     Call this on your own :class:`FastMCP` instance to compose aweb tools
@@ -148,7 +155,7 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
         ),
     )
     async def whoami() -> str:
-        return await _whoami_impl(db_infra)
+        return await _whoami_impl(db_infra, registry_client=registry_client)
 
     @mcp.tool(
         name="sign",
@@ -178,6 +185,7 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
     ) -> str:
         return await _send_mail_impl(
             db_infra,
+            registry_client=registry_client,
             to=to,
             subject=subject,
             body=body,
@@ -493,6 +501,7 @@ def create_mcp_app(
     *,
     db_infra: DatabaseInfra,
     redis: Optional[Redis] = None,
+    registry_client: RegistryClient | None = None,
     streamable_http_path: str = "/",
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
@@ -521,7 +530,15 @@ def create_mcp_app(
         ),
     )
 
-    register_tools(mcp, db_infra, redis)
+    if registry_client is None:
+        registry_url = get_awid_registry_url()
+        if is_local_awid_registry_url(registry_url):
+            raise ValueError(
+                "create_mcp_app() requires registry_client when AWEB_REGISTRY_URL=local"
+            )
+        registry_client = RegistryClient(registry_url=registry_url)
+
+    register_tools(mcp, db_infra, redis, registry_client)
 
     # streamable_http_app() returns a Starlette app with its own lifespan, but
     # mounted sub-applications do not receive lifespan events from FastAPI.

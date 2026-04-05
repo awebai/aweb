@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aweb.auth import get_actor_agent_id_from_auth
 from aweb.awid.custody import CustodyError, SelfCustodialError, sign_arbitrary_payload
+from aweb.ratelimit import enforce_rate_limit
 
 from ..db import DatabaseInfra, get_db_infra
 
@@ -34,10 +35,17 @@ class SignPayloadResponse(BaseModel):
 @router.post("/sign", response_model=SignPayloadResponse)
 async def sign_payload(
     request: Request,
+    response: Response,
     payload: SignPayloadRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> SignPayloadResponse:
     actor_id = await get_actor_agent_id_from_auth(request, db_infra, manager_name="aweb")
+    await enforce_rate_limit(
+        request,
+        response,
+        bucket="custody_sign",
+        key=actor_id,
+    )
     try:
         did_key, signature, timestamp = await sign_arbitrary_payload(
             actor_id,

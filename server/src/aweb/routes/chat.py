@@ -259,6 +259,7 @@ async def create_or_send(
             sender_project_id=project_id,
             sender_agent_id=actor_id,
             ref=ref,
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
         )
         for ref in to_aliases
     ]
