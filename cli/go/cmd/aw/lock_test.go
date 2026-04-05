@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestAwLockMutationUnsupportedMessage(t *testing.T) {
@@ -49,21 +50,8 @@ func TestAwLockMutationUnsupportedMessage(t *testing.T) {
 
 			tmp := t.TempDir()
 			bin := filepath.Join(tmp, "aw")
-			cfgPath := filepath.Join(tmp, "config.yaml")
 			buildAwBinary(t, ctx, bin)
-
-			if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-				t.Fatalf("write config: %v", err)
-			}
+			writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 			run := exec.CommandContext(ctx, bin, tc.args...)
 			run.Env = testCommandEnv(tmp)
@@ -119,22 +107,16 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_handle: alice
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     "agent-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+		WorkspaceID:    "workspace-1",
+	})
 
 	run := exec.CommandContext(ctx, bin, "lock", "list", "--mine")
 	run.Env = testCommandEnv(tmp)

@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/chat"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	configPath, err := defaultGlobalPath()
+	configPath, err := awconfig.DefaultUserStateDir()
 	if err != nil {
 		configPath = ""
 	}

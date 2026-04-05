@@ -110,7 +110,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			return networkError(err, args[0])
 		}
 		logsDir := defaultLogsDir()
-		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		myAddr := selectionAddress(sel)
 		logName := commLogNameForSelection(sel)
 		// Log the sent message.
 		appendCommLog(logsDir, logName, &CommLogEntry{
@@ -159,7 +159,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Dir:       "send",
 			Channel:   "chat",
 			SessionID: result.SessionID,
-			From:      deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle),
+			From:      selectionAddress(sel),
 			To:        args[0],
 			Body:      args[1],
 		})
@@ -216,7 +216,7 @@ var chatOpenCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		myAddr := selectionAddress(sel)
 		for _, m := range result.Messages {
 			logChatEvent(logsDir, commLogNameForSelection(sel), myAddr, m)
 		}
@@ -273,7 +273,7 @@ var chatExtendWaitCmd = &cobra.Command{
 			Dir:       "send",
 			Channel:   "chat",
 			SessionID: result.SessionID,
-			From:      deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle),
+			From:      selectionAddress(sel),
 			To:        result.TargetAgent,
 			Body:      args[1],
 		})
@@ -309,7 +309,7 @@ var chatListenCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		myAddr := selectionAddress(sel)
 		logChatEvents(logsDir, commLogNameForSelection(sel), myAddr, result.Events)
 		printOutput(result, formatChatSend)
 		return nil
@@ -335,7 +335,7 @@ var chatShowPendingCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		myAddr := selectionAddress(sel)
 		logChatEvents(logsDir, commLogNameForSelection(sel), myAddr, result.Events)
 		printOutput(result, formatChatSend)
 		return nil

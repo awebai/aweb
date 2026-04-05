@@ -132,7 +132,6 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -140,21 +139,6 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 	initGitRepoWithOrigin(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+workspaceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		ServerURL:      server.URL,
 		APIKey:         "aw_sk_test",
@@ -270,7 +254,6 @@ func TestAwInitAutoAttachesRepoContext(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -281,7 +264,7 @@ func TestAwInitAutoAttachesRepoContext(t *testing.T) {
 	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--role", "developer")
 	run.Stdin = strings.NewReader("")
 	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH="+cfgPath,
+		"AW_CONFIG_PATH=",
 		"AWEB_URL="+server.URL,
 		"AWEB_API_KEY=aw_sk_project_test",
 		"AW_DID_REGISTRY_URL=http://127.0.0.1:1",
@@ -416,29 +399,17 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	state := awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_test",
+		IdentityID:      selfID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -556,24 +527,15 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: coordinator
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     selfID,
+		IdentityHandle: "coordinator",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -671,24 +633,15 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     selfID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -788,29 +741,17 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	state := awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_test",
+		IdentityID:      selfID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -923,29 +864,17 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	state := awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_test",
+		IdentityID:      selfID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -1060,29 +989,17 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	state := awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_test",
+		IdentityID:      selfID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -1186,29 +1103,22 @@ func TestAwWorkspaceStatusLeavesWorkspaceWhenIdentityDeleteUnconfirmed(t *testin
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-    identity_id: `+selfID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_test",
+		IdentityID:     selfID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
 	state := awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_test",
+		IdentityID:      selfID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -1340,7 +1250,6 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1348,21 +1257,6 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		ServerURL:      server.URL,
 		APIKey:         "aw_sk_source",
@@ -1376,6 +1270,11 @@ default_account: acct-source
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_source",
+		IdentityID:      sourceID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     sourceID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -1479,7 +1378,6 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1487,21 +1385,14 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
@@ -1549,7 +1440,6 @@ func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1557,21 +1447,14 @@ func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
@@ -1596,24 +1479,15 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	buildAwBinary(t, ctx, bin)
-
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: https://example.com
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: source-1
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		ServerURL:      "https://example.com",
+		APIKey:         "aw_sk_source",
+		IdentityID:     "source-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
 	run.Env = testCommandEnv(tmp)
@@ -1709,7 +1583,6 @@ func TestAwWorkspaceAddWorktreeAcceptsExplicitRoleWhenNoProjectRolesExist(t *tes
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1717,21 +1590,6 @@ func TestAwWorkspaceAddWorktreeAcceptsExplicitRoleWhenNoProjectRolesExist(t *tes
 	initGitRepoWithOriginAndCommit(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		ServerURL:      server.URL,
 		APIKey:         "aw_sk_source",
@@ -1830,7 +1688,6 @@ func TestAwWorkspaceAddWorktreeExplicitAliasCreatesSiblingWorktree(t *testing.T)
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1838,25 +1695,23 @@ func TestAwWorkspaceAddWorktreeExplicitAliasCreatesSiblingWorktree(t *testing.T)
 	initGitRepoWithOriginAndCommit(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_source",
+		IdentityID:      sourceID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     sourceID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -1918,7 +1773,6 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -1926,25 +1780,23 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_source",
+		IdentityID:      sourceID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     sourceID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
@@ -2084,7 +1936,6 @@ func TestAwWorkspaceAddWorktreeRetriesAliasTakenSuggestion(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -2092,25 +1943,23 @@ func TestAwWorkspaceAddWorktreeRetriesAliasTakenSuggestion(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct-source:
-    server: local
-    api_key: aw_sk_source
-    identity_id: `+sourceID+`
-    identity_handle: alice
-    namespace_slug: demo
-default_account: acct-source
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		ServerURL:      server.URL,
+		APIKey:         "aw_sk_source",
+		IdentityID:     sourceID,
+		IdentityHandle: "alice",
+		NamespaceSlug:  "demo",
+		ProjectSlug:    "demo",
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		ServerURL:       server.URL,
+		APIKey:          "aw_sk_source",
+		IdentityID:      sourceID,
+		IdentityHandle:  "alice",
+		NamespaceSlug:   "demo",
 		WorkspaceID:     sourceID,
 		ProjectID:       "proj-1",
 		ProjectSlug:     "demo",
