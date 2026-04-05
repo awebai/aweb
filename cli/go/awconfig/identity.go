@@ -130,7 +130,7 @@ func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 		RegistryStatus: strings.TrimSpace(identity.RegistryStatus),
 		CreatedAt:      strings.TrimSpace(identity.CreatedAt),
 	}
-	if domain, handle, ok := cutResolvedIdentityAddress(resolved.Address); ok {
+	if domain, handle, ok := CutIdentityAddress(resolved.Address); ok {
 		resolved.Domain = domain
 		resolved.Handle = handle
 	} else if resolved.Address != "" {
@@ -139,7 +139,7 @@ func ResolveIdentity(workingDir string) (*ResolvedIdentity, error) {
 	return resolved, nil
 }
 
-func cutResolvedIdentityAddress(address string) (string, string, bool) {
+func CutIdentityAddress(address string) (string, string, bool) {
 	domain, handle, ok := strings.Cut(strings.TrimSpace(address), "/")
 	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(handle) == "" {
 		return "", "", false

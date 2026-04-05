@@ -81,11 +81,7 @@ func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
 	wd, _ := os.Getwd()
-	return resolveIdentityForDir(wd)
-}
-
-func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error) {
-	return awconfig.ResolveIdentity(workingDir)
+	return awconfig.ResolveIdentity(wd)
 }
 
 func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {

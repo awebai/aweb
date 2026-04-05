@@ -237,7 +237,7 @@ func syncPersistentIdentityRegistry(
 
 func persistentRegistryDomain(resp *awid.BootstrapIdentityResponse, identity *initIdentityMaterial) string {
 	if resp != nil {
-		if domain, _, ok := cutIdentityAddress(strings.TrimSpace(resp.Address)); ok && strings.Contains(domain, ".") {
+		if domain, _, ok := awconfig.CutIdentityAddress(strings.TrimSpace(resp.Address)); ok && strings.Contains(domain, ".") {
 			return domain
 		}
 		if ns := strings.TrimSpace(resp.Namespace); strings.Contains(ns, ".") {
@@ -245,7 +245,7 @@ func persistentRegistryDomain(resp *awid.BootstrapIdentityResponse, identity *in
 		}
 	}
 	if identity != nil {
-		if domain, _, ok := cutIdentityAddress(strings.TrimSpace(identity.Address)); ok && strings.Contains(domain, ".") {
+		if domain, _, ok := awconfig.CutIdentityAddress(strings.TrimSpace(identity.Address)); ok && strings.Contains(domain, ".") {
 			return domain
 		}
 	}

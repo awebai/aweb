@@ -65,7 +65,7 @@ func runDidRotateKey(cmd *cobra.Command, args []string) error {
 	if err := requirePermanentSelfCustodialIdentity(identity, signingKey); err != nil {
 		return err
 	}
-	registry, err := resolveCurrentIdentityRegistryClient()
+	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return err
 	}

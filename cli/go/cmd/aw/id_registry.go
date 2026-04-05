@@ -121,15 +121,11 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err := requirePermanentSelfCustodialIdentity(identity, signingKey); err != nil {
 		return err
 	}
-	sel, err := resolveSelectionForDir("")
+	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return err
 	}
-	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
-	if err != nil {
-		return err
-	}
-	registry, err := newConfiguredRegistryClient(nil, baseURL)
+	serverURL, err := resolveOptionalWorkspaceBaseURL()
 	if err != nil {
 		return err
 	}
@@ -140,7 +136,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	mapping, err := registry.RegisterDID(
 		ctx,
 		registryURL,
-		baseURL,
+		serverURL,
 		identity.Address,
 		identity.Handle,
 		identity.DID,
@@ -156,7 +152,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 		mapping = &awid.DIDMapping{
 			DIDAW:         identity.StableID,
 			CurrentDIDKey: identity.DID,
-			Server:        baseURL,
+			Server:        serverURL,
 			Address:       identity.Address,
 		}
 	} else if err != nil {
@@ -191,7 +187,7 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 		RegistryStatus: "not_applicable",
 	}
 	if identity.Lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) != "" {
-		registry, regClientErr := resolveCurrentIdentityRegistryClient()
+		registry, regClientErr := resolveIdentityRegistryClient(identity)
 		if regClientErr != nil {
 			out.RegistryStatus = "unreachable"
 			out.RegistryError = regClientErr.Error()
@@ -370,7 +366,7 @@ func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, sel *
 	}
 	if sel != nil && strings.TrimSpace(sel.StableID) == strings.TrimSpace(didAW) {
 		address := selectionAddress(sel)
-		if domain, _, ok := cutIdentityAddress(address); ok && strings.TrimSpace(domain) != "" {
+		if domain, _, ok := awconfig.CutIdentityAddress(address); ok && strings.TrimSpace(domain) != "" {
 			return registry.DiscoverRegistry(ctx, domain)
 		}
 	}
@@ -396,17 +392,18 @@ func resolveRegistryClientForLookup() (*awid.RegistryClient, *awconfig.Selection
 	return registry, nil, regErr
 }
 
-func resolveCurrentIdentityRegistryClient() (*awid.RegistryClient, error) {
-	wd, _ := os.Getwd()
-	sel, err := resolveSelectionForDir(wd)
-	if err == nil && strings.TrimSpace(sel.BaseURL) != "" {
-		baseURL, baseErr := resolveAuthenticatedBaseURL(sel.BaseURL)
-		if baseErr != nil {
-			return nil, baseErr
-		}
-		return newConfiguredRegistryClient(nil, baseURL)
+func resolveIdentityRegistryClient(identity *awconfig.ResolvedIdentity) (*awid.RegistryClient, error) {
+	baseURL, err := resolveOptionalWorkspaceBaseURL()
+	if err != nil {
+		return nil, err
 	}
-	return newConfiguredRegistryClient(nil, strings.TrimSpace(os.Getenv("AWEB_URL")))
+	if strings.TrimSpace(baseURL) == "" && identity != nil {
+		baseURL = strings.TrimSpace(identity.RegistryURL)
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+	}
+	return newConfiguredRegistryClient(nil, baseURL)
 }
 
 func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.PrivateKey, error) {
@@ -423,18 +420,21 @@ func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.Pri
 	return priv, nil
 }
 
+func resolveOptionalWorkspaceBaseURL() (string, error) {
+	sel, err := resolveSelectionForDir("")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(sel.BaseURL) == "" {
+		return "", nil
+	}
+	return resolveAuthenticatedBaseURL(sel.BaseURL)
+}
+
 func registryStatusCode(err error) (int, bool) {
 	var regErr *awid.RegistryError
 	if !errors.As(err, &regErr) {
 		return 0, false
 	}
 	return regErr.StatusCode, true
-}
-
-func cutIdentityAddress(address string) (string, string, bool) {
-	domain, handle, ok := strings.Cut(strings.TrimSpace(address), "/")
-	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(handle) == "" {
-		return "", "", false
-	}
-	return strings.TrimSpace(domain), strings.TrimSpace(handle), true
 }
