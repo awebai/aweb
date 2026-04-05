@@ -365,6 +365,169 @@ async def test_get_full_requires_current_or_owning_did_key(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_get_full_accepts_fractional_second_timestamp(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=did_key,
+        server="",
+        address="",
+        handle=None,
+    )
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="create",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=mapping_state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        create_response = await client.post(
+            "/v1/did",
+            json={
+                "did_aw": did_aw,
+                "did_key": did_key,
+                "server": "",
+                "address": "",
+                "handle": None,
+                "seq": 1,
+                "prev_entry_hash": None,
+                "state_hash": mapping_state_hash,
+                "authorized_by": did_key,
+                "timestamp": timestamp,
+                "proof": proof,
+            },
+        )
+        full_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        full_path = f"/v1/did/{did_aw}/full"
+        full_signature = sign_message(
+            signing_key,
+            f"{full_timestamp}\nGET\n{full_path}".encode("utf-8"),
+        )
+        full_response = await client.get(
+            full_path,
+            headers={
+                "Authorization": f"DIDKey {did_key} {full_signature}",
+                "X-AWEB-Timestamp": full_timestamp,
+            },
+        )
+
+    assert create_response.status_code == 200, create_response.text
+    assert full_response.status_code == 200, full_response.text
+
+
+@pytest.mark.asyncio
+async def test_rotate_key_rejects_server_field(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    old_signing_key, old_public_key = generate_keypair()
+    old_did_key = did_from_public_key(old_public_key)
+    _, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    did_aw = stable_id_from_did_key(old_did_key)
+    created_at = datetime.now(timezone.utc)
+    mapping_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=old_did_key,
+        server="https://app.aweb.ai",
+        address="acme.com/alice",
+        handle="alice",
+    )
+    initial_timestamp = created_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    initial_payload = log_entry_payload(
+        did_aw=did_aw,
+        seq=1,
+        operation="create",
+        previous_did_key=None,
+        new_did_key=old_did_key,
+        prev_entry_hash=None,
+        state_hash=mapping_state_hash,
+        authorized_by=old_did_key,
+        timestamp=initial_timestamp,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.did_aw_mappings}}
+            (did_aw, current_did_key, server_url, address, handle, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $6)
+        """,
+        did_aw,
+        old_did_key,
+        "https://app.aweb.ai",
+        "acme.com/alice",
+        "alice",
+        created_at,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.did_aw_log}}
+            (did_aw, seq, operation, previous_did_key, new_did_key, prev_entry_hash, entry_hash,
+             state_hash, authorized_by, signature, timestamp, created_at)
+        VALUES ($1, 1, 'create', NULL, $2, NULL, $3, $4, $2, $5, $6, $7)
+        """,
+        did_aw,
+        old_did_key,
+        "entry-hash-1",
+        mapping_state_hash,
+        sign_message(old_signing_key, initial_payload),
+        initial_timestamp,
+        created_at,
+    )
+    next_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    next_state_hash = state_hash(
+        did_aw=did_aw,
+        current_did_key=new_did_key,
+        server="https://app.aweb.ai",
+        address="acme.com/alice",
+        handle="alice",
+    )
+    next_payload = log_entry_payload(
+        did_aw=did_aw,
+        seq=2,
+        operation="rotate_key",
+        previous_did_key=old_did_key,
+        new_did_key=new_did_key,
+        prev_entry_hash="entry-hash-1",
+        state_hash=next_state_hash,
+        authorized_by=old_did_key,
+        timestamp=next_timestamp,
+    )
+    signature = sign_message(old_signing_key, next_payload)
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            f"/v1/did/{did_aw}",
+            json={
+                "operation": "rotate_key",
+                "new_did_key": new_did_key,
+                "server": "https://ignored.example",
+                "seq": 2,
+                "prev_entry_hash": "entry-hash-1",
+                "state_hash": next_state_hash,
+                "authorized_by": old_did_key,
+                "timestamp": next_timestamp,
+                "signature": signature,
+            },
+        )
+
+    assert response.status_code == 400, response.text
+    assert response.json() == {"detail": "rotate_key must not include server"}
+
+
+@pytest.mark.asyncio
 async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     subject_signing_key, subject_public_key = generate_keypair()

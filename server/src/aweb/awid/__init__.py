@@ -51,19 +51,15 @@ from aweb.awid.registry import (
 )
 from aweb.awid.signing import (
     SIGNED_FIELDS,
-    VerifyResult,
     canonical_json_bytes,
     canonical_payload,
     sign_message,
     verify_did_key_signature,
-    verify_signature,
-    verify_signature_with_public_key,
 )
 from aweb.awid.stable_id import backfill_missing_stable_ids, ensure_agent_stable_ids
 
 __all__ = [
     "SIGNED_FIELDS",
-    "VerifyResult",
     "IDENTITY_CUSTODY_MODES",
     "IDENTITY_LIFETIMES",
     "Address",
@@ -104,6 +100,4 @@ __all__ = [
     "validate_did",
     "validate_stable_id",
     "verify_did_key_signature",
-    "verify_signature",
-    "verify_signature_with_public_key",
 ]
