@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import yaml from "js-yaml";
 
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
@@ -56,6 +58,50 @@ export class PinStore {
       server,
     });
     this.addresses.set(address, did);
+  }
+
+  removeAddress(address: string): boolean {
+    let removed = false;
+
+    const pinnedDID = this.addresses.get(address);
+    if (pinnedDID !== undefined) {
+      this.addresses.delete(address);
+      const pin = this.pins.get(pinnedDID);
+      if (pin?.address === address) {
+        this.pins.delete(pinnedDID);
+      }
+      removed = true;
+    }
+
+    for (const [pinKey, pin] of this.pins) {
+      if (pin.address !== address) continue;
+      this.pins.delete(pinKey);
+      if (this.addresses.get(address) === pinKey) {
+        this.addresses.delete(address);
+      }
+      removed = true;
+    }
+
+    return removed;
+  }
+
+  async save(path: string): Promise<void> {
+    const data = this.toYAML();
+    const dir = dirname(path);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+
+    const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+    const file = await open(tmpPath, "w", 0o600);
+    try {
+      await file.writeFile(data, "utf-8");
+      await file.sync();
+    } catch (error) {
+      await file.close().catch(() => {});
+      await rm(tmpPath, { force: true }).catch(() => {});
+      throw error;
+    }
+    await file.close();
+    await rename(tmpPath, path);
   }
 
   /** Serialize to YAML (compatible with Go's known_agents.yaml). */

@@ -10,6 +10,9 @@ __pycache__/
 .coverage
 *.py[cod]
 *.egg-info/
+.env*
+.emacs-bu/
+*.emacs-bu*
 .aw/
 .claude/settings*
 

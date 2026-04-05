@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/awebai/aw/awconfig"
 )
@@ -11,8 +12,8 @@ import (
 // CommLogEntry is one line in the per-account communication log (JSONL).
 type CommLogEntry struct {
 	Timestamp    string `json:"ts"`
-	Dir          string `json:"dir"`                    // "send" or "recv"
-	Channel      string `json:"ch"`                     // "mail", "chat", "dm"
+	Dir          string `json:"dir"` // "send" or "recv"
+	Channel      string `json:"ch"`  // "mail", "chat", "dm"
 	MessageID    string `json:"msg_id,omitempty"`
 	SessionID    string `json:"session_id,omitempty"`
 	From         string `json:"from,omitempty"`
@@ -33,13 +34,33 @@ func commLogPath(logsDir, accountName string) string {
 	return filepath.Join(logsDir, accountName+".jsonl")
 }
 
-// defaultLogsDir returns ~/.config/aw/logs (or AW_CONFIG_PATH-relative).
+func commLogNameForSelection(sel *awconfig.Selection) string {
+	if sel == nil {
+		return "workspace"
+	}
+	candidates := []string{
+		strings.TrimSpace(sel.StableID),
+		strings.TrimSpace(sel.DID),
+		deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.DefaultProject), strings.TrimSpace(sel.IdentityHandle)),
+		strings.TrimSpace(sel.IdentityHandle),
+		strings.TrimSpace(sel.IdentityID),
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		return sanitizeKeyComponent(candidate)
+	}
+	return "workspace"
+}
+
+// defaultLogsDir returns ~/.config/aw/logs.
 func defaultLogsDir() string {
-	p, err := awconfig.DefaultGlobalConfigPath()
+	p, err := awconfig.DefaultLogsDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(p), "logs")
+	return p
 }
 
 // appendCommLog writes a single entry to the account's communication log.

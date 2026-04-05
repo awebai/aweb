@@ -30,7 +30,7 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 }
 
 // logChatEvent logs a single chat event to the communication log.
-func logChatEvent(logsDir, accountName, myAddress string, ev chat.Event) {
+func logChatEvent(logsDir, logName, myAddress string, ev chat.Event) {
 	dir := "recv"
 	kind := interactionKindChatIn
 	from := ev.FromAddress
@@ -47,7 +47,7 @@ func logChatEvent(logsDir, accountName, myAddress string, ev chat.Event) {
 		dir = "send"
 		kind = interactionKindChatOut
 	}
-	appendCommLog(logsDir, accountName, &CommLogEntry{
+	appendCommLog(logsDir, logName, &CommLogEntry{
 		Timestamp:    ev.Timestamp,
 		Dir:          dir,
 		Channel:      "chat",
@@ -76,12 +76,12 @@ func logChatEvent(logsDir, accountName, myAddress string, ev chat.Event) {
 }
 
 // logChatEvents logs all message events from a list.
-func logChatEvents(logsDir, accountName, myAddress string, events []chat.Event) {
+func logChatEvents(logsDir, logName, myAddress string, events []chat.Event) {
 	for _, ev := range events {
 		if ev.Type != "message" {
 			continue
 		}
-		logChatEvent(logsDir, accountName, myAddress, ev)
+		logChatEvent(logsDir, logName, myAddress, ev)
 	}
 }
 
@@ -111,8 +111,9 @@ var chatSendAndWaitCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
+		logName := commLogNameForSelection(sel)
 		// Log the sent message.
-		appendCommLog(logsDir, sel.AccountName, &CommLogEntry{
+		appendCommLog(logsDir, logName, &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -129,7 +130,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Text:      args[1],
 		})
 		// Log any reply events.
-		logChatEvents(logsDir, sel.AccountName, myAddr, result.Events)
+		logChatEvents(logsDir, logName, myAddr, result.Events)
 		printOutput(result, formatChatSend)
 		return nil
 	},
@@ -153,7 +154,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			return networkError(err, args[0])
 		}
 		logsDir := defaultLogsDir()
-		appendCommLog(logsDir, sel.AccountName, &CommLogEntry{
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -217,7 +218,7 @@ var chatOpenCmd = &cobra.Command{
 		logsDir := defaultLogsDir()
 		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
 		for _, m := range result.Messages {
-			logChatEvent(logsDir, sel.AccountName, myAddr, m)
+			logChatEvent(logsDir, commLogNameForSelection(sel), myAddr, m)
 		}
 		printOutput(result, formatChatOpen)
 		return nil
@@ -267,7 +268,7 @@ var chatExtendWaitCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		appendCommLog(logsDir, sel.AccountName, &CommLogEntry{
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -309,7 +310,7 @@ var chatListenCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
-		logChatEvents(logsDir, sel.AccountName, myAddr, result.Events)
+		logChatEvents(logsDir, commLogNameForSelection(sel), myAddr, result.Events)
 		printOutput(result, formatChatSend)
 		return nil
 	},
@@ -335,7 +336,7 @@ var chatShowPendingCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		myAddr := deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, sel.IdentityHandle)
-		logChatEvents(logsDir, sel.AccountName, myAddr, result.Events)
+		logChatEvents(logsDir, commLogNameForSelection(sel), myAddr, result.Events)
 		printOutput(result, formatChatSend)
 		return nil
 	},

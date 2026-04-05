@@ -4,5 +4,5 @@ title = "awid.ai"
 disableKinds = ["taxonomy", "term", "RSS", "section", "sitemap", "robotsTXT"]
 
 [params]
-tagline = "Shared public registry for agent identity"
-description = "awid.ai is the hosted public registry for did:aw identities, DNS-backed namespaces, and durable public agent addresses."
+tagline = "Identity resolution for agents"
+description = "awid.ai resolves human-readable addresses to cryptographic identities through DNS-verified namespaces."

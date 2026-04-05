@@ -6,6 +6,7 @@ import base64
 import enum
 import json
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 import httpx
@@ -105,9 +106,16 @@ def verify_did_key_signature(*, did_key: str, payload: bytes, signature_b64: str
         raise ValueError("invalid signature")
 
 
+@dataclass(frozen=True)
+class AgentSignatureVerification:
+    did_key: str
+    status: str
+    source: str
+
+
 async def _resolve_agent_verification_material(
     *, request, db, agent_id: str
-) -> tuple[bytes, str]:
+) -> tuple[bytes, str, str, str]:
     from aweb.awid.registry import RegistryError
 
     aweb_db = db.get_manager("aweb")
@@ -127,10 +135,24 @@ async def _resolve_agent_verification_material(
     cached_public_key = (row.get("public_key") or "").strip() or None
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
+    if stable_id is not None and registry_client is None:
+        logger.warning(
+            "No registry client available for stable identity %s; using cached key",
+            stable_id,
+        )
     if stable_id is not None and registry_client is not None:
         try:
-            resolution = await registry_client.resolve_key(stable_id)
-            return public_key_from_did(resolution.current_did_key), resolution.current_did_key
+            resolve_key = getattr(registry_client, "resolve_key_fresh", None)
+            if callable(resolve_key):
+                resolution = await resolve_key(stable_id)
+            else:
+                resolution = await registry_client.resolve_key(stable_id)
+            return (
+                public_key_from_did(resolution.current_did_key),
+                resolution.current_did_key,
+                "OK_VERIFIED",
+                "registry",
+            )
         except RegistryError as exc:
             if exc.status_code < 500:
                 raise ValueError("sender key lookup failed") from exc
@@ -145,14 +167,40 @@ async def _resolve_agent_verification_material(
                 stable_id,
                 exc_info=True,
             )
+        except Exception:
+            logger.warning(
+                "Unexpected AWID registry error resolving %s; falling back to cached agent key",
+                stable_id,
+                exc_info=True,
+            )
 
     if cached_public_key is not None:
         public_key = decode_public_key(cached_public_key)
         resolved_did = cached_did or did_from_public_key(public_key)
-        return public_key, resolved_did
+        if stable_id is None:
+            logger.info(
+                "Using cached local key for ephemeral sender %s",
+                agent_id,
+            )
+            return public_key, resolved_did, "OK_VERIFIED", "ephemeral_cached_key"
+        logger.warning(
+            "Using cached local key for stable identity %s because registry verification is unavailable",
+            stable_id,
+        )
+        return public_key, resolved_did, "OK_DEGRADED", "stable_cached_key"
 
     if cached_did is not None and cached_did.startswith("did:key:z"):
-        return public_key_from_did(cached_did), cached_did
+        if stable_id is None:
+            logger.info(
+                "Using cached local did:key for ephemeral sender %s",
+                agent_id,
+            )
+            return public_key_from_did(cached_did), cached_did, "OK_VERIFIED", "ephemeral_cached_did"
+        logger.warning(
+            "Using cached local did:key for stable identity %s because registry verification is unavailable",
+            stable_id,
+        )
+        return public_key_from_did(cached_did), cached_did, "OK_DEGRADED", "stable_cached_did"
 
     raise ValueError("sender key unavailable")
 
@@ -165,8 +213,8 @@ async def verify_agent_did_key_signature(
     did_key: str,
     payload: bytes,
     signature_b64: str,
-) -> None:
-    public_key, expected_did = await _resolve_agent_verification_material(
+) -> AgentSignatureVerification:
+    public_key, expected_did, status, source = await _resolve_agent_verification_material(
         request=request,
         db=db,
         agent_id=agent_id,
@@ -176,3 +224,4 @@ async def verify_agent_did_key_signature(
     result = verify_signature_with_public_key(public_key, payload, signature_b64)
     if result != VerifyResult.VERIFIED:
         raise ValueError("invalid signature")
+    return AgentSignatureVerification(did_key=expected_did, status=status, source=source)

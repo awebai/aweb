@@ -138,25 +138,17 @@ Mixed — needs splitting.
 
 ### Protocol config (→ awid)
 
-- `global_config.go` — Account struct fields: `Server`, `APIKey`, `IdentityID`,
-  `IdentityHandle`, `NamespaceSlug`, `DID`, `StableID`, `SigningKey`,
-  `Custody`, `Lifetime`, `Email`
 - `keys.go` — Keypair generation, storage, loading
 - `keys_scan.go` — Key scanning (recovery)
-- `selection.go` — Account resolution
 - `lock_unix.go`, `lock_windows.go` — Config file locking
+- registry and signing-key helpers that remain below the `.aw/` model
 
 ### Coordination config (→ aw)
 
 - `workspace.go` — `.aw/workspace.yaml` management
-- `context.go` — Worktree context (maps servers → accounts per directory)
-
-### Shared
-
-- `global_config.go` — The `GlobalConfig` and `Server` structs are used by
-  both layers. The config file itself (`~/.config/aw/config.yaml`) is shared.
-  Design decision: awid owns the config file format; aw reads/writes through
-  awid's API.
+- `context.go` — Worktree-local coordination pointer
+- `selection.go` — `.aw/`-based local selection
+- `state.go` — user-state helpers such as `known_agents.yaml` and `run.json`
 
 ---
 
@@ -170,13 +162,13 @@ delegate to the awid library.
 | File | Commands |
 |------|----------|
 | `init.go` | `aw init` |
-| `connect.go` | `aw connect` |
 | `mail.go` | `aw mail send`, `aw mail inbox` |
 | `chat.go` | `aw chat *` |
 | `network.go` | `aw directory` |
-| `agents.go` | `aw identities`, `aw identity access-mode`, `aw identity reachability`, `aw identity delete` |
+| `agents.go` | `aw identities`, `aw id access-mode`, `aw id reachability`, `aw id delete` |
 | `contacts.go` | `aw contacts` |
-| `did.go` | `aw identity log`, `aw identity rotate-key` |
+| `id_create.go` | `aw id create` |
+| `did.go` | `aw id log`, `aw id rotate-key`, `aw id register`, `aw id show`, `aw id resolve`, `aw id verify`, `aw id namespace` |
 | `heartbeat.go` | `aw heartbeat` |
 | `introspect.go` | `aw whoami` |
 | `reset.go` | `aw reset` |

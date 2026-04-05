@@ -122,6 +122,60 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
 
 
 @pytest.mark.asyncio
+async def test_register_did_allows_standalone_creation_without_server():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/v1/did":
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["server"] == ""
+            assert payload["address"] == ""
+            verify_did_key_signature(
+                did_key=payload["did_key"],
+                payload=log_entry_payload(
+                    did_aw=payload["did_aw"],
+                    seq=payload["seq"],
+                    operation="create",
+                    previous_did_key=None,
+                    new_did_key=payload["did_key"],
+                    prev_entry_hash=payload["prev_entry_hash"],
+                    state_hash=payload["state_hash"],
+                    authorized_by=payload["authorized_by"],
+                    timestamp=payload["timestamp"],
+                ),
+                signature_b64=payload["proof"],
+            )
+            return httpx.Response(200, json={"registered": True})
+        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": did_key,
+                    "server": "",
+                    "address": "",
+                    "handle": None,
+                    "created_at": "2026-04-03T00:00:00Z",
+                    "updated_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    mapping = await client.register_did(did_key, signing_key, None)
+
+    assert mapping.did_aw == did_aw
+    assert mapping.server == ""
+    assert mapping.address == ""
+
+
+@pytest.mark.asyncio
 async def test_register_did_raises_already_registered_error_with_existing_key():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
@@ -934,6 +988,50 @@ async def test_cached_registry_client_serves_stale_then_refreshes_in_background(
 
     refreshed = await client.resolve_key(did_aw)
     assert refreshed.current_did_key == new_did_key
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache(monkeypatch):
+    signing_key, public_key = generate_keypair()
+    old_did_key = did_from_public_key(public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    did_aw = stable_id_from_did_key(old_did_key)
+    now = {"value": 0}
+    current_key = {"value": old_did_key}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/did/{did_aw}/key"
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": current_key["value"],
+                "log_head": None,
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    fresh = await client.resolve_key(did_aw)
+    assert fresh.current_did_key == old_did_key
+
+    current_key["value"] = new_did_key
+    now["value"] = 301
+
+    force_fresh = await client.resolve_key_fresh(did_aw)
+
+    assert force_fresh.current_did_key == new_did_key
+    cached = await client.resolve_key(did_aw)
+    assert cached.current_did_key == new_did_key
+    assert new_signing_key != signing_key
 
 
 @pytest.mark.asyncio

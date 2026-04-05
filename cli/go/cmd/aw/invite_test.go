@@ -48,7 +48,6 @@ func TestAwInviteCreateOmitsDefaultServerFlag(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -60,21 +59,10 @@ func TestAwInviteCreateOmitsDefaultServerFlag(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "spawn", "create-invite", "--alias", "reviewer")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -122,7 +110,6 @@ func TestAwInviteCreateIncludesSelfHostedServerFlag(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -134,21 +121,10 @@ func TestAwInviteCreateIncludesSelfHostedServerFlag(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "spawn", "create-invite")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -199,7 +175,6 @@ func TestAwInviteListAndRevoke(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -211,21 +186,10 @@ func TestAwInviteListAndRevoke(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	listCmd := exec.CommandContext(ctx, bin, "spawn", "list-invites")
-	listCmd.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	listCmd.Env = testCommandEnv(tmp)
 	listCmd.Dir = tmp
 	listOut, err := listCmd.CombinedOutput()
 	if err != nil {
@@ -236,7 +200,7 @@ default_account: acct
 	}
 
 	revokeCmd := exec.CommandContext(ctx, bin, "spawn", "revoke-invite", "7f3k9x")
-	revokeCmd.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	revokeCmd.Env = testCommandEnv(tmp)
 	revokeCmd.Dir = tmp
 	revokeOut, err := revokeCmd.CombinedOutput()
 	if err != nil {
@@ -282,7 +246,6 @@ func TestAwInviteCreateMapsAccessFlag(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -294,21 +257,10 @@ func TestAwInviteCreateMapsAccessFlag(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: `+server.URL+`
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "spawn", "create-invite", "--access", "contacts")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -328,7 +280,6 @@ func TestAwInviteRejectsZeroUses(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	cfgPath := filepath.Join(tmp, "config.yaml")
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -340,21 +291,8 @@ func TestAwInviteRejectsZeroUses(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(`
-servers:
-  local:
-    url: https://app.aweb.ai
-accounts:
-  acct:
-    server: local
-    api_key: aw_sk_test
-default_account: acct
-`)+"\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
 	run := exec.CommandContext(ctx, bin, "spawn", "create-invite", "--uses", "0")
-	run.Env = append(os.Environ(), "AW_CONFIG_PATH="+cfgPath, "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {

@@ -141,31 +141,24 @@ func TestAwProjectCreateAgainstHosted(t *testing.T) {
 		t.Fatalf("api_key=%v", resp["api_key"])
 	}
 
-	// Verify config was written.
-	cfgData, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
+	if workspace.APIKey != "aw_sk_headless_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
-	// Should have an account with the headless API key.
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_headless_test" {
-			found = true
-			if acct.IdentityHandle != "deploy-bot" {
-				t.Fatalf("agent_alias=%q", acct.IdentityHandle)
-			}
-			if acct.NamespaceSlug != "myteam" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			break
-		}
+	if workspace.IdentityHandle != "deploy-bot" {
+		t.Fatalf("identity_handle=%q", workspace.IdentityHandle)
 	}
-	if !found {
-		t.Fatalf("expected account with headless API key in config:\n%s", string(cfgData))
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
+	}
+	if !strings.Contains(workspace.SigningKey, filepath.Join(".aw", "signing.key")) {
+		t.Fatalf("signing_key=%q, want .aw/signing.key", workspace.SigningKey)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
 	}
 }
 
@@ -261,26 +254,15 @@ func TestAwProjectCreateSupportsSeparateNamespaceSlug(t *testing.T) {
 		t.Fatalf("response namespace_slug=%v", resp["namespace_slug"])
 	}
 
-	cfgData, err := os.ReadFile(cfgPath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("load workspace: %v", err)
 	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
+	if workspace.APIKey != "aw_sk_headless_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_headless_test" {
-			found = true
-			if acct.NamespaceSlug != "acme" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected account with headless API key in config:\n%s", string(cfgData))
+	if workspace.NamespaceSlug != "acme" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
 	}
 }
 
@@ -502,12 +484,28 @@ func TestAwProjectCreateWithoutRolesAllowsLocalAttach(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); err != nil {
 		t.Fatalf("expected .aw/context: %v", err)
 	}
+	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspaceState.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	}
+	if workspaceState.ProjectSlug != "demo" {
+		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
+	}
+	if workspaceState.IdentityHandle != "alice" {
+		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
+	}
 }
 
 func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
+	var serverURL string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -517,6 +515,8 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_id":     "proj-1",
 				"project_slug":   "default",
@@ -526,12 +526,129 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 				"alias":          "maintainer",
 				"address":        "myteam.aweb.ai/maintainer",
 				"api_key":        "aw_sk_permanent_test",
-				"did":            "did:key:z6MkPermanent",
-				"stable_id":      "stable-permanent",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
 				"custody":        "self",
 				"lifetime":       "persistent",
 				"created":        true,
 			})
+		case "/v1/did":
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/" + bootstrappedStableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          bootstrappedStableID,
+				"current_did_key": bootstrappedDID,
+				"server":          serverURL,
+				"address":         "myteam.aweb.ai/maintainer",
+				"handle":          "maintainer",
+				"created_at":      "2026-04-04T00:00:00Z",
+				"updated_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	cfgPath := filepath.Join(tmp, "config.yaml")
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	run := exec.CommandContext(ctx, bin, "project", "create",
+		"--project", "myteam",
+		"--permanent",
+		"--name", "maintainer",
+		"--json",
+		"--write-context=false",
+		"--print-exports=false",
+	)
+	run.Stdin = strings.NewReader("")
+	run.Env = append(os.Environ(),
+		"AWEB_URL="+server.URL,
+		"AW_CONFIG_PATH="+cfgPath,
+		"AWEB_API_KEY=",
+		"AWEB_ALIAS=",
+		"AWID_REGISTRY_URL=local",
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	if gotBody["lifetime"] != "persistent" {
+		t.Fatalf("lifetime=%v", gotBody["lifetime"])
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if resp["lifetime"] != "persistent" {
+		t.Fatalf("response lifetime=%v", resp["lifetime"])
+	}
+
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspace.APIKey != "aw_sk_permanent_test" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
+	}
+	if workspace.NamespaceSlug != "myteam" {
+		t.Fatalf("namespace_slug=%q", workspace.NamespaceSlug)
+	}
+}
+
+func TestAwInitPermanentWarnsWhenRegistryRegistrationFails(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	var bootstrappedDID string
+	var bootstrappedStableID string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "maintainer", "roles": []string{}})
+		case "/api/v1/create-project":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			bootstrappedDID, _ = gotBody["did"].(string)
+			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_id":     "proj-1",
+				"project_slug":   "default",
+				"namespace_slug": "myteam",
+				"namespace":      "myteam.aweb.ai",
+				"identity_id":    "identity-1",
+				"alias":          "maintainer",
+				"address":        "myteam.aweb.ai/maintainer",
+				"api_key":        "aw_sk_permanent_test",
+				"did":            bootstrappedDID,
+				"stable_id":      bootstrappedStableID,
+				"custody":        "self",
+				"lifetime":       "persistent",
+				"created":        true,
+			})
+		case "/v1/did":
+			http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -571,45 +688,15 @@ func TestAwInitPermanentRequestsPersistentIdentity(t *testing.T) {
 		"AW_CONFIG_PATH="+cfgPath,
 		"AWEB_API_KEY=",
 		"AWEB_ALIAS=",
+		"AWID_REGISTRY_URL=local",
 	)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-
-	if gotBody["lifetime"] != "persistent" {
-		t.Fatalf("lifetime=%v", gotBody["lifetime"])
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if resp["lifetime"] != "persistent" {
-		t.Fatalf("response lifetime=%v", resp["lifetime"])
-	}
-
-	cfgData, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	var cfg awconfig.GlobalConfig
-	if err := yaml.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("parse config: %v", err)
-	}
-	found := false
-	for _, acct := range cfg.Accounts {
-		if acct.APIKey == "aw_sk_permanent_test" {
-			found = true
-			if acct.NamespaceSlug != "myteam" {
-				t.Fatalf("namespace_slug=%q", acct.NamespaceSlug)
-			}
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected account with permanent API key in config:\n%s", string(cfgData))
+	if !strings.Contains(string(out), "Warning: could not sync identity at awid.ai:") {
+		t.Fatalf("expected registration warning in output:\n%s", string(out))
 	}
 }
 

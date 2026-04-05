@@ -317,6 +317,7 @@ async def send_message(
     msg_signature = payload.signature
     msg_signing_key_id = payload.signing_key_id
     msg_signed_payload = payload.signed_payload
+    signature_verification = None
     created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
 
@@ -390,7 +391,7 @@ async def send_message(
     else:
         signed_payload_bytes = canonical_payload(message_fields | {"from_did": payload.from_did or ""})
         try:
-            await verify_agent_did_key_signature(
+            signature_verification = await verify_agent_did_key_signature(
                 request=request,
                 db=db,
                 agent_id=actor_id,
@@ -400,7 +401,8 @@ async def send_message(
             )
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-        msg_signing_key_id = payload.from_did
+        msg_from_did = signature_verification.did_key
+        msg_signing_key_id = signature_verification.did_key
         msg_signed_payload = signed_payload_bytes.decode("utf-8")
 
     try:
@@ -436,16 +438,16 @@ async def send_message(
     aweb_db = db.get_manager("aweb")
     await acknowledge_rotation(aweb_db, from_agent_id=UUID(actor_id), to_agent_id=UUID(to_agent_id))
 
-    await fire_mutation_hook(
-        request,
-        "message.sent",
-        {
-            "message_id": str(message_id),
-            "from_agent_id": actor_id,
-            "to_agent_id": to_agent_id,
-            "subject": payload.subject,
-        },
-    )
+    hook_context = {
+        "message_id": str(message_id),
+        "from_agent_id": actor_id,
+        "to_agent_id": to_agent_id,
+        "subject": payload.subject,
+    }
+    if signature_verification is not None:
+        hook_context["signature_verification_status"] = signature_verification.status
+        hook_context["signature_verification_source"] = signature_verification.source
+    await fire_mutation_hook(request, "message.sent", hook_context)
 
     return SendMessageResponse(
         message_id=str(message_id),

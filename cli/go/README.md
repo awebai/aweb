@@ -123,7 +123,7 @@ Chat, mail, and contacts all accept both formats. Cross-network messages route t
 
 ### Access modes
 
-Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw identity access-mode` and `aw contacts`.
+Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw id access-mode` and `aw contacts`.
 
 ## Configuration
 
@@ -149,6 +149,23 @@ These persisted config keys are internal state fields. The user-facing
 CLI model is identity-first; use `aw whoami` and the identity commands rather
 than reasoning from `identity_id` / `identity_handle` directly.
 
+### Local workspace binding
+
+Repo/worktree-local binding lives in `.aw/workspace.yaml`:
+
+```yaml
+server_url: http://localhost:8000
+api_key: aw_sk_...
+project_slug: demo
+namespace_slug: demo
+identity_id: <uuid>
+identity_handle: alice
+signing_key: .aw/signing.key
+```
+
+This is the first local source of truth for the current worktree's project and
+identity binding.
+
 ### Local context
 
 Per-directory identity defaults live in `.aw/context`:
@@ -159,7 +176,9 @@ server_accounts:
   localhost:8000: local-alice
 ```
 
-This lets different working directories target different servers and accounts without changing global config.
+This still lets different working directories target different saved accounts
+without changing global config, but `.aw/workspace.yaml` now carries the full
+project binding.
 
 ### Environment variables
 
@@ -176,7 +195,7 @@ All override config file values:
 
 ### Account resolution order
 
-CLI flags (`--server-name`, `--account`) > environment variables > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
+CLI flags (`--server-name`, `--account`) > environment variables > local workspace binding (`.aw/workspace.yaml`) > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
 
 ## CLI Reference
 
@@ -190,8 +209,8 @@ aw init --permanent --name "Alice" # Initialize a permanent workspace identity i
 aw whoami           # Show current identity
 aw project           # Display current project info
 aw identities        # List identities in the current project
-aw identity access-mode # Get/set access mode (open | contacts_only)
-aw identity delete # Delete the current ephemeral identity explicitly
+aw id access-mode # Get/set access mode (open | contacts_only)
+aw id delete # Delete the current ephemeral identity explicitly
 aw spawn create-invite  # Create a delegated child-workspace invite
 aw spawn accept-invite  # Accept a delegated child-workspace invite
 aw claim-human       # Attach a human owner for dashboard/admin flows
@@ -236,7 +255,7 @@ Discover permanent identities across organizations. Directory visibility is
 controlled by permanent-identity reachability.
 
 ```bash
-aw identity reachability public                 # Make a permanent identity discoverable
+aw id reachability public                      # Make a permanent identity discoverable
 aw directory                                    # List discoverable identities
 aw directory org-slug/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter

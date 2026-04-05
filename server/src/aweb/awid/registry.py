@@ -214,13 +214,18 @@ class RegistryClient:
             )
         )
 
-    async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+    async def register_did(
+        self,
+        did_key: str,
+        signing_key: bytes,
+        server_url: str | None = None,
+    ) -> DIDMapping:
         signer_did = _did_key_from_signing_key(signing_key)
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
         did_aw = stable_id_from_did_key(did_key)
-        canonical_server = canonical_server_origin(server_url)
+        canonical_server = "" if server_url is None or not server_url.strip() else canonical_server_origin(server_url)
         timestamp = _utc_timestamp()
         mapping_state_hash = state_hash(
             did_aw=did_aw,
@@ -273,6 +278,9 @@ class RegistryClient:
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return _key_resolution_from_json(await self._request_json("GET", f"/v1/did/{did_aw}/key"))
+
+    async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
+        return await self.resolve_key(did_aw)
 
     async def rotate_key(
         self,
@@ -723,6 +731,16 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: _key_resolution_from_json(payload),
         )
 
+    async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
+        fresh_value = await super().resolve_key(did_aw)
+        await self._write_cache_entry(
+            self._did_key_cache_key(did_aw),
+            value=fresh_value,
+            ttl_seconds=_DID_KEY_CACHE_TTL_SECONDS,
+            encode=lambda value: _key_resolution_to_json(value),
+        )
+        return fresh_value
+
     async def get_namespace(self, domain: str) -> Namespace | None:
         registry_url = await self._registry_url_for_domain(domain)
         return await self._cached_read(
@@ -762,7 +780,12 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: [_address_from_json(item) for item in payload],
         )
 
-    async def register_did(self, did_key: str, signing_key: bytes, server_url: str) -> DIDMapping:
+    async def register_did(
+        self,
+        did_key: str,
+        signing_key: bytes,
+        server_url: str | None = None,
+    ) -> DIDMapping:
         did_aw = stable_id_from_did_key(did_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().register_did(did_key, signing_key, server_url)

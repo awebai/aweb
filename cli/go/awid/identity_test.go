@@ -5,10 +5,23 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
+
+type staticTXTResolver map[string][]string
+
+func (r staticTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	records, ok := r[name]
+	if !ok {
+		return nil, &net.DNSError{IsNotFound: true}
+	}
+	return records, nil
+}
 
 func TestDIDKeyResolverValidDID(t *testing.T) {
 	t.Parallel()
@@ -369,7 +382,7 @@ func TestChainResolverDispatchesByFormat(t *testing.T) {
 	}
 }
 
-func TestChainResolverAddressUsesServer(t *testing.T) {
+func TestChainResolverAliasUsesServer(t *testing.T) {
 	t.Parallel()
 
 	pub, _, err := ed25519.GenerateKey(nil)
@@ -379,9 +392,12 @@ func TestChainResolverAddressUsesServer(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/resolve/researcher" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"did":      did,
-			"address":  "mycompany/researcher",
+			"address":  "researcher",
 			"custody":  "self",
 			"lifetime": "persistent",
 		})
@@ -397,7 +413,7 @@ func TestChainResolverAddressUsesServer(t *testing.T) {
 		DIDKey: &DIDKeyResolver{},
 		Server: &ServerResolver{Client: c},
 	}
-	identity, err := cr.Resolve(context.Background(), "mycompany/researcher")
+	identity, err := cr.Resolve(context.Background(), "researcher")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,8 +438,268 @@ func TestChainResolverNoServer(t *testing.T) {
 	cr := &ChainResolver{
 		DIDKey: &DIDKeyResolver{},
 	}
-	_, err := cr.Resolve(context.Background(), "mycompany/researcher")
+	_, err := cr.Resolve(context.Background(), "researcher")
 	if err == nil {
 		t.Fatal("expected error when no server resolver for address")
 	}
+}
+
+func TestRegistryResolverResolvesPermanentAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL, ControllerDID: did},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	identity, err := resolver.Resolve(context.Background(), "acme.com/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q", identity.DID)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("StableID=%q", identity.StableID)
+	}
+	if identity.ResolvedVia != "registry" {
+		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
+	}
+	if identity.ControllerDID != did {
+		t.Fatalf("ControllerDID=%q", identity.ControllerDID)
+	}
+}
+
+func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/probeproj.aweb.local/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "probeproj.aweb.local",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "private",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := resolver.Resolve(context.Background(), "probeproj.aweb.local/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ServerURL != server.URL {
+		t.Fatalf("ServerURL=%q", identity.ServerURL)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q", identity.DID)
+	}
+}
+
+func TestRegistryResolverRejectsKeyDidAWMismatch(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	otherStableID := "did:aw:SomeoneElse"
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          otherStableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	_, err = resolver.Resolve(context.Background(), "acme.com/alice")
+	if err == nil || !strings.Contains(err.Error(), "key did:aw mismatch") {
+		t.Fatalf("err=%v, want key did:aw mismatch", err)
+	}
+}
+
+func TestChainResolverAddressUsesRegistry(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	registry.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	cr := &ChainResolver{
+		DIDKey:   &DIDKeyResolver{},
+		Registry: registry,
+		Server:   &ServerResolver{Client: mustClient(t, server.URL)},
+	}
+	identity, err := cr.Resolve(context.Background(), "acme.com/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ResolvedVia != "registry" {
+		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
+	}
+}
+
+func TestRegistryResolverVerifyStableIdentityRejectsKeyDidAWMismatch(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          "did:aw:SomeoneElse",
+				"current_did_key": did,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	result := resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+	if result == nil || result.Outcome != StableIdentityHardError {
+		t.Fatalf("result=%+v, want hard error", result)
+	}
+	if !strings.Contains(result.Error, "key did:aw mismatch") {
+		t.Fatalf("error=%q, want key did:aw mismatch", result.Error)
+	}
+}
+
+func mustClient(t *testing.T, baseURL string) *Client {
+	t.Helper()
+	c, err := NewWithAPIKey(baseURL, "aw_sk_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

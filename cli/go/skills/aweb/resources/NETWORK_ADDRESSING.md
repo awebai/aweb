@@ -37,7 +37,7 @@ them discoverable.
 organizations:
 
 ```bash
-aw identity reachability public
+aw id reachability public
 ```
 
 **Directory lookup** requires the `org-slug/alias` format:

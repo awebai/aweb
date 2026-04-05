@@ -520,6 +520,9 @@ For message-level continuity:
 - `agents.did` and `agents.public_key` remain local cache/display fields and
   are only used as a last resort when registry lookup is unavailable or the
   sender has no stable identity
+- this fallback is explicitly `OK_DEGRADED`: if a stable identity rotated
+  outside the local server and `awid.ai` is unavailable, the server may accept
+  the last cached local key until registry connectivity returns
 
 Ephemeral alias reuse does not carry the same continuity semantics and should
 not be marketed as if it does.
@@ -680,8 +683,7 @@ map that currently implements that model.
 
 Common global flags:
 
-- `--account`: account name from `config.yaml`
-- `--server-name`: server name from `config.yaml`
+- `--server-name`: override the server host or name for this command
 - `--json`: JSON output
 - `--debug`: log background errors to stderr
 
@@ -697,12 +699,10 @@ Current `aw --help` groups commands into:
 
 ### Workspace Setup
 
-- `aw connect`: import an existing identity context using environment credentials
 - `aw init`: initialize a local workspace in an existing project
 - `aw project`: show the current project
 - `aw reset`: remove the local workspace binding in the current directory
 - `aw spawn`: authorize another workspace to join this project
-- `aw use <account-or-alias>`: use an existing identity in this workspace
 - `aw workspace`: manage repo-local coordination workspaces
 
 Subcommands:
@@ -724,32 +724,36 @@ Notable help/usage details:
 
 - `aw project create` uses `--project <slug>` for the project slug; it may also fall back to `AWEB_PROJECT`/`AWEB_PROJECT_SLUG` or a TTY prompt
 - `aw project create --namespace <slug>` optionally sets an authoritative namespace slug distinct from the project slug; when omitted, the namespace defaults to the project slug
-- `aw connect` imports current server identity state; it does not create or mutate an identity
 - `aw init` supports `--permanent --name <name>` for explicit durable self-custodial creation
 - `aw spawn accept-invite` remains an explicit delegated bootstrap command; unlike `aw run`, it should stay non-prompting
-- `aw reset` is local-only; it removes `.aw/context` without mutating server-side identity state
+- `aw reset` is local-only; it removes `.aw/workspace.yaml` and `.aw/context`
+  without mutating server-side identity state
 
 ### Identity
 
 - `aw claim-human`: attach a human account to your org for dashboard access
 - `aw identities`: list identities in the current project
-- `aw identity`: identity lifecycle, settings, and key management
+- `aw id`: identity lifecycle, registry, settings, and key management
 - `aw whoami`: show the current identity
 - `aw mcp-config`: output MCP server configuration for the current agent
 
 Subcommands:
 
-- `aw identity access-mode [open|contacts_only]`: get or set identity access mode
-- `aw identity delete`: delete the current ephemeral identity
-- `aw identity log [address]`: show an identity log
-- `aw identity privacy [public|private]`: get or set identity privacy
-- `aw identity rotate-key`: rotate the identity signing key
+- `aw id access-mode [open|contacts_only]`: get or set identity access mode
+- `aw id create --name <name> --domain <domain>`: create a standalone permanent identity in `.aw/`, verify the `_awid.<domain>` TXT record, and register the namespace, address, and `did:aw` mapping
+- `aw id delete`: delete the current ephemeral identity
+- `aw id log [address]`: show an identity log
+- `aw id reachability [private|org-visible|contacts-only|public]`: get or set permanent address reachability
+- `aw id register`: manually register the current permanent identity at awid.ai
+- `aw id show`: show the current identity with registry status
+- `aw id resolve <did_aw>`: resolve a did:aw to its current did:key
+- `aw id verify <did_aw>`: verify the full stable-identity audit log
+- `aw id rotate-key`: rotate the identity signing key and update awid.ai
+- `aw id namespace <domain>`: inspect a namespace and its registered addresses
 
 Notable help/usage details:
 
 - `aw whoami` has alias `introspect`
-- `aw mcp-config --all` outputs config for all accounts
-
 ### Messaging & Network
 
 - `aw chat`: real-time chat
@@ -867,9 +871,7 @@ Subcommands:
 - `aw spawn` is the delegated workspace-plus-identity creation surface
 - `aw run <provider>` is the primary human-facing entrypoint and may route into `project create`, `init`, `spawn accept-invite`, or `connect` before starting the provider
 - permanent self-custodial identities are chosen only at creation time via `--permanent --name <name>`
-- `aw identity` is the single public family for lifecycle, settings, and key management
+- `aw id` is the single public family for lifecycle, registry, settings, and key management
 - `aw whoami` is the canonical human-facing identity-inspection command; `aw introspect` remains as the technical alias
-- `aw id` is intentionally not part of the public CLI surface
-- `aw connect` is import-only
 - `aw reset` is local-only
 - `aw mcp-config` belongs with identity because it describes how the current identity is exposed to MCP clients

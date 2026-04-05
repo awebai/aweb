@@ -675,6 +675,7 @@ func (s *ScreenController) handleInlineSubmitLocked() {
 
 	value := InputValueFromLine(s.inputLine, s.promptLabel)
 	s.pasting = false
+	s.lastWasCR = false
 	s.pending = false
 	s.inputLine = s.promptLabel
 	s.inputCursor = 0

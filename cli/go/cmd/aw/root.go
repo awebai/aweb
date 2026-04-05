@@ -9,7 +9,6 @@ import (
 )
 
 var serverFlag string
-var accountFlag string
 var debugFlag bool
 var jsonFlag bool
 
@@ -63,8 +62,6 @@ func init() {
 	initCmd.GroupID = groupWorkspace
 	projectCmd.GroupID = groupWorkspace
 	spawnCmd.GroupID = groupWorkspace
-	connectCmd.GroupID = groupWorkspace
-	useCmd.GroupID = groupWorkspace
 	resetCmd.GroupID = groupWorkspace
 	workspaceCmd.GroupID = groupWorkspace
 
@@ -96,8 +93,7 @@ func init() {
 	rootCmd.SetHelpCommandGroupID(groupUtility)
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Server name from config.yaml")
-	rootCmd.PersistentFlags().StringVar(&accountFlag, "account", "", "Account name from config.yaml")
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output as JSON")
 	rootCmd.AddCommand(versionCmd)

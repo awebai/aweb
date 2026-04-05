@@ -34,8 +34,6 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	initPermanent = false
 	initInjectDocs = false
 	initSetupHooks = false
-	initSaveConfig = true
-	initSetDefault = false
 	initWriteContext = true
 	initIsTTY = func() bool { return true }
 
@@ -84,6 +82,9 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 	if !captured.AskPostCreateSetup {
 		t.Fatal("expected guided onboarding to include post-create setup prompts")
+	}
+	if captured.AuthToken != "" {
+		t.Fatalf("auth_token=%q", captured.AuthToken)
 	}
 	if readyCalls != 1 {
 		t.Fatalf("expected post-wizard ready message once, got %d", readyCalls)

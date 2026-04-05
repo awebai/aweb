@@ -45,11 +45,7 @@ type SettingOverrides struct {
 }
 
 func DefaultConfigPath() (string, error) {
-	globalPath, err := awconfig.DefaultGlobalConfigPath()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(filepath.Dir(globalPath), "run.json"), nil
+	return awconfig.DefaultRunConfigPath()
 }
 
 func FindLocalConfigPath(startDir string) (string, error) {

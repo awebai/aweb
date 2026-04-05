@@ -12,12 +12,15 @@ import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
 
 import { APIClient } from "../src/api/client.js";
+import { RegistryResolver } from "../src/identity/registry.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
 const channelDir = resolve(testDir, "..");
 const repoRoot = resolve(channelDir, "..");
 const serverDir = join(repoRoot, "server");
+const cliDir = join(repoRoot, "cli", "go");
+const awBinary = join(cliDir, "aw");
 
 const ChannelNotificationSchema = NotificationSchema.extend({
   method: z.literal("notifications/claude/channel"),
@@ -33,6 +36,8 @@ interface WorkspaceInfo {
   project_id: string;
   project_slug: string;
   alias: string;
+  name?: string;
+  address?: string;
   namespace?: string;
   namespace_slug?: string;
   workspace_id?: string;
@@ -98,6 +103,7 @@ class NotificationQueue {
 describe.sequential("channel integration", () => {
   let tempRoot = "";
   let homeDir = "";
+  let aliceDir = "";
   let bobDir = "";
   let server: ServerHandle;
   let alice: WorkspaceInfo;
@@ -111,20 +117,18 @@ describe.sequential("channel integration", () => {
   beforeAll(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
     homeDir = join(tempRoot, "home");
+    aliceDir = join(tempRoot, "alice");
     bobDir = join(tempRoot, "bob");
     await mkdir(homeDir, { recursive: true });
+    await mkdir(aliceDir, { recursive: true });
     await mkdir(bobDir, { recursive: true });
 
     server = await ensureServer(tempRoot);
+    await ensureAwBinary();
     const projectSlug = `channel-e2e-${Date.now()}`;
 
-    alice = await createProject(server.baseURL, {
-      project_slug: projectSlug,
-      alias: "alice",
-    });
-    bob = await initWorkspace(server.baseURL, alice.api_key, { alias: "bob" });
-
-    await writeReceiverConfig(homeDir, bobDir, server.baseURL, bob);
+    alice = await createProjectViaAW(homeDir, aliceDir, server.baseURL, projectSlug, "alice");
+    bob = await initWorkspaceViaAW(homeDir, bobDir, server.baseURL, alice.api_key, "bob");
 
     aliceClient = new APIClient(server.baseURL, alice.api_key);
 
@@ -139,14 +143,63 @@ describe.sequential("channel integration", () => {
     }
   }, 120_000);
 
-  test("channel receives mail and chat notifications from the live server", async () => {
+  test("real aw mail verifies through the embedded registry and reaches the channel", async () => {
+    const cliBody = `cli verified mail ${Date.now()}`;
+    const cliMail = await sendMailViaAW(homeDir, aliceDir, bob.address || "bob", cliBody);
+    const inbox = await inboxViaAW(homeDir, bobDir);
+    const cliMessage = inbox.messages.find((msg) => msg.message_id === cliMail.message_id);
+    expect(cliMessage).toBeDefined();
+    expect(cliMessage?.body).toBe(cliBody);
+    expect(cliMessage?.verification_status).toBe("verified");
+    expect(cliMessage?.from_address).toBe(alice.address);
+
+    const verifiedResolver = new RegistryResolver(fetch, txtNotFoundResolver, () => Date.now(), {
+      fallbackRegistryURL: server.baseURL,
+    });
+    await expect(
+      verifiedResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
+    ).resolves.toMatchObject({
+      outcome: "OK_VERIFIED",
+      currentDidKey: alice.did,
+    });
+
+    const degradedResolver = new RegistryResolver(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/v1/did/")) {
+        throw new Error("registry unavailable");
+      }
+      return fetch(input, init);
+    }, txtNotFoundResolver, () => Date.now(), {
+      fallbackRegistryURL: server.baseURL,
+    });
+    await expect(
+      degradedResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
+    ).resolves.toMatchObject({
+      outcome: "OK_DEGRADED",
+    });
+
+    const hardErrorResolver = new RegistryResolver(async (input, init) => {
+      const response = await fetch(input, init);
+      const url = String(input);
+      if (!url.includes(`/v1/did/${alice.stable_id}/key`)) {
+        return response;
+      }
+      const payload = await response.json() as Record<string, unknown>;
+      payload.did_aw = "did:aw:SomeoneElse";
+      return jsonResponse(payload);
+    }, txtNotFoundResolver, () => Date.now(), {
+      fallbackRegistryURL: server.baseURL,
+    });
+    await expect(
+      hardErrorResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
+    ).resolves.toMatchObject({
+      outcome: "HARD_ERROR",
+    });
+
     await startChannelIfNeeded();
 
-    const tools = await mcpClient!.listTools();
-    expect(tools.tools).toHaveLength(0);
-
-    const mailBody = `mail notification ${Date.now()}`;
-    const mail = await sendMail(aliceClient, "bob", mailBody, "e2e mail", "high");
+    const channelBody = `channel verified mail ${Date.now()}`;
+    const mail = await sendMailViaAW(homeDir, aliceDir, bob.address || "bob", channelBody);
     let mailNotification;
     try {
       mailNotification = await notifications.waitFor(
@@ -155,8 +208,9 @@ describe.sequential("channel integration", () => {
     } catch (error) {
       throw new Error(`${String(error)}\nchannel stderr:\n${channelStderr || "(empty)"}`);
     }
-    expect(mailNotification.content).toBe(mailBody);
-    expect(mailNotification.meta.from).toContain("alice");
+    expect(mailNotification.content).toBe(channelBody);
+    expect(mailNotification.meta.from).toBe(alice.address);
+    expect(mailNotification.meta.verified).toBe("true");
 
     const chatBody = `chat notification ${Date.now()}`;
     const created = await createChatSession(aliceClient, ["bob"], chatBody);
@@ -181,6 +235,7 @@ describe.sequential("channel integration", () => {
       env: {
         ...stringEnv(process.env),
         HOME: homeDir,
+        AWID_REGISTRY_URL: "local",
       },
       stderr: "pipe",
     });
@@ -272,6 +327,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
       AWEB_PORT: String(appPort),
       AWEB_CUSTODY_KEY: randomHex(64),
       AWEB_MANAGED_DOMAIN: "aweb.local",
+      AWID_REGISTRY_URL: "local",
       PYTHONUNBUFFERED: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -328,95 +384,6 @@ async function stopServer(server: ServerHandle | undefined): Promise<void> {
   }
 }
 
-async function createProject(
-  baseURL: string,
-  payload: { project_slug: string; alias: string },
-): Promise<WorkspaceInfo> {
-  const response = await fetch(`${baseURL}/api/v1/create-project`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`create-project failed: ${response.status} ${await response.text()}`);
-  }
-  return response.json() as Promise<WorkspaceInfo>;
-}
-
-async function initWorkspace(
-  baseURL: string,
-  apiKey: string,
-  payload: { alias: string },
-): Promise<WorkspaceInfo> {
-  const response = await fetch(`${baseURL}/v1/workspaces/init`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`workspace init failed: ${response.status} ${await response.text()}`);
-  }
-  return response.json() as Promise<WorkspaceInfo>;
-}
-
-async function writeReceiverConfig(
-  homeDir: string,
-  workspaceDir: string,
-  baseURL: string,
-  workspace: WorkspaceInfo,
-): Promise<void> {
-  const configDir = join(homeDir, ".config", "aw");
-  const awDir = join(workspaceDir, ".aw");
-  await mkdir(configDir, { recursive: true });
-  await mkdir(awDir, { recursive: true });
-
-  const accountName = `acct-e2e__${workspace.project_slug}__${workspace.alias}`;
-  const namespaceSlug = workspace.namespace_slug || workspace.namespace || workspace.project_slug;
-
-  await writeFile(join(configDir, "config.yaml"), JSON.stringify({
-    servers: {
-      e2e: { url: baseURL },
-    },
-    accounts: {
-      [accountName]: {
-        server: "e2e",
-        api_key: workspace.api_key,
-        alias: workspace.alias,
-        namespace_slug: namespaceSlug,
-        did: workspace.did || "",
-        stable_id: workspace.stable_id || "",
-        default_project: workspace.project_slug,
-      },
-    },
-  }, null, 2));
-
-  await writeFile(join(awDir, "context"), JSON.stringify({
-    default_account: accountName,
-    server_accounts: { e2e: accountName },
-    client_default_accounts: { aw: accountName },
-  }, null, 2));
-
-  await writeFile(join(awDir, "workspace.yaml"), JSON.stringify({
-    workspace_id: workspace.workspace_id || workspace.agent_id,
-    project_id: workspace.project_id,
-    project_slug: workspace.project_slug,
-    alias: workspace.alias,
-  }, null, 2));
-}
-
-async function sendMail(
-  client: APIClient,
-  toAlias: string,
-  body: string,
-  subject: string,
-  priority: "low" | "normal" | "high" | "urgent" = "normal",
-): Promise<{ message_id: string }> {
-  return client.post("/v1/messages", { to_alias: toAlias, body, subject, priority });
-}
-
 async function createChatSession(
   client: APIClient,
   toAliases: string[],
@@ -443,6 +410,104 @@ async function waitForHealthyServer(baseURL: string): Promise<void> {
     await delay(1_000);
   }
   throw new Error(`server at ${baseURL} did not become healthy`);
+}
+
+async function ensureAwBinary(): Promise<void> {
+  const result = await runCommand("make", ["build"], {
+    cwd: cliDir,
+    timeoutMs: 120_000,
+  });
+  if (!result.ok) {
+    throw new Error(`aw build failed:\n${result.stderr || result.stdout}`);
+  }
+}
+
+async function createProjectViaAW(
+  homeDir: string,
+  workspaceDir: string,
+  baseURL: string,
+  projectSlug: string,
+  name: string,
+): Promise<WorkspaceInfo> {
+  return runAwJSON<WorkspaceInfo>(homeDir, workspaceDir, [
+    "--json",
+    "project",
+    "create",
+    "--server-url", baseURL,
+    "--project", projectSlug,
+    "--name", name,
+    "--permanent",
+  ]);
+}
+
+async function initWorkspaceViaAW(
+  homeDir: string,
+  workspaceDir: string,
+  baseURL: string,
+  apiKey: string,
+  name: string,
+): Promise<WorkspaceInfo> {
+  return runAwJSON<WorkspaceInfo>(homeDir, workspaceDir, [
+    "--json",
+    "init",
+    "--server-url", baseURL,
+    "--name", name,
+    "--permanent",
+  ], { AWEB_API_KEY: apiKey });
+}
+
+async function sendMailViaAW(
+  homeDir: string,
+  workspaceDir: string,
+  to: string,
+  body: string,
+): Promise<{ message_id: string }> {
+  return runAwJSON<{ message_id: string }>(homeDir, workspaceDir, [
+    "--json",
+    "mail",
+    "send",
+    "--to", to,
+    "--body", body,
+  ]);
+}
+
+async function inboxViaAW(
+  homeDir: string,
+  workspaceDir: string,
+): Promise<{ messages: Array<{ message_id: string; body: string; from_address?: string; verification_status?: string }> }> {
+  return runAwJSON(homeDir, workspaceDir, ["--json", "mail", "inbox"]);
+}
+
+async function runAwJSON<T>(
+  homeDir: string,
+  workspaceDir: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): Promise<T> {
+  const result = await execFileAsync(awBinary, args, {
+    cwd: workspaceDir,
+    encoding: "utf8",
+    env: {
+      ...stringEnv(process.env),
+      ...extraEnv,
+      HOME: homeDir,
+      AW_CONFIG_PATH: join(homeDir, ".config", "aw", "config.yaml"),
+      AWID_REGISTRY_URL: "local",
+    },
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return JSON.parse(result.stdout) as T;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function txtNotFoundResolver(): Promise<string[][]> {
+  throw Object.assign(new Error("not found"), { code: "ENOTFOUND" });
 }
 
 async function runCommand(

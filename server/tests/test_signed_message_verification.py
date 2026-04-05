@@ -70,17 +70,29 @@ class _FakeRegistryClient:
         self,
         *,
         did_keys_by_stable_id: dict[str, str] | None = None,
+        fresh_did_keys_by_stable_id: dict[str, str] | None = None,
         error: Exception | None = None,
+        fresh_error: Exception | None = None,
     ) -> None:
         self.did_keys_by_stable_id = did_keys_by_stable_id or {}
+        self.fresh_did_keys_by_stable_id = fresh_did_keys_by_stable_id or {}
         self.error = error
+        self.fresh_error = fresh_error
         self.calls: list[str] = []
+        self.fresh_calls: list[str] = []
 
     async def resolve_key(self, did_aw: str):
         self.calls.append(did_aw)
         if self.error is not None:
             raise self.error
         did_key = self.did_keys_by_stable_id[did_aw]
+        return SimpleNamespace(current_did_key=did_key)
+
+    async def resolve_key_fresh(self, did_aw: str):
+        self.fresh_calls.append(did_aw)
+        if self.fresh_error is not None:
+            raise self.fresh_error
+        did_key = self.fresh_did_keys_by_stable_id.get(did_aw, self.did_keys_by_stable_id[did_aw])
         return SimpleNamespace(current_did_key=did_key)
 
 
@@ -148,7 +160,10 @@ def _sign_fields(signing_key: bytes, did_key: str, fields: dict[str, str]) -> tu
     return sign_message(signing_key, payload_bytes), payload_bytes.decode("utf-8")
 
 
-def _build_test_app(*, aweb_db, server_db, registry_client) -> FastAPI:
+_UNSET = object()
+
+
+def _build_test_app(*, aweb_db, server_db, registry_client=_UNSET) -> FastAPI:
     app = FastAPI(title="aweb signed verification test")
     app.include_router(bootstrap_router)
     app.include_router(init_router)
@@ -156,7 +171,14 @@ def _build_test_app(*, aweb_db, server_db, registry_client) -> FastAPI:
     app.include_router(chat_router)
     app.state.db = _DbInfra(aweb_db=aweb_db, server_db=server_db)
     app.state.redis = _FakeRedis()
-    app.state.awid_registry_client = registry_client
+    app.state.mutation_events = []
+
+    async def _record_mutation(event_type: str, context: dict) -> None:
+        app.state.mutation_events.append((event_type, context))
+
+    app.state.on_mutation = _record_mutation
+    if registry_client is not _UNSET:
+        app.state.awid_registry_client = registry_client
     app.dependency_overrides[get_db_infra] = lambda: app.state.db
     app.dependency_overrides[get_redis] = lambda: app.state.redis
     return app
@@ -244,7 +266,7 @@ async def test_send_message_verifies_signature_against_registry_key(aweb_cloud_d
     assert response.status_code == 200, response.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT signature, signing_key_id, signed_payload
+        SELECT from_did, signature, signing_key_id, signed_payload
         FROM {{tables.messages}}
         WHERE message_id = $1
         """,
@@ -252,9 +274,11 @@ async def test_send_message_verifies_signature_against_registry_key(aweb_cloud_d
     )
     assert row is not None
     assert row["signature"] == signature
+    assert row["from_did"] == did_key
     assert row["signing_key_id"] == did_key
     assert json.loads(row["signed_payload"]) == json.loads(canonical_text)
-    assert registry_client.calls == [alice["stable_id"]]
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
 
 
 @pytest.mark.asyncio
@@ -312,7 +336,8 @@ async def test_send_message_rejects_stale_cached_agent_key_when_registry_has_rot
 
     assert response.status_code == 401, response.text
     assert response.json()["detail"] == "from_did does not match current sender did:key"
-    assert registry_client.calls == [alice["stable_id"]]
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
     assert new_signing_key != old_signing_key
 
 
@@ -370,7 +395,10 @@ async def test_send_message_falls_back_to_cached_agent_key_when_registry_is_unav
         )
 
     assert response.status_code == 200, response.text
-    assert registry_client.calls == [alice["stable_id"]]
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
+    assert app.state.mutation_events[-1][1]["signature_verification_status"] == "OK_DEGRADED"
+    assert app.state.mutation_events[-1][1]["signature_verification_source"] == "stable_cached_key"
 
 
 @pytest.mark.asyncio
@@ -425,7 +453,7 @@ async def test_create_chat_session_verifies_signature_against_registry_key(
     assert response.status_code == 200, response.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT signature, signing_key_id, signed_payload
+        SELECT from_did, signature, signing_key_id, signed_payload
         FROM {{tables.chat_messages}}
         WHERE message_id = $1
         """,
@@ -433,9 +461,11 @@ async def test_create_chat_session_verifies_signature_against_registry_key(
     )
     assert row is not None
     assert row["signature"] == signature
+    assert row["from_did"] == did_key
     assert row["signing_key_id"] == did_key
     assert json.loads(row["signed_payload"]) == json.loads(canonical_text)
-    assert registry_client.calls == [alice["stable_id"]]
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
     assert bob["agent_id"]
 
 
@@ -496,5 +526,239 @@ async def test_send_chat_message_uses_registry_backed_verifier(aweb_cloud_db, mo
 
     assert response.status_code == 401, response.text
     assert response.json()["detail"] == "from_did does not match current sender did:key"
-    assert registry_client.calls == [alice["stable_id"]]
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
     assert new_signing_key != old_signing_key
+
+
+@pytest.mark.asyncio
+async def test_send_message_uses_force_fresh_registry_resolution(aweb_cloud_db, monkeypatch):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "example.test")
+    old_signing_key, old_public_key = generate_keypair()
+    old_did_key = did_from_public_key(old_public_key)
+    new_signing_key, new_public_key = generate_keypair()
+    new_did_key = did_from_public_key(new_public_key)
+    project_slug = f"fresh-mail-{uuid.uuid4().hex[:8]}"
+    registry_client = _FakeRegistryClient()
+    app = _build_test_app(
+        aweb_db=aweb_cloud_db.aweb_db,
+        server_db=aweb_cloud_db.oss_db,
+        registry_client=registry_client,
+    )
+    alice, _bob = await _bootstrap_agents(
+        app=app,
+        project_slug=project_slug,
+        did_key=old_did_key,
+        public_key=encode_public_key(old_public_key),
+    )
+    registry_client.did_keys_by_stable_id[alice["stable_id"]] = old_did_key
+    registry_client.fresh_did_keys_by_stable_id[alice["stable_id"]] = new_did_key
+
+    message_id = str(uuid.uuid4())
+    timestamp = "2026-04-04T12:00:00Z"
+    fields = _mail_payload_fields(
+        sender_alias="alice",
+        sender_project_slug=project_slug,
+        recipient_project_slug=project_slug,
+        recipient_alias="bob",
+        message_id=message_id,
+        timestamp=timestamp,
+        body="fresh hello",
+        from_stable_id=alice["stable_id"],
+    )
+    signature, _ = _sign_fields(old_signing_key, old_did_key, fields)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/messages",
+            headers=_auth_headers(alice["api_key"]),
+            json={
+                "to_alias": "bob",
+                "body": "fresh hello",
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "from_did": old_did_key,
+                "from_stable_id": alice["stable_id"],
+                "signature": signature,
+            },
+        )
+
+    assert response.status_code == 401, response.text
+    assert registry_client.calls == []
+    assert registry_client.fresh_calls == [alice["stable_id"]]
+    assert new_signing_key != old_signing_key
+
+
+@pytest.mark.asyncio
+async def test_send_message_warns_when_stable_identity_has_no_registry_client(
+    aweb_cloud_db, monkeypatch, caplog
+):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "example.test")
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    project_slug = f"warn-mail-{uuid.uuid4().hex[:8]}"
+    app = _build_test_app(
+        aweb_db=aweb_cloud_db.aweb_db,
+        server_db=aweb_cloud_db.oss_db,
+    )
+    alice, _bob = await _bootstrap_agents(
+        app=app,
+        project_slug=project_slug,
+        did_key=did_key,
+        public_key=encode_public_key(public_key),
+    )
+
+    message_id = str(uuid.uuid4())
+    timestamp = "2026-04-04T12:00:00Z"
+    fields = _mail_payload_fields(
+        sender_alias="alice",
+        sender_project_slug=project_slug,
+        recipient_project_slug=project_slug,
+        recipient_alias="bob",
+        message_id=message_id,
+        timestamp=timestamp,
+        body="warn hello",
+        from_stable_id=alice["stable_id"],
+    )
+    signature, _ = _sign_fields(signing_key, did_key, fields)
+
+    with caplog.at_level("WARNING"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/v1/messages",
+                headers=_auth_headers(alice["api_key"]),
+                json={
+                    "to_alias": "bob",
+                    "body": "warn hello",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
+                    "from_did": did_key,
+                    "from_stable_id": alice["stable_id"],
+                    "signature": signature,
+                },
+            )
+
+    assert response.status_code == 200, response.text
+    assert f"No registry client available for stable identity {alice['stable_id']}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_message_verifies_ephemeral_sender_without_registry(aweb_cloud_db, caplog):
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    project_slug = f"ephemeral-mail-{uuid.uuid4().hex[:8]}"
+    app = _build_test_app(
+        aweb_db=aweb_cloud_db.aweb_db,
+        server_db=aweb_cloud_db.oss_db,
+        registry_client=_FakeRegistryClient(),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        bootstrap = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": project_slug,
+                "namespace_slug": project_slug,
+                "alias": "alice",
+                "custody": "self",
+                "did": did_key,
+                "public_key": encode_public_key(public_key),
+            },
+        )
+        assert bootstrap.status_code == 200, bootstrap.text
+        alice = bootstrap.json()
+
+        second = await client.post(
+            "/v1/workspaces/init",
+            headers=_auth_headers(alice["api_key"]),
+            json={"alias": "bob"},
+        )
+        assert second.status_code == 200, second.text
+
+        message_id = str(uuid.uuid4())
+        timestamp = "2026-04-04T12:00:00Z"
+        fields = _mail_payload_fields(
+            sender_alias="alice",
+            sender_project_slug=project_slug,
+            recipient_project_slug=project_slug,
+            recipient_alias="bob",
+            message_id=message_id,
+            timestamp=timestamp,
+            body="ephemeral hello",
+            from_stable_id=None,
+        )
+        signature, _ = _sign_fields(signing_key, did_key, fields)
+
+        with caplog.at_level("INFO"):
+            response = await client.post(
+                "/v1/messages",
+                headers=_auth_headers(alice["api_key"]),
+                json={
+                    "to_alias": "bob",
+                    "body": "ephemeral hello",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
+                    "from_did": did_key,
+                    "signature": signature,
+                },
+            )
+
+    assert response.status_code == 200, response.text
+    assert "Using cached local key for ephemeral sender" in caplog.text
+    assert app.state.mutation_events[-1][1]["signature_verification_status"] == "OK_VERIFIED"
+    assert app.state.mutation_events[-1][1]["signature_verification_source"] == "ephemeral_cached_key"
+
+
+@pytest.mark.asyncio
+async def test_send_message_falls_back_on_unexpected_registry_exception(
+    aweb_cloud_db, monkeypatch, caplog
+):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "example.test")
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    project_slug = f"unexpected-mail-{uuid.uuid4().hex[:8]}"
+    registry_client = _FakeRegistryClient(fresh_error=TimeoutError("timed out"))
+    app = _build_test_app(
+        aweb_db=aweb_cloud_db.aweb_db,
+        server_db=aweb_cloud_db.oss_db,
+        registry_client=registry_client,
+    )
+    alice, _bob = await _bootstrap_agents(
+        app=app,
+        project_slug=project_slug,
+        did_key=did_key,
+        public_key=encode_public_key(public_key),
+    )
+
+    message_id = str(uuid.uuid4())
+    timestamp = "2026-04-04T12:00:00Z"
+    fields = _mail_payload_fields(
+        sender_alias="alice",
+        sender_project_slug=project_slug,
+        recipient_project_slug=project_slug,
+        recipient_alias="bob",
+        message_id=message_id,
+        timestamp=timestamp,
+        body="unexpected hello",
+        from_stable_id=alice["stable_id"],
+    )
+    signature, _ = _sign_fields(signing_key, did_key, fields)
+
+    with caplog.at_level("WARNING"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/v1/messages",
+                headers=_auth_headers(alice["api_key"]),
+                json={
+                    "to_alias": "bob",
+                    "body": "unexpected hello",
+                    "message_id": message_id,
+                    "timestamp": timestamp,
+                    "from_did": did_key,
+                    "from_stable_id": alice["stable_id"],
+                    "signature": signature,
+                },
+            )
+
+    assert response.status_code == 200, response.text
+    assert "Unexpected AWID registry error resolving" in caplog.text

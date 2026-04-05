@@ -30,6 +30,10 @@ type IdentityResolver interface {
 	Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error)
 }
 
+type StableIdentityVerifier interface {
+	VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification
+}
+
 // DIDKeyResolver extracts the public key from a did:key string.
 // No network call required.
 type DIDKeyResolver struct{}
@@ -207,9 +211,10 @@ func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedId
 // After server resolution, the public key is cross-checked by extracting
 // it from the server-reported DID.
 type ChainResolver struct {
-	DIDKey *DIDKeyResolver
-	Server *ServerResolver
-	Pin    *PinResolver
+	DIDKey   *DIDKeyResolver
+	Registry *RegistryResolver
+	Server   *ServerResolver
+	Pin      *PinResolver
 }
 
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
@@ -229,6 +234,13 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 		return identity, nil
 	}
 
+	if strings.Contains(identifier, "/") {
+		if r.Registry == nil {
+			return nil, fmt.Errorf("ChainResolver: no registry resolver for address %q", identifier)
+		}
+		return r.Registry.Resolve(ctx, identifier)
+	}
+
 	// Address-based resolution: use server, then cross-check DID.
 	if r.Server == nil {
 		return nil, fmt.Errorf("ChainResolver: no server resolver for address %q", identifier)
@@ -246,4 +258,11 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 		identity.PublicKey = pub
 	}
 	return identity, nil
+}
+
+func (r *ChainResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {
+	if r.Registry == nil || !strings.Contains(strings.TrimSpace(address), "/") {
+		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
+	}
+	return r.Registry.VerifyStableIdentity(ctx, address, stableID)
 }
