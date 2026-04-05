@@ -198,9 +198,6 @@ func removeLocalIdentityPins(sel *awconfig.Selection) error {
 	handle := strings.TrimSpace(sel.IdentityHandle)
 	if handle != "" {
 		canonical := selectionAddress(sel)
-		if canonical == "" {
-			canonical = deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.DefaultProject), handle)
-		}
 		removed = ps.RemoveAddress(canonical) || removed
 		removed = ps.RemoveAddress(handle) || removed
 	}
