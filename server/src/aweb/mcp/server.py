@@ -35,6 +35,7 @@ from aweb.mcp.tools.project_instructions import instructions_history as _instruc
 from aweb.mcp.tools.project_instructions import instructions_show as _instructions_show_impl
 from aweb.mcp.tools.project_roles import roles_show as _roles_show_impl
 from aweb.mcp.tools.project_roles import roles_list as _roles_list_impl
+from aweb.mcp.tools.signing import sign as _sign_impl
 from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
 from aweb.mcp.tools.tasks import task_close as _task_close_impl
 from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
@@ -148,6 +149,16 @@ def register_tools(mcp: FastMCP, db_infra: DatabaseInfra, redis: Optional[Redis]
     )
     async def whoami() -> str:
         return await _whoami_impl(db_infra)
+
+    @mcp.tool(
+        name="sign",
+        description=(
+            "Sign an arbitrary JSON payload using the authenticated custodial "
+            "agent's server-held key."
+        ),
+    )
+    async def sign(sign_payload: dict[str, Any]) -> str:
+        return await _sign_impl(db_infra, sign_payload=sign_payload)
 
     # -- Mail --
 

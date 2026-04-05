@@ -26,6 +26,7 @@ from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
+from .routes.custody_sign import router as custody_sign_router
 from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
@@ -307,6 +308,7 @@ def create_app(
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)
+    app.include_router(custody_sign_router)
     if mount_local_registry_routes:
         app.include_router(did_router)
         app.include_router(dns_addresses_router)
