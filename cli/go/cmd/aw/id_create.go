@@ -97,10 +97,8 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
-	out, err := executeIDCreate(ctx, workingDir, idCreateOptions{
+	out, err := executeIDCreate(workingDir, idCreateOptions{
 		Name:          idCreateName,
 		Domain:        idCreateDomain,
 		RegistryURL:   idCreateRegistryURL,
@@ -116,7 +114,7 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOptions) (idCreateOutput, error) {
+func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, error) {
 	prepared, err := prepareIDCreatePlan(workingDir, opts)
 	if err != nil {
 		return idCreateOutput{}, err
@@ -126,6 +124,12 @@ func executeIDCreate(ctx context.Context, workingDir string, opts idCreateOption
 	if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
 		return idCreateOutput{}, err
 	}
+
+	// Start the network timeout after the interactive prompt, not before.
+	// The user may take arbitrary time reading DNS instructions and responding.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if err := confirmAndVerifyIDCreateDNS(ctx, plan, opts); err != nil {
 		return idCreateOutput{}, err
 	}
