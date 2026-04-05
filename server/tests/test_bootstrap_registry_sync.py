@@ -4,7 +4,13 @@ import uuid
 
 import pytest
 
-from aweb.awid import AlreadyRegisteredError, did_from_public_key, encode_public_key, generate_keypair
+from aweb.awid import (
+    AlreadyRegisteredError,
+    did_from_public_key,
+    encode_public_key,
+    generate_keypair,
+    reset_custody_key_cache,
+)
 from aweb.bootstrap import bootstrap_identity
 
 
@@ -197,6 +203,7 @@ async def test_bootstrap_identity_reinit_ignores_custody_key_decrypt_failure(
     )
     assert project is not None
     monkeypatch.setenv("AWEB_CUSTODY_KEY", "11" * 32)
+    reset_custody_key_cache()
     agent = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}}

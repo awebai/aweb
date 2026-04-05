@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -111,6 +111,17 @@ class RegistryClient:
     transport: httpx.AsyncBaseTransport | None = None
     base_url: str | None = None
     domain_registry_resolver: DomainRegistryResolver | None = None
+    _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_http_client",
+            httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                transport=self.transport,
+            ),
+        )
 
     def _resolved_base_url(self, registry_url: str | None = None) -> str:
         target_registry_url = registry_url or self.registry_url
@@ -161,12 +172,12 @@ class RegistryClient:
         json: dict[str, Any] | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(
-            base_url=self._resolved_base_url(registry_url=registry_url),
-            timeout=self.timeout_seconds,
-            transport=self.transport,
-        ) as client:
-            response = await client.request(method, path, headers=headers, json=json)
+        response = await self._http_client.request(
+            method,
+            f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+            headers=headers,
+            json=json,
+        )
         if not 200 <= response.status_code < 300:
             detail = None
             try:
@@ -181,6 +192,9 @@ class RegistryClient:
         if not response.content:
             return {}
         return response.json()
+
+    async def aclose(self) -> None:
+        await self._http_client.aclose()
 
     async def _request_optional_json(
         self,

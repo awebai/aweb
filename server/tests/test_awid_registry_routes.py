@@ -528,6 +528,48 @@ async def test_rotate_key_rejects_server_field(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_list_namespaces_paginates_results(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    created_times = [
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+    ]
+    for idx, (domain, created_at) in enumerate(
+        zip(["alpha.example", "bravo.example", "charlie.example"], created_times, strict=True),
+        start=1,
+    ):
+        await aweb_db.execute(
+            """
+            INSERT INTO {{tables.dns_namespaces}}
+                (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at)
+            VALUES ($1, $2, $3, 'verified', $4, $4)
+            """,
+            uuid.uuid4(),
+            domain,
+            f"did:key:zcontroller{idx}",
+            created_at,
+        )
+
+    app = _build_registry_test_app(aweb_db=aweb_db, domain_verifier=lambda _domain: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.get("/v1/namespaces?limit=2")
+        assert first.status_code == 200, first.text
+        payload = first.json()
+        assert [item["domain"] for item in payload["namespaces"]] == ["alpha.example", "bravo.example"]
+        assert payload["has_more"] is True
+        assert payload["next_cursor"]
+
+        second = await client.get(f"/v1/namespaces?limit=2&cursor={payload['next_cursor']}")
+
+    assert second.status_code == 200, second.text
+    next_payload = second.json()
+    assert [item["domain"] for item in next_payload["namespaces"]] == ["charlie.example"]
+    assert next_payload["has_more"] is False
+    assert next_payload["next_cursor"] is None
+
+
+@pytest.mark.asyncio
 async def test_list_did_addresses_returns_active_addresses_for_identity(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     subject_signing_key, subject_public_key = generate_keypair()

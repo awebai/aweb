@@ -1710,3 +1710,40 @@ async def test_cached_registry_client_passthrough_when_redis_is_down():
     await client.resolve_key(did_aw)
 
     assert request_count["value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_registry_client_reuses_pooled_http_client():
+    requests: list[str] = []
+    did_aw = "did:aw:z6MkwAi6h4r1mFddQ4rQStb8ndV"
+    did_key = "did:key:z6Mkt1xZV9i7QbF7W9f7mGkC4rR2h3M9Yk5j6H7J8K9L"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.path == f"/v1/did/{did_aw}/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": did_aw,
+                    "current_did_key": did_key,
+                    "log_head": None,
+                },
+            )
+        return httpx.Response(200, json={})
+
+    client = RegistryClient(
+        registry_url="https://registry.example",
+        transport=httpx.MockTransport(handler),
+    )
+
+    first_http_client = client._http_client
+    await client.resolve_key(did_aw)
+    await client._request_json("GET", f"/v1/did/{did_aw}/full")
+
+    assert client._http_client is first_http_client
+    assert len(requests) == 2
+    assert client._http_client.is_closed is False
+
+    await client.aclose()
+
+    assert client._http_client.is_closed is True

@@ -10,6 +10,7 @@ from aweb.awid.custody import (
     destroy_signing_key,
     encrypt_signing_key,
     get_custody_key,
+    reset_custody_key_cache,
     sign_on_behalf,
 )
 from aweb.awid.contract import (
@@ -88,6 +89,7 @@ __all__ = [
     "get_sender_delivery_metadata",
     "log_entry_payload",
     "public_key_from_did",
+    "reset_custody_key_cache",
     "require_canonical_server_origin",
     "resolve_identity_contract",
     "assert_permanent_identity",

@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.5.0"
+version = "1.5.3"
 source = { directory = "../server" }
 dependencies = [
     { name = "base58" },
