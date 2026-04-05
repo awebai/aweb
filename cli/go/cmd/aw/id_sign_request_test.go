@@ -194,8 +194,12 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
+	var sawAuthorization bool
+	var sawTimestamp bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuthorization = strings.TrimSpace(r.Header.Get("Authorization")) != ""
+		sawTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp")) != ""
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("pong"))
 	}))
@@ -220,6 +224,60 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "pong") {
 		t.Fatalf("output=%q", string(out))
+	}
+	if !sawAuthorization || !sawTimestamp {
+		t.Fatalf("raw request missing DIDKey auth headers: authorization=%v timestamp=%v", sawAuthorization, sawTimestamp)
+	}
+}
+
+func TestAwIDRequestDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	var redirectedHit bool
+	redirectTarget := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectedHit = true
+		t.Fatalf("unexpected redirected request with Authorization=%q", r.Header.Get("Authorization"))
+	}))
+
+	redirectSource := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", redirectTarget.URL+"/sink")
+		w.WriteHeader(http.StatusFound)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, "https://api.awid.ai", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "request", "GET", redirectSource.URL+"/start",
+		"--sign", `{"operation":"ping"}`,
+		"--json",
+	)
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("request failed: %v\n%s", err, string(out))
+	}
+	var got map[string]any
+	if jsonErr := json.Unmarshal(extractJSON(t, out), &got); jsonErr != nil {
+		t.Fatalf("invalid json: %v\n%s", jsonErr, string(out))
+	}
+	if got["status"] != float64(http.StatusFound) {
+		t.Fatalf("status=%v want %d", got["status"], http.StatusFound)
+	}
+	if redirectedHit {
+		t.Fatal("redirect target should not have been contacted")
 	}
 }
 

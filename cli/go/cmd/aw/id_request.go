@@ -150,7 +150,12 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	}
 	req.Header = headers.Clone()
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

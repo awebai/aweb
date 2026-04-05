@@ -409,6 +409,22 @@ func TestCanonicalJSONValueSortsKeys(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONValuePreservesUnicode(t *testing.T) {
+	t.Parallel()
+
+	got, err := CanonicalJSONValue(map[string]any{
+		"greeting": "olá",
+		"name":     "李雷",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"greeting":"olá","name":"李雷"}`
+	if got != want {
+		t.Fatalf("got:  %s\nwant: %s", got, want)
+	}
+}
+
 func TestSignArbitraryPayloadRoundtrip(t *testing.T) {
 	t.Parallel()
 
