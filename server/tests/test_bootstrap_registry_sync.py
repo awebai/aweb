@@ -242,3 +242,37 @@ async def test_bootstrap_identity_reinit_ignores_custody_key_decrypt_failure(
     assert registry_client.register_calls == []
     assert registry_client.update_calls == []
     assert "Failed to decrypt signing key during bootstrap re-init" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_identity_rejects_alias_with_different_did(aweb_cloud_db):
+    """Re-init with the same alias but a different DID must be rejected."""
+    db_infra = _DbInfra(aweb_cloud_db.aweb_db, aweb_cloud_db.oss_db)
+    slug = f"alias-clash-{uuid.uuid4().hex[:8]}"
+
+    _, pub1 = generate_keypair()
+    did1 = did_from_public_key(pub1)
+
+    await bootstrap_identity(
+        db_infra,
+        project_slug=slug,
+        alias="taken",
+        did=did1,
+        public_key=encode_public_key(pub1),
+        custody="self",
+        lifetime="ephemeral",
+    )
+
+    _, pub2 = generate_keypair()
+    did2 = did_from_public_key(pub2)
+
+    with pytest.raises(ValueError, match="already in use"):
+        await bootstrap_identity(
+            db_infra,
+            project_slug=slug,
+            alias="taken",
+            did=did2,
+            public_key=encode_public_key(pub2),
+            custody="self",
+            lifetime="ephemeral",
+        )

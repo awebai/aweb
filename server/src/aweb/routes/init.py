@@ -93,6 +93,8 @@ def _translate_bootstrap_value_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
     if detail == "Managed namespaces require AWEB_MANAGED_DOMAIN to be configured":
         return _namespace_unavailable()
+    if "is already in use" in detail:
+        return HTTPException(status_code=409, detail=detail)
     return HTTPException(status_code=422, detail=detail)
 
 

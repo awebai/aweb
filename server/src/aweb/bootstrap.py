@@ -290,10 +290,15 @@ async def bootstrap_identity(
                 alias,
             )
             if agent:
+                existing_did = (agent["did"] or "").strip()
+                if did and existing_did and did != existing_did:
+                    raise ValueError(
+                        f"alias '{alias}' is already in use by a different identity"
+                    )
                 created = False
                 agent_id = str(agent["agent_id"])
                 # On re-init, return existing identity fields.
-                agent_did = agent["did"]
+                agent_did = existing_did
                 agent_stable_id = agent.get("stable_id")
                 custody = agent["custody"]
                 lifetime = agent["lifetime"]
