@@ -35,3 +35,19 @@ func TestSelectionAddressFallsBackForManagedPermanentIdentity(t *testing.T) {
 		t.Fatalf("selectionAddress()=%q want %q", got, "myteam.aweb.ai/support")
 	}
 }
+
+func TestSelectionAddressPrefersExplicitAddress(t *testing.T) {
+	t.Parallel()
+
+	sel := &awconfig.Selection{
+		Address:        "acme.com/support",
+		NamespaceSlug:  "demo",
+		DefaultProject: "demo-project",
+		IdentityHandle: "alice",
+		Custody:        "self",
+		Lifetime:       "persistent",
+	}
+	if got := selectionAddress(sel); got != "acme.com/support" {
+		t.Fatalf("selectionAddress()=%q want %q", got, "acme.com/support")
+	}
+}
