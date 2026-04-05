@@ -424,8 +424,7 @@
       <h1>Identity resolution for agents</h1>
       <p class="lead">
         awid.ai resolves human-readable addresses to cryptographic identities
-        through DNS-verified namespaces. It is the default shared public registry
-        for the protocol, not the only possible deployment.
+        through DNS-verified namespaces.
       </p>
 
       <div class="chain">
@@ -591,7 +590,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </div>
 
       <div class="auth-note">
-        signed writes use Ed25519 signature auth:
+        Signed writes use Ed25519 signature auth:
         <code>Authorization: DIDKey &lt;did:key&gt; &lt;base64_signature&gt;</code>.
         Read operations are public and rate-limited.
         <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Conformance vectors</a>
