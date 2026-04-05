@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -146,6 +148,53 @@ func formatIDRotate(v any) string {
 	}
 	if strings.TrimSpace(out.RegistryURL) != "" {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
+	}
+	return sb.String()
+}
+
+func formatIDSign(v any) string {
+	out := v.(idSignOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.DIDKey))
+	sb.WriteString(fmt.Sprintf("Timestamp:   %s\n", out.Timestamp))
+	sb.WriteString(fmt.Sprintf("Signature:   %s\n", out.Signature))
+	return sb.String()
+}
+
+func formatIDRequest(v any) string {
+	out := v.(idRequestOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %d\n", out.Status))
+	if len(out.Headers) > 0 {
+		sb.WriteString("Headers:\n")
+		keys := make([]string, 0, len(out.Headers))
+		for key := range out.Headers {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			value := out.Headers[key]
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", key, value))
+		}
+	}
+	if out.Body == nil {
+		return sb.String()
+	}
+	sb.WriteString("Body:\n")
+	switch body := out.Body.(type) {
+	case string:
+		if strings.TrimSpace(body) == "" {
+			sb.WriteString("(empty)\n")
+		} else {
+			sb.WriteString(body)
+			if !strings.HasSuffix(body, "\n") {
+				sb.WriteByte('\n')
+			}
+		}
+	default:
+		data, _ := json.MarshalIndent(body, "", "  ")
+		sb.WriteString(string(data))
+		sb.WriteByte('\n')
 	}
 	return sb.String()
 }

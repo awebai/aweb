@@ -735,9 +735,11 @@ Subcommands:
 - `aw id create --name <name> --domain <domain>`: create a standalone permanent identity in `.aw/`, verify the `_awid.<domain>` TXT record, and register the namespace, address, and `did:aw` mapping
 - `aw id delete`: delete the current ephemeral identity
 - `aw id log [address]`: show an identity log
+- `aw id request <method> <url>`: make a DIDKey-signed HTTP request with the local identity key
 - `aw id reachability [private|org-visible|contacts-only|public]`: get or set permanent address reachability
 - `aw id register`: manually register the current permanent identity at awid.ai
 - `aw id show`: show the current identity with registry status
+- `aw id sign`: sign a canonical JSON payload with the local identity key
 - `aw id resolve <did_aw>`: resolve a did:aw to its current did:key
 - `aw id verify <did_aw>`: verify the full stable-identity audit log
 - `aw id rotate-key`: rotate the identity signing key and update awid.ai

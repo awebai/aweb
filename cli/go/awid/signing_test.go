@@ -390,6 +390,71 @@ func TestCanonicalReplacementJSONFieldOrder(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONValueSortsKeys(t *testing.T) {
+	t.Parallel()
+
+	got, err := CanonicalJSONValue(map[string]any{
+		"z": 1,
+		"a": map[string]any{
+			"b": true,
+			"a": "x",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"a":{"a":"x","b":true},"z":1}`
+	if got != want {
+		t.Fatalf("got:  %s\nwant: %s", got, want)
+	}
+}
+
+func TestSignArbitraryPayloadRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestamp := "2026-04-05T10:30:00Z"
+	didKey, signature, canonical, err := SignArbitraryPayload(priv, map[string]any{
+		"domain":    "acme.com",
+		"operation": "register",
+	}, timestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if didKey != ComputeDIDKey(pub) {
+		t.Fatalf("didKey=%q", didKey)
+	}
+	wantCanonical := `{"domain":"acme.com","operation":"register","timestamp":"2026-04-05T10:30:00Z"}`
+	if canonical != wantCanonical {
+		t.Fatalf("canonical=%s want %s", canonical, wantCanonical)
+	}
+	sigBytes, err := base64.RawStdEncoding.DecodeString(signature)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	if !ed25519.Verify(pub, []byte(canonical), sigBytes) {
+		t.Fatal("signature did not verify")
+	}
+}
+
+func TestSignArbitraryPayloadRejectsTimestampField(t *testing.T) {
+	t.Parallel()
+
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = SignArbitraryPayload(priv, map[string]any{
+		"timestamp": "2026-04-05T10:30:00Z",
+	}, "2026-04-05T10:30:00Z")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestVerifyReplacementSignatureRoundtrip(t *testing.T) {
 	t.Parallel()
 
