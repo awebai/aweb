@@ -475,7 +475,11 @@ async def inbox(
     announcements = await get_pending_announcements(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(actor_id)
     )
-    sender_delivery = await get_sender_delivery_metadata(aweb_db, sender_ids=sender_ids)
+    sender_delivery = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=sender_ids,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+    )
 
     contact_addrs = await get_contact_addresses(db, project_id=project_id)
     project_ids = {

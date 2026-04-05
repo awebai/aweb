@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from aweb.address_scope import _sender_contact_addresses, resolve_local_recipient
 from aweb.awid.custody import encrypt_signing_key, reset_custody_key_cache
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair, stable_id_from_did_key
+from aweb.awid.replacement import get_sender_delivery_metadata
 from aweb.awid.registry import RegistryError
 from aweb.db import get_db_infra
 from aweb.mcp.auth import AuthContext, _auth_context
@@ -242,6 +243,58 @@ async def test_sender_contact_addresses_use_registry_reverse_lookup(aweb_cloud_d
     assert f"{project_slug}~alice" in addresses
     assert "team.example/alice" in addresses
     assert registry_client.did_calls == [sender_stable_id]
+
+
+@pytest.mark.asyncio
+async def test_sender_delivery_metadata_uses_registry_addresses(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    project_id = await _create_project(aweb_db, slug=f"delivery-{uuid.uuid4().hex[:8]}")
+    stable_id = f"did:aw:{uuid.uuid4().hex}"
+    agent_id = await _create_agent(
+        aweb_db,
+        project_id=project_id,
+        alias="alice",
+        stable_id=stable_id,
+    )
+    registry_client = _FakeRegistryClient(
+        did_addresses=[
+            _FakeAddress(domain="team.example", name="alice", did_aw=stable_id),
+        ]
+    )
+
+    metadata = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=[uuid.UUID(agent_id)],
+        registry_client=registry_client,
+    )
+
+    assert metadata[agent_id]["from_address"] == "team.example/alice"
+    assert metadata[agent_id]["replacement_announcement"] is None
+    assert registry_client.did_calls == [stable_id]
+
+
+@pytest.mark.asyncio
+async def test_sender_delivery_metadata_degrades_when_registry_unavailable(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    project_id = await _create_project(aweb_db, slug=f"delivery-fallback-{uuid.uuid4().hex[:8]}")
+    stable_id = f"did:aw:{uuid.uuid4().hex}"
+    agent_id = await _create_agent(
+        aweb_db,
+        project_id=project_id,
+        alias="alice",
+        stable_id=stable_id,
+    )
+    registry_client = _FakeRegistryClient(fail_list=True)
+
+    metadata = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=[uuid.UUID(agent_id)],
+        registry_client=registry_client,
+    )
+
+    assert metadata[agent_id]["from_address"] is None
+    assert metadata[agent_id]["replacement_announcement"] is None
+    assert registry_client.did_calls == [stable_id]
 
 
 @pytest.mark.asyncio

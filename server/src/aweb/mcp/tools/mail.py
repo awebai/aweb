@@ -232,7 +232,11 @@ async def check_inbox(
     announcements = await get_pending_announcements(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(auth.agent_id)
     )
-    sender_delivery = await get_sender_delivery_metadata(aweb_db, sender_ids=sender_ids)
+    sender_delivery = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=sender_ids,
+        registry_client=registry_client,
+    )
     contact_addrs = await get_contact_addresses(db_infra, project_id=auth.project_id)
     slug_by_project_id = await _project_slug_map(
         db_infra,
