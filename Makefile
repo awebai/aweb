@@ -1,23 +1,34 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build release-server-check release-server-tag release-server-push release-awid-check release-awid-tag release-awid-push
+.PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build \
+	release-server-check release-server-tag release-server-push \
+	release-awid-check release-awid-tag release-awid-push \
+	release-channel-check release-channel-tag release-channel-push \
+	release-cli-tag release-cli-push \
+	release-all-check release-all-tag release-all-push
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
+CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
+CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
+CLI_VERSION := $(SERVER_VERSION)
 
 help:
 	@echo "Targets:"
 	@echo "  build        Build the aw CLI binary"
-	@echo "  test         Run all tests (server + CLI + channel)"
+	@echo "  test         Run all tests (server + CLI + channel + awid)"
 	@echo "  test-server  Run server tests"
 	@echo "  test-awid    Run awid service tests"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
-	@echo "  release-server-check  Run server release checks and build PyPI artifacts"
-	@echo "  release-server-tag    Commit the server version bump and create server-v<version>"
-	@echo "  release-server-push   Push main and server-v<version> to trigger PyPI publish"
-	@echo "  release-awid-check    Run awid release checks and validate the release image build"
-	@echo "  release-awid-tag      Commit the awid version bump and create awid-v<version>"
-	@echo "  release-awid-push     Push main and awid-v<version> to trigger GHCR publish"
+	@echo ""
+	@echo "  release-all-check   Validate ALL products before release"
+	@echo "  release-all-tag     Commit version bumps and create all tags"
+	@echo "  release-all-push    Push main and all tags to trigger CI"
+	@echo ""
+	@echo "  release-server-check / -tag / -push   aweb server (PyPI)"
+	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
+	@echo "  release-awid-check / -tag / -push     awid service (GHCR)"
+	@echo "  release-cli-tag / -push               aw CLI (goreleaser)"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -76,6 +87,75 @@ release-awid-tag:
 release-awid-push:
 	git push origin main
 	git push origin awid-v$(AWID_VERSION)
+
+# ── Channel release ──────────────────────────────────────────────────
+
+release-channel-check:
+	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
+		(echo "ERROR: channel package.json ($(CHANNEL_VERSION)) != plugin.json ($(CHANNEL_PLUGIN_VERSION))"; exit 1)
+	cd channel && npm test
+	cd channel && npm run build
+	cd channel && npm pack --dry-run
+	@echo "Channel $(CHANNEL_VERSION) ready."
+
+release-channel-tag:
+	@git rev-parse --verify "channel-v$(CHANNEL_VERSION)" >/dev/null 2>&1 && (echo "Tag channel-v$(CHANNEL_VERSION) already exists."; exit 1) || true
+	git add channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json
+	git commit -m "release: @awebai/claude-channel $(CHANNEL_VERSION)"
+	git tag "channel-v$(CHANNEL_VERSION)"
+	@echo "Created tag channel-v$(CHANNEL_VERSION)."
+
+release-channel-push:
+	git push origin main
+	git push origin channel-v$(CHANNEL_VERSION)
+
+# ── CLI release ──────────────────────────────────────────────────────
+
+release-cli-tag:
+	@git rev-parse --verify "aw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag aw-v$(CLI_VERSION) already exists."; exit 1) || true
+	git tag "aw-v$(CLI_VERSION)"
+	@echo "Created tag aw-v$(CLI_VERSION)."
+
+release-cli-push:
+	git push origin aw-v$(CLI_VERSION)
+
+# ── Unified release ──────────────────────────────────────────────────
+
+release-all-check:
+	@echo "=== Validating versions ==="
+	@echo "  server:  $(SERVER_VERSION)"
+	@echo "  awid:    $(AWID_VERSION)"
+	@echo "  channel: $(CHANNEL_VERSION) (plugin: $(CHANNEL_PLUGIN_VERSION))"
+	@echo "  cli:     $(CLI_VERSION)"
+	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
+		(echo "ERROR: channel package.json != plugin.json"; exit 1)
+	@echo ""
+	@echo "=== Running all tests ==="
+	$(MAKE) test
+	@echo ""
+	@echo "=== Building artifacts ==="
+	$(MAKE) release-server-check
+	$(MAKE) release-channel-check
+	@echo ""
+	@echo "=== All checks passed ==="
+
+release-all-tag:
+	@echo "=== Tagging all products ==="
+	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml
+	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
+	git tag "server-v$(SERVER_VERSION)"
+	git tag "aw-v$(CLI_VERSION)"
+	git tag "channel-v$(CHANNEL_VERSION)"
+	git tag "awid-v$(AWID_VERSION)"
+	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION)"
+
+release-all-push:
+	git push origin main
+	git push origin server-v$(SERVER_VERSION)
+	git push origin aw-v$(CLI_VERSION)
+	git push origin channel-v$(CHANNEL_VERSION)
+	git push origin awid-v$(AWID_VERSION)
+	@echo "All tags pushed. CI will publish."
 
 clean:
 	@echo "Cleaning build artifacts..."
