@@ -14,6 +14,7 @@ from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
 from aweb.db import get_db_infra
 from aweb.mcp.auth import AuthContext, _auth_context
 from aweb.mcp.tools.signing import sign as mcp_sign
+from aweb.ratelimit import MemoryFixedWindowRateLimiter
 from aweb.redis_client import get_redis
 from aweb.routes.custody_sign import router as custody_sign_router
 from aweb.routes.init import bootstrap_router
@@ -43,6 +44,8 @@ def _build_app(*, aweb_db, server_db) -> FastAPI:
     app = FastAPI(title="aweb custody sign test")
     app.include_router(bootstrap_router)
     app.include_router(custody_sign_router)
+    app.state.db = _DbInfra(aweb_db=aweb_db, server_db=server_db)
+    app.state.rate_limiter = MemoryFixedWindowRateLimiter()
     app.dependency_overrides[get_db_infra] = lambda: _DbInfra(aweb_db=aweb_db, server_db=server_db)
     app.dependency_overrides[get_redis] = lambda: _FakeRedis()
     return app
@@ -236,6 +239,47 @@ async def test_custody_sign_route_returns_503_when_did_missing(aweb_cloud_db):
 
     assert response.status_code == 503, response.text
     assert "has no did:key configured" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_custody_sign_route_rate_limits_per_agent(aweb_cloud_db):
+    app = _build_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+    master_key = bytes.fromhex("66" * 32)
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    encrypted = encrypt_signing_key(signing_key, master_key)
+    os.environ["AWEB_CUSTODY_KEY"] = master_key.hex()
+    reset_custody_key_cache()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await _create_project(client, slug=f"custody-rate-limit-{uuid.uuid4().hex[:8]}")
+        await _set_agent_custody(
+            aweb_cloud_db.aweb_db,
+            agent_id=created["agent_id"],
+            custody="custodial",
+            signing_key_enc=encrypted,
+            did=did_key,
+            public_key=encode_public_key(public_key),
+        )
+        headers = _auth_headers(created["api_key"])
+        for i in range(60):
+            response = await client.post(
+                "/v1/custody/sign",
+                headers=headers,
+                json={"sign_payload": {"operation": "lookup", "attempt": i}},
+            )
+            assert response.status_code == 200, response.text
+
+        limited = await client.post(
+            "/v1/custody/sign",
+            headers=headers,
+            json={"sign_payload": {"operation": "lookup", "attempt": 61}},
+        )
+
+    assert limited.status_code == 429, limited.text
+    assert limited.json() == {"detail": "rate limit exceeded"}
+    assert limited.headers["X-RateLimit-Limit"] == "60"
+    assert limited.headers["Retry-After"]
 
 
 @pytest.mark.asyncio

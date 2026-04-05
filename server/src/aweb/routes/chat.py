@@ -259,6 +259,7 @@ async def create_or_send(
             sender_project_id=project_id,
             sender_agent_id=actor_id,
             ref=ref,
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
         )
         for ref in to_aliases
     ]
@@ -628,6 +629,7 @@ async def history(
     sender_delivery = await get_sender_delivery_metadata(
         aweb_db,
         sender_ids=[UUID(str(m["from_agent_id"])) for m in messages],
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
     )
 
     history_items: list[dict[str, Any]] = []
@@ -659,7 +661,6 @@ async def history(
                 "signature": m["signature"],
                 "signing_key_id": m["signing_key_id"],
                 "signed_payload": m.get("signed_payload"),
-                "replacement_announcement": sender_meta.get("replacement_announcement"),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -780,6 +781,7 @@ async def _sse_events(
         sender_delivery = await get_sender_delivery_metadata(
             aweb_db,
             sender_ids=[UUID(str(row["agent_id"])) for row in participant_rows],
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
         )
 
         async def _connect_pubsub() -> PubSub:
@@ -864,7 +866,6 @@ async def _sse_events(
                     "signature": r["signature"],
                     "signing_key_id": r["signing_key_id"],
                     "signed_payload": r.get("signed_payload"),
-                    "replacement_announcement": sender_meta.get("replacement_announcement"),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
@@ -1006,7 +1007,6 @@ async def _sse_events(
                         "signature": r["signature"],
                         "signing_key_id": r["signing_key_id"],
                         "signed_payload": r.get("signed_payload"),
-                        "replacement_announcement": sender_meta.get("replacement_announcement"),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }
                     yield f"event: message\ndata: {json.dumps(payload)}\n\n"

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException
 
+from aweb.awid import RegistryClient
+from aweb.awid.registry import Address
+from aweb.awid.registry import RegistryError
 from aweb.auth import validate_agent_alias, validate_project_slug
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,7 @@ class ResolvedRecipient:
     agent_alias: str
     project_id: str
     project_slug: str
+    registry_address: Optional[Address] = None
 
 
 def parse_recipient_ref(value: str) -> RecipientRef:
@@ -90,29 +98,35 @@ async def resolve_local_recipient(
     sender_project_id: str,
     sender_agent_id: str | None = None,
     ref: str,
+    registry_client: RegistryClient | None = None,
 ) -> ResolvedRecipient:
     parsed = parse_recipient_ref(ref)
     aweb_db = db.get_manager("aweb")
 
     if parsed.domain is not None:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT a.agent_id, a.alias, p.project_id, p.slug AS project_slug,
-                   p.owner_type, p.owner_ref, pa.reachability
-            FROM {{tables.public_addresses}} pa
-            JOIN {{tables.dns_namespaces}} ns ON pa.namespace_id = ns.namespace_id
-                AND ns.deleted_at IS NULL
-            JOIN {{tables.agents}} a ON a.stable_id = pa.did_aw
-                AND a.deleted_at IS NULL
-            JOIN {{tables.projects}} p ON a.project_id = p.project_id
-                AND p.deleted_at IS NULL
-            WHERE ns.domain = $1
-              AND pa.name = $2
-              AND pa.deleted_at IS NULL
-            """,
-            parsed.domain,
-            parsed.alias,
-        )
+        if registry_client is None:
+            raise HTTPException(status_code=503, detail="AWID registry client not configured")
+        try:
+            address = await registry_client.resolve_address(parsed.domain, parsed.alias)
+        except RegistryError as exc:
+            raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
+
+        row = None
+        registry_address = None
+        if address is not None:
+            registry_address = address
+            row = await aweb_db.fetch_one(
+                """
+                SELECT a.agent_id, a.alias, p.project_id, p.slug AS project_slug,
+                       p.owner_type, p.owner_ref
+                FROM {{tables.agents}} a
+                JOIN {{tables.projects}} p ON a.project_id = p.project_id
+                    AND p.deleted_at IS NULL
+                WHERE a.stable_id = $1
+                  AND a.deleted_at IS NULL
+                """,
+                address.did_aw,
+            )
         if row:
             allowed = await _can_use_external_address(
                 db,
@@ -121,7 +135,8 @@ async def resolve_local_recipient(
                 recipient_project_id=str(row["project_id"]),
                 recipient_owner_type=str(row.get("owner_type") or "") or None,
                 recipient_owner_ref=str(row["owner_ref"]) if row.get("owner_ref") is not None else None,
-                reachability=str(row.get("reachability") or "private"),
+                reachability=address.reachability,
+                registry_client=registry_client,
             )
             if not allowed:
                 row = None
@@ -172,6 +187,7 @@ async def resolve_local_recipient(
         agent_alias=row["alias"],
         project_id=str(row["project_id"]),
         project_slug=row["project_slug"],
+        registry_address=registry_address if parsed.domain is not None else None,
     )
     return recipient
 
@@ -181,6 +197,7 @@ async def _sender_contact_addresses(
     *,
     sender_project_id: str,
     sender_agent_id: str | None,
+    registry_client: RegistryClient | None,
 ) -> set[str]:
     sender_scope = await get_project_scope(db, project_id=sender_project_id)
     addresses: set[str] = {sender_scope.project_slug}
@@ -212,20 +229,18 @@ async def _sender_contact_addresses(
     addresses.add(f"{sender_scope.project_slug}~{alias}")
 
     stable_id = str(sender_row.get("stable_id") or "").strip()
-    if stable_id:
-        rows = await aweb_db.fetch_all(
-            """
-            SELECT ns.domain, pa.name
-            FROM {{tables.public_addresses}} pa
-            JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
-            WHERE pa.did_aw = $1
-              AND pa.deleted_at IS NULL
-              AND ns.deleted_at IS NULL
-            """,
-            stable_id,
-        )
-        for row in rows:
-            addresses.add(f"{row['domain']}/{row['name']}")
+    if stable_id and registry_client is not None:
+        try:
+            assigned_addresses = await registry_client.list_did_addresses(stable_id)
+        except RegistryError:
+            logger.warning(
+                "Failed to list registry addresses for sender stable_id=%s",
+                stable_id,
+                exc_info=True,
+            )
+        else:
+            for address in assigned_addresses:
+                addresses.add(f"{address.domain}/{address.name}")
 
     return addresses
 
@@ -239,6 +254,7 @@ async def _can_use_external_address(
     recipient_owner_type: str | None,
     recipient_owner_ref: str | None,
     reachability: str,
+    registry_client: RegistryClient | None,
 ) -> bool:
     if sender_project_id == recipient_project_id:
         return True
@@ -264,6 +280,7 @@ async def _can_use_external_address(
             db,
             sender_project_id=sender_project_id,
             sender_agent_id=sender_agent_id,
+            registry_client=registry_client,
         )
         return any(is_address_in_contacts(candidate, contacts) for candidate in sender_addresses)
 

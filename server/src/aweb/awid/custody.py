@@ -135,8 +135,8 @@ async def sign_on_behalf(
     Returns (from_did, signature, signing_key_id, signed_payload) for custodial
     agents, or None for non-custodial agents (who sign client-side).
 
-    Raises RuntimeError if the agent is custodial but AWEB_CUSTODY_KEY is not
-    set or the agent has no stored signing key.
+    Raises CustodyError if the agent is custodial but server-side signing is
+    misconfigured.
     """
     try:
         private_key, from_did = await _load_custodial_signing_key(agent_id, db)

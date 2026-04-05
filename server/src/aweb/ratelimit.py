@@ -129,6 +129,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "address_update": (30, 3600),
     "address_delete": (30, 3600),
     "address_reassign": (30, 3600),
+    "custody_sign": (60, 60),
 }
 
 
@@ -173,6 +174,37 @@ async def get_rate_limiter(request: Request) -> RateLimiter:
     if limiter is None:
         raise RuntimeError("rate_limiter not initialized on app.state")
     return limiter
+
+
+async def enforce_rate_limit(
+    request: Request,
+    response: Response,
+    *,
+    bucket: str,
+    key: str,
+) -> None:
+    limiter = await get_rate_limiter(request)
+    limit, window = _rate_config(bucket)
+    decision = await limiter.hit(
+        bucket=bucket,
+        key=key,
+        limit=limit,
+        window_seconds=window,
+    )
+    for k, v in decision.headers().items():
+        response.headers[k] = v
+
+    if decision.allowed:
+        return
+
+    retry_after = decision.retry_after_seconds()
+    headers = decision.headers()
+    headers["Retry-After"] = str(retry_after)
+    raise HTTPException(
+        status_code=429,
+        detail="rate limit exceeded",
+        headers=headers,
+    )
 
 
 def rate_limit_dep(

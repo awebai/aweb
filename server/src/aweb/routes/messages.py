@@ -231,6 +231,7 @@ async def send_message(
             sender_project_id=project_id,
             sender_agent_id=actor_id,
             ref=payload.to_alias,
+            registry_client=getattr(request.app.state, "awid_registry_client", None),
         )
         to_agent_id = resolved.agent_id
         recipient_project_id = resolved.project_id
@@ -474,7 +475,11 @@ async def inbox(
     announcements = await get_pending_announcements(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(actor_id)
     )
-    sender_delivery = await get_sender_delivery_metadata(aweb_db, sender_ids=sender_ids)
+    sender_delivery = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=sender_ids,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+    )
 
     contact_addrs = await get_contact_addresses(db, project_id=project_id)
     project_ids = {
@@ -513,8 +518,6 @@ async def inbox(
         )
         ann_data = announcements.get(str(r["from_agent_id"]))
         ann = RotationAnnouncement(**ann_data) if ann_data else None
-        replacement_data = sender_meta.get("replacement_announcement")
-        replacement = ReplacementAnnouncement(**replacement_data) if replacement_data else None
         messages.append(
             InboxMessage(
                 message_id=str(r["message_id"]),
@@ -536,7 +539,6 @@ async def inbox(
                 signing_key_id=r["signing_key_id"],
                 signed_payload=r.get("signed_payload"),
                 rotation_announcement=ann,
-                replacement_announcement=replacement,
                 is_contact=is_address_in_contacts(
                     from_address,
                     contact_addrs,

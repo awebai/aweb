@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from aweb.awid.custody import encrypt_signing_key, reset_custody_key_cache, sign_on_behalf
+from aweb.awid.custody import CustodyError, encrypt_signing_key, reset_custody_key_cache, sign_on_behalf
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair
 
 
@@ -92,7 +92,7 @@ async def test_custodial_agent_raises_when_custody_key_missing(aweb_cloud_db):
 
     env_backup = os.environ.pop("AWEB_CUSTODY_KEY", None)
     try:
-        with pytest.raises(RuntimeError, match="AWEB_CUSTODY_KEY"):
+        with pytest.raises(CustodyError, match="AWEB_CUSTODY_KEY"):
             await sign_on_behalf(agent_id, MESSAGE_FIELDS, db)
     finally:
         if env_backup is not None:
@@ -113,7 +113,7 @@ async def test_custodial_agent_raises_when_signing_key_missing(aweb_cloud_db):
     env_backup = os.environ.get("AWEB_CUSTODY_KEY")
     os.environ["AWEB_CUSTODY_KEY"] = master_key.hex()
     try:
-        with pytest.raises(RuntimeError, match="signing key"):
+        with pytest.raises(CustodyError, match="signing key"):
             await sign_on_behalf(agent_id, MESSAGE_FIELDS, db)
     finally:
         if env_backup is not None:
@@ -198,7 +198,7 @@ async def test_custodial_agent_raises_when_did_missing(aweb_cloud_db):
     env_backup = os.environ.get("AWEB_CUSTODY_KEY")
     os.environ["AWEB_CUSTODY_KEY"] = master_key.hex()
     try:
-        with pytest.raises(RuntimeError, match="did:key"):
+        with pytest.raises(CustodyError, match="did:key"):
             await sign_on_behalf(agent_id, MESSAGE_FIELDS, db)
     finally:
         if env_backup is not None:

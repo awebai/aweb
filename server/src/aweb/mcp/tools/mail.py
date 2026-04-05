@@ -41,6 +41,7 @@ async def _project_slug_map(db_infra, *, project_ids: set[str]) -> dict[str, str
 async def send_mail(
     db_infra,
     *,
+    registry_client,
     to: str,
     subject: str = "",
     body: str,
@@ -70,6 +71,7 @@ async def send_mail(
             sender_project_id=auth.project_id,
             sender_agent_id=auth.agent_id,
             ref=recipient_ref,
+            registry_client=registry_client,
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None)
@@ -193,7 +195,12 @@ async def send_mail(
 
 
 async def check_inbox(
-    db_infra, *, unread_only: bool = True, limit: int = 50, include_bodies: bool = True
+    db_infra,
+    *,
+    registry_client=None,
+    unread_only: bool = True,
+    limit: int = 50,
+    include_bodies: bool = True,
 ) -> str:
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
@@ -230,7 +237,11 @@ async def check_inbox(
     announcements = await get_pending_announcements(
         aweb_db, sender_ids=sender_ids, recipient_id=UUID(auth.agent_id)
     )
-    sender_delivery = await get_sender_delivery_metadata(aweb_db, sender_ids=sender_ids)
+    sender_delivery = await get_sender_delivery_metadata(
+        aweb_db,
+        sender_ids=sender_ids,
+        registry_client=registry_client,
+    )
     contact_addrs = await get_contact_addresses(db_infra, project_id=auth.project_id)
     slug_by_project_id = await _project_slug_map(
         db_infra,
@@ -334,9 +345,6 @@ async def check_inbox(
         announcement = announcements.get(str(r["from_agent_id"]))
         if announcement:
             msg["rotation_announcement"] = announcement
-        replacement_announcement = sender_meta.get("replacement_announcement")
-        if replacement_announcement:
-            msg["replacement_announcement"] = replacement_announcement
         messages.append(msg)
 
     return json.dumps({"messages": messages})
