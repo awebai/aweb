@@ -10,9 +10,6 @@ __pycache__/
 .coverage
 *.py[cod]
 *.egg-info/
-.env*
-.emacs-bu/
-*.emacs-bu*
 .aw/
 .claude/settings*
 .claude/worktrees/
@@ -23,6 +20,7 @@ __pycache__/
 **/.env
 **/.env.*
 .emacs-bu/
+*.emacs-bu*
 
 # server/
 server/.venv/
