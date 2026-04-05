@@ -6,13 +6,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.address_reachability import normalize_address_reachability
 from aweb.awid.did import validate_stable_id
 from aweb.deps import DomainVerifier, get_db, get_domain_verifier
 from aweb.dns_verify import DnsVerificationError
+from aweb.pagination import encode_cursor, validate_pagination_params
 from aweb.ratelimit import rate_limit_dep
 from aweb.routes.dns_auth import validate_did_key as _validate_dns_did_key
 from aweb.routes.dns_auth import verify_signed_json_request
@@ -194,6 +195,8 @@ class AddressResponse(BaseModel):
 
 class AddressListResponse(BaseModel):
     addresses: list[AddressResponse]
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -338,24 +341,45 @@ async def get_address(
 )
 async def list_addresses(
     domain: str,
+    limit: int | None = Query(default=None, ge=1),
+    cursor: str | None = Query(default=None),
     db_infra=Depends(get_db),
 ) -> AddressListResponse:
-    """List all active addresses under a namespace."""
+    """List active addresses under a namespace with cursor pagination."""
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await _require_namespace(db, domain)
 
-    rows = await db.fetch_all(
-        """
-        SELECT address_id, name, did_aw, current_did_key, reachability, created_at
-        FROM {{tables.public_addresses}}
-        WHERE namespace_id = $1 AND deleted_at IS NULL
-        ORDER BY name
-        """,
-        ns_row["namespace_id"],
+    try:
+        validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    params: list[object] = [ns_row["namespace_id"]]
+    where_clauses = ["namespace_id = $1", "deleted_at IS NULL"]
+    if decoded_cursor is not None:
+        cursor_name = decoded_cursor.get("name")
+        if not isinstance(cursor_name, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor: missing name")
+        params.append(cursor_name)
+        where_clauses.append(f"name > ${len(params)}")
+    params.append(validated_limit + 1)
+    query = (
+        "SELECT address_id, name, did_aw, current_did_key, reachability, created_at"
+        " FROM {{tables.public_addresses}}"
+        " WHERE " + " AND ".join(where_clauses)
+        + f" ORDER BY name LIMIT ${len(params)}"
     )
+    rows = await db.fetch_all(query, *params)
+    has_more = len(rows) > validated_limit
+    page_rows = rows[:validated_limit]
+    next_cursor = None
+    if has_more and page_rows:
+        next_cursor = encode_cursor({"name": page_rows[-1]["name"]})
     return AddressListResponse(
-        addresses=[_address_response(r, domain) for r in rows],
+        addresses=[_address_response(r, domain) for r in page_rows],
+        has_more=has_more,
+        next_cursor=next_cursor,
     )
 
 

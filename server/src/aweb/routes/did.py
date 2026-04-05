@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -413,8 +416,9 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     if raw_server_url:
         try:
             server_url = require_canonical_server_origin(raw_server_url)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception:
+            logger.error("Stored server_url failed validation for %s", did_aw, exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
     else:
         server_url = ""
 
