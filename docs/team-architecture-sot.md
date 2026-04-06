@@ -37,7 +37,7 @@ JSON of the request payload + timestamp (same as today's DIDKey auth).
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid.
 
-### Verification (all local, no network calls)
+### Verification (mostly local crypto, one cached lookup)
 
 1. Parse `Authorization` header → extract did:key and signature.
 2. Extract public key from did:key.
@@ -46,20 +46,32 @@ issued by the team controller at awid.
 5. Verify certificate signature against the team's public key
    (cached from awid). Reject if invalid.
 6. Verify certificate `member_did_key` matches the did:key from step 1.
-7. Verify certificate `expires_at` is in the future.
+7. Check certificate `certificate_id` against cached revocation list
+   (fetched from awid periodically, TTL 5-15 min). Reject if revoked.
 8. Extract team_address, alias, lifetime from certificate.
 9. Request is authenticated and authorized for the given team.
 
-### Team public key caching
+Steps 1-6 are local crypto, no network. Step 7 is a cache lookup
+(revocation list fetched periodically from awid).
 
-aweb caches each team's public key from awid:
+### Caching from awid
 
+aweb caches two things from awid per team:
+
+**Team public key** (for certificate signature verification):
 ```
 GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}
 → { "team_did_key": "did:key:z6Mk...", ... }
 ```
+Cache TTL: 24 hours. Invalidated on team key rotation.
 
-Cache TTL: 24 hours. Invalidated on team key rotation notification.
+**Revocation list** (for checking removed members):
+```
+GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}/revocations
+→ { "revocations": [{ "certificate_id": "...", "revoked_at": "..." }] }
+```
+Cache TTL: 5-15 minutes. This is the maximum window of stale access
+after a member is removed.
 
 ### No API keys
 
@@ -74,11 +86,9 @@ team certificate is the sole credential. This eliminates:
 
 ## Database schema
 
-aweb uses two PostgreSQL schemas: `aweb` (identity/protocol, now
-minimal) and `server` (coordination). In the clean architecture these
-could merge into one schema, but keeping two is fine.
+aweb uses a single PostgreSQL schema: `aweb`.
 
-### aweb schema
+### Schema
 
 ```sql
 -- Teams this server coordinates for.
@@ -105,7 +115,7 @@ CREATE TABLE agents (
                     CHECK (lifetime IN ('permanent', 'ephemeral')),
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
-    role            TEXT NOT NULL DEFAULT 'agent',
+    role            TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -208,11 +218,7 @@ CREATE TABLE control_signals (
 CREATE INDEX idx_control_signals_pending
     ON control_signals (team_address, target_agent_id, created_at)
     WHERE consumed_at IS NULL;
-```
 
-### server schema
-
-```sql
 -- Repos (git context)
 CREATE TABLE repos (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -523,12 +529,16 @@ routes, 401 if not connected).
 1. aw id create --name alice --domain acme.com
    → identity created at awid (did:aw, did:key, address)
 
-2. aw id team join backend --namespace acme.com
-   → team membership at awid
-   → team certificate issued
+2. Team controller invites alice:
+   aw id team invite --team backend --namespace acme.com
+   → returns invite token
 
-3. aw init --server app.aweb.ai
-   → reads .aw/identity.yaml for team info
+3. Alice accepts:
+   aw id team accept-invite <token>
+   → team controller signs certificate for alice's did:key
+   → certificate saved to .aw/team-cert.pem
+
+4. aw init --server app.aweb.ai
    → presents team certificate to aweb
    → POST /v1/connect (aweb auto-provisions team + agent rows)
    → aweb returns workspace binding
@@ -538,10 +548,16 @@ routes, 401 if not connected).
 ### Ephemeral agent
 
 ```
-1. aw init --server app.aweb.ai --team acme.com/backend
+1. Team controller creates invite for ephemeral member:
+   aw id team invite --team backend --namespace acme.com --ephemeral
+
+2. New agent accepts:
+   aw id team accept-invite <token>
    → generates local keypair (.aw/signing.key)
-   → requests ephemeral team certificate from awid
-     (team controller signs short-lived cert for this did:key)
+   → team controller signs ephemeral certificate for this did:key
+   → certificate saved to .aw/team-cert.pem
+
+3. aw init --server app.aweb.ai
    → POST /v1/connect to aweb
    → aweb auto-provisions ephemeral agent row
    → writes .aw/workspace.yaml
@@ -552,32 +568,24 @@ routes, 401 if not connected).
 ```
 1. aw id team remove-member --team backend --namespace acme.com \
      --member acme.com/alice
-   → membership removed at awid
-   → alice's certificate expires (≤12 hours)
-   → aweb rejects expired cert on next request
+   → team controller posts revocation to awid
+     (certificate_id added to revocation list)
+   → aweb's cached revocation list refreshes within 5-15 min
+   → aweb rejects alice's certificate on next request after refresh
    → agent row stays (for message history) but status → 'deleted'
 ```
 
-### Certificate renewal
+### Certificate reissuance
 
-**Self-custodial agents (CLI):** The aw CLI renews the certificate
-automatically before expiry. `aw run` checks certificate TTL on each
-iteration and renews when <1 hour remains.
+Certificates do not expire. They are long-lived. Reissuance is only
+needed for two rare administrative events:
 
-**Custodial agents (browser-based):** aweb-cloud runs a background job
-every 6 hours that scans active custodial agents and calls awid to
-renew their certificates. This is aweb-cloud's responsibility since
-custodial agents have no CLI runtime.
-
-```
-POST https://api.awid.ai/v1/namespaces/{domain}/teams/{name}/certificates/renew
-Authorization: DIDKey <member's did:key> <signature>
-→ { new certificate }
-```
-
-awid checks team membership is still active before issuing a new
-certificate. If the member was removed, renewal fails → agent loses
-access on certificate expiry.
+- **Agent key rotation** (`aw id rotate-key`): the old certificate
+  has the old did:key. The team controller issues a new certificate
+  for the new did:key.
+- **Team key rotation**: the old certificates were signed by the old
+  team key. All active members need new certificates signed by the
+  new key.
 
 The certificate is stored at `.aw/team-cert.pem` (CLI agents) or
 managed by aweb-cloud (custodial agents).
@@ -608,14 +616,12 @@ managed by aweb-cloud (custodial agents).
 | Command | Purpose |
 |---------|---------|
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team join --team X --namespace Y` | Join team (self) |
-| `aw id team leave --team X --namespace Y` | Leave team |
 | `aw id team invite --team X --namespace Y` | Create invite token |
-| `aw id team accept-invite <token>` | Accept invite |
-| `aw id team members --team X --namespace Y` | List members |
-| `aw id team remove-member --team X --namespace Y --member Z` | Remove member |
+| `aw id team invite --team X --namespace Y --ephemeral` | Create ephemeral invite |
+| `aw id team accept-invite <token>` | Accept invite, receive certificate |
+| `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
+| `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
-| `aw id cert renew` | Force certificate renewal |
 
 ### Changed
 
@@ -624,8 +630,8 @@ managed by aweb-cloud (custodial agents).
 | `aw init` | No longer needs API key. Uses team certificate. |
 | `aw init --server URL` | Presents certificate, auto-provisions at aweb. |
 | `aw init --team X --ephemeral` | Creates ephemeral agent with temp cert. |
-| `aw run` | Handles certificate renewal in background. |
-| `aw whoami` | Shows team membership + certificate expiry. |
+| `aw run` | Uses team certificate for auth. |
+| `aw whoami` | Shows team membership + certificate info. |
 | `aw workspace status` | team_address instead of project. Shows team info. |
 
 ### Unchanged
@@ -728,10 +734,20 @@ GET /v1/did/{did_aw}/key
   }
 ```
 
+### Team revocation list (cached, for rejecting removed members)
+
+```
+GET /v1/namespaces/{domain}/teams/{name}/revocations?since=<timestamp>
+→ { "revocations": [{ "certificate_id": "uuid", "revoked_at": "..." }] }
+```
+
+Cache TTL: 5-15 minutes. The `since` parameter enables incremental
+sync — only fetch new revocations since last check.
+
 ### That's it.
 
 aweb does NOT call awid for:
-- Team membership checks (certificate handles this)
+- Team membership checks (certificate + revocation list handles this)
 - Identity creation (awid's concern)
 - Namespace management (awid's concern)
 - Certificate issuance (awid's concern)
