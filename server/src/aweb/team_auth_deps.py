@@ -113,27 +113,12 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-    # -- Step 2: Verify DIDKey signature over request payload + timestamp --
+    # -- Step 2: Verify DIDKey signature over {team_address, timestamp} --
+    # The signature proves the caller holds the private key for the did:key.
+    # We sign headers only (not the body) to avoid ASGI body-stream conflicts.
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    try:
-        body_bytes = await request.body()
-        if body_bytes:
-            body_dict = json.loads(body_bytes)
-        else:
-            body_dict = {}
-    except Exception:
-        body_dict = {}
-
-    payload_with_ts = body_dict | {"timestamp": timestamp}
-    payload_bytes = canonical_json_bytes(payload_with_ts)
-    try:
-        verify_did_key_signature(did_key=did_key, payload=payload_bytes, signature_b64=signature_b64)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
-
-    # -- Step 3: Extract and decode certificate header --
     cert_header = request.headers.get("X-AWID-Team-Certificate")
     if not cert_header:
         raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate header")
@@ -144,6 +129,13 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Malformed certificate")
 
     cert_team_address = cert_data.get("team", "")
+
+    # Verify Ed25519 signature over {team_address, timestamp}
+    sig_payload = canonical_json_bytes({"team": cert_team_address, "timestamp": timestamp})
+    try:
+        verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
     team_did_key = await _resolve_team_key(request, cert_team_address)

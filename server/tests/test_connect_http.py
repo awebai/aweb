@@ -69,11 +69,10 @@ def _build_test_app(aweb_db, team_did_key):
     return app
 
 
-def _signed_request(agent_sk, agent_did_key, body_dict):
-    """Build signed headers for a request."""
+def _signed_request(agent_sk, agent_did_key, team_address):
+    """Build signed headers for a request. Signs {team, timestamp}."""
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = body_dict | {"timestamp": timestamp}
-    payload_bytes = canonical_json_bytes(payload)
+    payload_bytes = canonical_json_bytes({"team": team_address, "timestamp": timestamp})
     sig = sign_message(agent_sk, payload_bytes)
     return {
         "Authorization": f"DIDKey {agent_did_key} {sig}",
@@ -105,7 +104,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
         "agent_type": "agent",
     }
 
-    headers = _signed_request(agent_sk, agent_did_key, body)
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend")
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -144,11 +143,11 @@ async def test_connect_http_idempotent(aweb_cloud_db):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        headers1 = _signed_request(agent_sk, agent_did_key, body)
+        headers1 = _signed_request(agent_sk, agent_did_key, "acme.com/backend")
         headers1["X-AWID-Team-Certificate"] = cert_header
         resp1 = await client.post("/v1/connect", json=body, headers=headers1)
 
-        headers2 = _signed_request(agent_sk, agent_did_key, body)
+        headers2 = _signed_request(agent_sk, agent_did_key, "acme.com/backend")
         headers2["X-AWID-Team-Certificate"] = cert_header
         resp2 = await client.post("/v1/connect", json=body, headers=headers2)
 
@@ -164,7 +163,7 @@ async def test_connect_http_missing_cert_returns_401(aweb_cloud_db):
     agent_sk, _, agent_did_key = _make_keypair()
 
     body = {"hostname": "Mac.local"}
-    headers = _signed_request(agent_sk, agent_did_key, body)
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend")
     # No X-AWID-Team-Certificate header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -193,7 +192,7 @@ async def test_connect_http_invalid_signature_returns_401(aweb_cloud_db):
 
     body = {"hostname": "Mac.local"}
     # Sign with the wrong agent key
-    headers = _signed_request(other_sk, agent_did_key, body)
+    headers = _signed_request(other_sk, agent_did_key, "acme.com/backend")
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
