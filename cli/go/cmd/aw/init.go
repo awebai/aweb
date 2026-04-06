@@ -182,6 +182,26 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Certificate-based init: when a team certificate exists and --server is provided.
+	{
+		wd, _ := os.Getwd()
+		if hasCertificateForInit(wd) {
+			serverURL := strings.TrimSpace(initServerURL)
+			if serverURL == "" {
+				serverURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+			}
+			if serverURL == "" {
+				return usageError("--server is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
+			}
+			result, err := initCertificateConnect(wd, serverURL, resolveRequestedRole(strings.TrimSpace(initRole)))
+			if err != nil {
+				return err
+			}
+			printOutput(result, formatConnect)
+			return nil
+		}
+	}
+
 	if strings.TrimSpace(os.Getenv("AWEB_API_KEY")) == "" {
 		wd, _ := os.Getwd()
 		workspaceMissing, err := initWorkspaceMissing(wd)
@@ -190,7 +210,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if workspaceMissing {
 			if !initIsTTY() {
-				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or use `aw project create` or `aw spawn accept-invite`")
+				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding, use `aw project create`, or get a team certificate first with `aw id team accept-invite`")
 			}
 			result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 				WorkingDir:    wd,
