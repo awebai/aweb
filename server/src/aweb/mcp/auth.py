@@ -105,30 +105,23 @@ class MCPAuthMiddleware:
 
         did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-        # Verify DIDKey signature over request body + timestamp
+        # Verify DIDKey signature over {team_address, timestamp}
         timestamp = request.headers.get("x-aweb-timestamp", "")
         if not timestamp:
             raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp header")
 
-        try:
-            body_bytes = await request.body()
-            body_dict = json.loads(body_bytes) if body_bytes else {}
-        except Exception:
-            body_dict = {}
-
-        payload_bytes = canonical_json_bytes(body_dict | {"timestamp": timestamp})
-        try:
-            verify_did_key_signature(did_key=did_key, payload=payload_bytes, signature_b64=signature_b64)
-        except ValueError:
-            raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
-
-        # Decode certificate and resolve team key from awid
         try:
             cert_data = json.loads(base64.b64decode(cert_header))
         except Exception:
             raise HTTPException(status_code=401, detail="Malformed certificate")
 
         cert_team_address = cert_data.get("team", "")
+
+        sig_payload = canonical_json_bytes({"team": cert_team_address, "timestamp": timestamp})
+        try:
+            verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
         # Resolve team key from awid registry
         registry_client = getattr(request.app.state, "awid_registry_client", None)
