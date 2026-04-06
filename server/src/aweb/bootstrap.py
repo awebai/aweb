@@ -3,7 +3,6 @@ from __future__ import annotations
 import json as json_module
 import logging
 import os
-import re
 import secrets
 import uuid as uuid_mod
 from dataclasses import dataclass
@@ -38,8 +37,10 @@ from aweb.config import is_local_awid_registry_url
 from aweb.namespace_registry import (
     ensure_dns_namespace_registered,
     get_namespace_address,
+    managed_namespace_domain,
     register_namespace_address,
     set_namespace_address_reachability,
+    validate_subdomain_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,17 +208,15 @@ async def bootstrap_identity(
     ns_domain: str | None = None
     ns_reachability: str | None = None
     if namespace is not None:
-        namespace = namespace.strip().lower()
+        namespace = validate_subdomain_label(namespace)
         managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
         if not managed_domain:
             raise ValueError(
                 "Managed namespaces require AWEB_MANAGED_DOMAIN to be configured"
             )
-        if not re.fullmatch(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", namespace):
-            raise ValueError("Invalid namespace slug format")
         if alias is None or not alias.strip():
             raise ValueError("alias is required when namespace is specified")
-        ns_domain = f"{namespace}.{managed_domain}"
+        ns_domain = managed_namespace_domain(namespace)
         ns_reachability = normalize_address_reachability(address_reachability)
 
     reinit_without_key_material = (

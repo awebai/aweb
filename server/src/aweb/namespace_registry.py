@@ -60,15 +60,6 @@ def managed_namespace_domain(owner_slug: str) -> str:
     return owner_slug
 
 
-def namespace_slug_from_domain(domain: str) -> str:
-    normalized = _normalize_domain(domain)
-    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
-    suffix = f".{managed_domain}" if managed_domain else ""
-    if suffix and normalized.endswith(suffix):
-        return normalized[: -len(suffix)]
-    return normalized
-
-
 def _controller_did_from_signing_key(signing_key: bytes) -> str:
     return did_from_public_key(bytes(SigningKey(signing_key).verify_key))
 

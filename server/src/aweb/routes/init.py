@@ -75,6 +75,13 @@ def _normalize_requested_namespace_slug(value: str | None) -> str | None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _derive_owner_slug_or_422(*, project_slug: str, owner_ref: str | None) -> str:
+    try:
+        return derive_owner_slug(project_slug=project_slug, owner_ref=owner_ref)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _translate_bootstrap_value_error(exc: ValueError) -> HTTPException:
     detail = str(exc)
     if detail == "Managed namespaces require AWEB_MANAGED_DOMAIN to be configured":
@@ -153,6 +160,8 @@ class CreateProjectRequest(_BootstrapBaseModel):
 
     project_slug: str = Field(..., max_length=256)
     namespace_slug: str | None = Field(default=None, min_length=1, max_length=63)
+    owner_type: str | None = Field(default=None, max_length=64)
+    owner_ref: str | None = Field(default=None, min_length=1, max_length=63)
 
     @field_validator("project_slug")
     @classmethod
@@ -166,8 +175,27 @@ class CreateProjectRequest(_BootstrapBaseModel):
             return None
         return validate_subdomain_label(v)
 
+    @field_validator("owner_type")
+    @classmethod
+    def _validate_owner_type(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        candidate = v.strip()
+        if not candidate:
+            return None
+        return candidate
+
+    @field_validator("owner_ref")
+    @classmethod
+    def _validate_owner_ref(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return validate_subdomain_label(v)
+
     @model_validator(mode="after")
     def _validate_identity_presence(self):
+        if (self.owner_type is None) != (self.owner_ref is None):
+            raise ValueError("owner_type and owner_ref must be provided together")
         if self.lifetime == "persistent" and self.name is None:
             raise ValueError("name is required for persistent identities")
         return self
@@ -339,7 +367,7 @@ async def _lookup_attached_namespace(
         return None
     project_slug = (row.get("slug") or "").strip()
     owner_ref = (row.get("owner_ref") or "").strip() or None
-    owner_slug = derive_owner_slug(project_slug=project_slug, owner_ref=owner_ref)
+    owner_slug = _derive_owner_slug_or_422(project_slug=project_slug, owner_ref=owner_ref)
     return owner_slug, managed_namespace_domain(owner_slug)
 
 
@@ -349,7 +377,7 @@ def _ensure_project_namespace(
     owner_ref: str | None,
     requested_namespace_slug: str | None,
 ) -> tuple[str, str]:
-    namespace_slug = derive_owner_slug(project_slug=project_slug, owner_ref=owner_ref)
+    namespace_slug = _derive_owner_slug_or_422(project_slug=project_slug, owner_ref=owner_ref)
     if requested_namespace_slug is not None:
         requested = _normalize_requested_namespace_slug(requested_namespace_slug)
         if requested != namespace_slug:
@@ -502,7 +530,7 @@ async def create_project(
     bootstrap_alias, response_name = _response_identity_handle(payload)
     namespace_slug, namespace_domain = _ensure_project_namespace(
         project_slug=payload.project_slug,
-        owner_ref=None,
+        owner_ref=payload.owner_ref,
         requested_namespace_slug=payload.namespace_slug,
     )
 
@@ -511,6 +539,8 @@ async def create_project(
             db_infra,
             project_slug=payload.project_slug,
             project_name=payload.project_slug,
+            owner_type=payload.owner_type,
+            owner_ref=payload.owner_ref,
             alias=bootstrap_alias,
             human_name=payload.human_name or "",
             agent_type=payload.agent_type,
