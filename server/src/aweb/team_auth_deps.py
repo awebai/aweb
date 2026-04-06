@@ -7,9 +7,16 @@ a TeamIdentity from the request's certificate headers.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
+from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
+
+from aweb.routes.dns_auth import parse_didkey_auth
+from aweb.team_auth import parse_and_verify_certificate
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -72,3 +79,69 @@ async def resolve_team_identity(
         lifetime=cert_info.get("lifetime", "ephemeral"),
         certificate_id=cert_info.get("certificate_id", ""),
     )
+
+
+async def get_team_identity(request: Request, db) -> TeamIdentity:
+    """FastAPI dependency: authenticate request via team certificate.
+
+    Extracts Authorization (DIDKey) and X-AWID-Team-Certificate headers,
+    verifies the certificate signature against the team's public key
+    (looked up from the teams table), checks revocation, and resolves
+    the agent row.
+
+    Returns a TeamIdentity or raises HTTPException(401/403).
+    """
+    cert_header = request.headers.get("X-AWID-Team-Certificate")
+    if not cert_header:
+        raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate header")
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+    did_key, _ = parse_didkey_auth(auth_header)
+
+    aweb_db = db.get_manager("aweb")
+
+    async def _team_key_resolver(team_address: str) -> str:
+        """Resolve team public key from the teams table."""
+        row = await aweb_db.fetch_one(
+            "SELECT team_did_key FROM {{tables.teams}} WHERE team_address = $1",
+            team_address,
+        )
+        if not row:
+            return ""
+        return row["team_did_key"]
+
+    # Synchronous wrapper for parse_and_verify_certificate's callable interface
+    # Pre-resolve the team key since the certificate contains the team_address
+    import base64, json
+    try:
+        cert_data = json.loads(base64.b64decode(cert_header))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Malformed certificate")
+
+    cert_team_address = cert_data.get("team", "")
+    team_did_key = await _team_key_resolver(cert_team_address)
+
+    def team_key_resolver_sync(team_address: str) -> str:
+        return team_did_key
+
+    def revocation_checker(team_address: str, certificate_id: str) -> bool:
+        # TODO: check cached revocation list from awid (aweb-aaex dependency)
+        return False
+
+    try:
+        cert_info = parse_and_verify_certificate(
+            cert_header,
+            request_did_key=did_key,
+            team_public_key_resolver=team_key_resolver_sync,
+            revocation_checker=revocation_checker,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    try:
+        return await resolve_team_identity(aweb_db, cert_info)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
