@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_workspace_aliases(
-    db_infra: "DatabaseInfra", project_id: str, workspace_ids: list[str]
+    db_infra: "DatabaseInfra", team_address: str, workspace_ids: list[str]
 ) -> dict[str, str]:
     """Return {workspace_id: alias} for a list of workspace IDs.
 
@@ -22,11 +22,11 @@ async def fetch_workspace_aliases(
     """
     if not workspace_ids:
         return {}
-    server_db = db_infra.get_manager("server")
-    rows = await server_db.fetch_all(
+    aweb_db = db_infra.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
         "SELECT workspace_id, alias FROM {{tables.workspaces}} "
-        "WHERE project_id = $1 AND workspace_id = ANY($2) AND deleted_at IS NULL",
-        UUID(project_id),
+        "WHERE team_address = $1 AND workspace_id = ANY($2) AND deleted_at IS NULL",
+        team_address,
         [UUID(ws_id) for ws_id in workspace_ids],
     )
     return {str(row["workspace_id"]): row["alias"] for row in rows}
@@ -47,7 +47,7 @@ def _claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
 
 async def resolve_task_claim_apex(
     db_infra: DatabaseInfra,
-    project_id: str,
+    team_address: str,
     task_ref: str,
     max_depth: int = 20,
 ) -> Optional[str]:
@@ -56,16 +56,10 @@ async def resolve_task_claim_apex(
     Prefer the highest epic ancestor when one exists. Otherwise fall back to
     the root task ref so non-epic task trees still have a stable apex.
     """
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
-    # Look up the project slug for task_ref reconstruction
-    project = await server_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE id = $1 AND deleted_at IS NULL",
-        UUID(project_id),
-    )
-    if not project:
-        return None
-    slug = project["slug"]
+    # Derive slug from team_address (the part after '/')
+    slug = team_address.split("/")[-1]
 
     prefix = slug + "-"
     ref_suffix = task_ref[len(prefix) :] if task_ref.startswith(prefix) else task_ref
@@ -73,13 +67,13 @@ async def resolve_task_claim_apex(
     if not ref_suffix:
         return None
 
-    current = await server_db.fetch_one(
+    current = await aweb_db.fetch_one(
         """
         SELECT task_id, task_ref_suffix, parent_task_id, task_type
         FROM {{tables.tasks}}
-        WHERE project_id = $1 AND task_ref_suffix = $2 AND deleted_at IS NULL
+        WHERE team_address = $1 AND task_ref_suffix = $2 AND deleted_at IS NULL
         """,
-        UUID(project_id),
+        team_address,
         ref_suffix,
     )
     if not current:
@@ -92,7 +86,7 @@ async def resolve_task_claim_apex(
     # Walk parent chain to root
     depth = 0
     while current.get("parent_task_id") and depth < max_depth:
-        parent = await server_db.fetch_one(
+        parent = await aweb_db.fetch_one(
             """
             SELECT task_id, task_ref_suffix, parent_task_id, task_type
             FROM {{tables.tasks}}
@@ -113,21 +107,25 @@ async def resolve_task_claim_apex(
 async def _is_open_task_ref(
     tx,
     *,
-    project_id: str,
+    team_address: str,
     task_ref: str,
 ) -> bool:
+    # Derive slug from team_address to match task_ref format (slug-suffix)
+    slug = team_address.split("/")[-1]
+    prefix = slug + "-"
+    ref_suffix = task_ref[len(prefix):] if task_ref.startswith(prefix) else task_ref
+
     row = await tx.fetch_one(
         """
-        SELECT t.status
-        FROM {{tables.tasks}} t
-        JOIN {{tables.projects}} p ON p.id = t.project_id AND p.deleted_at IS NULL
-        WHERE t.project_id = $1
-          AND p.slug || '-' || t.task_ref_suffix = $2
-          AND t.deleted_at IS NULL
+        SELECT status
+        FROM {{tables.tasks}}
+        WHERE team_address = $1
+          AND task_ref_suffix = $2
+          AND deleted_at IS NULL
         LIMIT 1
         """,
-        UUID(project_id),
-        task_ref,
+        team_address,
+        ref_suffix,
     )
     if not row:
         return False
@@ -137,7 +135,7 @@ async def _is_open_task_ref(
 async def upsert_claim(
     db_infra: DatabaseInfra,
     *,
-    project_id: str,
+    team_address: str,
     workspace_id: str,
     alias: str,
     human_name: str,
@@ -148,19 +146,19 @@ async def upsert_claim(
     Returns ``None`` on success, or the conflicting
     claim dict (with alias, human_name, workspace_id) if already held by
     another workspace."""
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
-    apex_task_ref = await resolve_task_claim_apex(db_infra, project_id, task_ref)
+    apex_task_ref = await resolve_task_claim_apex(db_infra, team_address, task_ref)
 
-    async with server_db.transaction() as tx:
+    async with aweb_db.transaction() as tx:
         # Check if another workspace already holds this claim.
         existing = await tx.fetch_one(
             """
             SELECT workspace_id, alias, human_name
             FROM {{tables.task_claims}}
-            WHERE project_id = $1 AND task_ref = $2 AND workspace_id != $3
+            WHERE team_address = $1 AND task_ref = $2 AND workspace_id != $3
             """,
-            UUID(project_id),
+            team_address,
             task_ref,
             UUID(workspace_id),
         )
@@ -174,18 +172,18 @@ async def upsert_claim(
         await tx.execute(
             """
             INSERT INTO {{tables.task_claims}} (
-                project_id, workspace_id, alias, human_name, task_ref,
+                team_address, workspace_id, alias, human_name, task_ref,
                 apex_task_ref, claimed_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (project_id, task_ref, workspace_id)
+            ON CONFLICT (team_address, task_ref, workspace_id)
             DO UPDATE SET
                 alias = EXCLUDED.alias,
                 human_name = EXCLUDED.human_name,
                 apex_task_ref = EXCLUDED.apex_task_ref,
                 claimed_at = EXCLUDED.claimed_at
             """,
-            UUID(project_id),
+            team_address,
             UUID(workspace_id),
             alias,
             human_name,
@@ -199,10 +197,10 @@ async def upsert_claim(
             SET focus_task_ref = $1,
                 focus_updated_at = NOW(),
                 updated_at = NOW()
-            WHERE project_id = $2 AND workspace_id = $3
+            WHERE team_address = $2 AND workspace_id = $3
             """,
             claim_focus_task_ref(task_ref, apex_task_ref),
-            UUID(project_id),
+            team_address,
             UUID(workspace_id),
         )
 
@@ -212,7 +210,7 @@ async def upsert_claim(
 async def release_task_claims(
     db_infra: DatabaseInfra,
     *,
-    project_id: str,
+    team_address: str,
     task_ref: str,
     workspace_id: str | None = None,
 ) -> list[str]:
@@ -226,17 +224,17 @@ async def release_task_claims(
 
     Returns the workspace_id strings of affected claimants.
     """
-    server_db = db_infra.get_manager("server")
-    async with server_db.transaction() as tx:
+    aweb_db = db_infra.get_manager("aweb")
+    async with aweb_db.transaction() as tx:
         released_focus_by_workspace: dict[str, str] = {}
         if workspace_id:
             released_rows = await tx.fetch_all(
                 """
                 DELETE FROM {{tables.task_claims}}
-                WHERE project_id = $1 AND workspace_id = $2 AND task_ref = $3
+                WHERE team_address = $1 AND workspace_id = $2 AND task_ref = $3
                 RETURNING workspace_id, task_ref, apex_task_ref
                 """,
-                UUID(project_id),
+                team_address,
                 UUID(workspace_id),
                 task_ref,
             )
@@ -245,10 +243,10 @@ async def release_task_claims(
             released_rows = await tx.fetch_all(
                 """
                 DELETE FROM {{tables.task_claims}}
-                WHERE project_id = $1 AND task_ref = $2
+                WHERE team_address = $1 AND task_ref = $2
                 RETURNING workspace_id, task_ref, apex_task_ref
                 """,
-                UUID(project_id),
+                team_address,
                 task_ref,
             )
             affected_ws_ids = [row["workspace_id"] for row in released_rows]
@@ -267,11 +265,11 @@ async def release_task_claims(
                 """
                 SELECT task_ref, apex_task_ref
                 FROM {{tables.task_claims}}
-                WHERE project_id = $1 AND workspace_id = $2
+                WHERE team_address = $1 AND workspace_id = $2
                 ORDER BY claimed_at DESC
                 LIMIT 1
                 """,
-                UUID(project_id),
+                team_address,
                 ws_id,
             )
             next_focus = None
@@ -281,7 +279,7 @@ async def release_task_claims(
                 released_focus = released_focus_by_workspace.get(str(ws_id))
                 if released_focus and await _is_open_task_ref(
                     tx,
-                    project_id=project_id,
+                    team_address=team_address,
                     task_ref=released_focus,
                 ):
                     next_focus = released_focus
@@ -291,10 +289,10 @@ async def release_task_claims(
                 SET focus_task_ref = $1,
                     focus_updated_at = NOW(),
                     updated_at = NOW()
-                WHERE project_id = $2 AND workspace_id = $3
+                WHERE team_address = $2 AND workspace_id = $3
                 """,
                 next_focus,
-                UUID(project_id),
+                team_address,
                 ws_id,
             )
 

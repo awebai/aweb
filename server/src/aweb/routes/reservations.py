@@ -11,12 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
-from aweb.aweb_introspection import get_identity_from_auth
-from aweb.aweb_introspection import get_project_from_auth
+from aweb.deps import get_db
+from aweb.team_auth_deps import get_team_identity
 
-from ..db import DatabaseInfra, get_db_infra
 from ._reservation_utils import reservation_metadata, reservation_prefix_like
-from .agents import _require_human_owner_or_admin_for_lifecycle_action
 
 router = APIRouter(prefix="/v1", tags=["reservations"])
 
@@ -24,7 +22,7 @@ DEFAULT_RESERVATION_TTL_SECONDS = 3600
 
 
 class ReservationView(BaseModel):
-    project_id: str
+    team_address: str
     resource_key: str
     holder_agent_id: str
     holder_alias: str
@@ -49,7 +47,7 @@ class ReservationAcquireRequest(BaseModel):
 
 class ReservationAcquireResponse(BaseModel):
     status: str
-    project_id: str
+    team_address: str
     resource_key: str
     holder_agent_id: str
     holder_alias: str
@@ -122,7 +120,7 @@ def _reservation_conflict_response(*, holder_agent_id: str, holder_alias: str, e
 def _reservation_view(row, *, now: datetime) -> ReservationView:
     metadata = reservation_metadata(row["metadata_json"])
     return ReservationView(
-        project_id=str(row["project_id"]),
+        team_address=row["team_address"],
         resource_key=row["resource_key"],
         holder_agent_id=str(row["holder_agent_id"]),
         holder_alias=row["holder_alias"],
@@ -134,81 +132,27 @@ def _reservation_view(row, *, now: datetime) -> ReservationView:
     )
 
 
-async def _require_workspace_actor(
-    request: Request,
-    db_infra: DatabaseInfra,
-    *,
-    project_id: str,
-) -> tuple[str, str, Optional[str]]:
-    identity = await get_identity_from_auth(request, db_infra)
-    actor_id = (identity.agent_id or "").strip()
-    if not actor_id:
-        raise HTTPException(status_code=403, detail="API key is not bound to a workspace")
-
-    server_db = db_infra.get_manager("server")
-    workspace = await server_db.fetch_one(
-        """
-        SELECT alias, role
-        FROM {{tables.workspaces}}
-        WHERE project_id = $1 AND workspace_id = $2 AND deleted_at IS NULL
-        """,
-        UUID(project_id),
-        UUID(actor_id),
-    )
-    if workspace is None:
-        raise HTTPException(status_code=403, detail="API key is not bound to a registered workspace")
-    return actor_id, workspace["alias"], workspace["role"]
-
-
-async def _require_revoke_access(
-    request: Request,
-    db_infra: DatabaseInfra,
-    *,
-    project_id: str,
-) -> None:
-    identity = await get_identity_from_auth(request, db_infra)
-    actor_id = (identity.agent_id or "").strip()
-    if actor_id:
-        _, _, role = await _require_workspace_actor(request, db_infra, project_id=project_id)
-        if (role or "").strip().lower() == "coordinator":
-            return
-
-    if identity.user_id:
-        await _require_human_owner_or_admin_for_lifecycle_action(
-            request,
-            db_infra,
-            project_id=project_id,
-            action="revoke reservations",
-        )
-        return
-
-    raise HTTPException(
-        status_code=403,
-        detail="Only coordinators or human project owners/admins can revoke reservations",
-    )
-
-
 @router.get("/reservations")
 async def list_reservations(
     request: Request,
     prefix: Optional[str] = Query(None, description="Optional resource key prefix filter"),
-    db_infra: DatabaseInfra = Depends(get_db_infra),
+    db=Depends(get_db),
 ) -> ReservationListResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
-    conditions = ["project_id = $1", "expires_at > NOW()"]
-    params: list[object] = [UUID(project_id)]
+    conditions = ["team_address = $1", "expires_at > NOW()"]
+    params: list[object] = [identity.team_address]
 
     if prefix:
         conditions.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
         params.append(reservation_prefix_like(prefix))
 
     where_clause = " AND ".join(conditions)
-    rows = await server_db.fetch_all(
+    rows = await aweb_db.fetch_all(
         f"""
-        SELECT project_id, resource_key, holder_agent_id, holder_alias,
+        SELECT team_address, resource_key, holder_agent_id, holder_alias,
                acquired_at, expires_at, metadata_json
         FROM {{{{tables.reservations}}}}
         WHERE {where_clause}
@@ -231,28 +175,27 @@ async def list_reservations(
 async def acquire_reservation(
     request: Request,
     payload: ReservationAcquireRequest,
-    db_infra: DatabaseInfra = Depends(get_db_infra),
+    db=Depends(get_db),
 ) -> ReservationAcquireResponse | JSONResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    actor_id, alias, _ = await _require_workspace_actor(request, db_infra, project_id=project_id)
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=payload.ttl_seconds)
 
-    async with server_db.transaction() as tx:
+    async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT project_id, resource_key, holder_agent_id, holder_alias,
+            SELECT team_address, resource_key, holder_agent_id, holder_alias,
                    acquired_at, expires_at, metadata_json
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND resource_key = $2
+            WHERE team_address = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            UUID(project_id),
+            identity.team_address,
             payload.resource_key,
         )
 
-        if row and row["expires_at"] > now and str(row["holder_agent_id"]) != actor_id:
+        if row and row["expires_at"] > now and str(row["holder_agent_id"]) != identity.agent_id:
             return _reservation_conflict_response(
                 holder_agent_id=str(row["holder_agent_id"]),
                 holder_alias=row["holder_alias"],
@@ -271,12 +214,12 @@ async def acquire_reservation(
                     acquired_at = $5,
                     expires_at = $6,
                     metadata_json = $7::jsonb
-                WHERE project_id = $1 AND resource_key = $2
+                WHERE team_address = $1 AND resource_key = $2
                 """,
-                UUID(project_id),
+                identity.team_address,
                 payload.resource_key,
-                UUID(actor_id),
-                alias,
+                UUID(identity.agent_id),
+                identity.alias,
                 now,
                 expires_at,
                 json.dumps(metadata),
@@ -285,13 +228,13 @@ async def acquire_reservation(
             await tx.execute(
                 """
                 INSERT INTO {{tables.reservations}}
-                    (project_id, resource_key, holder_agent_id, holder_alias, acquired_at, expires_at, metadata_json)
+                    (team_address, resource_key, holder_agent_id, holder_alias, acquired_at, expires_at, metadata_json)
                 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
                 """,
-                UUID(project_id),
+                identity.team_address,
                 payload.resource_key,
-                UUID(actor_id),
-                alias,
+                UUID(identity.agent_id),
+                identity.alias,
                 now,
                 expires_at,
                 json.dumps(metadata),
@@ -299,10 +242,10 @@ async def acquire_reservation(
 
     return ReservationAcquireResponse(
         status="acquired",
-        project_id=project_id,
+        team_address=identity.team_address,
         resource_key=payload.resource_key,
-        holder_agent_id=actor_id,
-        holder_alias=alias,
+        holder_agent_id=identity.agent_id,
+        holder_alias=identity.alias,
         acquired_at=now.isoformat(),
         expires_at=expires_at.isoformat(),
     )
@@ -316,28 +259,27 @@ async def acquire_reservation(
 async def renew_reservation(
     request: Request,
     payload: ReservationRenewRequest,
-    db_infra: DatabaseInfra = Depends(get_db_infra),
+    db=Depends(get_db),
 ) -> ReservationRenewResponse | JSONResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    actor_id, _, _ = await _require_workspace_actor(request, db_infra, project_id=project_id)
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=payload.ttl_seconds)
 
-    async with server_db.transaction() as tx:
+    async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
             SELECT holder_agent_id, holder_alias, expires_at
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND resource_key = $2
+            WHERE team_address = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            UUID(project_id),
+            identity.team_address,
             payload.resource_key,
         )
         if row is None or row["expires_at"] <= now:
             raise HTTPException(status_code=404, detail="reservation not found")
-        if str(row["holder_agent_id"]) != actor_id:
+        if str(row["holder_agent_id"]) != identity.agent_id:
             return _reservation_conflict_response(
                 holder_agent_id=str(row["holder_agent_id"]),
                 holder_alias=row["holder_alias"],
@@ -348,9 +290,9 @@ async def renew_reservation(
             """
             UPDATE {{tables.reservations}}
             SET expires_at = $3
-            WHERE project_id = $1 AND resource_key = $2
+            WHERE team_address = $1 AND resource_key = $2
             """,
-            UUID(project_id),
+            identity.team_address,
             payload.resource_key,
             expires_at,
         )
@@ -370,26 +312,25 @@ async def renew_reservation(
 async def release_reservation(
     request: Request,
     payload: ReservationReleaseRequest,
-    db_infra: DatabaseInfra = Depends(get_db_infra),
+    db=Depends(get_db),
 ) -> ReservationReleaseResponse | JSONResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    actor_id, _, _ = await _require_workspace_actor(request, db_infra, project_id=project_id)
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
-    async with server_db.transaction() as tx:
+    async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
             SELECT holder_agent_id, holder_alias, expires_at
             FROM {{tables.reservations}}
-            WHERE project_id = $1 AND resource_key = $2
+            WHERE team_address = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            UUID(project_id),
+            identity.team_address,
             payload.resource_key,
         )
 
-        if row is not None and row["expires_at"] > now and str(row["holder_agent_id"]) != actor_id:
+        if row is not None and row["expires_at"] > now and str(row["holder_agent_id"]) != identity.agent_id:
             return _reservation_conflict_response(
                 holder_agent_id=str(row["holder_agent_id"]),
                 holder_alias=row["holder_alias"],
@@ -400,9 +341,9 @@ async def release_reservation(
             await tx.execute(
                 """
                 DELETE FROM {{tables.reservations}}
-                WHERE project_id = $1 AND resource_key = $2
+                WHERE team_address = $1 AND resource_key = $2
                 """,
-                UUID(project_id),
+                identity.team_address,
                 payload.resource_key,
             )
 
@@ -413,19 +354,18 @@ async def release_reservation(
 async def revoke_reservations(
     request: Request,
     payload: ReservationRevokeRequest,
-    db_infra: DatabaseInfra = Depends(get_db_infra),
+    db=Depends(get_db),
 ) -> ReservationRevokeResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    await _require_revoke_access(request, db_infra, project_id=project_id)
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    params: list[object] = [UUID(project_id)]
-    where = ["project_id = $1", "expires_at > NOW()"]
+    params: list[object] = [identity.team_address]
+    where = ["team_address = $1", "expires_at > NOW()"]
     if payload.prefix:
         where.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
         params.append(reservation_prefix_like(payload.prefix))
 
-    rows = await server_db.fetch_all(
+    rows = await aweb_db.fetch_all(
         f"""
         DELETE FROM {{{{tables.reservations}}}}
         WHERE {' AND '.join(where)}

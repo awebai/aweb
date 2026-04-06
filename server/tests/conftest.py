@@ -34,26 +34,16 @@ async def shared_test_pool(test_db_factory):
 
 @pytest_asyncio.fixture
 async def aweb_cloud_db(shared_test_pool):
-    """Standalone-compatible database managers for aweb/server schema tests."""
+    """Database manager for the unified aweb schema tests."""
 
     temp_manager = AsyncDatabaseManager(pool=shared_test_pool, schema=None)
-    await temp_manager.execute("CREATE SCHEMA IF NOT EXISTS server")
     await temp_manager.execute("CREATE SCHEMA IF NOT EXISTS aweb")
 
-    oss_db = AsyncDatabaseManager(pool=shared_test_pool, schema="server")
     aweb_db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
 
     import aweb
 
     aweb_path = Path(aweb.__file__).parent
-    server_migrations = AsyncMigrationManager(
-        oss_db,
-        migrations_path=str(aweb_path / "migrations" / "server"),
-        module_name="aweb-server",
-        migrations_table="schema_migrations",
-    )
-    await server_migrations.apply_pending_migrations()
-
     aweb_migrations = AsyncMigrationManager(
         aweb_db,
         migrations_path=str(aweb_path / "migrations" / "aweb"),
@@ -63,8 +53,8 @@ async def aweb_cloud_db(shared_test_pool):
     await aweb_migrations.apply_pending_migrations()
 
     class DatabaseManagers:
-        def __init__(self, oss_db, aweb_db):
-            self.oss_db = oss_db
+        def __init__(self, aweb_db):
+            self.oss_db = aweb_db
             self.aweb_db = aweb_db
 
-    yield DatabaseManagers(oss_db, aweb_db)
+    yield DatabaseManagers(aweb_db)

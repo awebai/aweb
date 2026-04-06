@@ -25,36 +25,36 @@ def _parse_uuid(v: str, *, field_name: str) -> UUID:
         raise ValidationError(f"Invalid {field_name} format")
 
 
-async def get_agent_row(db, *, project_id: str, agent_id: str) -> dict | None:
+async def get_agent_by_id(db, *, team_address: str, agent_id: str) -> dict | None:
+    """Look up an agent by agent_id within a team."""
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, project_id, alias, deleted_at
+        SELECT agent_id, team_address, alias, did_key, status, deleted_at
         FROM {{tables.agents}}
-        WHERE agent_id = $1
+        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
         """,
         _parse_uuid(agent_id, field_name="agent_id"),
+        team_address,
     )
     if not row:
-        return None
-    if str(row["project_id"]) != project_id:
-        return None
-    if row.get("deleted_at") is not None:
         return None
     return dict(row)
 
 
-async def get_agent_row_any(db, *, agent_id: str) -> dict | None:
+async def get_agent_by_alias(db, *, team_address: str, alias: str) -> dict | None:
+    """Look up an agent by alias within a team."""
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, project_id, alias, deleted_at
+        SELECT agent_id, team_address, alias, did_key, status, deleted_at
         FROM {{tables.agents}}
-        WHERE agent_id = $1
+        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        _parse_uuid(agent_id, field_name="agent_id"),
+        team_address,
+        alias,
     )
-    if not row or row.get("deleted_at") is not None:
+    if not row:
         return None
     return dict(row)
 
@@ -62,43 +62,37 @@ async def get_agent_row_any(db, *, agent_id: str) -> dict | None:
 async def deliver_message(
     db,
     *,
-    project_id: str,
+    team_address: str,
     from_agent_id: str,
     from_alias: str,
     to_agent_id: str,
-    recipient_project_id: str | None = None,
+    to_alias: str,
     subject: str,
     body: str,
     priority: MessagePriority,
-    thread_id: str | None,
     from_did: str | None = None,
-    from_stable_id: str | None = None,
-    to_did: str | None = None,
-    to_stable_id: str | None = None,
     signature: str | None = None,
-    signing_key_id: str | None = None,
     signed_payload: str | None = None,
     created_at: datetime | None = None,
     message_id: UUID | None = None,
 ) -> tuple[UUID, datetime]:
-    project_uuid = _parse_uuid(project_id, field_name="project_id")
+    """Deliver a message within a team.
+
+    Validates that both sender and recipient exist in the team,
+    then inserts the message row.
+    """
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id")
     to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id")
-    thread_uuid = _parse_uuid(thread_id, field_name="thread_id") if thread_id is not None else None
 
-    sender = await get_agent_row(db, project_id=str(project_uuid), agent_id=str(from_uuid))
+    sender = await get_agent_by_id(db, team_address=team_address, agent_id=str(from_uuid))
     if sender is None:
-        raise NotFoundError("Agent not found")
+        raise NotFoundError("Sender agent not found")
     if sender["alias"] != from_alias:
         raise ValidationError("from_alias does not match canonical alias")
 
-    recipient = await get_agent_row(
-        db,
-        project_id=recipient_project_id or str(project_uuid),
-        agent_id=str(to_uuid),
-    )
+    recipient = await get_agent_by_id(db, team_address=team_address, agent_id=str(to_uuid))
     if recipient is None:
-        raise NotFoundError("Agent not found")
+        raise NotFoundError("Recipient agent not found")
 
     if created_at is None:
         created_at = datetime.now(timezone.utc)
@@ -109,27 +103,23 @@ async def deliver_message(
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (message_id, project_id, recipient_project_id, from_agent_id, to_agent_id, from_alias, subject, body, priority, thread_id,
-             from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            (message_id, team_address, from_agent_id, to_agent_id,
+             from_alias, to_alias, subject, body, priority,
+             from_did, signature, signed_payload, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING message_id, created_at
         """,
         message_id,
-        project_uuid,
-        _parse_uuid(recipient_project_id or str(project_uuid), field_name="recipient_project_id"),
+        team_address,
         from_uuid,
         to_uuid,
         from_alias,
+        to_alias,
         subject,
         body,
         priority,
-        thread_uuid,
         from_did,
-        from_stable_id,
-        to_did,
-        to_stable_id,
         signature,
-        signing_key_id,
         signed_payload,
         created_at,
     )
