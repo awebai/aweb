@@ -1,0 +1,113 @@
+-- 002_registry.sql
+-- Identity resolution tables for the awid registry:
+-- DID mappings, audit log, DNS namespaces, public addresses,
+-- and replacement announcements.
+
+-- DID:aw resolution
+CREATE TABLE IF NOT EXISTS {{tables.did_aw_mappings}} (
+    did_aw          TEXT PRIMARY KEY,
+    current_did_key TEXT NOT NULL,
+    server_url      TEXT NOT NULL,
+    address         TEXT NOT NULL,
+    handle          TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.did_aw_log}} (
+    did_aw          TEXT NOT NULL REFERENCES {{tables.did_aw_mappings}}(did_aw) ON DELETE CASCADE,
+    seq             INTEGER NOT NULL,
+    operation       TEXT NOT NULL,
+    previous_did_key TEXT,
+    new_did_key     TEXT NOT NULL,
+    prev_entry_hash TEXT,
+    entry_hash      TEXT NOT NULL,
+    state_hash      TEXT NOT NULL,
+    authorized_by   TEXT NOT NULL,
+    signature       TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (did_aw, seq)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_did_aw_log_entry_hash
+    ON {{tables.did_aw_log}} (entry_hash);
+
+CREATE INDEX IF NOT EXISTS idx_did_aw_log_head
+    ON {{tables.did_aw_log}} (did_aw, seq DESC);
+
+-- DNS namespaces
+CREATE TABLE IF NOT EXISTS {{tables.dns_namespaces}} (
+    namespace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    domain          TEXT NOT NULL,
+    controller_did  TEXT,
+    verification_status TEXT NOT NULL DEFAULT 'unverified',
+    last_verified_at TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ,
+    namespace_type  TEXT NOT NULL DEFAULT 'dns_verified',
+    scope_id        UUID,
+    CONSTRAINT chk_dns_namespaces_status CHECK (
+        verification_status IN ('verified', 'unverified', 'revoked')
+    ),
+    CONSTRAINT chk_dns_namespaces_type CHECK (
+        namespace_type IN ('dns_verified', 'managed')
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_namespaces_domain_unique_active
+    ON {{tables.dns_namespaces}} (domain)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_dns_namespaces_controller_did
+    ON {{tables.dns_namespaces}} (controller_did)
+    WHERE deleted_at IS NULL;
+
+-- Public addresses
+CREATE TABLE IF NOT EXISTS {{tables.public_addresses}} (
+    address_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    namespace_id    UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
+    name            TEXT NOT NULL,
+    did_aw          TEXT NOT NULL,
+    current_did_key TEXT NOT NULL,
+    reachability    TEXT NOT NULL DEFAULT 'private',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ,
+    CONSTRAINT chk_public_addresses_name_not_empty CHECK (name <> ''),
+    CONSTRAINT chk_public_addresses_name_no_slash CHECK (POSITION('/' IN name) = 0),
+    CONSTRAINT chk_public_addresses_name_no_dot CHECK (POSITION('.' IN name) = 0),
+    CONSTRAINT chk_public_addresses_name_no_tilde CHECK (POSITION('~' IN name) = 0),
+    CONSTRAINT chk_public_addresses_did_aw_prefix CHECK (did_aw LIKE 'did:aw:%'),
+    CONSTRAINT chk_public_addresses_reachability
+        CHECK (reachability IN ('private', 'org_visible', 'contacts_only', 'public'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_public_addresses_namespace_name_active
+    ON {{tables.public_addresses}} (namespace_id, name)
+    WHERE deleted_at IS NULL;
+
+-- Replacement announcements
+CREATE TABLE IF NOT EXISTS {{tables.replacement_announcements}} (
+    announcement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id      UUID,
+    old_agent_id    UUID,
+    new_agent_id    UUID,
+    namespace_id    UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
+    address_name    TEXT NOT NULL,
+    old_did         TEXT NOT NULL,
+    new_did         TEXT NOT NULL,
+    controller_did  TEXT NOT NULL,
+    replacement_timestamp TEXT NOT NULL,
+    controller_signature TEXT NOT NULL,
+    authorized_by   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_replacement_announcements_new_agent
+    ON {{tables.replacement_announcements}} (new_agent_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_replacement_announcements_old_agent
+    ON {{tables.replacement_announcements}} (old_agent_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_replacement_announcements_address_new_did
+    ON {{tables.replacement_announcements}} (namespace_id, address_name, new_did);

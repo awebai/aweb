@@ -9,10 +9,12 @@ CREATE TABLE IF NOT EXISTS {{tables.teams}} (
     team_did_key    TEXT NOT NULL,
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (domain, name)
+    deleted_at      TIMESTAMPTZ
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_domain_name_active
+    ON {{tables.teams}} (domain, name)
+    WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS {{tables.team_certificates}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
