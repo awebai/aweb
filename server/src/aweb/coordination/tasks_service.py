@@ -396,7 +396,7 @@ async def list_tasks(
             "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
-            "updated_at": r["updated_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
         }
         for r in rows
     ]
