@@ -339,7 +339,7 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
         aweb_db = db_infra.get_manager("aweb")
         if event.session_id and event.workspace_id:
             participants = await aweb_db.fetch_all(
-                "SELECT alias FROM {{tables.chat_session_participants}} "
+                "SELECT alias FROM {{tables.chat_participants}} "
                 "WHERE session_id = $1 AND agent_id != $2",
                 UUID(event.session_id),
                 UUID(event.workspace_id),

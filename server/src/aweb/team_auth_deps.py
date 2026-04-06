@@ -167,6 +167,8 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
+    # Include the registry-resolved team key (not the certificate's claim)
+    cert_info["verified_team_did_key"] = team_did_key
     return cert_info
 
 
