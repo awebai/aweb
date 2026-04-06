@@ -1,4 +1,4 @@
--- 002_registry.sql
+-- 001_registry.sql
 -- Identity resolution tables for the awid registry:
 -- DID mappings, audit log, DNS namespaces, public addresses,
 -- and replacement announcements.

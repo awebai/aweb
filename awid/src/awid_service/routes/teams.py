@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from aweb.deps import get_db
 from aweb.pagination import encode_cursor, validate_pagination_params
@@ -68,6 +72,13 @@ class TeamCreateRequest(BaseModel):
     display_name: str = Field(default="", max_length=256)
     team_did_key: str = Field(..., min_length=1, max_length=256)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if not _TEAM_NAME_PATTERN.fullmatch(value):
+            raise ValueError("must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')")
+        return value
+
     @field_validator("team_did_key")
     @classmethod
     def validate_team_did_key(cls, value: str) -> str:
@@ -107,7 +118,7 @@ class TeamRotateResponse(BaseModel):
     display_name: str
     team_did_key: str
     created_at: str
-    certificates_invalidated: bool
+    key_changed: bool
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +159,7 @@ async def create_team(
             now,
         )
     except QueryError as exc:
-        if "duplicate" not in str(exc).lower():
+        if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
             raise
         raise HTTPException(status_code=409, detail="Team already exists")
 
@@ -315,7 +326,7 @@ async def rotate_team_key(
     resp = _team_response(row)
     return TeamRotateResponse(
         **resp.model_dump(),
-        certificates_invalidated=key_changed,
+        key_changed=key_changed,
     )
 
 

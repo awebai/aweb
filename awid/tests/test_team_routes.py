@@ -252,6 +252,15 @@ async def test_delete_team_wrong_key_returns_403(client, controller_identity):
 
 
 @pytest.mark.asyncio
+async def test_delete_team_no_auth_returns_401(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "delnoauth.com")
+
+    resp = await client.delete("/v1/namespaces/delnoauth.com/teams/x")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_delete_team_not_found(client, controller_identity):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "delnf.com")
@@ -295,7 +304,7 @@ async def test_rotate_team_key(client, controller_identity):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["team_did_key"] == new_did_key
-    assert body["certificates_invalidated"] is True
+    assert body["key_changed"] is True
 
     # Confirm the key persisted
     resp = await client.get("/v1/namespaces/rot.com/teams/svc")
@@ -326,6 +335,19 @@ async def test_rotate_team_key_wrong_controller_returns_403(client, controller_i
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_rotate_team_key_no_auth_returns_401(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "rotnoauth.com")
+
+    _, pub = generate_keypair()
+    resp = await client.post(
+        "/v1/namespaces/rotnoauth.com/teams/x/rotate",
+        json={"new_team_did_key": did_from_public_key(pub)},
+    )
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -373,4 +395,4 @@ async def test_rotate_same_key_reports_no_invalidation(client, controller_identi
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["certificates_invalidated"] is False
+    assert resp.json()["key_changed"] is False

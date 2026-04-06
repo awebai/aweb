@@ -1,10 +1,11 @@
--- 001_teams.sql
+-- 002_teams.sql
 -- Teams and team certificate registration for the awid registry.
 
 CREATE TABLE IF NOT EXISTS {{tables.teams}} (
     team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
-    name            TEXT NOT NULL,
+    name            TEXT NOT NULL
+                    CONSTRAINT chk_teams_name CHECK (name ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
     display_name    TEXT NOT NULL DEFAULT '',
     team_did_key    TEXT NOT NULL,
     created_by      TEXT,
