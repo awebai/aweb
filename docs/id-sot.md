@@ -715,7 +715,7 @@ Subcommands:
 Notable help/usage details:
 
 - `aw project create` uses `--project <slug>` for the project slug; it may also fall back to `AWEB_PROJECT`/`AWEB_PROJECT_SLUG` or a TTY prompt
-- `aw project create --namespace <slug>` optionally sets an authoritative namespace slug distinct from the project slug; when omitted, the namespace defaults to the project slug
+- `aw project create --namespace <slug>` sets the managed owner slug used for addresses under `<slug>.aweb.ai`; it is not a separate project-local namespace label
 - `aw init` supports `--permanent --name <name>` for explicit durable self-custodial creation
 - `aw spawn accept-invite` remains an explicit delegated bootstrap command; unlike `aw run`, it should stay non-prompting
 - `aw reset` is local-only; it removes `.aw/workspace.yaml` and `.aw/context`
@@ -738,12 +738,12 @@ Subcommands:
 - `aw id request <method> <url>`: make a DIDKey-signed HTTP request with the local identity key
 - `aw id reachability [private|org-visible|contacts-only|public]`: get or set permanent address reachability
 - `aw id register`: manually register the current permanent identity at awid.ai
-- `aw id show`: show the current identity with registry status
+- `aw id show`: show the current identity with registry status, for example `owner.aweb.ai/alice`
 - `aw id sign`: sign a canonical JSON payload with the local identity key
 - `aw id resolve <did_aw>`: resolve a did:aw to its current did:key
 - `aw id verify <did_aw>`: verify the full stable-identity audit log
 - `aw id rotate-key`: rotate the identity signing key and update awid.ai
-- `aw id namespace <domain>`: inspect a namespace and its registered addresses
+- `aw id namespace <namespace>`: inspect a namespace and its registered addresses, for example `owner.aweb.ai` or `acme.com`
 
 Notable help/usage details:
 
