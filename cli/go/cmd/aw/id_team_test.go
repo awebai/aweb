@@ -347,6 +347,16 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	var gotRevokePayload map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          "did:aw:test123",
+				"current_did_key": "did:key:z6MkAlice",
+				"reachability":    "public",
+				"created_at":      "2026-04-06T00:00:00Z",
+			})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/certificates"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"certificates": []map[string]any{

@@ -153,32 +153,33 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 }
 
 // canonicalCertificatePayload builds the canonical JSON for certificate signing.
-// Fields are sorted lexicographically, matching the signing pattern used elsewhere.
+// Uses sorted-key map pattern consistent with canonicalRegistryJSON.
 func canonicalCertificatePayload(certID, teamAddress, teamDIDKey, memberDIDKey, alias, lifetime, issuedAt string) string {
-	fields := []struct {
-		key   string
-		value string
-	}{
-		{"alias", alias},
-		{"certificate_id", certID},
-		{"issued_at", issuedAt},
-		{"lifetime", lifetime},
-		{"member_did_key", memberDIDKey},
-		{"team_address", teamAddress},
-		{"team_did_key", teamDIDKey},
+	fields := map[string]string{
+		"alias":          alias,
+		"certificate_id": certID,
+		"issued_at":      issuedAt,
+		"lifetime":       lifetime,
+		"member_did_key": memberDIDKey,
+		"team_address":   teamAddress,
+		"team_did_key":   teamDIDKey,
 	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 
 	var b strings.Builder
 	b.WriteByte('{')
-	for i, f := range fields {
+	for i, k := range keys {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteByte('"')
-		b.WriteString(f.key)
+		b.WriteString(k)
 		b.WriteString(`":"`)
-		writeEscapedString(&b, f.value)
+		writeEscapedString(&b, fields[k])
 		b.WriteByte('"')
 	}
 	b.WriteByte('}')

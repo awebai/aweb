@@ -35,11 +35,15 @@ func DefaultTeamInvitesDir() (string, error) {
 }
 
 func teamInvitePath(inviteID string) (string, error) {
+	id := strings.TrimSpace(inviteID)
+	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, "/\\") {
+		return "", fmt.Errorf("invalid invite ID: %q", inviteID)
+	}
 	dir, err := DefaultTeamInvitesDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, strings.TrimSpace(inviteID)+".json"), nil
+	return filepath.Join(dir, id+".json"), nil
 }
 
 // GenerateInviteSecret generates a cryptographically random secret for invite tokens.
