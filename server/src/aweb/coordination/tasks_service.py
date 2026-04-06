@@ -372,7 +372,8 @@ async def list_tasks(
         params.append(labels)
         idx += 1
     if q is not None:
-        q_pattern = f"%{q}%"
+        q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q_pattern = f"%{q_escaped}%"
         conditions.append(
             f"(title ILIKE ${idx} OR (${idx + 1} || '-' || task_ref_suffix) ILIKE ${idx})"
         )

@@ -100,6 +100,19 @@ async def test_search_no_match(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_search_escapes_ilike_wildcards(aweb_cloud_db):
+    db = _DbInfra(server_db=aweb_cloud_db.oss_db, aweb_db=aweb_cloud_db.aweb_db)
+    project_id = await _seed_project_and_tasks(aweb_cloud_db.oss_db, aweb_cloud_db.aweb_db)
+
+    # "%" and "_" are ILIKE wildcards — they must not match everything
+    results = await list_tasks(db, project_id=project_id, q="%")
+    assert len(results) == 0
+
+    results = await list_tasks(db, project_id=project_id, q="_")
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
 async def test_search_returns_all_when_q_is_none(aweb_cloud_db):
     db = _DbInfra(server_db=aweb_cloud_db.oss_db, aweb_db=aweb_cloud_db.aweb_db)
     project_id = await _seed_project_and_tasks(aweb_cloud_db.oss_db, aweb_cloud_db.aweb_db)
