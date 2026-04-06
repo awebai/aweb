@@ -98,6 +98,15 @@ def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
     return False
 
 
+async def check_access(db, **kwargs) -> bool:
+    """Team membership is the sole access control. Always returns True.
+
+    Callers that still import this function are being migrated to remove
+    the access check entirely.
+    """
+    return True
+
+
 async def remove_contact(db, *, team_address: str, contact_id: str) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
