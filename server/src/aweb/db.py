@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from fastapi import Request
 from pgdbm import AsyncDatabaseManager
@@ -13,15 +13,15 @@ from .db_config import build_database_config
 
 class DatabaseInfra:
     """
-    Shared pgdbm infrastructure for the unified OSS package.
+    Shared pgdbm infrastructure for the aweb server.
 
-    Creates a single shared pool and schema-specific managers
-    for the coordination and protocol modules.
+    Creates a single shared pool and a single database manager
+    for the unified aweb schema.
     """
 
     def __init__(self) -> None:
         self._shared_pool: Optional[Any] = None
-        self._managers: Dict[str, AsyncDatabaseManager] = {}
+        self._manager: Optional[AsyncDatabaseManager] = None
         self._initialized: bool = False
         self._init_lock: asyncio.Lock = asyncio.Lock()
         self._owns_pool: bool = True
@@ -55,43 +55,31 @@ class DatabaseInfra:
 
             self._shared_pool = shared_pool
 
-            self._managers["server"] = AsyncDatabaseManager(
-                pool=shared_pool,
-                schema="server",
-            )
-            self._managers["aweb"] = AsyncDatabaseManager(
+            self._manager = AsyncDatabaseManager(
                 pool=shared_pool,
                 schema="aweb",
             )
 
-            base_dir = Path(__file__).resolve().parent
-            migrations_root = base_dir / "migrations"
+            await self._manager.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
 
-            for name, db in self._managers.items():
-                # Ensure schema exists before applying migrations
-                await db.execute(f'CREATE SCHEMA IF NOT EXISTS "{db.schema}"')
-
-                if name == "aweb":
-                    module_migrations = migrations_root / "aweb"
-                    module_name = "aweb-aweb"
-                else:
-                    module_migrations = migrations_root / name
-                    module_name = f"aweb-{name}"
-
-                if run_migrations and module_migrations.is_dir():
-                    manager = AsyncMigrationManager(
-                        db,
-                        migrations_path=str(module_migrations),
-                        module_name=module_name,
+            if run_migrations:
+                base_dir = Path(__file__).resolve().parent
+                migrations_path = base_dir / "migrations" / "aweb"
+                if migrations_path.is_dir():
+                    mgr = AsyncMigrationManager(
+                        self._manager,
+                        migrations_path=str(migrations_path),
+                        module_name="aweb-aweb",
                     )
-                    await manager.apply_pending_migrations()
+                    await mgr.apply_pending_migrations()
+
             self._initialized = True
 
     async def close(self) -> None:
         if self._shared_pool is not None and self._owns_pool:
             await self._shared_pool.close()
 
-        self._managers.clear()
+        self._manager = None
         self._shared_pool = None
         self._initialized = False
         self._owns_pool = True
@@ -101,18 +89,15 @@ class DatabaseInfra:
         """Check if the database infrastructure is initialized."""
         return self._initialized
 
-    def get_manager(self, name: str = "server") -> AsyncDatabaseManager:
+    def get_manager(self, name: str = "aweb") -> AsyncDatabaseManager:
         if not self._initialized:
             raise RuntimeError(
                 "DatabaseInfra is not initialized. Call 'await db_infra.initialize()' first."
             )
-        manager = self._managers.get(name)
-        if manager is None:
-            available = ", ".join(sorted(self._managers.keys())) or "(none)"
-            raise RuntimeError(
-                f"Unknown database manager '{name}'. Available managers: {available}"
-            )
-        return manager
+        assert self._manager is not None
+        # All tables are in the single aweb schema. Both "aweb" and "server"
+        # resolve to the same manager during the migration to team-based arch.
+        return self._manager
 
 
 db_infra = DatabaseInfra()
