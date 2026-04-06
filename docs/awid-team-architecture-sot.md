@@ -113,10 +113,18 @@ No members table. Membership is proven by certificates held by agents.
 POST   /v1/namespaces/{domain}/teams
        Create team.
        Auth: namespace controller DIDKey signature.
+
+       BYOD mode (caller provides key):
        Body: { "name": "backend", "team_did_key": "did:key:z6Mk..." }
+
+       Managed/escrow mode (awid generates and stores key):
+       Body: { "name": "backend", "escrow": true }
+       awid generates an Ed25519 keypair, stores the private key
+       encrypted in team_key_enc, returns the public key.
+
        Response: { "team_id": "uuid", "domain": "acme.com",
                    "name": "backend", "team_did_key": "did:key:z6Mk...",
-                   "created_at": "..." }
+                   "escrowed": true|false, "created_at": "..." }
 
 GET    /v1/namespaces/{domain}/teams
        List teams in namespace.
@@ -281,12 +289,12 @@ holding the key locally.
 The escrow key is encrypted with `AWID_TEAM_KEY_ENCRYPTION_KEY`
 (AES-256-GCM, same pattern as custody key encryption).
 
-awid exposes an internal endpoint for aweb-cloud to issue certificates
-for managed teams:
+awid exposes a certificate issuance endpoint with two auth paths:
 
+**Managed teams (escrowed key):**
 ```
 POST /v1/namespaces/{domain}/teams/{name}/certificates/issue
-Auth: parent controller DIDKey signature
+Auth: parent controller DIDKey signature (AWEB_PARENT_CONTROLLER_KEY)
 Body: {
   "member_did_key": "did:key:z6Mk...",
   "member_did_aw": "did:aw:...",
@@ -294,11 +302,19 @@ Body: {
   "alias": "alice",
   "lifetime": "permanent"
 }
-Response: { certificate JSON with signature }
+Response: { certificate JSON with signature by escrowed team key }
 ```
 
-For BYOD teams (acme.com), the team controller holds the key
-locally and signs certificates themselves via `aw id team add-member`.
+The parent controller (aweb.ai namespace controller) authorizes
+certificate issuance for managed teams. awid decrypts the escrowed
+team key and signs the certificate.
+
+**BYOD teams (caller holds key):**
+The team controller signs certificates locally via `aw id team
+add-member`. awid is not involved in certificate issuance for BYOD
+teams — the certificate is signed locally and given directly to the
+agent. awid only stores the team's public key (for verification by
+services) and the revocation list.
 
 ---
 
