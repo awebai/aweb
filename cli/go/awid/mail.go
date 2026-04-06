@@ -21,14 +21,9 @@ type SendMessageRequest struct {
 	Subject       string          `json:"subject,omitempty"`
 	Body          string          `json:"body"`
 	Priority      MessagePriority `json:"priority,omitempty"`
-	ThreadID      *string         `json:"thread_id,omitempty"`
-	FromDID       string          `json:"from_did,omitempty"`
-	ToDID         string          `json:"to_did,omitempty"`
-	FromStableID  string          `json:"from_stable_id,omitempty"`
-	Signature     string          `json:"signature,omitempty"`
-	SigningKeyID  string          `json:"signing_key_id,omitempty"`
-	Timestamp     string          `json:"timestamp,omitempty"`
 	MessageID     string          `json:"message_id,omitempty"`
+	FromDID       string          `json:"from_did,omitempty"`
+	Signature     string          `json:"signature,omitempty"`
 	SignedPayload string          `json:"signed_payload,omitempty"`
 }
 
@@ -72,11 +67,7 @@ func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*Sen
 		return nil, err
 	}
 	payload.FromDID = sf.FromDID
-	payload.ToDID = sf.ToDID
-	payload.FromStableID = sf.FromStableID
 	payload.Signature = sf.Signature
-	payload.SigningKeyID = sf.SigningKeyID
-	payload.Timestamp = sf.Timestamp
 	payload.MessageID = sf.MessageID
 	payload.SignedPayload = sf.SignedPayload
 
