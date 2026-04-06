@@ -48,13 +48,13 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
           AND t.deleted_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.messages}} m
-              WHERE (m.team_address = t.team_address OR m.recipient_team_address = t.team_address)
+              WHERE m.team_address = t.team_address
                 AND m.created_at >= $1
           )
           AND NOT EXISTS (
-              SELECT 1 FROM {{tables.chat_session_participants}} csp
-              JOIN {{tables.chat_messages}} cm ON cm.session_id = csp.session_id
-              JOIN {{tables.agents}} a ON a.agent_id = csp.agent_id
+              SELECT 1 FROM {{tables.chat_participants}} cp
+              JOIN {{tables.chat_messages}} cm ON cm.session_id = cp.session_id
+              JOIN {{tables.agents}} a ON a.agent_id = cp.agent_id
               WHERE a.team_address = t.team_address
                 AND cm.created_at >= $1
           )
@@ -84,7 +84,7 @@ async def _hard_delete_scope(aweb_db, *, team_address) -> None:
         )
         await tx.execute(
             """
-            DELETE FROM {{tables.chat_session_participants}}
+            DELETE FROM {{tables.chat_participants}}
             WHERE agent_id IN (
                 SELECT agent_id FROM {{tables.agents}} WHERE team_address = $1
             )
@@ -95,25 +95,17 @@ async def _hard_delete_scope(aweb_db, *, team_address) -> None:
             """
             DELETE FROM {{tables.chat_sessions}} cs
             WHERE NOT EXISTS (
-                SELECT 1 FROM {{tables.chat_session_participants}} csp
-                WHERE csp.session_id = cs.session_id
+                SELECT 1 FROM {{tables.chat_participants}} cp
+                WHERE cp.session_id = cs.session_id
             )
             """,
         )
         await tx.execute(
-            "DELETE FROM {{tables.messages}} WHERE team_address = $1 OR recipient_team_address = $1",
+            "DELETE FROM {{tables.messages}} WHERE team_address = $1",
             team_address,
         )
         await tx.execute(
             "DELETE FROM {{tables.control_signals}} WHERE team_address = $1",
-            team_address,
-        )
-        await tx.execute(
-            "DELETE FROM {{tables.agent_log}} WHERE team_address = $1",
-            team_address,
-        )
-        await tx.execute(
-            "DELETE FROM {{tables.api_keys}} WHERE team_address = $1",
             team_address,
         )
         await tx.execute(
