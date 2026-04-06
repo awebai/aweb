@@ -3,7 +3,6 @@ from __future__ import annotations
 import json as json_module
 import logging
 import os
-import re
 import secrets
 import uuid as uuid_mod
 from dataclasses import dataclass
@@ -20,7 +19,12 @@ from aweb.auth import (
     validate_project_slug,
 )
 from aweb.awid.contract import resolve_identity_contract
-from aweb.awid.custody import decrypt_signing_key, encrypt_signing_key, get_custody_key
+from aweb.awid.custody import (
+    decrypt_signing_key,
+    encrypt_signing_key,
+    get_custody_key,
+    get_namespace_controller_key,
+)
 from aweb.awid.did import (
     decode_public_key,
     did_from_public_key,
@@ -29,6 +33,14 @@ from aweb.awid.did import (
     stable_id_from_did_key,
 )
 from aweb.awid.registry import AlreadyRegisteredError, RegistryClient, RegistryError
+from aweb.namespace_registry import (
+    ensure_dns_namespace_registered,
+    get_namespace_address,
+    managed_namespace_domain,
+    register_namespace_address,
+    set_namespace_address_reachability,
+    validate_subdomain_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,17 +201,15 @@ async def bootstrap_identity(
     ns_domain: str | None = None
     ns_reachability: str | None = None
     if namespace is not None:
-        namespace = namespace.strip().lower()
+        namespace = validate_subdomain_label(namespace)
         managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
         if not managed_domain:
             raise ValueError(
                 "Managed namespaces require AWEB_MANAGED_DOMAIN to be configured"
             )
-        if not re.fullmatch(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", namespace):
-            raise ValueError("Invalid namespace slug format")
         if alias is None or not alias.strip():
             raise ValueError("alias is required when namespace is specified")
-        ns_domain = f"{namespace}.{managed_domain}"
+        ns_domain = managed_namespace_domain(namespace)
         ns_reachability = normalize_address_reachability(address_reachability)
 
     reinit_without_key_material = (
@@ -408,51 +418,60 @@ async def bootstrap_identity(
                 raise ValueError(
                     "Only permanent identities may own or publish addresses"
                 )
-
-            ns_row = await tx.fetch_one(
-                """
-                SELECT namespace_id FROM {{tables.dns_namespaces}}
-                WHERE domain = $1 AND deleted_at IS NULL
-                """,
-                ns_domain,
+            if registry_client is None:
+                raise ValueError(
+                    "AWID_REGISTRY_URL must point to an external awid registry for permanent managed addresses"
+                )
+            controller_signing_key = get_namespace_controller_key()
+            if controller_signing_key is None:
+                raise ValueError(
+                    "AWEB_NAMESPACE_CONTROLLER_KEY not set — cannot register managed namespace with external awid registry"
+                )
+            await ensure_dns_namespace_registered(
+                registry_client=registry_client,
+                domain=ns_domain,
+                controller_signing_key=controller_signing_key,
             )
-            if ns_row is None:
-                ns_id = uuid_mod.uuid4()
-                await tx.execute(
-                    """
-                    INSERT INTO {{tables.dns_namespaces}}
-                        (namespace_id, domain, namespace_type, scope_id,
-                         verification_status, created_at)
-                    VALUES ($1, $2, 'managed', $3, 'verified', NOW())
-                    """,
-                    ns_id,
-                    ns_domain,
-                    UUID(resolved_project_id),
+            if effective_registry_signing_key is None and custody == "self":
+                logger.info(
+                    "Skipping managed address registration for self-custodial permanent identity %s; "
+                    "DID registration uses the local private key",
+                    alias or agent_stable_id or "(unassigned)",
                 )
             else:
-                ns_id = ns_row["namespace_id"]
-
-            existing_addr = await tx.fetch_one(
-                """
-                SELECT address_id FROM {{tables.public_addresses}}
-                WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-                """,
-                ns_id,
-                alias,
-            )
-            if existing_addr is None:
-                await tx.execute(
-                    """
-                    INSERT INTO {{tables.public_addresses}}
-                        (namespace_id, name, did_aw, current_did_key, reachability, created_at)
-                    VALUES ($1, $2, $3, $4, $5, NOW())
-                    """,
-                    ns_id,
-                    alias,
-                    agent_stable_id,
-                    agent_did,
-                    ns_reachability,
+                existing_addr = await get_namespace_address(
+                    registry_client=registry_client,
+                    domain=ns_domain,
+                    name=alias,
                 )
+                if existing_addr is None:
+                    await register_namespace_address(
+                        registry_client=registry_client,
+                        domain=ns_domain,
+                        name=alias,
+                        did_aw=agent_stable_id,
+                        current_did_key=agent_did,
+                        controller_signing_key=controller_signing_key,
+                        reachability=ns_reachability or "private",
+                    )
+                else:
+                    existing_did_aw = str(existing_addr.get("did_aw") or "").strip()
+                    if existing_did_aw != agent_stable_id:
+                        raise ValueError(
+                            f"address '{ns_domain}/{alias}' is already in use"
+                        )
+                    if (
+                        ns_reachability is not None
+                        and str(existing_addr.get("reachability") or "private")
+                        != ns_reachability
+                    ):
+                        await set_namespace_address_reachability(
+                            registry_client=registry_client,
+                            domain=ns_domain,
+                            name=alias,
+                            controller_signing_key=controller_signing_key,
+                            reachability=ns_reachability,
+                        )
 
             ns_address = f"{ns_domain}/{alias}"
 

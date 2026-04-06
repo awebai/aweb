@@ -22,6 +22,21 @@ def test_create_project_request_allows_server_assigned_ephemeral_alias():
     assert req.lifetime == "ephemeral"
 
 
+def test_create_project_request_accepts_owner_scope_fields():
+    req = CreateProjectRequest(
+        project_slug="my-project",
+        owner_type="organization",
+        owner_ref="acme",
+    )
+    assert req.owner_type == "organization"
+    assert req.owner_ref == "acme"
+
+
+def test_create_project_request_requires_owner_fields_together():
+    with pytest.raises(ValidationError, match="owner_type and owner_ref must be provided together"):
+        CreateProjectRequest(project_slug="my-project", owner_ref="acme")
+
+
 def test_create_project_request_requires_name_for_persistent():
     with pytest.raises(ValidationError, match="name is required for persistent identities"):
         CreateProjectRequest(project_slug="my-project", alias="alice", lifetime="persistent")

@@ -7,7 +7,13 @@ import uuid
 
 import pytest
 
-from aweb.awid.custody import CustodyError, encrypt_signing_key, reset_custody_key_cache, sign_on_behalf
+from aweb.awid.custody import (
+    CustodyError,
+    encrypt_signing_key,
+    get_namespace_controller_key,
+    reset_custody_key_cache,
+    sign_on_behalf,
+)
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair
 
 
@@ -120,6 +126,31 @@ async def test_custodial_agent_raises_when_signing_key_missing(aweb_cloud_db):
             os.environ["AWEB_CUSTODY_KEY"] = env_backup
         else:
             os.environ.pop("AWEB_CUSTODY_KEY", None)
+
+
+def test_namespace_controller_key_reads_valid_hex():
+    env_backup = os.environ.get("AWEB_NAMESPACE_CONTROLLER_KEY")
+    os.environ["AWEB_NAMESPACE_CONTROLLER_KEY"] = "bb" * 32
+    try:
+        assert get_namespace_controller_key() == bytes.fromhex("bb" * 32)
+    finally:
+        if env_backup is not None:
+            os.environ["AWEB_NAMESPACE_CONTROLLER_KEY"] = env_backup
+        else:
+            os.environ.pop("AWEB_NAMESPACE_CONTROLLER_KEY", None)
+
+
+def test_namespace_controller_key_rejects_invalid_hex():
+    env_backup = os.environ.get("AWEB_NAMESPACE_CONTROLLER_KEY")
+    os.environ["AWEB_NAMESPACE_CONTROLLER_KEY"] = "not-hex"
+    try:
+        with pytest.raises(ValueError, match="AWEB_NAMESPACE_CONTROLLER_KEY"):
+            get_namespace_controller_key()
+    finally:
+        if env_backup is not None:
+            os.environ["AWEB_NAMESPACE_CONTROLLER_KEY"] = env_backup
+        else:
+            os.environ.pop("AWEB_NAMESPACE_CONTROLLER_KEY", None)
 
 
 @pytest.mark.asyncio

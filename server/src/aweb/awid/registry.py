@@ -1,4 +1,4 @@
-"""HTTP client for the external or embedded AWID registry."""
+"""HTTP client for the external AWID registry."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from redis.exceptions import RedisError
 from aweb.awid.did import did_from_public_key, stable_id_from_did_key
 from aweb.awid.log import canonical_server_origin, log_entry_payload, state_hash
 from aweb.awid.signing import canonical_json_bytes, sign_message
-from aweb.config import is_local_awid_registry_url
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
@@ -126,26 +125,14 @@ class RegistryClient:
     def _resolved_base_url(self, registry_url: str | None = None) -> str:
         target_registry_url = registry_url or self.registry_url
         if registry_url is None and self.base_url:
-            if not is_local_awid_registry_url(self.registry_url):
-                raise ValueError(
-                    "base_url override is only allowed in local mode"
-                )
             return self.base_url.rstrip("/")
-        if is_local_awid_registry_url(target_registry_url):
-            if self.transport is None:
-                raise ValueError(
-                    "registry_url='local' requires an explicit base_url or transport for HTTP access"
-                )
-            return "http://awid.local"
         return canonical_server_origin(target_registry_url)
 
     async def _registry_url_for_domain(self, domain: str) -> str:
         if self.domain_registry_resolver is not None:
             return canonical_server_origin(await self.domain_registry_resolver(domain))
         if self.transport is not None:
-            return self.registry_url
-        if is_local_awid_registry_url(self.registry_url):
-            return self.registry_url
+            return canonical_server_origin(self.registry_url)
         default_registry_url = canonical_server_origin(self.registry_url)
         from aweb.dns_verify import DnsVerificationError, discover_registry_override
 
@@ -195,6 +182,9 @@ class RegistryClient:
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
+
+    async def health(self) -> dict[str, Any]:
+        return await self._request_json("GET", "/health")
 
     async def _request_optional_json(
         self,

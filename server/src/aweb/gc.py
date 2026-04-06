@@ -105,20 +105,6 @@ async def _hard_delete_scope(aweb_db, *, project_id) -> None:
             project_id,
         )
         await tx.execute(
-            """
-            DELETE FROM {{tables.public_addresses}}
-            WHERE namespace_id IN (
-                SELECT namespace_id FROM {{tables.dns_namespaces}}
-                WHERE scope_id = $1
-            )
-            """,
-            project_id,
-        )
-        await tx.execute(
-            "DELETE FROM {{tables.dns_namespaces}} WHERE scope_id = $1",
-            project_id,
-        )
-        await tx.execute(
             "DELETE FROM {{tables.control_signals}} WHERE project_id = $1",
             project_id,
         )

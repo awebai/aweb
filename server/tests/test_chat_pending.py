@@ -73,7 +73,6 @@ async def _bootstrap_two_agents(aweb_cloud_db):
             "/api/v1/create-project",
             json={
                 "project_slug": "chat-pending-project",
-                "namespace_slug": "chat-pending-team",
                 "alias": "alice",
             },
         )

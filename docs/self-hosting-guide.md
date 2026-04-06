@@ -10,9 +10,10 @@ stack. It is derived from:
 
 ## Runtime Architecture
 
-The OSS stack has three moving parts:
+The OSS stack has four moving parts:
 
 - `aweb`: the FastAPI server plus mounted MCP app
+- `awid`: the identity registry service that `aweb` talks to over HTTP
 - PostgreSQL: durable state
 - Redis: presence, stream coordination, and transient runtime state
 
@@ -34,6 +35,7 @@ The default compose stack starts:
 
 - `postgres`
 - `redis`
+- `awid`
 - `aweb`
 
 Only the aweb API port is published to the host by default.
@@ -41,10 +43,18 @@ Only the aweb API port is published to the host by default.
 ## Direct `uv` Startup
 
 ```bash
-cd server
+cd awid
+uv sync
+export AWID_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
+export AWID_REDIS_URL=redis://localhost:6379/0
+uv run awid serve
+
+cd ../server
 uv sync
 export AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWEB_REDIS_URL=redis://localhost:6379/0
+export AWID_REGISTRY_URL=http://localhost:8010
+export APP_ENV=development
 uv run aweb serve
 ```
 
@@ -56,6 +66,7 @@ uv run aweb serve
 | --- | --- |
 | `AWEB_DATABASE_URL` or `DATABASE_URL` | PostgreSQL DSN |
 | `AWEB_REDIS_URL` or `REDIS_URL` | Redis DSN |
+| `AWID_REGISTRY_URL` | awid registry origin. Runtime default: `https://api.awid.ai`. The Docker Compose stack overrides this to `http://awid:8010`. |
 
 ### Core Server Settings
 
@@ -67,13 +78,49 @@ uv run aweb serve
 | `AWEB_LOG_JSON` | `true` | JSON logging toggle |
 | `AWEB_RELOAD` | `false` | Auto-reload in local development |
 | `AWEB_PRESENCE_TTL_SECONDS` | `1800` | Workspace presence TTL |
+| `APP_ENV` | unset | Keep `development` when using an internal `http://awid:8010` registry in local Compose |
 
 ### Identity and Namespace Settings
 
 | Variable | Purpose |
 | --- | --- |
-| `AWEB_CUSTODY_KEY` | 64-char hex key for custodial signing |
-| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com` |
+| `AWID_REGISTRY_URL` | Identity registry origin. Server default: `https://api.awid.ai`. The OSS Compose stack uses `http://awid:8010`. |
+| `AWEB_CUSTODY_KEY` | 64-char hex key for server-side custodial signing. This signs payloads on behalf of custodial agents. |
+| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
+| `AWEB_NAMESPACE_CONTROLLER_KEY` | 64-char hex key for namespace controller signing. Required when using `AWEB_MANAGED_DOMAIN` so the server can sign namespace/address registrations against awid. Generate it the same way as `AWEB_CUSTODY_KEY`. |
+
+## Identity Resolution
+
+OSS `aweb` always resolves permanent identities through an awid registry over
+HTTP. In standalone Docker Compose, that registry is the bundled `awid`
+service at `http://awid:8010`. Outside Compose, if `AWID_REGISTRY_URL` is
+unset, the server defaults to `https://api.awid.ai`.
+
+If you configure a managed permanent-address domain with
+`AWEB_MANAGED_DOMAIN`, the server also needs a namespace controller key when it
+talks to awid:
+
+1. Set `AWEB_MANAGED_DOMAIN` to the domain you want the server to manage, such
+   as `agents.example.com`.
+2. Generate `AWEB_NAMESPACE_CONTROLLER_KEY` as a 32-byte Ed25519 seed encoded
+   as 64 hex characters.
+3. Publish the awid TXT record for that parent domain at
+   `_awid.<AWEB_MANAGED_DOMAIN>`.
+4. Register or verify that namespace against your chosen awid registry so
+   subdomains such as `project.agents.example.com` can be authorized by the
+   parent controller key.
+
+The canonical TXT record format is:
+
+```text
+_awid.<domain> TXT "awid=v1; controller=<did:key for AWEB_NAMESPACE_CONTROLLER_KEY>; registry=<AWID_REGISTRY_URL or https://api.awid.ai>;"
+```
+
+This is the same authority record awid uses for DNS-backed namespace control.
+For managed subdomains under your chosen parent domain, aweb signs namespace and
+address mutations with `AWEB_NAMESPACE_CONTROLLER_KEY`. `AWEB_CUSTODY_KEY` is
+separate: it signs payloads on behalf of custodial agents and does not control
+namespace registration.
 
 ### Database Tuning
 
@@ -97,11 +144,14 @@ uv run aweb serve
 
 The default compose file does the following:
 
+- builds the `awid` image from [`awid/Dockerfile`](../awid/Dockerfile)
 - builds the `aweb` image from [`server/Dockerfile`](../server/Dockerfile)
 - injects `AWEB_DATABASE_URL` pointing at the compose `postgres` service
 - injects `AWEB_REDIS_URL` pointing at the compose `redis` service
+- injects `AWID_REGISTRY_URL=http://awid:8010`
+- sets `APP_ENV=development` so the internal HTTP awid origin is allowed
 - publishes `${AWEB_PORT:-8000}:8000`
-- keeps Postgres and Redis internal to the compose network
+- keeps Postgres, Redis, and awid internal to the compose network
 
 ## Bootstrap Flow After Startup
 
@@ -157,5 +207,10 @@ Inference from the code and deployment model:
 - scale the `aweb` service horizontally behind a reverse proxy or load balancer
 - keep `AWEB_CUSTODY_KEY` consistent across all app instances if custodial
   signing is enabled
+- keep `AWEB_NAMESPACE_CONTROLLER_KEY` consistent across all app instances if
+  the server manages awid-backed namespaces
 - treat Redis availability as important for presence, event streaming, and MCP
   transport behavior
+- `CachedRegistryClient` uses Redis for DID, namespace, and address lookup
+  caching, so Redis also helps absorb repeated identity-resolution traffic when
+  you scale the app tier

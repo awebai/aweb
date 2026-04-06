@@ -27,10 +27,14 @@ class _DbInfra:
 
 @pytest.mark.asyncio
 async def test_health_hides_internal_exception_details(monkeypatch, caplog):
-    async def _noop_mount(_app, _db_infra, _redis):
+    async def _noop_mount(_app, _db_infra, _redis, _registry_client):
+        return None
+
+    async def _noop_registry_validation(_registry_client):
         return None
 
     monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
+    monkeypatch.setattr("aweb.api._validate_awid_registry_client", _noop_registry_validation)
     caplog.set_level(logging.ERROR, logger="aweb.api")
     app = create_app(db_infra=_DbInfra(), redis=_FailingRedis(), enable_bootstrap_routes=False)
 

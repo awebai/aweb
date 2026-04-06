@@ -870,27 +870,37 @@ async def test_update_server_uses_current_key_and_signed_audit_payload():
 
 
 @pytest.mark.asyncio
-async def test_base_url_override_requires_local_mode():
+async def test_base_url_override_is_used_when_provided():
     client = RegistryClient(
         registry_url="https://api.awid.ai",
         base_url="http://override.test",
     )
 
-    with pytest.raises(ValueError, match="base_url override is only allowed"):
-        client._resolved_base_url()
+    assert client._resolved_base_url() == "http://override.test"
 
-    allowed = RegistryClient(
-        registry_url="local",
-        base_url="http://override.test",
-    )
-
-    assert allowed._resolved_base_url() == "http://override.test"
+    with pytest.raises(httpx.ConnectError):
+        await client.health()
 
 
 @pytest.mark.asyncio
-async def test_local_registry_mode_uses_http_transport_when_provided():
+async def test_base_url_override_with_transport_is_used_for_requests():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url == httpx.URL("http://awid.local/v1/namespaces/example.com")
+        assert request.url == httpx.URL("http://override.test/health")
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        base_url="http://override.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert await client.health() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_transport_uses_registry_origin_for_requests_when_no_base_url():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://api.awid.ai/v1/namespaces/example.com")
         return httpx.Response(
             200,
             json={
@@ -903,7 +913,10 @@ async def test_local_registry_mode_uses_http_transport_when_provided():
             },
         )
 
-    client = RegistryClient(registry_url="local", transport=httpx.MockTransport(handler))
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
 
     namespace = await client.get_namespace("example.com")
 
