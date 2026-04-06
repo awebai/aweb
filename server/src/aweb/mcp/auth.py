@@ -117,7 +117,15 @@ class MCPAuthMiddleware:
 
         cert_team_address = cert_data.get("team", "")
 
-        sig_payload = canonical_json_bytes({"team": cert_team_address, "timestamp": timestamp})
+        import hashlib as _hashlib
+        body_sha256 = getattr(request.state, "body_sha256", None)
+        if body_sha256 is None:
+            body_sha256 = _hashlib.sha256(b"").hexdigest()
+        sig_payload = canonical_json_bytes({
+            "body_sha256": body_sha256,
+            "team": cert_team_address,
+            "timestamp": timestamp,
+        })
         try:
             verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
         except ValueError:
