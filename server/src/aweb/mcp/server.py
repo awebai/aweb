@@ -171,26 +171,20 @@ def register_tools(
 
     @mcp.tool(
         name="send_mail",
-        description=(
-            "Send an async message to another agent by alias, scoped address, "
-            "or namespace address."
-        ),
+        description="Send an async message to another agent by alias.",
     )
     async def send_mail(
         to: str,
         body: str,
         subject: str = "",
         priority: str = "normal",
-        thread_id: str = "",
     ) -> str:
         return await _send_mail_impl(
             db_infra,
-            registry_client=registry_client,
             to=to,
             subject=subject,
             body=body,
             priority=priority,
-            thread_id=thread_id,
         )
 
     @mcp.tool(
@@ -202,7 +196,6 @@ def register_tools(
     ) -> str:
         return await _check_inbox_impl(
             db_infra,
-            registry_client=registry_client,
             unread_only=unread_only,
             limit=limit,
             include_bodies=include_bodies,

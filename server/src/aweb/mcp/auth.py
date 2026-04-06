@@ -3,8 +3,8 @@
 Resolves the calling agent's identity and makes it available to MCP tool
 handlers via a contextvar.  Supports two auth modes:
 
-1. **Direct mode** (OSS / standalone): Bearer token validated against the aweb
-   API key store.
+1. **Certificate mode** (OSS / standalone): DIDKey signature + team certificate,
+   same as the HTTP route authentication.
 2. **Proxy mode** (embedded / hosted): Signed internal headers injected by the
    outer auth middleware (requires ``AWEB_TRUST_PROXY_HEADERS=1``).
 """
@@ -21,8 +21,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aweb.auth import verify_bearer_token_details
 from aweb.internal_auth import _trust_aweb_proxy_headers, parse_internal_auth_context
+from aweb.team_auth_deps import verify_request_certificate, resolve_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,10 @@ logger = logging.getLogger(__name__)
 class AuthContext:
     """Resolved identity for the current MCP request."""
 
-    project_id: str
+    team_address: str
     agent_id: str
-    api_key_id: str | None = None
-    principal_type: str = "k"
-    principal_id: str | None = None
+    alias: str
+    did_key: str
 
 
 _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
@@ -57,7 +56,7 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves agent identity for MCP requests.
 
-    Supports proxy-header auth (for claweb) and direct Bearer token auth (OSS).
+    Supports certificate auth (OSS) and proxy-header auth (hosted).
     """
 
     def __init__(self, app: ASGIApp, db_infra: Any) -> None:
@@ -72,7 +71,6 @@ class MCPAuthMiddleware:
         request = Request(scope)
 
         if _trust_aweb_proxy_headers():
-            # Proxy mode: proxy auth is the only path — never fall back to Bearer.
             try:
                 ctx = self._resolve_proxy_auth(request)
             except HTTPException as exc:
@@ -92,9 +90,9 @@ class MCPAuthMiddleware:
                 await response(scope, receive, send)
                 return
         else:
-            ctx = await self._resolve_bearer_auth(request, scope, receive, send)
+            ctx = await self._resolve_certificate_auth(request, scope, receive, send)
             if ctx is None:
-                return  # Response already sent by _resolve_bearer_auth.
+                return  # Response already sent.
 
         cv_token = _auth_context.set(ctx)
         try:
@@ -108,66 +106,62 @@ class MCPAuthMiddleware:
 
         Raises HTTPException on invalid signatures — callers must not swallow it.
         Returns None only when no proxy headers are present at all.
+
+        Note: proxy mode is a transitional path for aweb-cloud. The proxy
+        headers must provide team_address and alias alongside actor_id.
         """
         internal = parse_internal_auth_context(request)
         if internal is None:
             return None
-        principal_type = (internal.get("principal_type") or "").strip()
-        if principal_type not in {"k", "m"}:
-            raise HTTPException(status_code=403, detail="MCP requires an agent-bound principal")
         actor_id = (internal.get("actor_id") or "").strip()
         if not actor_id:
             return None
+        team_address = (internal.get("team_address") or "").strip()
+        alias = (internal.get("alias") or "").strip()
+        did_key = (internal.get("did_key") or "").strip()
+        if not team_address:
+            raise HTTPException(status_code=403, detail="Proxy headers must include team_address")
         return AuthContext(
-            project_id=internal["project_id"],
+            team_address=team_address,
             agent_id=actor_id,
-            api_key_id=internal.get("principal_id") if principal_type == "k" else None,
-            principal_type=principal_type,
-            principal_id=internal.get("principal_id") or None,
+            alias=alias,
+            did_key=did_key,
         )
 
-    async def _resolve_bearer_auth(
+    async def _resolve_certificate_auth(
         self, request: Request, scope: Scope, receive: Receive, send: Send
     ) -> AuthContext | None:
-        """Resolve auth from Bearer token (OSS mode). Sends error response on failure."""
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            response = JSONResponse(
-                {"error": "Authentication required"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
-            return None
-
-        token = auth_header[7:]
+        """Resolve auth from DIDKey signature + team certificate (OSS mode)."""
         try:
-            details = await verify_bearer_token_details(self.db_infra, token, manager_name="aweb")
-        except HTTPException:
+            cert_info = await verify_request_certificate(request, self.db_infra)
+        except HTTPException as exc:
             response = JSONResponse(
-                {"error": "Invalid API key"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
+                {"error": exc.detail},
+                status_code=exc.status_code,
+                headers=getattr(exc, "headers", None),
             )
             await response(scope, receive, send)
             return None
         except Exception:
-            logger.exception("Unexpected error validating API key")
-            raise
+            logger.exception("Unexpected error verifying certificate")
+            response = JSONResponse({"error": "Internal error"}, status_code=500)
+            await response(scope, receive, send)
+            return None
 
-        agent_id = (details.get("agent_id") or "").strip()
-        if not agent_id:
+        try:
+            aweb_db = self.db_infra.get_manager("aweb")
+            identity = await resolve_team_identity(aweb_db, cert_info)
+        except ValueError:
             response = JSONResponse(
-                {"error": "API key is not bound to an agent"},
+                {"error": "Agent not connected — use POST /v1/connect first"},
                 status_code=403,
             )
             await response(scope, receive, send)
             return None
 
         return AuthContext(
-            project_id=str(details["project_id"]),
-            agent_id=agent_id,
-            api_key_id=str(details["api_key_id"]),
-            principal_type="k",
-            principal_id=str(details["api_key_id"]),
+            team_address=identity.team_address,
+            agent_id=identity.agent_id,
+            alias=identity.alias,
+            did_key=identity.did_key,
         )
