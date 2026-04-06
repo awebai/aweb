@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, alias)
+    UNIQUE (team_address, alias),
+    UNIQUE (team_address, did_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_did_key

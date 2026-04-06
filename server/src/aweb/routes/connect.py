@@ -9,11 +9,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 from pydantic import BaseModel, Field
 
 from aweb.coordination.routes.repos import canonicalize_git_url
+from aweb.deps import get_db
+from aweb.team_auth_deps import get_team_identity
 
 router = APIRouter(prefix="/v1", tags=["connect"])
 
@@ -90,7 +92,7 @@ async def _ensure_agent(
         INSERT INTO {{tables.agents}}
             (agent_id, team_address, did_key, alias, lifetime, human_name, agent_type, role)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (team_address, alias) DO NOTHING
+        ON CONFLICT (team_address, did_key) DO NOTHING
         """,
         agent_id,
         team_address,
@@ -308,3 +310,44 @@ async def connect_agent(
         "workspace_id": workspace_id,
         "role": role,
     }
+
+
+# ---------------------------------------------------------------------------
+# HTTP endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/connect", response_model=ConnectResponse)
+async def connect_endpoint(
+    request: Request, payload: ConnectRequest, db=Depends(get_db)
+) -> ConnectResponse:
+    """Agent connects with certificate. Auto-provisions team + agent + workspace."""
+    identity = await get_team_identity(request, db)
+
+    aweb_db = db.get_manager("aweb")
+
+    # Get the team's public key (already resolved during auth)
+    team_row = await aweb_db.fetch_one(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_address = $1",
+        identity.team_address,
+    )
+    team_did_key = team_row["team_did_key"] if team_row else ""
+
+    result = await connect_agent(
+        db=aweb_db,
+        cert_info={
+            "team_address": identity.team_address,
+            "alias": identity.alias,
+            "did_key": identity.did_key,
+            "lifetime": identity.lifetime,
+        },
+        team_did_key=team_did_key or identity.did_key,
+        hostname=payload.hostname,
+        workspace_path=payload.workspace_path,
+        repo_origin=payload.repo_origin,
+        role=payload.role or identity.alias,
+        human_name=payload.human_name,
+        agent_type=payload.agent_type,
+    )
+
+    return ConnectResponse(**result)

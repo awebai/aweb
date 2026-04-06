@@ -518,6 +518,39 @@ class RegistryClient:
         )
         return [_address_from_json(item) for item in data.get("addresses", [])]
 
+    async def get_team_public_key(self, domain: str, name: str) -> str | None:
+        """Fetch the team's public did:key from awid.
+
+        GET /v1/namespaces/{domain}/teams/{name}
+        Returns team_did_key or None if team not found.
+        """
+        data = await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}/teams/{name}",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+        if data is None:
+            return None
+        return data.get("team_did_key")
+
+    async def get_team_revocations(self, domain: str, name: str) -> set[str]:
+        """Fetch the set of revoked certificate IDs for a team.
+
+        GET /v1/namespaces/{domain}/teams/{name}/revocations
+        Returns set of certificate_id strings.
+        """
+        try:
+            data = await self._request_json(
+                "GET",
+                f"/v1/namespaces/{domain}/teams/{name}/revocations",
+                registry_url=await self._registry_url_for_domain(domain),
+            )
+        except RegistryError as exc:
+            if exc.status_code == 404:
+                return set()
+            raise
+        return {r["certificate_id"] for r in data.get("revocations", [])}
+
     async def update_address(
         self,
         domain: str,
