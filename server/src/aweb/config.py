@@ -35,19 +35,17 @@ class Settings:
     database_statement_cache_size: Optional[int]
     presence_ttl_seconds: int
     awid_registry_url: str
-    awid_registry_is_local: bool
 
 
 def get_awid_registry_url() -> str:
     value = (os.getenv("AWID_REGISTRY_URL") or "").strip()
     if not value:
         return DEFAULT_AWID_REGISTRY_URL
+    if value.lower() == "local":
+        raise ValueError(
+            "AWID_REGISTRY_URL=local is no longer supported. Run the awid service separately and point AWEB at its HTTP origin."
+        )
     return value
-
-
-def is_local_awid_registry_url(value: str | None = None) -> bool:
-    registry_url = value.strip() if value is not None else get_awid_registry_url()
-    return registry_url.lower() == "local"
 
 
 def get_settings() -> Settings:
@@ -105,5 +103,4 @@ def get_settings() -> Settings:
         ),
         presence_ttl_seconds=presence_ttl,
         awid_registry_url=get_awid_registry_url(),
-        awid_registry_is_local=is_local_awid_registry_url(),
     )

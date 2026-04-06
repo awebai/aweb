@@ -1,4 +1,5 @@
 .PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build \
+	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
 	release-channel-check release-channel-tag release-channel-push \
@@ -20,6 +21,8 @@ help:
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
+	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
+	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo ""
 	@echo "  release-all-check   Validate ALL products before release"
 	@echo "  release-all-tag     Commit version bumps and create all tags"
@@ -50,6 +53,24 @@ test-channel:
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
+
+selfhost-up:
+	cd server && docker compose up --build -d
+
+selfhost-down:
+	cd server && docker compose down
+
+selfhost-logs:
+	cd server && docker compose logs -f aweb awid
+
+awid-up:
+	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose up --build -d
+
+awid-down:
+	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose down
+
+awid-logs:
+	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
 
 release-server-check:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q

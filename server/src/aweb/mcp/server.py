@@ -18,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from redis.asyncio import Redis
 
 from aweb.awid import RegistryClient
-from aweb.config import get_awid_registry_url, is_local_awid_registry_url
+from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
@@ -532,12 +532,7 @@ def create_mcp_app(
     )
 
     if registry_client is None:
-        registry_url = get_awid_registry_url()
-        if is_local_awid_registry_url(registry_url):
-            raise ValueError(
-                "create_mcp_app() requires registry_client when AWEB_REGISTRY_URL=local"
-            )
-        registry_client = RegistryClient(registry_url=registry_url)
+        registry_client = RegistryClient(registry_url=get_awid_registry_url())
 
     register_tools(mcp, db_infra, redis, registry_client)
 

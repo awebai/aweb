@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from httpx import ASGITransport
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,7 +27,7 @@ from aweb.namespace_registry import (
     managed_namespace_domain,
     validate_subdomain_label,
 )
-from aweb.config import get_awid_registry_url, is_local_awid_registry_url
+from aweb.config import get_awid_registry_url
 from aweb.rate_limit import enforce_init_rate_limit
 from aweb.redis_client import get_redis
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -50,13 +49,7 @@ def _registry_client_for_request(request: Request) -> RegistryClient:
     if cached_client is not None:
         return cached_client
 
-    registry_url = get_awid_registry_url()
-    if is_local_awid_registry_url(registry_url):
-        return RegistryClient(
-            registry_url=registry_url,
-            transport=ASGITransport(app=request.app),
-        )
-    return RegistryClient(registry_url=registry_url)
+    return RegistryClient(registry_url=get_awid_registry_url())
 
 
 def _namespace_unavailable() -> HTTPException:

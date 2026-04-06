@@ -14,7 +14,8 @@ includes:
 
 ## Run locally
 
-Recommended OSS path: start the bundled stack with Docker Compose.
+Recommended OSS path: start the bundled stack with Docker Compose. That stack
+includes `aweb`, `awid`, Postgres, and Redis.
 
 ```bash
 cp .env.example .env
@@ -22,15 +23,23 @@ docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
-Only the aweb API port is published to the host by default. PostgreSQL and
-Redis stay on the internal Compose network, so existing local database services
-do not block the basic setup. If `8000` is already taken, change `AWEB_PORT`
-in `.env`.
+Only the aweb API port is published to the host by default. PostgreSQL, Redis,
+and awid stay on the internal Compose network, so existing local database
+services do not block the basic setup. If `8000` is already taken, change
+`AWEB_PORT` in `.env`.
 
-Direct `uv` mode remains available when you already have Postgres and Redis:
+Direct `uv` mode remains available when you already have Postgres, Redis, and
+an awid service:
 
 ```bash
+cd ../awid
 uv sync
+uv run awid serve
+
+cd ../server
+uv sync
+export AWID_REGISTRY_URL=http://localhost:8010
+export APP_ENV=development
 uv run aweb serve
 ```
 
@@ -38,10 +47,12 @@ By default, `aweb` reads:
 
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
+- `AWID_REGISTRY_URL`
 - `AWEB_HOST`
 - `AWEB_PORT`
 - `AWEB_CUSTODY_KEY` for custodial signing
 - `AWEB_MANAGED_DOMAIN` for permanent managed-address bootstrap
+- `AWEB_NAMESPACE_CONTROLLER_KEY` for managed namespace/address registration
 
 ## Bootstrap flow
 
@@ -76,7 +87,7 @@ Important:
 - `aw spawn create-invite` requires an existing identity
 - `aw spawn accept-invite` requires only the invite token
 
-See [`docs/self-hosting.md`](docs/self-hosting.md) for the operator view.
+See [`../docs/self-hosting-guide.md`](../docs/self-hosting-guide.md) for the operator view.
 
 ## Release to PyPI
 
@@ -102,5 +113,5 @@ Stable identity, signing, continuity, and audit-log verification live under:
 src/aweb/awid/
 ```
 
-That boundary is explicit on purpose. `awid` is part of OSS `aweb`; it is not a
-separate product.
+That boundary is explicit on purpose. The OSS deployment includes both
+services, but `aweb` and `awid` now run as separate processes.

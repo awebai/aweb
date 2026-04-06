@@ -25,6 +25,31 @@ services:
       timeout: 5s
       retries: 5
 
+  awid:
+    build:
+      context: ..
+      dockerfile: awid/Dockerfile
+    restart: unless-stopped
+    environment:
+      AWID_DATABASE_URL: postgresql://${POSTGRES_USER:-aweb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aweb}
+      AWID_REDIS_URL: redis://redis:6379/0
+      AWID_HOST: 0.0.0.0
+      AWID_PORT: 8010
+      AWID_DB_SCHEMA: ${AWID_DB_SCHEMA:-awid}
+      AWID_LOG_JSON: ${AWID_LOG_JSON:-true}
+      AWID_RATE_LIMIT_BACKEND: ${AWID_RATE_LIMIT_BACKEND:-redis}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   aweb:
     build:
       context: .
@@ -36,15 +61,19 @@ services:
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
+      APP_ENV: ${APP_ENV:-development}
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
+      AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-http://awid:8010}
       AWEB_CUSTODY_KEY: ${AWEB_CUSTODY_KEY:-}
       AWEB_MANAGED_DOMAIN: ${AWEB_MANAGED_DOMAIN:-}
-      # AWID_REGISTRY_URL: https://api.awid.ai
       # AWEB_NAMESPACE_CONTROLLER_KEY: 64-char hex Ed25519 seed for managed namespace registration
+      AWEB_NAMESPACE_CONTROLLER_KEY: ${AWEB_NAMESPACE_CONTROLLER_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      awid:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
