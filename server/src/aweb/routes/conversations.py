@@ -48,12 +48,11 @@ async def list_conversations(
             raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     # --- Mail conversations ---
-    # Group by COALESCE(thread_id, message_id) to treat standalone mails as their own thread.
-    # Only include conversations where this agent is sender or receiver.
+    # Each message is a standalone conversation.
     mail_rows = await aweb_db.fetch_all(
         """
         SELECT
-            COALESCE(m.thread_id, m.message_id)::text AS conversation_id,
+            m.message_id::text AS conversation_id,
             MAX(m.created_at) AS last_message_at,
             (array_agg(m.body ORDER BY m.created_at DESC))[1] AS last_body,
             (array_agg(m.from_alias ORDER BY m.created_at DESC))[1] AS last_from,
@@ -62,7 +61,7 @@ async def list_conversations(
         FROM {{tables.messages}} m
         WHERE m.team_address = $1
           AND (m.from_agent_id = $2 OR m.to_agent_id = $2)
-        GROUP BY COALESCE(m.thread_id, m.message_id)
+        GROUP BY m.message_id
         ORDER BY MAX(m.created_at) DESC
         """,
         identity.team_address,
@@ -75,12 +74,12 @@ async def list_conversations(
     if conv_ids:
         part_rows = await aweb_db.fetch_all(
             """
-            SELECT COALESCE(m.thread_id, m.message_id)::text AS conv_id, a.alias
+            SELECT m.message_id::text AS conv_id, a.alias
             FROM {{tables.messages}} m
             JOIN {{tables.agents}} a ON a.agent_id IN (m.from_agent_id, m.to_agent_id)
             WHERE m.team_address = $1
-              AND COALESCE(m.thread_id, m.message_id)::text = ANY($2)
-            GROUP BY COALESCE(m.thread_id, m.message_id), a.alias
+              AND m.message_id::text = ANY($2)
+            GROUP BY m.message_id, a.alias
             ORDER BY a.alias
             """,
             identity.team_address,
