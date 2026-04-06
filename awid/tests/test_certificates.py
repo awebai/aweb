@@ -60,7 +60,7 @@ async def test_register_certificate(client, controller_identity):
             "member_did_aw": member_did_aw,
             "member_address": "cert.com/alice",
             "alias": "alice",
-            "lifetime": "permanent",
+            "lifetime": "persistent",
         },
         headers=headers,
     )

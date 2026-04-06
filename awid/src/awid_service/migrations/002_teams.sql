@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS {{tables.team_certificates}} (
     member_did_aw   TEXT,
     member_address  TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'permanent'
-                    CHECK (lifetime IN ('permanent', 'ephemeral')),
+    lifetime        TEXT NOT NULL DEFAULT 'persistent'
+                    CHECK (lifetime IN ('persistent', 'ephemeral')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 

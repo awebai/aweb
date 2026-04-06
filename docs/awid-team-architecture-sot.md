@@ -93,8 +93,8 @@ CREATE TABLE team_certificates (
     member_did_aw   TEXT,
     member_address  TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'permanent'
-                    CHECK (lifetime IN ('permanent', 'ephemeral')),
+    lifetime        TEXT NOT NULL DEFAULT 'persistent'
+                    CHECK (lifetime IN ('persistent', 'ephemeral')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
@@ -159,7 +159,7 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_did_aw": "did:aw:...",
                "member_address": "acme.com/alice",
                "alias": "alice",
-               "lifetime": "permanent" }
+               "lifetime": "persistent" }
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, aweb-cloud for
        managed). awid records the issuance but does not sign.
@@ -175,7 +175,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "member_did_aw": "did:aw:...",
                    "member_address": "acme.com/alice",
                    "alias": "alice",
-                   "lifetime": "permanent",
+                   "lifetime": "persistent",
                    "issued_at": "...",
                    "revoked_at": null }] }
        With active_only=true: only rows where revoked_at IS NULL.
@@ -220,7 +220,7 @@ any service.
   "member_did_aw": "did:aw:...(agent's stable ID, empty for ephemeral)",
   "member_address": "acme.com/alice (empty for ephemeral)",
   "alias": "alice",
-  "lifetime": "permanent",
+  "lifetime": "persistent",
   "issued_at": "2026-04-06T...",
   "signature": "base64...(Ed25519 by team private key)"
 }
@@ -377,8 +377,8 @@ CREATE TABLE team_certificates (
     member_did_aw   TEXT,
     member_address  TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'permanent'
-                    CHECK (lifetime IN ('permanent', 'ephemeral')),
+    lifetime        TEXT NOT NULL DEFAULT 'persistent'
+                    CHECK (lifetime IN ('persistent', 'ephemeral')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 

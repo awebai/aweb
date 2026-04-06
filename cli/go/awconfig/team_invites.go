@@ -13,21 +13,23 @@ import (
 
 // TeamInvite is a pending team invite stored locally by the team controller.
 type TeamInvite struct {
-	InviteID  string `json:"invite_id" yaml:"invite_id"`
-	Domain    string `json:"domain" yaml:"domain"`
-	TeamName  string `json:"team_name" yaml:"team_name"`
-	Ephemeral bool   `json:"ephemeral" yaml:"ephemeral"`
-	Secret    string `json:"secret" yaml:"secret"`
-	CreatedAt string `json:"created_at" yaml:"created_at"`
+	InviteID    string `json:"invite_id" yaml:"invite_id"`
+	Domain      string `json:"domain" yaml:"domain"`
+	TeamName    string `json:"team_name" yaml:"team_name"`
+	Ephemeral   bool   `json:"ephemeral" yaml:"ephemeral"`
+	Secret      string `json:"secret" yaml:"secret"`
+	RegistryURL string `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
+	CreatedAt   string `json:"created_at" yaml:"created_at"`
 }
 
 // TeamInviteToken is the JSON structure encoded in the invite token
 // that gets shared with the invitee.
 type TeamInviteToken struct {
-	InviteID string `json:"i"`
-	Domain   string `json:"d"`
-	TeamName string `json:"t"`
-	Secret   string `json:"s"`
+	InviteID    string `json:"i"`
+	Domain      string `json:"d"`
+	TeamName    string `json:"t"`
+	Secret      string `json:"s"`
+	RegistryURL string `json:"r,omitempty"`
 }
 
 func DefaultTeamInvitesDir() (string, error) {
@@ -104,10 +106,11 @@ func DeleteTeamInvite(inviteID string) error {
 // EncodeInviteToken encodes an invite into a shareable base64url token.
 func EncodeInviteToken(invite *TeamInvite) (string, error) {
 	tok := TeamInviteToken{
-		InviteID: invite.InviteID,
-		Domain:   invite.Domain,
-		TeamName: invite.TeamName,
-		Secret:   invite.Secret,
+		InviteID:    invite.InviteID,
+		Domain:      invite.Domain,
+		TeamName:    invite.TeamName,
+		Secret:      invite.Secret,
+		RegistryURL: invite.RegistryURL,
 	}
 	data, err := json.Marshal(tok)
 	if err != nil {

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     address         TEXT,
     alias           TEXT NOT NULL,
     lifetime        TEXT NOT NULL DEFAULT 'ephemeral'
-                    CHECK (lifetime IN ('permanent', 'ephemeral')),
+                    CHECK (lifetime IN ('persistent', 'ephemeral')),
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',

@@ -90,7 +90,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
         "did:aw:abc123",
         "example.com/alice",
         "alice",
-        "permanent",
+        "persistent",
     )
 
     row = await db.fetch_one(
@@ -100,7 +100,7 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
     assert row is not None
     assert row["member_did_key"] == member_did_key
     assert row["alias"] == "alice"
-    assert row["lifetime"] == "permanent"
+    assert row["lifetime"] == "persistent"
     assert row["issued_at"] is not None
     assert row["revoked_at"] is None
 
