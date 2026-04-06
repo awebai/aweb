@@ -30,6 +30,8 @@ services:
       context: ..
       dockerfile: awid/Dockerfile
     restart: unless-stopped
+    ports:
+      - "${AWID_PORT:-8010}:8010"
     environment:
       AWID_DATABASE_URL: postgresql://${POSTGRES_USER:-aweb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aweb}
       AWID_REDIS_URL: redis://redis:6379/0
@@ -64,10 +66,6 @@ services:
       APP_ENV: ${APP_ENV:-development}
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
       AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-http://awid:8010}
-      AWEB_CUSTODY_KEY: ${AWEB_CUSTODY_KEY:-}
-      AWEB_MANAGED_DOMAIN: ${AWEB_MANAGED_DOMAIN:-}
-      # AWEB_NAMESPACE_CONTROLLER_KEY: 64-char hex Ed25519 seed for managed namespace registration
-      AWEB_NAMESPACE_CONTROLLER_KEY: ${AWEB_NAMESPACE_CONTROLLER_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
