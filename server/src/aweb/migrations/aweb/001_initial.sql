@@ -197,16 +197,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_active_alias
 -- Tasks
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.task_counters}} (
-    team_address    TEXT PRIMARY KEY,
-    next_number     INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS {{tables.task_root_counters}} (
-    team_address    TEXT PRIMARY KEY,
-    next_number     INTEGER NOT NULL DEFAULT 1
-);
-
 CREATE TABLE IF NOT EXISTS {{tables.tasks}} (
     task_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
@@ -250,6 +240,16 @@ CREATE TABLE IF NOT EXISTS {{tables.task_dependencies}} (
     depends_on_id   UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
     team_address    TEXT NOT NULL,
     PRIMARY KEY (task_id, depends_on_id)
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_counters}} (
+    team_address    TEXT PRIMARY KEY,
+    next_number     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_root_counters}} (
+    team_address    TEXT PRIMARY KEY,
+    next_number     INTEGER NOT NULL DEFAULT 1
 );
 
 -- ---------------------------------------------------------------------------

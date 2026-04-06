@@ -95,8 +95,6 @@ class DatabaseInfra:
                 "DatabaseInfra is not initialized. Call 'await db_infra.initialize()' first."
             )
         assert self._manager is not None
-        # All tables are in the single aweb schema. Both "aweb" and "server"
-        # resolve to the same manager during the migration to team-based arch.
         return self._manager
 
 
