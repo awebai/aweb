@@ -14,7 +14,7 @@ async def contacts_list(db_infra) -> str:
     """List all contacts in the project."""
     auth = get_auth()
     try:
-        contacts = await list_contacts(db_infra, project_id=auth.project_id)
+        contacts = await list_contacts(db_infra, team_address=auth.team_address)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"contacts": contacts})
@@ -26,7 +26,7 @@ async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> st
     try:
         result = await add_contact(
             db_infra,
-            project_id=auth.project_id,
+            team_address=auth.team_address,
             contact_address=contact_address,
             label=label or None,
         )
@@ -41,7 +41,7 @@ async def contacts_remove(db_infra, *, contact_id: str) -> str:
     """Remove a contact from the project."""
     auth = get_auth()
     try:
-        await remove_contact(db_infra, project_id=auth.project_id, contact_id=contact_id)
+        await remove_contact(db_infra, team_address=auth.team_address, contact_id=contact_id)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 

@@ -129,22 +129,23 @@ async def chat_send(
 
     if to_alias:
         # Create or find session and send.
-        sender = await get_agent_by_id(db_infra, project_id=auth.project_id, agent_id=auth.agent_id)
+        sender = await get_agent_by_id(db_infra, team_address=auth.team_address, agent_id=auth.agent_id)
         if not sender:
             return json.dumps({"error": "Sender agent not found"})
 
         if sender["alias"] == to_alias:
             return json.dumps({"error": "Cannot chat with yourself"})
 
-        target = await get_agent_by_alias(db_infra, project_id=auth.project_id, alias=to_alias)
+        target = await get_agent_by_alias(db_infra, team_address=auth.team_address, alias=to_alias)
         if not target:
             return json.dumps({"error": f"Agent '{to_alias}' not found in project"})
 
         try:
             sid = await ensure_session(
                 db_infra,
-                project_id=auth.project_id,
+                team_address=auth.team_address,
                 agent_rows=[dict(sender), dict(target)],
+                created_by_alias=auth.alias,
             )
         except ServiceError:
             return json.dumps({"error": "Failed to create chat session"})
@@ -152,7 +153,6 @@ async def chat_send(
         # Server-side custodial signing.
         msg_from_did = None
         msg_signature = None
-        msg_signing_key_id = None
         msg_signed_payload = None
         msg_created_at = datetime.now(timezone.utc)
         pre_message_id = uuid_mod.uuid4()
@@ -173,7 +173,7 @@ async def chat_send(
             db_infra,
         )
         if sign_result is not None:
-            msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
+            msg_from_did, msg_signature, _, msg_signed_payload = sign_result
 
         msg = await send_in_session(
             db_infra,
@@ -184,7 +184,6 @@ async def chat_send(
             hang_on=hang_on,
             from_did=msg_from_did,
             signature=msg_signature,
-            signing_key_id=msg_signing_key_id,
             signed_payload=msg_signed_payload,
             created_at=msg_created_at,
             message_id=pre_message_id,
@@ -198,25 +197,24 @@ async def chat_send(
         except Exception:
             return json.dumps({"error": "Invalid session_id format"})
 
-        # Verify session belongs to project.
+        # Verify session belongs to team.
         sess = await aweb_db.fetch_one(
-            "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND project_id = $2",
+            "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_address = $2",
             sid,
-            UUID(auth.project_id),
+            auth.team_address,
         )
         if not sess:
             return json.dumps({"error": "Session not found"})
 
         # Server-side custodial signing.
         sender_row = await aweb_db.fetch_one(
-            "SELECT alias FROM {{tables.chat_session_participants}} WHERE session_id = $1 AND agent_id = $2",
+            "SELECT alias FROM {{tables.chat_participants}} WHERE session_id = $1 AND agent_id = $2",
             sid,
             UUID(auth.agent_id),
         )
         sender_alias = sender_row["alias"] if sender_row else ""
         msg_from_did = None
         msg_signature = None
-        msg_signing_key_id = None
         msg_signed_payload = None
         msg_created_at = datetime.now(timezone.utc)
         pre_message_id = uuid_mod.uuid4()
@@ -237,7 +235,7 @@ async def chat_send(
             db_infra,
         )
         if sign_result is not None:
-            msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
+            msg_from_did, msg_signature, _, msg_signed_payload = sign_result
 
         msg = await send_in_session(
             db_infra,
@@ -248,7 +246,6 @@ async def chat_send(
             hang_on=hang_on,
             from_did=msg_from_did,
             signature=msg_signature,
-            signing_key_id=msg_signing_key_id,
             signed_payload=msg_signed_payload,
             created_at=msg_created_at,
             message_id=pre_message_id,
@@ -318,11 +315,11 @@ async def chat_history(
 
     aweb_db = db_infra.get_manager("aweb")
 
-    # Verify session exists in project.
+    # Verify session exists in team.
     sess = await aweb_db.fetch_one(
-        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND project_id = $2",
+        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_address = $2",
         session_uuid,
-        UUID(auth.project_id),
+        auth.team_address,
     )
     if not sess:
         return json.dumps({"error": "Session not found"})

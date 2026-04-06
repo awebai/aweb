@@ -11,17 +11,17 @@ from aweb.mcp.auth import get_auth
 async def instructions_show(db_infra, *, project_instructions_id: str = "") -> str:
     """Show the active or requested project instructions version."""
     auth = get_auth()
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
     if project_instructions_id:
-        row = await server_db.fetch_one(
+        row = await aweb_db.fetch_one(
             """
-            SELECT project_instructions_id, project_id, version, document_json, updated_at
+            SELECT id, team_address, version, document_json, updated_at
             FROM {{tables.project_instructions}}
-            WHERE project_instructions_id = $1 AND project_id = $2
+            WHERE id = $1 AND team_address = $2
             """,
             project_instructions_id,
-            auth.project_id,
+            auth.team_address,
         )
         if row is None:
             return json.dumps({"error": "Project instructions not found"})
@@ -30,24 +30,24 @@ async def instructions_show(db_infra, *, project_instructions_id: str = "") -> s
             document_data = json.loads(document_data)
         return json.dumps(
             {
-                "project_instructions_id": str(row["project_instructions_id"]),
+                "project_instructions_id": str(row["id"]),
                 "active_project_instructions_id": None,
-                "project_id": str(row["project_id"]),
+                "team_address": str(row["team_address"]),
                 "version": row["version"],
                 "updated_at": row["updated_at"].isoformat(),
                 "document": document_data,
             }
         )
 
-    version = await get_active_project_instructions(server_db, auth.project_id, bootstrap_if_missing=True)
+    version = await get_active_project_instructions(aweb_db, auth.team_address, bootstrap_if_missing=True)
     if version is None:
         return json.dumps({"error": "Project instructions not found"})
 
     return json.dumps(
         {
-            "project_instructions_id": version.project_instructions_id,
-            "active_project_instructions_id": version.project_instructions_id,
-            "project_id": version.project_id,
+            "project_instructions_id": version.id,
+            "active_project_instructions_id": version.id,
+            "team_address": version.team_address,
             "version": version.version,
             "updated_at": version.updated_at.isoformat(),
             "document": version.document.model_dump(),
@@ -58,33 +58,20 @@ async def instructions_show(db_infra, *, project_instructions_id: str = "") -> s
 async def instructions_history(db_infra, *, limit: int = 20) -> str:
     """List recent project instructions versions for the authenticated project."""
     auth = get_auth()
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
     limit = max(1, min(int(limit), 100))
 
-    await get_active_project_instructions(server_db, auth.project_id, bootstrap_if_missing=True)
-    active_result = await server_db.fetch_one(
-        """
-        SELECT active_project_instructions_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
-        """,
-        auth.project_id,
-    )
-    active_project_instructions_id = (
-        str(active_result["active_project_instructions_id"])
-        if active_result and active_result["active_project_instructions_id"]
-        else None
-    )
+    await get_active_project_instructions(aweb_db, auth.team_address, bootstrap_if_missing=True)
 
-    rows = await server_db.fetch_all(
+    rows = await aweb_db.fetch_all(
         """
-        SELECT project_instructions_id, version, created_at, created_by_workspace_id
+        SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.project_instructions}}
-        WHERE project_id = $1
+        WHERE team_address = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        auth.project_id,
+        auth.team_address,
         limit,
     )
 
@@ -92,17 +79,15 @@ async def instructions_history(db_infra, *, limit: int = 20) -> str:
         {
             "project_instructions_versions": [
                 {
-                    "project_instructions_id": str(row["project_instructions_id"]),
+                    "project_instructions_id": str(row["id"]),
                     "version": row["version"],
                     "created_at": row["created_at"].isoformat(),
-                    "created_by_workspace_id": (
-                        str(row["created_by_workspace_id"])
-                        if row["created_by_workspace_id"]
+                    "created_by_alias": (
+                        str(row["created_by_alias"])
+                        if row["created_by_alias"]
                         else None
                     ),
-                    "is_active": (
-                        str(row["project_instructions_id"]) == active_project_instructions_id
-                    ),
+                    "is_active": bool(row["is_active"]),
                 }
                 for row in rows
             ]
