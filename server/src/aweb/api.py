@@ -5,13 +5,12 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from httpx import ASGITransport
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from .awid import CachedRegistryClient, RegistryClient, get_custody_key
-from .config import get_settings, is_local_awid_registry_url
+from .config import get_settings
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from .logging import configure_logging
@@ -27,9 +26,6 @@ from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
 from .routes.custody_sign import router as custody_sign_router
-from .routes.did import router as did_router
-from .routes.dns_addresses import router as dns_addresses_router
-from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.events import router as events_router
 from .routes.init import bootstrap_router, router as init_router
 from .routes.messages import router as messages_router
@@ -97,11 +93,18 @@ def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryCl
     registry_url = settings.awid_registry_url
     client_class = CachedRegistryClient if redis is not None else RegistryClient
     client_kwargs = {"registry_url": registry_url}
-    if is_local_awid_registry_url(registry_url):
-        client_kwargs["transport"] = ASGITransport(app=app)
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)
+
+
+async def _validate_awid_registry_client(registry_client: RegistryClient) -> None:
+    try:
+        await registry_client.health()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to reach AWID registry at {registry_client.registry_url}: {exc}"
+        ) from exc
 
 
 def _make_standalone_lifespan():
@@ -139,6 +142,7 @@ def _make_standalone_lifespan():
             app.state.rate_limiter = build_rate_limiter(redis=redis)
             app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+            await _validate_awid_registry_client(app.state.awid_registry_client)
             await _mount_mcp_app(app, default_db_infra, redis, app.state.awid_registry_client)
 
         except Exception:
@@ -190,6 +194,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+        await _validate_awid_registry_client(app.state.awid_registry_client)
         await _mount_mcp_app(app, db_infra, redis, app.state.awid_registry_client)
 
         try:
@@ -268,7 +273,6 @@ def create_app(
 
     app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
-    mount_local_registry_routes = is_local_awid_registry_url()
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
@@ -319,10 +323,6 @@ def create_app(
     app.include_router(contacts_router)
     app.include_router(conversations_router)
     app.include_router(custody_sign_router)
-    if mount_local_registry_routes:
-        app.include_router(did_router)
-        app.include_router(dns_addresses_router)
-        app.include_router(dns_namespaces_router)
     app.include_router(events_router)
     app.include_router(messages_router)
     app.include_router(projects_router)

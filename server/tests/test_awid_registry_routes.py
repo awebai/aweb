@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -17,6 +18,77 @@ from aweb.ratelimit import MemoryFixedWindowRateLimiter
 from aweb.routes.did import router as did_router
 from aweb.routes.dns_addresses import router as dns_addresses_router
 from aweb.routes.dns_namespaces import router as dns_namespaces_router
+
+
+async def _ensure_legacy_registry_tables(aweb_db) -> None:
+    await aweb_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS {{tables.did_aw_mappings}} (
+            did_aw TEXT PRIMARY KEY,
+            current_did_key TEXT NOT NULL,
+            server_url TEXT NOT NULL,
+            address TEXT NOT NULL,
+            handle TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS {{tables.did_aw_log}} (
+            did_aw TEXT NOT NULL REFERENCES {{tables.did_aw_mappings}}(did_aw) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            operation TEXT NOT NULL,
+            previous_did_key TEXT,
+            new_did_key TEXT NOT NULL,
+            prev_entry_hash TEXT,
+            entry_hash TEXT NOT NULL,
+            state_hash TEXT NOT NULL,
+            authorized_by TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (did_aw, seq)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_did_aw_log_entry_hash
+        ON {{tables.did_aw_log}} (entry_hash);
+
+        CREATE TABLE IF NOT EXISTS {{tables.dns_namespaces}} (
+            namespace_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            domain TEXT NOT NULL,
+            controller_did TEXT,
+            verification_status TEXT NOT NULL DEFAULT 'unverified',
+            last_verified_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ,
+            namespace_type TEXT NOT NULL DEFAULT 'dns_verified',
+            scope_id UUID
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_namespaces_domain_unique_active
+        ON {{tables.dns_namespaces}} (domain)
+        WHERE deleted_at IS NULL;
+
+        CREATE TABLE IF NOT EXISTS {{tables.public_addresses}} (
+            address_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            namespace_id UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
+            name TEXT NOT NULL,
+            did_aw TEXT NOT NULL,
+            current_did_key TEXT NOT NULL,
+            reachability TEXT NOT NULL DEFAULT 'private',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_public_addresses_namespace_name_active
+        ON {{tables.public_addresses}} (namespace_id, name)
+        WHERE deleted_at IS NULL;
+        """
+    )
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _legacy_registry_schema(aweb_cloud_db):
+    await _ensure_legacy_registry_tables(aweb_cloud_db.aweb_db)
 
 
 class _DbInfra:

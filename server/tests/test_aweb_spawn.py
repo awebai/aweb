@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from aweb.auth import hash_api_key
+from aweb.awid.custody import reset_custody_key_cache
 from aweb.awid.did import did_from_public_key, encode_public_key, generate_keypair
 from aweb.db import get_db_infra
 from aweb.redis_client import get_redis
 from aweb.routes.auth import router as auth_router
 from aweb.routes.init import bootstrap_router, router as init_router
 from aweb.routes.spawn import router as spawn_router
+
+
+@pytest.fixture(autouse=True)
+def _reset_signing_key_cache():
+    reset_custody_key_cache()
+    yield
+    reset_custody_key_cache()
 
 
 class _FakeRedis:
@@ -35,7 +44,36 @@ class _FakeRedis:
         return 1
 
 
-def _build_spawn_test_app(*, aweb_db, server_db) -> FastAPI:
+class _FakeRegistryClient:
+    def __init__(self) -> None:
+        self._namespaces: dict[str, SimpleNamespace] = {}
+
+    async def get_namespace(self, domain: str):
+        return self._namespaces.get(domain)
+
+    async def register_namespace(
+        self,
+        *,
+        domain: str,
+        controller_did: str,
+        controller_signing_key: bytes,
+        parent_signing_key: bytes | None,
+    ):
+        del controller_signing_key, parent_signing_key
+
+        ns = SimpleNamespace(
+            namespace_id="ns-1",
+            domain=domain,
+            controller_did=controller_did,
+            verification_status="verified",
+            last_verified_at=None,
+            created_at="2026-04-06T00:00:00Z",
+        )
+        self._namespaces[domain] = ns
+        return ns
+
+
+def _build_spawn_test_app(*, aweb_db, server_db, registry_client=None) -> FastAPI:
     class _DbInfra:
         is_initialized = True
 
@@ -51,6 +89,8 @@ def _build_spawn_test_app(*, aweb_db, server_db) -> FastAPI:
     app.include_router(init_router)
     app.include_router(spawn_router)
     app.include_router(auth_router)
+    if registry_client is not None:
+        app.state.awid_registry_client = registry_client
     app.dependency_overrides[get_db_infra] = lambda: _DbInfra()
     app.dependency_overrides[get_redis] = lambda: _FakeRedis()
     return app
@@ -264,8 +304,13 @@ async def test_spawn_invite_revoke_is_creator_only(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_spawn_accept_allows_explicit_permanent_self_custodial_identity(aweb_cloud_db, monkeypatch):
     monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "aweb.ai")
-    monkeypatch.setenv("AWID_REGISTRY_URL", "local")
-    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+    monkeypatch.setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+    monkeypatch.setenv("AWEB_NAMESPACE_CONTROLLER_KEY", "33" * 32)
+    app = _build_spawn_test_app(
+        aweb_db=aweb_cloud_db.aweb_db,
+        server_db=aweb_cloud_db.oss_db,
+        registry_client=_FakeRegistryClient(),
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         bootstrap = await client.post(

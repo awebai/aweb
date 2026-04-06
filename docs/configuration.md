@@ -127,8 +127,9 @@ resolution and custodial signing behave.
 
 ### Identity Resolution
 
-- `AWID_REGISTRY_URL`: selects the awid registry. Unset defaults to
-  `https://api.awid.ai`. Set `local` for embedded mode.
+- `AWID_REGISTRY_URL`: selects the awid registry origin. The server default is
+  `https://api.awid.ai`. The OSS Docker Compose stack overrides this to
+  `http://awid:8010`.
 - `APP_ENV`: when set to `production` or left unset, registry URLs must use
   HTTPS. Only explicit development values such as `dev`, `development`, or
   `local` relax that check.
@@ -138,8 +139,7 @@ resolution and custodial signing behave.
 - `AWEB_MANAGED_DOMAIN`: the parent domain used for server-managed permanent
   addresses
 - `AWEB_NAMESPACE_CONTROLLER_KEY`: 64-char hex Ed25519 seed used to sign
-  namespace and address registrations for `AWEB_MANAGED_DOMAIN` when
-  `AWID_REGISTRY_URL` points at an external registry
+  namespace and address registrations for `AWEB_MANAGED_DOMAIN` against awid
 
 ### Custodial Agent Signing
 
