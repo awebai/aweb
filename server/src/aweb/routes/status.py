@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 
 from aweb.auth import validate_workspace_id
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
@@ -262,6 +262,7 @@ async def status(
     repo_id: Optional[str] = Query(None, min_length=36, max_length=36),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> Dict[str, Any]:
     """
     Aggregate workspace status: agent presence, claims, and conflicts.
@@ -270,7 +271,6 @@ async def status(
     - workspace_id: Show status for a specific workspace
     - repo_id: Show aggregated status for all workspaces in a repo (UUID)
     """
-    identity = await get_team_identity(request, db_infra)
     team_address = identity.team_address
     aweb_db = db_infra.get_manager("aweb")
 
@@ -560,6 +560,7 @@ async def status_stream(
     ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> StreamingResponse:
     """
     Server-Sent Events (SSE) stream for real-time updates.
@@ -593,7 +594,6 @@ async def status_stream(
         data: {"type": "task.status_changed", "workspace_id": "...", ...}
         ```
     """
-    identity = await get_team_identity(request, db_infra)
     team_address = identity.team_address
 
     # Determine which workspace_ids to subscribe to

@@ -45,9 +45,9 @@ class ListContactsResponse(BaseModel):
 
 @router.post("", response_model=ContactView)
 async def create_contact(
-    request: Request, payload: CreateContactRequest, db=Depends(get_db)
+    request: Request, payload: CreateContactRequest, db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ContactView:
-    identity = await get_team_identity(request, db)
     result = await add_contact(
         db,
         team_address=identity.team_address,
@@ -58,14 +58,18 @@ async def create_contact(
 
 
 @router.get("", response_model=ListContactsResponse)
-async def list_contacts_route(request: Request, db=Depends(get_db)) -> ListContactsResponse:
-    identity = await get_team_identity(request, db)
+async def list_contacts_route(
+    request: Request, db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> ListContactsResponse:
     contacts = await list_contacts(db, team_address=identity.team_address)
     return ListContactsResponse(contacts=[ContactView(**c) for c in contacts])
 
 
 @router.delete("/{contact_id}")
-async def delete_contact(request: Request, contact_id: str, db=Depends(get_db)) -> dict:
-    identity = await get_team_identity(request, db)
+async def delete_contact(
+    request: Request, contact_id: str, db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> dict:
     await remove_contact(db, team_address=identity.team_address, contact_id=contact_id)
     return {"deleted": True}

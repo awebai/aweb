@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from aweb.deps import get_db, get_redis
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -83,9 +83,9 @@ async def list_agents(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ListAgentsResponse:
     """List agents in the current team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
@@ -167,9 +167,9 @@ async def heartbeat(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> HeartbeatResponse:
     """Update workspace last_seen_at and Redis presence."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     # Update last_seen_at on the workspace scoped by team_address
@@ -206,9 +206,9 @@ async def patch_agent_workspace(
     request: Request,
     payload: PatchWorkspaceRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> PatchWorkspaceResponse:
     """Update the calling agent's workspace info."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
@@ -263,9 +263,9 @@ async def send_control_signal(
     alias: str,
     payload: SendControlSignalRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ):
     """Send a control signal (pause/resume/interrupt) to another agent."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     target = await aweb_db.fetch_one(

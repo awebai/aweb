@@ -40,7 +40,7 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +173,9 @@ class CreateSessionResponse(BaseModel):
 
 @router.post("/sessions", response_model=CreateSessionResponse)
 async def create_or_send(
-    request: Request, payload: CreateSessionRequest, db=Depends(get_db), redis=Depends(get_redis)
+    request: Request, payload: CreateSessionRequest, db=Depends(get_db), redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ):
-    identity = await get_team_identity(request, db)
     team_address = identity.team_address
     actor_id = identity.agent_id
 
@@ -327,8 +327,8 @@ async def pending(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> PendingResponse:
-    identity = await get_team_identity(request, db)
     team_address = identity.team_address
     actor_id = identity.agent_id
 
@@ -427,8 +427,8 @@ async def history(
     unread_only: bool = Query(False),
     limit: int = Query(200, ge=1, le=2000),
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> HistoryResponse:
-    identity = await get_team_identity(request, db)
     team_address = identity.team_address
     actor_id = identity.agent_id
 
@@ -506,8 +506,8 @@ async def mark_read(
     payload: MarkReadRequest,
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db)
     actor_id = identity.agent_id
 
     session_uuid = UUID(session_id.strip())
@@ -864,8 +864,8 @@ async def stream(
     after: str | None = Query(None),
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ):
-    identity = await get_team_identity(request, db)
     actor_id = identity.agent_id
     team_address = identity.team_address
 
@@ -955,6 +955,7 @@ async def send_message(
     session_id: str = Path(..., min_length=1),
     payload: SendMessageRequest = ...,  # type: ignore[assignment]
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> SendMessageResponse:
     """Send a message in an existing chat session.
 
@@ -962,7 +963,6 @@ async def send_message(
     Uses canonical alias from participants table to prevent spoofing.
     Supports hang_on flag for requesting more time to reply.
     """
-    identity = await get_team_identity(request, db)
     actor_id = identity.agent_id
 
     try:
@@ -1072,12 +1072,12 @@ async def list_sessions(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> SessionListResponse:
     """List chat sessions for the authenticated agent.
 
     Sessions are persistent. Returns sessions where agent is a participant.
     """
-    identity = await get_team_identity(request, db)
     actor_id = identity.agent_id
 
     agent_uuid = UUID(actor_id)
