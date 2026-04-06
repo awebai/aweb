@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from aweb.access_modes import validate_access_mode
 from aweb.address_reachability import normalize_address_reachability
 from aweb.aweb_introspection import AuthIdentity, get_identity_from_auth
+from aweb.awid.registry import RegistryError
 from aweb.bootstrap import bootstrap_identity
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.input_validation import is_valid_alias, is_valid_human_name
@@ -410,6 +411,8 @@ async def accept_spawn_invite(
                 if (payload.lifetime or "ephemeral") == "persistent"
                 else None,
             )
+        except RegistryError as exc:
+            raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
         except ValueError as exc:
             raise _translate_bootstrap_value_error(exc) from exc
 

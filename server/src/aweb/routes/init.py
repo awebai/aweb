@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-import asyncpg.exceptions
 from httpx import ASGITransport
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.address_reachability import normalize_address_reachability
 from aweb.aweb_introspection import get_identity_from_auth
-from aweb.awid import RegistryClient
+from aweb.awid import RegistryClient, RegistryError
 from aweb.auth import validate_project_slug
 from aweb.bootstrap import AliasExhaustedError, BootstrapIdentityResult, bootstrap_identity
 from aweb.coordination.project_registry import ensure_server_project_row
@@ -25,7 +23,11 @@ from aweb.coordination.routes.repos import canonicalize_git_url, extract_repo_na
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.input_validation import is_valid_alias, is_valid_human_name
 from aweb.names import CLASSIC_NAMES
-from aweb.namespace_registry import ensure_dns_namespace_registered, validate_subdomain_label
+from aweb.namespace_registry import (
+    derive_owner_slug,
+    managed_namespace_domain,
+    validate_subdomain_label,
+)
 from aweb.config import get_awid_registry_url, is_local_awid_registry_url
 from aweb.rate_limit import enforce_init_rate_limit
 from aweb.redis_client import get_redis
@@ -55,22 +57,6 @@ def _registry_client_for_request(request: Request) -> RegistryClient:
             transport=ASGITransport(app=request.app),
         )
     return RegistryClient(registry_url=registry_url)
-
-
-def _managed_namespace_domain(namespace_slug: str) -> str:
-    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
-    if managed_domain:
-        return f"{namespace_slug}.{managed_domain}"
-    return namespace_slug
-
-
-def _namespace_slug_from_domain(domain: str) -> str:
-    normalized = (domain or "").strip().lower().rstrip(".")
-    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
-    suffix = f".{managed_domain}" if managed_domain else ""
-    if suffix and normalized.endswith(suffix):
-        return normalized[: -len(suffix)]
-    return normalized
 
 
 def _namespace_unavailable() -> HTTPException:
@@ -342,86 +328,36 @@ async def _lookup_attached_namespace(
     aweb_db = db_infra.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT domain
-        FROM {{tables.dns_namespaces}}
-        WHERE scope_id = $1
-          AND namespace_type = 'managed'
+        SELECT slug, owner_ref
+        FROM {{tables.projects}}
+        WHERE project_id = $1
           AND deleted_at IS NULL
-        ORDER BY created_at
-        LIMIT 1
         """,
         UUID(project_id),
     )
     if row is None:
         return None
-    domain = (row.get("domain") or "").strip().lower()
-    if not domain:
-        return None
-    return _namespace_slug_from_domain(domain), domain
+    project_slug = (row.get("slug") or "").strip()
+    owner_ref = (row.get("owner_ref") or "").strip() or None
+    owner_slug = derive_owner_slug(project_slug=project_slug, owner_ref=owner_ref)
+    return owner_slug, managed_namespace_domain(owner_slug)
 
 
-async def _ensure_project_namespace(
-    db_infra: DatabaseInfra,
+def _ensure_project_namespace(
     *,
-    project_id: str,
     project_slug: str,
+    owner_ref: str | None,
     requested_namespace_slug: str | None,
 ) -> tuple[str, str]:
-    aweb_db = db_infra.get_manager("aweb")
-    existing = await _lookup_attached_namespace(db_infra, project_id=project_id)
-    if existing is not None:
-        existing_slug, existing_domain = existing
-        if requested_namespace_slug is not None:
-            namespace_slug = _normalize_requested_namespace_slug(requested_namespace_slug)
-        else:
-            namespace_slug = existing_slug
-        if existing_slug != namespace_slug:
+    namespace_slug = derive_owner_slug(project_slug=project_slug, owner_ref=owner_ref)
+    if requested_namespace_slug is not None:
+        requested = _normalize_requested_namespace_slug(requested_namespace_slug)
+        if requested != namespace_slug:
             raise HTTPException(
                 status_code=409,
-                detail="namespace_slug_conflict: project already has a different attached namespace",
-        )
-        return existing_slug, existing_domain
-
-    namespace_slug = _normalize_requested_namespace_slug(requested_namespace_slug or project_slug)
-
-    namespace_domain = _managed_namespace_domain(namespace_slug)
-    claimed = await aweb_db.fetch_one(
-        """
-        SELECT scope_id
-        FROM {{tables.dns_namespaces}}
-        WHERE domain = $1 AND deleted_at IS NULL
-        """,
-        namespace_domain,
-    )
-    if claimed is not None:
-        scope_id = claimed.get("scope_id")
-        if scope_id is None or str(scope_id) != project_id:
-            raise HTTPException(status_code=409, detail="namespace_slug_conflict: namespace already claimed")
-
-    try:
-        namespace = await ensure_dns_namespace_registered(
-            aweb_db=aweb_db,
-            domain=namespace_domain,
-            controller_did=None,
-            namespace_type="managed",
-            scope_id=project_id,
-        )
-    except asyncpg.UniqueViolationError:
-        claimed = await aweb_db.fetch_one(
-            """
-            SELECT scope_id
-            FROM {{tables.dns_namespaces}}
-            WHERE domain = $1 AND deleted_at IS NULL
-            """,
-            namespace_domain,
-        )
-        if claimed is None:
-            raise
-        scope_id = claimed.get("scope_id")
-        if scope_id is None or str(scope_id) != project_id:
-            raise HTTPException(status_code=409, detail="namespace_slug_conflict: namespace already claimed")
-        return namespace_slug, namespace_domain
-    return namespace_slug, namespace["domain"]
+                detail="namespace_slug_conflict: managed namespace is derived from project owner",
+            )
+    return namespace_slug, managed_namespace_domain(namespace_slug)
 
 
 def _response_identity_handle(payload: _BootstrapBaseModel) -> tuple[str | None, str | None]:
@@ -564,8 +500,11 @@ async def create_project(
         raise HTTPException(status_code=409, detail="project_slug_conflict: project already exists")
 
     bootstrap_alias, response_name = _response_identity_handle(payload)
-    requested_namespace_slug = payload.namespace_slug or payload.project_slug
-    requested_namespace_domain = _managed_namespace_domain(requested_namespace_slug)
+    namespace_slug, namespace_domain = _ensure_project_namespace(
+        project_slug=payload.project_slug,
+        owner_ref=None,
+        requested_namespace_slug=payload.namespace_slug,
+    )
 
     try:
         identity = await bootstrap_identity(
@@ -579,7 +518,7 @@ async def create_project(
             public_key=payload.public_key,
             custody=payload.custody,
             lifetime=payload.lifetime,
-            namespace=requested_namespace_slug if payload.lifetime == "persistent" else None,
+            namespace=namespace_slug if payload.lifetime == "persistent" else None,
             address_reachability=payload.address_reachability,
             registry_client=_registry_client_for_request(request)
             if payload.lifetime == "persistent"
@@ -588,27 +527,11 @@ async def create_project(
         )
     except AliasExhaustedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except asyncpg.exceptions.UniqueViolationError as exc:
-        namespace_claim = await aweb_db.fetch_one(
-            """
-            SELECT scope_id
-            FROM {{tables.dns_namespaces}}
-            WHERE domain = $1 AND deleted_at IS NULL
-            """,
-            requested_namespace_domain,
-        )
-        if namespace_claim is not None:
-            raise HTTPException(status_code=409, detail="namespace_slug_conflict: namespace already claimed") from exc
-        raise HTTPException(status_code=409, detail="project_slug_conflict: project already exists") from exc
+    except RegistryError as exc:
+        raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
     except ValueError as exc:
         raise _translate_bootstrap_value_error(exc) from exc
 
-    namespace_slug, namespace_domain = await _ensure_project_namespace(
-        db_infra,
-        project_id=identity.project_id,
-        project_slug=identity.project_slug,
-        requested_namespace_slug=requested_namespace_slug,
-    )
     async with server_db.transaction() as tx:
         await ensure_server_project_row(
             server_db=tx,
@@ -696,10 +619,9 @@ async def init(
         prefix = await _suggest_name_prefix_for_project(db_infra, project_id=auth_project_id)
         bootstrap_alias = f"{prefix}-{role_to_alias_prefix(payload.role)}"
 
-    namespace_slug, namespace_domain = await _ensure_project_namespace(
-        db_infra,
-        project_id=auth_project_id,
+    namespace_slug, namespace_domain = _ensure_project_namespace(
         project_slug=project_slug,
+        owner_ref=owner_ref,
         requested_namespace_slug=payload.namespace_slug or payload.namespace,
     )
 
@@ -728,6 +650,8 @@ async def init(
         )
     except AliasExhaustedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RegistryError as exc:
+        raise HTTPException(status_code=503, detail=exc.detail or str(exc)) from exc
     except ValueError as exc:
         raise _translate_bootstrap_value_error(exc) from exc
 

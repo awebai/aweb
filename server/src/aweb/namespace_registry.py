@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import os
 import re
-import uuid
-from datetime import datetime, timezone
-from uuid import UUID
 
-import asyncpg
+from nacl.signing import SigningKey
 
 from aweb.address_reachability import normalize_address_reachability
+from aweb.awid.did import did_from_public_key
+from aweb.awid.registry import RegistryClient
 
 
 SUBDOMAIN_LABEL_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -47,274 +47,191 @@ def _normalize_domain(domain: str) -> str:
     return value
 
 
-def _address_record(row, *, domain: str) -> dict:
-    return {
-        "address_id": str(row["address_id"]),
-        "domain": domain,
-        "name": str(row["name"]),
-        "did_aw": str(row["did_aw"]),
-        "current_did_key": str(row["current_did_key"]),
-        "reachability": str(row.get("reachability") or "private"),
-        "created_at": row["created_at"].isoformat(),
-        "address": f"{domain}/{row['name']}",
-    }
+def derive_owner_slug(*, project_slug: str, owner_ref: str | None = None) -> str:
+    candidate = (owner_ref or project_slug or "").strip().lower()
+    return validate_subdomain_label(candidate)
 
 
-def _namespace_record(row) -> dict:
-    return {
-        "namespace_id": str(row["namespace_id"]),
-        "domain": str(row["domain"]),
-        "controller_did": str(row["controller_did"]) if row.get("controller_did") else None,
-        "verification_status": str(row["verification_status"]),
-        "last_verified_at": row["last_verified_at"].isoformat() if row.get("last_verified_at") else None,
-        "created_at": row["created_at"].isoformat(),
-        "namespace_type": str(row.get("namespace_type") or "dns_verified"),
-        "scope_id": str(row["scope_id"]) if row.get("scope_id") else None,
-    }
+def managed_namespace_domain(owner_slug: str) -> str:
+    owner_slug = validate_subdomain_label(owner_slug)
+    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
+    if managed_domain:
+        return f"{owner_slug}.{managed_domain}"
+    return owner_slug
 
 
-async def get_namespace(*, aweb_db, domain: str) -> dict | None:
+def namespace_slug_from_domain(domain: str) -> str:
     normalized = _normalize_domain(domain)
-    row = await aweb_db.fetch_one(
-        """
-        SELECT namespace_id, domain, controller_did, verification_status,
-               last_verified_at, created_at, namespace_type, scope_id
-        FROM {{tables.dns_namespaces}}
-        WHERE domain = $1 AND deleted_at IS NULL
-        """,
-        normalized,
-    )
-    return _namespace_record(row) if row is not None else None
+    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
+    suffix = f".{managed_domain}" if managed_domain else ""
+    if suffix and normalized.endswith(suffix):
+        return normalized[: -len(suffix)]
+    return normalized
+
+
+def _controller_did_from_signing_key(signing_key: bytes) -> str:
+    return did_from_public_key(bytes(SigningKey(signing_key).verify_key))
+
+
+def _parent_signing_key_for_domain(domain: str, controller_signing_key: bytes) -> bytes | None:
+    normalized = _normalize_domain(domain)
+    managed_domain = (os.environ.get("AWEB_MANAGED_DOMAIN") or "").strip().lower()
+    if managed_domain and normalized.endswith(f".{managed_domain}") and normalized != managed_domain:
+        return controller_signing_key
+    return None
+
+
+def _namespace_record(namespace) -> dict:
+    return {
+        "namespace_id": str(namespace.namespace_id),
+        "domain": str(namespace.domain),
+        "controller_did": str(namespace.controller_did) if namespace.controller_did else None,
+        "verification_status": str(namespace.verification_status),
+        "last_verified_at": str(namespace.last_verified_at) if namespace.last_verified_at else None,
+        "created_at": str(namespace.created_at),
+    }
+
+
+def _address_record(address) -> dict:
+    return {
+        "address_id": str(address.address_id),
+        "domain": str(address.domain),
+        "name": str(address.name),
+        "did_aw": str(address.did_aw),
+        "current_did_key": str(address.current_did_key),
+        "reachability": str(address.reachability),
+        "created_at": str(address.created_at),
+        "address": f"{address.domain}/{address.name}",
+    }
+
+
+async def get_namespace(*, registry_client: RegistryClient, domain: str) -> dict | None:
+    namespace = await registry_client.get_namespace(_normalize_domain(domain))
+    return _namespace_record(namespace) if namespace is not None else None
 
 
 async def ensure_dns_namespace_registered(
     *,
-    aweb_db,
+    registry_client: RegistryClient,
     domain: str,
-    controller_did: str | None,
-    namespace_type: str = "dns_verified",
-    scope_id: str | None = None,
+    controller_signing_key: bytes,
 ) -> dict:
     normalized = _normalize_domain(domain)
-    now = datetime.now(timezone.utc)
-    scope_uuid = UUID(scope_id) if scope_id else None
-
-    row = await aweb_db.fetch_one(
-        """
-        SELECT namespace_id
-        FROM {{tables.dns_namespaces}}
-        WHERE domain = $1 AND deleted_at IS NULL
-        """,
-        normalized,
+    controller_did = _controller_did_from_signing_key(controller_signing_key)
+    existing = await registry_client.get_namespace(normalized)
+    if existing is not None:
+        if existing.controller_did and existing.controller_did != controller_did:
+            raise ValueError("Namespace is controlled by a different DID")
+        return _namespace_record(existing)
+    namespace = await registry_client.register_namespace(
+        domain=normalized,
+        controller_did=controller_did,
+        controller_signing_key=controller_signing_key,
+        parent_signing_key=_parent_signing_key_for_domain(normalized, controller_signing_key),
     )
-    if row is None:
-        created = await aweb_db.fetch_one(
-            """
-            INSERT INTO {{tables.dns_namespaces}}
-                (namespace_id, domain, controller_did, namespace_type, scope_id,
-                 verification_status, last_verified_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, 'verified', $6, $6)
-            RETURNING namespace_id, domain, controller_did, verification_status,
-                      last_verified_at, created_at, namespace_type, scope_id
-            """,
-            uuid.uuid4(),
-            normalized,
-            controller_did,
-            namespace_type,
-            scope_uuid,
-            now,
-        )
-        if created is None:
-            raise RuntimeError("Failed to register namespace")
-        return _namespace_record(created)
-
-    updated = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.dns_namespaces}}
-        SET controller_did = $2,
-            namespace_type = $3,
-            scope_id = $4,
-            verification_status = 'verified',
-            last_verified_at = $5,
-            deleted_at = NULL
-        WHERE domain = $1 AND deleted_at IS NULL
-        RETURNING namespace_id, domain, controller_did, verification_status,
-                  last_verified_at, created_at, namespace_type, scope_id
-        """,
-        normalized,
-        controller_did,
-        namespace_type,
-        scope_uuid,
-        now,
-    )
-    if updated is None:
-        raise RuntimeError("Failed to refresh namespace registration")
-    return _namespace_record(updated)
+    return _namespace_record(namespace)
 
 
-async def get_namespace_address(*, aweb_db, domain: str, name: str) -> dict | None:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
-    if namespace is None:
-        return None
-    row = await aweb_db.fetch_one(
-        """
-        SELECT address_id, name, did_aw, current_did_key, reachability, created_at
-        FROM {{tables.public_addresses}}
-        WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-        """,
-        UUID(namespace["namespace_id"]),
-        name,
-    )
-    return _address_record(row, domain=namespace["domain"]) if row is not None else None
+async def get_namespace_address(
+    *,
+    registry_client: RegistryClient,
+    domain: str,
+    name: str,
+) -> dict | None:
+    address = await registry_client.resolve_address(_normalize_domain(domain), validate_agent_name(name))
+    return _address_record(address) if address is not None else None
 
 
-async def list_namespace_addresses(*, aweb_db, domain: str) -> list[dict]:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
+async def list_namespace_addresses(
+    *,
+    registry_client: RegistryClient,
+    domain: str,
+) -> list[dict]:
+    normalized = _normalize_domain(domain)
+    namespace = await registry_client.get_namespace(normalized)
     if namespace is None:
         return []
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT address_id, name, did_aw, current_did_key, reachability, created_at
-        FROM {{tables.public_addresses}}
-        WHERE namespace_id = $1 AND deleted_at IS NULL
-        ORDER BY name
-        """,
-        UUID(namespace["namespace_id"]),
-    )
-    return [_address_record(row, domain=namespace["domain"]) for row in rows]
+    return [_address_record(address) for address in await registry_client.list_addresses(normalized)]
 
 
 async def register_namespace_address(
     *,
-    aweb_db,
+    registry_client: RegistryClient,
     domain: str,
     name: str,
     did_aw: str,
     current_did_key: str,
+    controller_signing_key: bytes,
     reachability: str = "private",
 ) -> dict:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
-    if namespace is None:
-        raise ValueError("Namespace not found")
-    reachability = normalize_address_reachability(reachability)
-    try:
-        row = await aweb_db.fetch_one(
-            """
-            INSERT INTO {{tables.public_addresses}}
-                (address_id, namespace_id, name, did_aw, current_did_key, reachability, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
-            """,
-            uuid.uuid4(),
-            UUID(namespace["namespace_id"]),
-            name,
-            did_aw,
-            current_did_key,
-            reachability,
-            datetime.now(timezone.utc),
-        )
-    except asyncpg.UniqueViolationError as exc:
-        raise ValueError("Address name already registered") from exc
-    if row is None:
-        raise RuntimeError("Failed to register address")
-    return _address_record(row, domain=namespace["domain"])
+    del current_did_key
+    address = await registry_client.register_address(
+        domain=_normalize_domain(domain),
+        name=validate_agent_name(name),
+        did_aw=did_aw,
+        controller_signing_key=controller_signing_key,
+        reachability=normalize_address_reachability(reachability),
+    )
+    return _address_record(address)
 
 
 async def reassign_namespace_address(
     *,
-    aweb_db,
+    registry_client: RegistryClient,
     domain: str,
     name: str,
     did_aw: str,
     current_did_key: str,
+    controller_signing_key: bytes,
     reachability: str | None = None,
 ) -> dict:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
-    if namespace is None:
-        raise ValueError("Namespace not found")
-    if reachability is None:
-        row = await aweb_db.fetch_one(
-            """
-            UPDATE {{tables.public_addresses}}
-            SET did_aw = $3,
-                current_did_key = $4
-            WHERE namespace_id = $1
-              AND name = $2
-              AND deleted_at IS NULL
-            RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
-            """,
-            UUID(namespace["namespace_id"]),
-            name,
-            did_aw,
-            current_did_key,
+    del current_did_key
+    normalized_domain = _normalize_domain(domain)
+    normalized_name = validate_agent_name(name)
+    address = await registry_client.reassign_address(
+        normalized_domain,
+        normalized_name,
+        did_aw,
+        controller_signing_key,
+    )
+    if reachability is not None:
+        address = await registry_client.update_address(
+            normalized_domain,
+            normalized_name,
+            controller_signing_key,
+            normalize_address_reachability(reachability),
         )
-    else:
-        normalized = normalize_address_reachability(reachability)
-        row = await aweb_db.fetch_one(
-            """
-            UPDATE {{tables.public_addresses}}
-            SET did_aw = $3,
-                current_did_key = $4,
-                reachability = $5
-            WHERE namespace_id = $1
-              AND name = $2
-              AND deleted_at IS NULL
-            RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
-            """,
-            UUID(namespace["namespace_id"]),
-            name,
-            did_aw,
-            current_did_key,
-            normalized,
-        )
-    if row is None:
-        raise ValueError("Address not found")
-    return _address_record(row, domain=namespace["domain"])
+    return _address_record(address)
 
 
 async def set_namespace_address_reachability(
     *,
-    aweb_db,
+    registry_client: RegistryClient,
     domain: str,
     name: str,
+    controller_signing_key: bytes,
     reachability: str,
 ) -> dict:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
-    if namespace is None:
-        raise ValueError("Namespace not found")
-    normalized = normalize_address_reachability(reachability)
-    row = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.public_addresses}}
-        SET reachability = $3
-        WHERE namespace_id = $1
-          AND name = $2
-          AND deleted_at IS NULL
-        RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
-        """,
-        UUID(namespace["namespace_id"]),
-        name,
-        normalized,
+    address = await registry_client.update_address(
+        _normalize_domain(domain),
+        validate_agent_name(name),
+        controller_signing_key,
+        normalize_address_reachability(reachability),
     )
-    if row is None:
-        raise ValueError("Address not found")
-    return _address_record(row, domain=namespace["domain"])
+    return _address_record(address)
 
 
-async def delete_namespace_address(*, aweb_db, domain: str, name: str) -> bool:
-    namespace = await get_namespace(aweb_db=aweb_db, domain=domain)
-    if namespace is None:
+async def delete_namespace_address(
+    *,
+    registry_client: RegistryClient,
+    domain: str,
+    name: str,
+    controller_signing_key: bytes,
+) -> bool:
+    normalized_domain = _normalize_domain(domain)
+    normalized_name = validate_agent_name(name)
+    existing = await registry_client.resolve_address(normalized_domain, normalized_name)
+    if existing is None:
         return False
-    result = await aweb_db.execute(
-        """
-        UPDATE {{tables.public_addresses}}
-        SET deleted_at = NOW()
-        WHERE namespace_id = $1
-          AND name = $2
-          AND deleted_at IS NULL
-        """,
-        UUID(namespace["namespace_id"]),
-        name,
-    )
-    return not result.startswith("UPDATE 0")
-
+    await registry_client.delete_address(normalized_domain, normalized_name, controller_signing_key)
+    return True
