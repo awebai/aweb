@@ -23,7 +23,6 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.awid.custody import sign_on_behalf
 from aweb.mcp.auth import get_auth
 from aweb.service_errors import ServiceError
 
@@ -157,23 +156,6 @@ async def chat_send(
         msg_created_at = datetime.now(timezone.utc)
         pre_message_id = uuid_mod.uuid4()
 
-        sign_result = await sign_on_behalf(
-            auth.agent_id,
-            {
-                "from": sender["alias"],
-                "from_did": "",
-                "message_id": str(pre_message_id),
-                "to": to_alias,
-                "to_did": "",
-                "type": "chat",
-                "subject": "",
-                "body": message,
-                "timestamp": msg_created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            },
-            db_infra,
-        )
-        if sign_result is not None:
-            msg_from_did, msg_signature, _, msg_signed_payload = sign_result
 
         msg = await send_in_session(
             db_infra,
@@ -219,21 +201,7 @@ async def chat_send(
         msg_created_at = datetime.now(timezone.utc)
         pre_message_id = uuid_mod.uuid4()
 
-        sign_result = await sign_on_behalf(
-            auth.agent_id,
-            {
-                "from": sender_alias,
-                "from_did": "",
-                "message_id": str(pre_message_id),
-                "to": "",
-                "to_did": "",
-                "type": "chat",
-                "subject": "",
-                "body": message,
-                "timestamp": msg_created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            },
-            db_infra,
-        )
+        sign_result = None
         if sign_result is not None:
             msg_from_did, msg_signature, _, msg_signed_payload = sign_result
 
