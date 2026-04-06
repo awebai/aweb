@@ -250,6 +250,25 @@ def create_app(
     app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
+    @app.middleware("http")
+    async def cache_body_middleware(request: Request, call_next):
+        """Cache request body and compute SHA256 for signature verification.
+
+        Replaces the receive callable so FastAPI can still read the body
+        for Pydantic parsing after we've consumed the stream.
+        """
+        import hashlib as _hashlib
+
+        body = await request.body()
+        request.state.cached_body = body
+        request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
+
+        async def _receive():
+            return {"type": "http.request", "body": body}
+
+        request._receive = _receive
+        return await call_next(request)
+
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:

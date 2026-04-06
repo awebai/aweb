@@ -32,7 +32,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "permanent"),
+        "lifetime": kwargs.get("lifetime", "persistent"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -54,7 +54,7 @@ class TestTeamIdentity:
             alias="alice",
             did_key="did:key:z6Mktest",
             agent_id="agent-uuid",
-            lifetime="permanent",
+            lifetime="persistent",
             certificate_id="cert-001",
         )
 
@@ -62,7 +62,7 @@ class TestTeamIdentity:
         assert identity.alias == "alice"
         assert identity.did_key == "did:key:z6Mktest"
         assert identity.agent_id == "agent-uuid"
-        assert identity.lifetime == "permanent"
+        assert identity.lifetime == "persistent"
         assert identity.certificate_id == "cert-001"
 
     def test_frozen(self):
@@ -73,7 +73,7 @@ class TestTeamIdentity:
             alias="alice",
             did_key="did:key:z6Mktest",
             agent_id="agent-uuid",
-            lifetime="permanent",
+            lifetime="persistent",
             certificate_id="cert-001",
         )
 
@@ -100,7 +100,7 @@ class TestResolveTeamIdentity:
                 "team_address": "acme.com/backend",
                 "alias": "alice",
                 "did_key": agent_did_key,
-                "lifetime": "permanent",
+                "lifetime": "persistent",
                 "certificate_id": "cert-001",
             },
             team_did_key=team_did_key,
@@ -116,7 +116,7 @@ class TestResolveTeamIdentity:
             "team_address": "acme.com/backend",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "permanent",
+            "lifetime": "persistent",
             "certificate_id": "cert-001",
         }
 
@@ -126,7 +126,7 @@ class TestResolveTeamIdentity:
         assert identity.alias == "alice"
         assert identity.did_key == agent_did_key
         assert identity.agent_id == result["agent_id"]
-        assert identity.lifetime == "permanent"
+        assert identity.lifetime == "persistent"
         assert identity.certificate_id == "cert-001"
 
     @pytest.mark.asyncio

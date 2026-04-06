@@ -53,7 +53,7 @@ async def _seed(aweb_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_address, did_key, alias, lifetime, role, status)
-        VALUES ($1, 'acme.com/backend', 'did:key:z6Mkalice', 'alice', 'permanent', 'developer', 'active'),
+        VALUES ($1, 'acme.com/backend', 'did:key:z6Mkalice', 'alice', 'persistent', 'developer', 'active'),
                ($2, 'acme.com/backend', 'did:key:z6Mkbob', 'bob', 'ephemeral', 'reviewer', 'active')
         """,
         alice_id, bob_id,

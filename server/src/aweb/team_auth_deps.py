@@ -130,8 +130,16 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     cert_team_address = cert_data.get("team", "")
 
-    # Verify Ed25519 signature over {team_address, timestamp}
-    sig_payload = canonical_json_bytes({"team": cert_team_address, "timestamp": timestamp})
+    # Verify Ed25519 signature over {team, timestamp, body_sha256}
+    body_sha256 = getattr(request.state, "body_sha256", None)
+    if body_sha256 is None:
+        import hashlib as _hashlib
+        body_sha256 = _hashlib.sha256(b"").hexdigest()
+    sig_payload = canonical_json_bytes({
+        "body_sha256": body_sha256,
+        "team": cert_team_address,
+        "timestamp": timestamp,
+    })
     try:
         verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
     except ValueError:

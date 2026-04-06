@@ -32,7 +32,9 @@ X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
 The `Authorization` header is an Ed25519 signature over the canonical
-JSON of the request payload + timestamp (same as today's DIDKey auth).
+JSON of `{team_address, timestamp, body_sha256}` where `body_sha256`
+is the SHA256 hex digest of the request body (or of empty string for
+GET requests with no body).
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid.
@@ -41,7 +43,9 @@ issued by the team controller at awid.
 
 1. Parse `Authorization` header → extract did:key and signature.
 2. Extract public key from did:key.
-3. Verify Ed25519 signature over canonical JSON payload. Reject if invalid.
+3. Compute SHA256 hex digest of the request body. Verify Ed25519
+   signature over canonical JSON of `{team_address, timestamp,
+   body_sha256}`. Reject if invalid.
 4. Decode team certificate from `X-AWID-Team-Certificate`.
 5. Verify certificate signature against the team's public key
    (cached from awid). Reject if invalid.
