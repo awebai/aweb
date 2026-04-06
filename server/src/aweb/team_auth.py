@@ -21,47 +21,31 @@ from aweb.awid.signing import canonical_json_bytes, verify_signature_with_public
 
 logger = logging.getLogger(__name__)
 
+_CERTIFICATE_VERSION = 1
+
 
 # ---------------------------------------------------------------------------
 # Certificate verification
 # ---------------------------------------------------------------------------
 
-# Fields included in the signed payload (everything except the signature itself)
-_CERTIFICATE_SIGNED_FIELDS = {
-    "version",
-    "certificate_id",
-    "team",
-    "team_did_key",
-    "member_did_key",
-    "member_did_aw",
-    "member_address",
-    "alias",
-    "lifetime",
-    "issued_at",
-}
 
+def _verify_certificate_signature(cert: dict, team_did_key: str) -> bool:
+    """Verify that a certificate was signed by the given team key.
 
-def verify_certificate_signature(cert: dict, team_did_key: str) -> bool:
-    """Verify that a certificate was signed by the team's private key.
-
-    Args:
-        cert: The full certificate dict (including 'signature' field).
-        team_did_key: The team's did:key for verification.
-
-    Returns:
-        True if the signature is valid, False otherwise.
+    The team_did_key MUST come from a trusted source (the awid registry),
+    never from the certificate itself.
     """
     signature = cert.get("signature")
     if not signature:
         return False
 
-    # Reconstruct the payload that was signed (cert without the signature)
-    payload_fields = {k: v for k, v in cert.items() if k in _CERTIFICATE_SIGNED_FIELDS}
+    # The signed payload is the entire certificate minus the signature field.
+    payload_fields = {k: v for k, v in cert.items() if k != "signature"}
     payload_bytes = canonical_json_bytes(payload_fields)
 
     try:
         public_key = public_key_from_did(team_did_key)
-    except (ValueError, Exception):
+    except Exception:
         return False
 
     result = verify_signature_with_public_key(public_key, payload_bytes, signature)
@@ -80,8 +64,10 @@ def parse_and_verify_certificate(
     Args:
         encoded_certificate: Base64-encoded certificate JSON.
         request_did_key: The did:key from the Authorization header.
-        team_public_key_resolver: Given a team_address, returns team_did_key.
-        revocation_checker: Given (team_address, certificate_id), returns True if revoked.
+        team_public_key_resolver: Given a team_address, returns team_did_key
+            from the awid registry (cached). Must raise on failure.
+        revocation_checker: Given (team_address, certificate_id), returns
+            True if the certificate has been revoked.
 
     Returns:
         Dict with team_address, alias, did_key, lifetime, certificate_id.
@@ -95,6 +81,10 @@ def parse_and_verify_certificate(
     except Exception:
         raise ValueError("Malformed certificate: invalid base64 or JSON")
 
+    version = cert.get("version")
+    if version != _CERTIFICATE_VERSION:
+        raise ValueError(f"Unsupported certificate version: {version}")
+
     team_address = cert.get("team")
     member_did_key = cert.get("member_did_key")
     certificate_id = cert.get("certificate_id")
@@ -106,13 +96,13 @@ def parse_and_verify_certificate(
     if member_did_key != request_did_key:
         raise ValueError("Certificate did_key mismatch: agent's did:key does not match certificate")
 
-    # Get the team's public key for signature verification
+    # Get the team's public key from a trusted source (awid registry)
     team_did_key = team_public_key_resolver(team_address)
     if not team_did_key:
         raise ValueError(f"Unknown team: {team_address}")
 
-    # Verify certificate signature
-    if not verify_certificate_signature(cert, team_did_key):
+    # Verify certificate signature against the registry-resolved team key
+    if not _verify_certificate_signature(cert, team_did_key):
         raise ValueError("Certificate signature verification failed")
 
     # Check revocation
@@ -147,11 +137,14 @@ def verify_dashboard_token(
         required_team: If provided, verify the token grants access to this team.
 
     Returns:
-        Dict with user_id, team_addresses, exp.
+        Dict with user_id, team_addresses.
 
     Raises:
         ValueError: If the token is invalid, expired, or unauthorized.
     """
+    if not secret:
+        raise ValueError("Dashboard JWT secret not configured")
+
     try:
         payload = pyjwt.decode(token, secret, algorithms=["HS256"])
     except pyjwt.ExpiredSignatureError:

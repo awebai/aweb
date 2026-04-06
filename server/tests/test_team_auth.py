@@ -20,7 +20,7 @@ from aweb.awid.signing import canonical_json_bytes, sign_message
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_team_keypair():
+def _make_keypair():
     sk = SigningKey.generate()
     pk = bytes(sk.verify_key)
     did_key = did_from_public_key(pk)
@@ -51,6 +51,7 @@ def _make_certificate(
         "lifetime": lifetime,
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
+    # Sign the cert without the signature field (canonical JSON, sorted keys)
     payload = canonical_json_bytes(cert)
     sig = sign_message(team_sk, payload)
     cert["signature"] = sig
@@ -66,12 +67,12 @@ def _encode_certificate(cert: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-class TestVerifyTeamCertificate:
+class TestCertificateSignature:
     def test_valid_certificate(self):
-        from aweb.team_auth import verify_certificate_signature
+        from aweb.team_auth import _verify_certificate_signature
 
-        team_sk, _team_pk, team_did_key = _make_team_keypair()
-        agent_sk, _agent_pk, agent_did_key = _make_team_keypair()
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
@@ -79,60 +80,55 @@ class TestVerifyTeamCertificate:
             alias="alice",
         )
 
-        result = verify_certificate_signature(cert, team_did_key)
-        assert result is True
+        assert _verify_certificate_signature(cert, team_did_key) is True
 
     def test_invalid_signature_rejected(self):
-        from aweb.team_auth import verify_certificate_signature
+        from aweb.team_auth import _verify_certificate_signature
 
-        team_sk, _team_pk, team_did_key = _make_team_keypair()
-        _, _, agent_did_key = _make_team_keypair()
-        other_sk, _, other_did_key = _make_team_keypair()
+        _, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+        other_sk, _, _ = _make_keypair()
 
-        # Sign with wrong team key
-        cert = _make_certificate(
-            other_sk, team_did_key, agent_did_key,
-        )
+        cert = _make_certificate(other_sk, team_did_key, agent_did_key)
 
-        result = verify_certificate_signature(cert, team_did_key)
-        assert result is False
+        assert _verify_certificate_signature(cert, team_did_key) is False
 
     def test_tampered_certificate_rejected(self):
-        from aweb.team_auth import verify_certificate_signature
+        from aweb.team_auth import _verify_certificate_signature
 
-        team_sk, _, team_did_key = _make_team_keypair()
-        _, _, agent_did_key = _make_team_keypair()
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
-        cert["alias"] = "mallory"  # tamper after signing
+        cert["alias"] = "mallory"
 
-        result = verify_certificate_signature(cert, team_did_key)
-        assert result is False
+        assert _verify_certificate_signature(cert, team_did_key) is False
 
+
+class TestParseAndVerifyCertificate:
     def test_member_did_key_mismatch_rejected(self):
         from aweb.team_auth import parse_and_verify_certificate
 
-        team_sk, _, team_did_key = _make_team_keypair()
-        _, _, agent_did_key = _make_team_keypair()
-        _, _, other_did_key = _make_team_keypair()
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+        _, _, other_did_key = _make_keypair()
 
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
         encoded = _encode_certificate(cert)
 
-        # Claim to be a different DID key
         with pytest.raises(ValueError, match="did_key mismatch"):
             parse_and_verify_certificate(
                 encoded,
                 request_did_key=other_did_key,
-                team_public_key_resolver=lambda ta: team_did_key,
-                revocation_checker=lambda ta, cid: False,
+                team_public_key_resolver=lambda _ta: team_did_key,
+                revocation_checker=lambda _ta, _cid: False,
             )
 
     def test_revoked_certificate_rejected(self):
         from aweb.team_auth import parse_and_verify_certificate
 
-        team_sk, _, team_did_key = _make_team_keypair()
-        _, _, agent_did_key = _make_team_keypair()
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
@@ -144,15 +140,15 @@ class TestVerifyTeamCertificate:
             parse_and_verify_certificate(
                 encoded,
                 request_did_key=agent_did_key,
-                team_public_key_resolver=lambda ta: team_did_key,
-                revocation_checker=lambda ta, cid: True,  # is revoked
+                team_public_key_resolver=lambda _ta: team_did_key,
+                revocation_checker=lambda _ta, _cid: True,
             )
 
     def test_valid_full_flow(self):
         from aweb.team_auth import parse_and_verify_certificate
 
-        team_sk, _, team_did_key = _make_team_keypair()
-        _, _, agent_did_key = _make_team_keypair()
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
@@ -165,8 +161,8 @@ class TestVerifyTeamCertificate:
         result = parse_and_verify_certificate(
             encoded,
             request_did_key=agent_did_key,
-            team_public_key_resolver=lambda ta: team_did_key,
-            revocation_checker=lambda ta, cid: False,
+            team_public_key_resolver=lambda _ta: team_did_key,
+            revocation_checker=lambda _ta, _cid: False,
         )
 
         assert result["team_address"] == "acme.com/backend"
@@ -175,41 +171,83 @@ class TestVerifyTeamCertificate:
         assert result["lifetime"] == "permanent"
         assert result["certificate_id"] == "cert-001"
 
+    def test_malformed_base64_rejected(self):
+        from aweb.team_auth import parse_and_verify_certificate
+
+        with pytest.raises(ValueError, match="Malformed certificate"):
+            parse_and_verify_certificate(
+                "not-valid-base64!!!",
+                request_did_key="did:key:z6Mkfake",
+                team_public_key_resolver=lambda _ta: "",
+                revocation_checker=lambda _ta, _cid: False,
+            )
+
+    def test_malformed_json_rejected(self):
+        from aweb.team_auth import parse_and_verify_certificate
+
+        encoded = base64.b64encode(b"this is not json").decode()
+
+        with pytest.raises(ValueError, match="Malformed certificate"):
+            parse_and_verify_certificate(
+                encoded,
+                request_did_key="did:key:z6Mkfake",
+                team_public_key_resolver=lambda _ta: "",
+                revocation_checker=lambda _ta, _cid: False,
+            )
+
+    def test_unsupported_version_rejected(self):
+        from aweb.team_auth import parse_and_verify_certificate
+
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+
+        cert = _make_certificate(team_sk, team_did_key, agent_did_key)
+        cert["version"] = 99
+        encoded = _encode_certificate(cert)
+
+        with pytest.raises(ValueError, match="Unsupported certificate version"):
+            parse_and_verify_certificate(
+                encoded,
+                request_did_key=agent_did_key,
+                team_public_key_resolver=lambda _ta: team_did_key,
+                revocation_checker=lambda _ta, _cid: False,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Dashboard JWT auth
 # ---------------------------------------------------------------------------
+
+_JWT_SECRET = "test-dashboard-secret-at-least-32bytes!"
 
 
 class TestDashboardJWT:
     def test_valid_jwt(self):
         from aweb.team_auth import verify_dashboard_token
 
-        secret = "test-dashboard-secret-at-least-32bytes!"
         payload = {
             "user_id": "user-123",
             "team_addresses": ["acme.com/backend", "acme.com/frontend"],
             "exp": int(time.time()) + 3600,
         }
-        token = jwt.encode(payload, secret, algorithm="HS256")
+        token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
-        result = verify_dashboard_token(token, secret)
+        result = verify_dashboard_token(token, _JWT_SECRET)
         assert result["user_id"] == "user-123"
         assert "acme.com/backend" in result["team_addresses"]
 
     def test_expired_jwt_rejected(self):
         from aweb.team_auth import verify_dashboard_token
 
-        secret = "test-dashboard-secret-at-least-32bytes!"
         payload = {
             "user_id": "user-123",
             "team_addresses": ["acme.com/backend"],
             "exp": int(time.time()) - 3600,
         }
-        token = jwt.encode(payload, secret, algorithm="HS256")
+        token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
         with pytest.raises(ValueError, match="expired"):
-            verify_dashboard_token(token, secret)
+            verify_dashboard_token(token, _JWT_SECRET)
 
     def test_invalid_secret_rejected(self):
         from aweb.team_auth import verify_dashboard_token
@@ -227,27 +265,42 @@ class TestDashboardJWT:
     def test_team_address_authorization(self):
         from aweb.team_auth import verify_dashboard_token
 
-        secret = "test-dashboard-secret-at-least-32bytes!"
         payload = {
             "user_id": "user-123",
             "team_addresses": ["acme.com/backend"],
             "exp": int(time.time()) + 3600,
         }
-        token = jwt.encode(payload, secret, algorithm="HS256")
+        token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
-        result = verify_dashboard_token(token, secret, required_team="acme.com/backend")
+        result = verify_dashboard_token(token, _JWT_SECRET, required_team="acme.com/backend")
         assert result["user_id"] == "user-123"
 
     def test_team_address_unauthorized(self):
         from aweb.team_auth import verify_dashboard_token
 
-        secret = "test-dashboard-secret-at-least-32bytes!"
         payload = {
             "user_id": "user-123",
             "team_addresses": ["acme.com/backend"],
             "exp": int(time.time()) + 3600,
         }
-        token = jwt.encode(payload, secret, algorithm="HS256")
+        token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
         with pytest.raises(ValueError, match="not authorized"):
-            verify_dashboard_token(token, secret, required_team="acme.com/frontend")
+            verify_dashboard_token(token, _JWT_SECRET, required_team="acme.com/frontend")
+
+    def test_empty_secret_rejected(self):
+        import warnings
+
+        from aweb.team_auth import verify_dashboard_token
+
+        payload = {
+            "user_id": "user-123",
+            "team_addresses": ["acme.com/backend"],
+            "exp": int(time.time()) + 3600,
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            token = jwt.encode(payload, "", algorithm="HS256")
+
+        with pytest.raises(ValueError, match="not configured"):
+            verify_dashboard_token(token, "")
