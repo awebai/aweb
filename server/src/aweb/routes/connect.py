@@ -6,6 +6,7 @@ verified certificate, creates or updates a workspace.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import verify_request_certificate
 
 router = APIRouter(prefix="/v1", tags=["connect"])
 
@@ -321,31 +322,34 @@ async def connect_agent(
 async def connect_endpoint(
     request: Request, payload: ConnectRequest, db=Depends(get_db)
 ) -> ConnectResponse:
-    """Agent connects with certificate. Auto-provisions team + agent + workspace."""
-    identity = await get_team_identity(request, db)
+    """Agent connects with certificate. Auto-provisions team + agent + workspace.
+
+    Uses certificate-only auth (no agent lookup) since the agent may not
+    exist yet — this endpoint creates the agent row.
+    """
+    cert_info = await verify_request_certificate(request, db)
 
     aweb_db = db.get_manager("aweb")
 
-    # Get the team's public key (already resolved during auth)
-    team_row = await aweb_db.fetch_one(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_address = $1",
-        identity.team_address,
-    )
-    team_did_key = team_row["team_did_key"] if team_row else ""
+    # Extract team_did_key from the verified certificate for storage in
+    # the teams table. The certificate signature was already validated
+    # against the registry-resolved team key.
+    import base64 as _b64
+    cert_header = request.headers.get("X-AWID-Team-Certificate", "")
+    try:
+        cert_data = json.loads(_b64.b64decode(cert_header))
+        team_did_key = cert_data.get("team_did_key", "")
+    except Exception:
+        team_did_key = ""
 
     result = await connect_agent(
         db=aweb_db,
-        cert_info={
-            "team_address": identity.team_address,
-            "alias": identity.alias,
-            "did_key": identity.did_key,
-            "lifetime": identity.lifetime,
-        },
-        team_did_key=team_did_key or identity.did_key,
+        cert_info=cert_info,
+        team_did_key=team_did_key,
         hostname=payload.hostname,
         workspace_path=payload.workspace_path,
         repo_origin=payload.repo_origin,
-        role=payload.role or identity.alias,
+        role=payload.role or cert_info["alias"],
         human_name=payload.human_name,
         agent_type=payload.agent_type,
     )

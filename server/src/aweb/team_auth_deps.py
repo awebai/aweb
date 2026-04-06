@@ -84,17 +84,26 @@ async def resolve_team_identity(
     )
 
 
-async def get_team_identity(request: Request, db) -> TeamIdentity:
-    """FastAPI dependency: authenticate request via team certificate.
+# ---------------------------------------------------------------------------
+# Shared certificate verification (steps 1-5, no agent lookup)
+# ---------------------------------------------------------------------------
 
+
+async def verify_request_certificate(request: Request, db) -> dict[str, str]:
+    """Verify a request's DIDKey signature and team certificate.
+
+    Steps 1-5 of the auth pipeline:
     1. Parse Authorization: DIDKey <did:key> <signature>
     2. Verify Ed25519 signature over canonical JSON payload + timestamp
     3. Parse and verify team certificate (X-AWID-Team-Certificate)
-    4. Resolve team public key from awid registry (with local DB fallback)
+    4. Resolve team public key from awid registry
     5. Check revocation list from awid registry
-    6. Look up agent row
 
-    Returns a TeamIdentity or raises HTTPException(401/403).
+    Returns cert_info dict (team_address, alias, did_key, lifetime, certificate_id).
+    Does NOT look up the agent in the local DB — suitable for /v1/connect
+    where the agent may not exist yet.
+
+    Raises HTTPException on any failure.
     """
     # -- Step 1: Extract DIDKey auth header --
     auth_header = request.headers.get("Authorization")
@@ -106,7 +115,6 @@ async def get_team_identity(request: Request, db) -> TeamIdentity:
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    # Build canonical payload from request body
     try:
         body_bytes = await request.body()
         if body_bytes:
@@ -135,18 +143,18 @@ async def get_team_identity(request: Request, db) -> TeamIdentity:
 
     cert_team_address = cert_data.get("team", "")
 
-    # -- Step 4: Resolve team public key from awid (with local DB fallback) --
-    team_did_key = await _resolve_team_key(request, db, cert_team_address)
+    # -- Step 4: Resolve team public key from awid --
+    team_did_key = await _resolve_team_key(request, cert_team_address)
     if not team_did_key:
         raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_address}")
 
     # -- Step 5: Check revocation --
-    revoked_certs = await _get_revoked_certificates(request, db, cert_team_address)
+    revoked_certs = await _get_revoked_certificates(request, cert_team_address)
 
-    def team_key_resolver(team_address: str) -> str:
+    def team_key_resolver(_team_address: str) -> str:
         return team_did_key
 
-    def revocation_checker(team_address: str, certificate_id: str) -> bool:
+    def revocation_checker(_team_address: str, certificate_id: str) -> bool:
         return certificate_id in revoked_certs
 
     try:
@@ -159,7 +167,20 @@ async def get_team_identity(request: Request, db) -> TeamIdentity:
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    # -- Step 6: Resolve agent from DB --
+    return cert_info
+
+
+async def get_team_identity(request: Request, db) -> TeamIdentity:
+    """FastAPI dependency: authenticate request via team certificate.
+
+    Full auth pipeline (steps 1-6): verifies the certificate and
+    resolves the agent from the local DB. For routes where the agent
+    must already exist.
+
+    Returns a TeamIdentity or raises HTTPException(401/403).
+    """
+    cert_info = await verify_request_certificate(request, db)
+
     aweb_db = db.get_manager("aweb")
     try:
         return await resolve_team_identity(aweb_db, cert_info)
@@ -167,50 +188,50 @@ async def get_team_identity(request: Request, db) -> TeamIdentity:
         raise HTTPException(status_code=403, detail=str(e))
 
 
-async def _resolve_team_key(request: Request, db, team_address: str) -> str:
-    """Resolve team public key. Tries awid registry first, falls back to local DB."""
-    # Parse team_address to get domain and team name
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_team_key(request: Request, team_address: str) -> str:
+    """Resolve team public key from awid registry.
+
+    Returns the team's did:key, or empty string if the team is unknown.
+    Raises HTTPException(503) if awid is unreachable.
+    """
     parts = team_address.split("/", 1)
     if len(parts) != 2:
         return ""
     domain, team_name = parts
 
-    # Try awid registry client (if available on app state)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is not None:
-        try:
-            key = await registry_client.get_team_public_key(domain, team_name)
-            if key:
-                return key
-        except Exception:
-            logger.debug("Failed to resolve team key from awid for %s", team_address, exc_info=True)
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry client not configured")
 
-    # Fallback: local teams table
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_address = $1",
-        team_address,
-    )
-    if row:
-        return row["team_did_key"]
-
-    return ""
+    try:
+        key = await registry_client.get_team_public_key(domain, team_name)
+        return key or ""
+    except Exception:
+        logger.warning("AWID registry unreachable for team key resolution: %s", team_address, exc_info=True)
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
 
-async def _get_revoked_certificates(request: Request, db, team_address: str) -> set[str]:
-    """Get the set of revoked certificate IDs for a team."""
+async def _get_revoked_certificates(request: Request, team_address: str) -> set[str]:
+    """Get the set of revoked certificate IDs from awid.
+
+    Raises HTTPException(503) if awid is unreachable.
+    """
     parts = team_address.split("/", 1)
     if len(parts) != 2:
         return set()
     domain, team_name = parts
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is not None:
-        try:
-            return await registry_client.get_team_revocations(domain, team_name)
-        except Exception:
-            logger.debug(
-                "Failed to fetch revocations from awid for %s", team_address, exc_info=True
-            )
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry client not configured")
 
-    return set()
+    try:
+        return await registry_client.get_team_revocations(domain, team_name)
+    except Exception:
+        logger.warning("AWID registry unreachable for revocation check: %s", team_address, exc_info=True)
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
