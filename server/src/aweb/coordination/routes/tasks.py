@@ -143,6 +143,7 @@ async def list_tasks_unified(
     task_type: Optional[str] = Query(None),
     priority: Optional[int] = Query(None, ge=0, le=4),
     labels: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
     project_id = await get_project_from_auth(request, db_infra)
@@ -156,6 +157,7 @@ async def list_tasks_unified(
         task_type=task_type,
         priority=priority,
         labels=label_list,
+        q=q,
     )
 
     return {"tasks": tasks}

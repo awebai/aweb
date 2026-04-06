@@ -334,6 +334,7 @@ async def list_tasks(
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
+    q: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = await _get_project_slug(db, project_id=project_id)
     server_db = db.get_manager("server")
@@ -370,6 +371,14 @@ async def list_tasks(
         conditions.append(f"labels @> ${idx}")
         params.append(labels)
         idx += 1
+    if q is not None:
+        q_pattern = f"%{q}%"
+        conditions.append(
+            f"(title ILIKE ${idx} OR (${idx + 1} || '-' || task_ref_suffix) ILIKE ${idx})"
+        )
+        params.append(q_pattern)
+        params.append(slug)
+        idx += 2
 
     rows = await server_db.fetch_all(
         f"""
