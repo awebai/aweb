@@ -78,9 +78,10 @@ CREATE TABLE teams (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (domain, name)
+    UNIQUE (domain, name) WHERE deleted_at IS NULL
 );
 
+-- Allows name reuse after soft-delete.
 -- Certificate issuance log. Records every certificate issued for
 -- a team. Active members = rows where revoked_at IS NULL.
 -- Services cache the revoked rows to reject removed members.
