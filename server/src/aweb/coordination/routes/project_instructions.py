@@ -14,8 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
-from aweb.auth import enforce_actor_binding, validate_workspace_id
-from aweb.aweb_introspection import get_identity_from_auth, get_project_from_auth
+from aweb.team_auth_deps import get_team_identity
 
 from ...db import DatabaseInfra, get_db_infra
 from ..defaults import get_default_project_instructions
@@ -45,11 +44,11 @@ class ProjectInstructionsDocument(BaseModel):
 
 
 class ProjectInstructionsVersion(BaseModel):
-    project_instructions_id: str
-    project_id: str
+    id: str
+    team_address: str
     version: int
     document: ProjectInstructionsDocument
-    created_by_workspace_id: Optional[str]
+    created_by_alias: Optional[str]
     created_at: datetime
     updated_at: datetime
 
@@ -57,7 +56,7 @@ class ProjectInstructionsVersion(BaseModel):
 class ActiveProjectInstructionsResponse(BaseModel):
     project_instructions_id: str
     active_project_instructions_id: Optional[str] = None
-    project_id: str
+    team_address: str
     version: int
     updated_at: datetime
     document: ProjectInstructionsDocument
@@ -69,15 +68,11 @@ class CreateProjectInstructionsRequest(BaseModel):
         None,
         description="Optional project_instructions_id that this version is based on.",
     )
-    created_by_workspace_id: Optional[str] = Field(
-        None,
-        description="Optional workspace_id of the creator for audit trail.",
-    )
 
 
 class CreateProjectInstructionsResponse(BaseModel):
     project_instructions_id: str
-    project_id: str
+    team_address: str
     version: int
     created: bool = True
 
@@ -97,7 +92,7 @@ class ProjectInstructionsHistoryItem(BaseModel):
     project_instructions_id: str
     version: int
     created_at: datetime
-    created_by_workspace_id: Optional[str]
+    created_by_alias: Optional[str]
     is_active: bool
 
 
@@ -139,67 +134,59 @@ def _legacy_invariants_to_markdown(bundle_data: Dict[str, Any]) -> str:
 async def create_project_instructions_version(
     db: AsyncDatabaseManager,
     *,
-    project_id: str,
-    base_project_instructions_id: Optional[str],
+    team_address: str,
+    base_instructions_id: Optional[str],
     document: Dict[str, Any],
-    created_by_workspace_id: Optional[str],
+    created_by_alias: Optional[str],
 ) -> ProjectInstructionsVersion:
-    project = await db.fetch_one(
-        "SELECT id FROM {{tables.projects}} WHERE id = $1 AND deleted_at IS NULL",
-        project_id,
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
     result = await db.fetch_one(
         """
-        WITH locked_project AS (
-            SELECT id, active_project_instructions_id
-            FROM {{tables.projects}}
-            WHERE id = $1 AND deleted_at IS NULL
-            FOR UPDATE
+        WITH active_check AS (
+            SELECT id
+            FROM {{tables.project_instructions}}
+            WHERE team_address = $1 AND is_active = true
         ),
         base_check AS (
-            SELECT id FROM locked_project
-            WHERE $4::UUID IS NULL OR active_project_instructions_id = $4::UUID
+            SELECT 1 AS ok
+            WHERE $4::TEXT IS NULL
+               OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
         ),
         next_version AS (
             SELECT COALESCE(MAX(version), 0) + 1 AS version
             FROM {{tables.project_instructions}}
-            WHERE project_id = $1
+            WHERE team_address = $1
         )
         INSERT INTO {{tables.project_instructions}} (
-            project_id,
+            team_address,
             version,
             document_json,
-            created_by_workspace_id
+            created_by_alias
         )
         SELECT $1, nv.version, $2::jsonb, $3
         FROM next_version nv, base_check bc
-        RETURNING project_instructions_id, project_id, version, document_json,
-                  created_by_workspace_id, created_at, updated_at
+        RETURNING id, team_address, version, document_json,
+                  created_by_alias, created_at, updated_at
         """,
-        project_id,
+        team_address,
         json.dumps(document),
-        created_by_workspace_id,
-        base_project_instructions_id,
+        created_by_alias,
+        base_instructions_id,
     )
 
     if not result:
         active = await db.fetch_one(
-            "SELECT active_project_instructions_id FROM {{tables.projects}} WHERE id = $1",
-            project_id,
+            """
+            SELECT id FROM {{tables.project_instructions}}
+            WHERE team_address = $1 AND is_active = true
+            """,
+            team_address,
         )
-        active_id = (
-            str(active["active_project_instructions_id"])
-            if active and active["active_project_instructions_id"]
-            else "none"
-        )
+        active_id = str(active["id"]) if active else "none"
         raise HTTPException(
             status_code=409,
             detail=(
-                "Project instructions conflict: base_project_instructions_id "
-                f"{base_project_instructions_id} does not match active project instructions "
+                "Project instructions conflict: base_instructions_id "
+                f"{base_instructions_id} does not match active project instructions "
                 f"{active_id}. Re-read the active project instructions and retry."
             ),
         )
@@ -209,13 +196,11 @@ async def create_project_instructions_version(
         document_data = json.loads(document_data)
 
     return ProjectInstructionsVersion(
-        project_instructions_id=str(result["project_instructions_id"]),
-        project_id=str(result["project_id"]),
+        id=str(result["id"]),
+        team_address=result["team_address"],
         version=result["version"],
         document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
-        created_by_workspace_id=(
-            str(result["created_by_workspace_id"]) if result["created_by_workspace_id"] else None
-        ),
+        created_by_alias=result["created_by_alias"],
         created_at=result["created_at"],
         updated_at=result["updated_at"],
     )
@@ -224,57 +209,63 @@ async def create_project_instructions_version(
 async def activate_project_instructions(
     db: AsyncDatabaseManager,
     *,
-    project_id: str,
-    project_instructions_id: str,
+    team_address: str,
+    instructions_id: str,
 ) -> bool:
-    project_instructions_version = await db.fetch_one(
+    target = await db.fetch_one(
         """
-        SELECT project_instructions_id, project_id
+        SELECT id, team_address
         FROM {{tables.project_instructions}}
-        WHERE project_instructions_id = $1
+        WHERE id = $1
         """,
-        project_instructions_id,
+        instructions_id,
     )
-    if not project_instructions_version:
+    if not target:
         raise HTTPException(status_code=404, detail="Project instructions not found")
 
-    if str(project_instructions_version["project_id"]) != project_id:
+    if target["team_address"] != team_address:
         raise HTTPException(
             status_code=400,
-            detail="Project instructions do not belong to this project",
+            detail="Project instructions do not belong to this team",
         )
 
-    result = await db.fetch_one(
+    # Deactivate the currently active version (if any)
+    await db.execute(
         """
-        UPDATE {{tables.projects}}
-        SET active_project_instructions_id = $2
-        WHERE id = $1
-        RETURNING id
+        UPDATE {{tables.project_instructions}}
+        SET is_active = false
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
-        project_instructions_id,
+        team_address,
     )
-    if not result:
-        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Activate the target version
+    await db.execute(
+        """
+        UPDATE {{tables.project_instructions}}
+        SET is_active = true
+        WHERE id = $1
+        """,
+        instructions_id,
+    )
+
     return True
 
 
 async def get_active_project_instructions(
     db: AsyncDatabaseManager,
-    project_id: str,
+    team_address: str,
     *,
     bootstrap_if_missing: bool = True,
 ) -> Optional[ProjectInstructionsVersion]:
     result = await db.fetch_one(
         """
-        SELECT pi.project_instructions_id, pi.project_id, pi.version, pi.document_json,
-               pi.created_by_workspace_id, pi.created_at, pi.updated_at
-        FROM {{tables.projects}} p
-        JOIN {{tables.project_instructions}} pi
-          ON pi.project_instructions_id = p.active_project_instructions_id
-        WHERE p.id = $1
+        SELECT pi.id, pi.team_address, pi.version, pi.document_json,
+               pi.created_by_alias, pi.created_at, pi.updated_at
+        FROM {{tables.project_instructions}} pi
+        WHERE pi.team_address = $1 AND pi.is_active = true
         """,
-        project_id,
+        team_address,
     )
 
     if result:
@@ -283,15 +274,11 @@ async def get_active_project_instructions(
             document_data = json.loads(document_data)
 
         return ProjectInstructionsVersion(
-            project_instructions_id=str(result["project_instructions_id"]),
-            project_id=str(result["project_id"]),
+            id=str(result["id"]),
+            team_address=result["team_address"],
             version=result["version"],
             document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
-            created_by_workspace_id=(
-                str(result["created_by_workspace_id"])
-                if result["created_by_workspace_id"]
-                else None
-            ),
+            created_by_alias=result["created_by_alias"],
             created_at=result["created_at"],
             updated_at=result["updated_at"],
         )
@@ -301,16 +288,14 @@ async def get_active_project_instructions(
 
     from .project_roles import get_active_project_roles
 
-    await get_active_project_roles(db, project_id, bootstrap_if_missing=True)
+    await get_active_project_roles(db, team_address, bootstrap_if_missing=True)
     raw_roles_result = await db.fetch_one(
         """
         SELECT pr.bundle_json
-        FROM {{tables.projects}} p
-        LEFT JOIN {{tables.project_roles}} pr
-          ON pr.project_roles_id = p.active_project_roles_id
-        WHERE p.id = $1
+        FROM {{tables.project_roles}} pr
+        WHERE pr.team_address = $1 AND pr.is_active = true
         """,
-        project_id,
+        team_address,
     )
     default_document = get_default_project_instructions()
     document = dict(default_document)
@@ -325,25 +310,25 @@ async def get_active_project_instructions(
     try:
         instructions_version = await create_project_instructions_version(
             db,
-            project_id=project_id,
-            base_project_instructions_id=None,
+            team_address=team_address,
+            base_instructions_id=None,
             document=document,
-            created_by_workspace_id=None,
+            created_by_alias=None,
         )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(
             exc.__cause__, asyncpg.exceptions.UniqueViolationError
         ):
             raise
-        # A concurrent bootstrap already created the version — read it
-        logger.info("Concurrent bootstrap for project %s, retrying read", project_id)
+        # A concurrent bootstrap already created the version -- read it
+        logger.info("Concurrent bootstrap for team %s, retrying read", team_address)
         return await get_active_project_instructions(
-            db, project_id, bootstrap_if_missing=False
+            db, team_address, bootstrap_if_missing=False
         )
     await activate_project_instructions(
         db,
-        project_id=project_id,
-        project_instructions_id=instructions_version.project_instructions_id,
+        team_address=team_address,
+        instructions_id=instructions_version.id,
     )
     return instructions_version
 
@@ -355,22 +340,22 @@ async def get_active_project_instructions_endpoint(
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActiveProjectInstructionsResponse:
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    version = await get_active_project_instructions(server_db, project_id)
+    version = await get_active_project_instructions(aweb_db, identity.team_address)
     if not version:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="No active project instructions found")
 
-    etag = _generate_etag(version.project_instructions_id, version.updated_at)
+    etag = _generate_etag(version.id, version.updated_at)
     response.headers["ETag"] = etag
     if if_none_match and if_none_match == etag:
         return Response(status_code=304, headers={"ETag": etag})
 
     return ActiveProjectInstructionsResponse(
-        project_instructions_id=version.project_instructions_id,
-        active_project_instructions_id=version.project_instructions_id,
-        project_id=version.project_id,
+        project_instructions_id=version.id,
+        active_project_instructions_id=version.id,
+        team_address=version.team_address,
         version=version.version,
         updated_at=version.updated_at,
         document=version.document,
@@ -383,47 +368,31 @@ async def list_project_instructions_history(
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ProjectInstructionsHistoryResponse:
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    await get_active_project_instructions(server_db, project_id, bootstrap_if_missing=True)
+    await get_active_project_instructions(aweb_db, identity.team_address, bootstrap_if_missing=True)
 
-    active_result = await server_db.fetch_one(
+    rows = await aweb_db.fetch_all(
         """
-        SELECT active_project_instructions_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
-        """,
-        project_id,
-    )
-    active_project_instructions_id = (
-        str(active_result["active_project_instructions_id"])
-        if active_result and active_result["active_project_instructions_id"]
-        else None
-    )
-
-    rows = await server_db.fetch_all(
-        """
-        SELECT project_instructions_id, version, created_at, created_by_workspace_id
+        SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.project_instructions}}
-        WHERE project_id = $1
+        WHERE team_address = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        project_id,
+        identity.team_address,
         limit,
     )
 
     return ProjectInstructionsHistoryResponse(
         project_instructions_versions=[
             ProjectInstructionsHistoryItem(
-                project_instructions_id=str(row["project_instructions_id"]),
+                project_instructions_id=str(row["id"]),
                 version=row["version"],
                 created_at=row["created_at"],
-                created_by_workspace_id=(
-                    str(row["created_by_workspace_id"]) if row["created_by_workspace_id"] else None
-                ),
-                is_active=(str(row["project_instructions_id"]) == active_project_instructions_id),
+                created_by_alias=row["created_by_alias"],
+                is_active=row["is_active"],
             )
             for row in rows
         ]
@@ -436,66 +405,27 @@ async def create_project_instructions_endpoint(
     payload: CreateProjectInstructionsRequest,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> CreateProjectInstructionsResponse:
-    identity = await get_identity_from_auth(request, db)
-    project_id = identity.project_id
-    server_db = db.get_manager("server")
-
-    created_by_workspace_id: Optional[str] = identity.agent_id if identity.agent_id else None
-    if payload.created_by_workspace_id:
-        try:
-            created_by_workspace_id = validate_workspace_id(payload.created_by_workspace_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        enforce_actor_binding(
-            identity,
-            created_by_workspace_id,
-            detail="created_by_workspace_id does not match API key identity",
-        )
-
-        workspace = await server_db.fetch_one(
-            """
-            SELECT workspace_id
-            FROM {{tables.workspaces}}
-            WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-            """,
-            created_by_workspace_id,
-            project_id,
-        )
-        if not workspace:
-            raise HTTPException(
-                status_code=403,
-                detail="Workspace not found or does not belong to your project",
-            )
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
     version = await create_project_instructions_version(
-        server_db,
-        project_id=project_id,
-        base_project_instructions_id=payload.base_project_instructions_id,
+        aweb_db,
+        team_address=identity.team_address,
+        base_instructions_id=payload.base_project_instructions_id,
         document=payload.document.model_dump(),
-        created_by_workspace_id=created_by_workspace_id,
+        created_by_alias=identity.alias,
     )
 
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, event_type, details)
-        VALUES ($1, $2, $3, $4::jsonb)
-        """,
-        project_id,
-        created_by_workspace_id,
-        "project_instructions_created",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_instructions_id": version.project_instructions_id,
-                "version": version.version,
-                "base_project_instructions_id": payload.base_project_instructions_id,
-            }
-        ),
+    logger.info(
+        "Project instructions created via API: team=%s id=%s version=%d",
+        identity.team_address,
+        version.id,
+        version.version,
     )
 
     return CreateProjectInstructionsResponse(
-        project_instructions_id=version.project_instructions_id,
-        project_id=version.project_id,
+        project_instructions_id=version.id,
+        team_address=version.team_address,
         version=version.version,
     )
 
@@ -506,23 +436,23 @@ async def get_project_instructions_by_id_endpoint(
     project_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActiveProjectInstructionsResponse:
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    result = await server_db.fetch_one(
+    result = await aweb_db.fetch_one(
         """
-        SELECT pi.project_instructions_id, pi.project_id, pi.version, pi.document_json,
-               pi.created_by_workspace_id, pi.created_at, pi.updated_at
+        SELECT pi.id, pi.team_address, pi.version, pi.document_json,
+               pi.created_by_alias, pi.created_at, pi.updated_at
         FROM {{tables.project_instructions}} pi
-        WHERE pi.project_instructions_id = $1 AND pi.project_id = $2
+        WHERE pi.id = $1 AND pi.team_address = $2
         """,
         project_instructions_id,
-        project_id,
+        identity.team_address,
     )
     if not result:
         raise HTTPException(
             status_code=404,
-            detail="Project instructions not found or do not belong to this project",
+            detail="Project instructions not found or do not belong to this team",
         )
 
     document_data = result["document_json"]
@@ -530,9 +460,9 @@ async def get_project_instructions_by_id_endpoint(
         document_data = json.loads(document_data)
 
     return ActiveProjectInstructionsResponse(
-        project_instructions_id=str(result["project_instructions_id"]),
+        project_instructions_id=str(result["id"]),
         active_project_instructions_id=None,
-        project_id=str(result["project_id"]),
+        team_address=result["team_address"],
         version=result["version"],
         updated_at=result["updated_at"],
         document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
@@ -545,43 +475,29 @@ async def activate_project_instructions_endpoint(
     project_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActivateProjectInstructionsResponse:
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    current_active = await server_db.fetch_one(
+    previous_active = await aweb_db.fetch_one(
         """
-        SELECT active_project_instructions_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
+        SELECT id FROM {{tables.project_instructions}}
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
+        identity.team_address,
     )
-    previous_project_instructions_id = (
-        str(current_active["active_project_instructions_id"])
-        if current_active and current_active["active_project_instructions_id"]
-        else None
-    )
+    previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
     await activate_project_instructions(
-        server_db,
-        project_id=project_id,
-        project_instructions_id=project_instructions_id,
+        aweb_db,
+        team_address=identity.team_address,
+        instructions_id=project_instructions_id,
     )
 
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "project_instructions_activated",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_instructions_id": project_instructions_id,
-                "previous_project_instructions_id": previous_project_instructions_id,
-            }
-        ),
+    logger.info(
+        "Project instructions activated via API: team=%s id=%s (was: %s)",
+        identity.team_address,
+        project_instructions_id,
+        previous_instructions_id,
     )
 
     return ActivateProjectInstructionsResponse(
@@ -595,55 +511,41 @@ async def reset_project_instructions_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ResetProjectInstructionsResponse:
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    current_active = await server_db.fetch_one(
+    previous_active = await aweb_db.fetch_one(
         """
-        SELECT active_project_instructions_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
+        SELECT id FROM {{tables.project_instructions}}
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
+        identity.team_address,
     )
-    previous_project_instructions_id = (
-        str(current_active["active_project_instructions_id"])
-        if current_active and current_active["active_project_instructions_id"]
-        else None
-    )
+    previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
     version = await create_project_instructions_version(
-        server_db,
-        project_id=project_id,
-        base_project_instructions_id=previous_project_instructions_id,
+        aweb_db,
+        team_address=identity.team_address,
+        base_instructions_id=previous_instructions_id,
         document=get_default_project_instructions(),
-        created_by_workspace_id=None,
+        created_by_alias=None,
     )
     await activate_project_instructions(
-        server_db,
-        project_id=project_id,
-        project_instructions_id=version.project_instructions_id,
+        aweb_db,
+        team_address=identity.team_address,
+        instructions_id=version.id,
     )
 
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "project_instructions_reset_to_default",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_instructions_id": version.project_instructions_id,
-                "version": version.version,
-                "previous_project_instructions_id": previous_project_instructions_id,
-            }
-        ),
+    logger.info(
+        "Project instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
+        identity.team_address,
+        version.id,
+        version.version,
+        previous_instructions_id,
     )
 
     return ResetProjectInstructionsResponse(
         reset=True,
-        active_project_instructions_id=version.project_instructions_id,
+        active_project_instructions_id=version.id,
         version=version.version,
     )

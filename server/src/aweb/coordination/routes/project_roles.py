@@ -14,8 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
-from aweb.auth import enforce_actor_binding, validate_workspace_id
-from aweb.aweb_introspection import get_identity_from_auth, get_project_from_auth
+from aweb.team_auth_deps import get_team_identity
 
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -61,32 +60,30 @@ class ProjectRolesBundle(BaseModel):
 class ProjectRolesVersion(BaseModel):
     """A versioned project roles record."""
 
-    project_roles_id: str
-    project_id: str
+    id: str
+    team_address: str
     version: int
     bundle: ProjectRolesBundle
-    created_by_workspace_id: Optional[str]
+    created_by_alias: Optional[str]
     created_at: datetime
     updated_at: datetime
 
 
 async def get_active_project_roles(
     db: AsyncDatabaseManager,
-    project_id: str,
+    team_address: str,
     *,
     bootstrap_if_missing: bool = True,
 ) -> Optional[ProjectRolesVersion]:
-    """Get the active project roles bundle for a project."""
+    """Get the active project roles bundle for a team."""
     result = await db.fetch_one(
         """
-        SELECT pr.project_roles_id, pr.project_id, pr.version, pr.bundle_json,
-               pr.created_by_workspace_id, pr.created_at, pr.updated_at
-        FROM {{tables.projects}} p
-        JOIN {{tables.project_roles}} pr
-          ON pr.project_roles_id = p.active_project_roles_id
-        WHERE p.id = $1
+        SELECT pr.id, pr.team_address, pr.version, pr.bundle_json,
+               pr.created_by_alias, pr.created_at, pr.updated_at
+        FROM {{tables.project_roles}} pr
+        WHERE pr.team_address = $1 AND pr.is_active = true
         """,
-        project_id,
+        team_address,
     )
 
     if result:
@@ -95,15 +92,11 @@ async def get_active_project_roles(
             bundle_data = json.loads(bundle_data)
 
         return ProjectRolesVersion(
-            project_roles_id=str(result["project_roles_id"]),
-            project_id=str(result["project_id"]),
+            id=str(result["id"]),
+            team_address=result["team_address"],
             version=result["version"],
             bundle=ProjectRolesBundle(**bundle_data),
-            created_by_workspace_id=(
-                str(result["created_by_workspace_id"])
-                if result["created_by_workspace_id"]
-                else None
-            ),
+            created_by_alias=result["created_by_alias"],
             created_at=result["created_at"],
             updated_at=result["updated_at"],
         )
@@ -111,29 +104,29 @@ async def get_active_project_roles(
     if not bootstrap_if_missing:
         return None
 
-    logger.info("Bootstrapping default project roles for project %s", project_id)
+    logger.info("Bootstrapping default project roles for team %s", team_address)
     try:
         project_roles_version = await create_project_roles_version(
             db,
-            project_id=project_id,
-            base_project_roles_id=None,
+            team_address=team_address,
+            base_roles_id=None,
             bundle=get_default_bundle(),
-            created_by_workspace_id=None,
+            created_by_alias=None,
         )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(
             exc.__cause__, asyncpg.exceptions.UniqueViolationError
         ):
             raise
-        # A concurrent bootstrap already created the version — read it
-        logger.info("Concurrent bootstrap for project %s, retrying read", project_id)
+        # A concurrent bootstrap already created the version -- read it
+        logger.info("Concurrent bootstrap for team %s, retrying read", team_address)
         return await get_active_project_roles(
-            db, project_id, bootstrap_if_missing=False
+            db, team_address, bootstrap_if_missing=False
         )
     await activate_project_roles(
         db,
-        project_id=project_id,
-        project_roles_id=project_roles_version.project_roles_id,
+        team_address=team_address,
+        roles_id=project_roles_version.id,
     )
     return project_roles_version
 
@@ -141,67 +134,59 @@ async def get_active_project_roles(
 async def create_project_roles_version(
     db: AsyncDatabaseManager,
     *,
-    project_id: str,
-    base_project_roles_id: Optional[str],
+    team_address: str,
+    base_roles_id: Optional[str],
     bundle: Dict[str, Any],
-    created_by_workspace_id: Optional[str],
+    created_by_alias: Optional[str],
 ) -> ProjectRolesVersion:
-    """Create a new project roles version for a project."""
-    project = await db.fetch_one(
-        "SELECT id FROM {{tables.projects}} WHERE id = $1 AND deleted_at IS NULL",
-        project_id,
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
+    """Create a versioned project roles record for a team."""
     result = await db.fetch_one(
         """
-        WITH locked_project AS (
-            SELECT id, active_project_roles_id
-            FROM {{tables.projects}}
-            WHERE id = $1 AND deleted_at IS NULL
-            FOR UPDATE
+        WITH active_check AS (
+            SELECT id
+            FROM {{tables.project_roles}}
+            WHERE team_address = $1 AND is_active = true
         ),
         base_check AS (
-            SELECT id FROM locked_project
-            WHERE $4::UUID IS NULL OR active_project_roles_id = $4::UUID
+            SELECT 1 AS ok
+            WHERE $4::TEXT IS NULL
+               OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
         ),
         next_version AS (
             SELECT COALESCE(MAX(version), 0) + 1 AS version
             FROM {{tables.project_roles}}
-            WHERE project_id = $1
+            WHERE team_address = $1
         )
         INSERT INTO {{tables.project_roles}} (
-            project_id,
+            team_address,
             version,
             bundle_json,
-            created_by_workspace_id
+            created_by_alias
         )
         SELECT $1, nv.version, $2::jsonb, $3
         FROM next_version nv, base_check bc
-        RETURNING project_roles_id, project_id, version, bundle_json,
-                  created_by_workspace_id, created_at, updated_at
+        RETURNING id, team_address, version, bundle_json,
+                  created_by_alias, created_at, updated_at
         """,
-        project_id,
+        team_address,
         json.dumps(bundle),
-        created_by_workspace_id,
-        base_project_roles_id,
+        created_by_alias,
+        base_roles_id,
     )
 
     if not result:
         active = await db.fetch_one(
-            "SELECT active_project_roles_id FROM {{tables.projects}} WHERE id = $1",
-            project_id,
+            """
+            SELECT id FROM {{tables.project_roles}}
+            WHERE team_address = $1 AND is_active = true
+            """,
+            team_address,
         )
-        active_id = (
-            str(active["active_project_roles_id"])
-            if active and active["active_project_roles_id"]
-            else "none"
-        )
+        active_id = str(active["id"]) if active else "none"
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Project roles conflict: base_project_roles_id {base_project_roles_id} "
+                f"Project roles conflict: base_roles_id {base_roles_id} "
                 f"does not match active project roles {active_id}. "
                 f"Another agent may have updated the project roles. "
                 f"Re-read the active project roles and retry."
@@ -209,10 +194,10 @@ async def create_project_roles_version(
         )
 
     logger.info(
-        "Created project roles version %d for project %s (project_roles_id=%s)",
+        "Created project roles version %d for team %s (id=%s)",
         result["version"],
-        project_id,
-        result["project_roles_id"],
+        team_address,
+        result["id"],
     )
 
     bundle_data = result["bundle_json"]
@@ -220,13 +205,11 @@ async def create_project_roles_version(
         bundle_data = json.loads(bundle_data)
 
     return ProjectRolesVersion(
-        project_roles_id=str(result["project_roles_id"]),
-        project_id=str(result["project_id"]),
+        id=str(result["id"]),
+        team_address=result["team_address"],
         version=result["version"],
         bundle=ProjectRolesBundle(**bundle_data),
-        created_by_workspace_id=(
-            str(result["created_by_workspace_id"]) if result["created_by_workspace_id"] else None
-        ),
+        created_by_alias=result["created_by_alias"],
         created_at=result["created_at"],
         updated_at=result["updated_at"],
     )
@@ -235,48 +218,54 @@ async def create_project_roles_version(
 async def activate_project_roles(
     db: AsyncDatabaseManager,
     *,
-    project_id: str,
-    project_roles_id: str,
+    team_address: str,
+    roles_id: str,
 ) -> bool:
-    """Set the active project roles bundle for a project."""
-    project_roles_version = await db.fetch_one(
+    """Set the active project roles bundle for a team."""
+    target = await db.fetch_one(
         """
-        SELECT project_roles_id, project_id
+        SELECT id, team_address
         FROM {{tables.project_roles}}
-        WHERE project_roles_id = $1
+        WHERE id = $1
         """,
-        project_roles_id,
+        roles_id,
     )
-    if not project_roles_version:
+    if not target:
         raise HTTPException(status_code=404, detail="Project roles not found")
 
-    if str(project_roles_version["project_id"]) != project_id:
+    if target["team_address"] != team_address:
         raise HTTPException(
             status_code=400,
-            detail="Project roles do not belong to this project",
+            detail="Project roles do not belong to this team",
         )
 
-    result = await db.fetch_one(
+    # Deactivate the currently active version (if any)
+    await db.execute(
         """
-        UPDATE {{tables.projects}}
-        SET active_project_roles_id = $2
-        WHERE id = $1
-        RETURNING id
+        UPDATE {{tables.project_roles}}
+        SET is_active = false
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
-        project_roles_id,
+        team_address,
     )
 
-    if not result:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Activate the target version
+    await db.execute(
+        """
+        UPDATE {{tables.project_roles}}
+        SET is_active = true
+        WHERE id = $1
+        """,
+        roles_id,
+    )
 
-    logger.info("Activated project roles %s for project %s", project_roles_id, project_id)
+    logger.info("Activated project roles %s for team %s", roles_id, team_address)
     return True
 
 
-def _generate_etag(project_roles_id: str, updated_at: datetime) -> str:
-    """Generate ETag from project_roles_id and updated_at timestamp."""
-    content = f"{project_roles_id}:{updated_at.isoformat()}"
+def _generate_etag(roles_id: str, updated_at: datetime) -> str:
+    """Generate ETag from roles id and updated_at timestamp."""
+    content = f"{roles_id}:{updated_at.isoformat()}"
     return f'"{hashlib.sha256(content.encode()).hexdigest()[:16]}"'
 
 
@@ -315,7 +304,7 @@ class ActiveProjectRolesResponse(BaseModel):
 
     project_roles_id: str
     active_project_roles_id: Optional[str] = None
-    project_id: str
+    team_address: str
     version: int
     updated_at: datetime
     roles: Dict[str, RoleDefinition]
@@ -334,17 +323,13 @@ class CreateProjectRolesRequest(BaseModel):
         None,
         description="Optional bundle ID that this version is based on.",
     )
-    created_by_workspace_id: Optional[str] = Field(
-        None,
-        description="Optional workspace_id of the creator for audit trail.",
-    )
 
 
 class CreateProjectRolesResponse(BaseModel):
     """Response for POST /v1/roles."""
 
     project_roles_id: str
-    project_id: str
+    team_address: str
     version: int
     created: bool = True
 
@@ -378,7 +363,7 @@ class ProjectRolesHistoryItem(BaseModel):
     project_roles_id: str
     version: int
     created_at: datetime
-    created_by_workspace_id: Optional[str]
+    created_by_alias: Optional[str]
     is_active: bool
 
 
@@ -407,16 +392,16 @@ async def get_active_project_roles_endpoint(
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActiveProjectRolesResponse:
-    """Get the active project roles bundle for the project."""
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    """Get the active project roles bundle for the team."""
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    project_roles_version = await get_active_project_roles(server_db, project_id)
+    project_roles_version = await get_active_project_roles(aweb_db, identity.team_address)
     if not project_roles_version:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="No active project roles found")
 
     etag = _generate_etag(
-        project_roles_version.project_roles_id,
+        project_roles_version.id,
         project_roles_version.updated_at,
     )
     response.headers["ETag"] = etag
@@ -468,9 +453,9 @@ async def get_active_project_roles_endpoint(
         }
 
     return ActiveProjectRolesResponse(
-        project_roles_id=project_roles_version.project_roles_id,
-        active_project_roles_id=project_roles_version.project_roles_id,
-        project_id=project_roles_version.project_id,
+        project_roles_id=project_roles_version.id,
+        active_project_roles_id=project_roles_version.id,
+        team_address=project_roles_version.team_address,
         version=project_roles_version.version,
         updated_at=project_roles_version.updated_at,
         roles=roles,
@@ -485,47 +470,31 @@ async def list_project_roles_history(
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ProjectRolesHistoryResponse:
-    """List project roles version history for the project."""
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    """List project roles version history for the team."""
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    await get_active_project_roles(server_db, project_id, bootstrap_if_missing=True)
+    await get_active_project_roles(aweb_db, identity.team_address, bootstrap_if_missing=True)
 
-    active_result = await server_db.fetch_one(
+    rows = await aweb_db.fetch_all(
         """
-        SELECT active_project_roles_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
-        """,
-        project_id,
-    )
-    active_project_roles_id = (
-        str(active_result["active_project_roles_id"])
-        if active_result and active_result["active_project_roles_id"]
-        else None
-    )
-
-    rows = await server_db.fetch_all(
-        """
-        SELECT project_roles_id, version, created_at, created_by_workspace_id
+        SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.project_roles}}
-        WHERE project_id = $1
+        WHERE team_address = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        project_id,
+        identity.team_address,
         limit,
     )
 
     project_roles_versions = [
         ProjectRolesHistoryItem(
-            project_roles_id=str(row["project_roles_id"]),
+            project_roles_id=str(row["id"]),
             version=row["version"],
             created_at=row["created_at"],
-            created_by_workspace_id=(
-                str(row["created_by_workspace_id"]) if row["created_by_workspace_id"] else None
-            ),
-            is_active=(str(row["project_roles_id"]) == active_project_roles_id),
+            created_by_alias=row["created_by_alias"],
+            is_active=row["is_active"],
         )
         for row in rows
     ]
@@ -539,76 +508,30 @@ async def create_project_roles_endpoint(
     payload: CreateProjectRolesRequest,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> CreateProjectRolesResponse:
-    """Create a new project roles version for the project."""
-    identity = await get_identity_from_auth(request, db)
-    project_id = identity.project_id
-    server_db = db.get_manager("server")
+    """Create a versioned project roles record for the team."""
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
     bundle_dict = payload.bundle.model_dump()
 
-    created_by_workspace_id: Optional[str] = identity.agent_id if identity.agent_id else None
-    if payload.created_by_workspace_id:
-        try:
-            created_by_workspace_id = validate_workspace_id(payload.created_by_workspace_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        enforce_actor_binding(
-            identity,
-            created_by_workspace_id,
-            detail="created_by_workspace_id does not match API key identity",
-        )
-
-        workspace = await server_db.fetch_one(
-            """
-            SELECT workspace_id
-            FROM {{tables.workspaces}}
-            WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
-            """,
-            created_by_workspace_id,
-            project_id,
-        )
-        if not workspace:
-            raise HTTPException(
-                status_code=403,
-                detail="Workspace not found or does not belong to your project",
-            )
-
     project_roles_version = await create_project_roles_version(
-        server_db,
-        project_id=project_id,
-        base_project_roles_id=payload.base_project_roles_id,
+        aweb_db,
+        team_address=identity.team_address,
+        base_roles_id=payload.base_project_roles_id,
         bundle=bundle_dict,
-        created_by_workspace_id=created_by_workspace_id,
-    )
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, event_type, details)
-        VALUES ($1, $2, $3, $4::jsonb)
-        """,
-        project_id,
-        created_by_workspace_id,
-        "project_roles_created",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_roles_id": project_roles_version.project_roles_id,
-                "version": project_roles_version.version,
-                "base_project_roles_id": payload.base_project_roles_id,
-            }
-        ),
+        created_by_alias=identity.alias,
     )
 
     logger.info(
-        "Project roles created via API: project=%s project_roles_id=%s version=%d",
-        project_id,
-        project_roles_version.project_roles_id,
+        "Project roles created via API: team=%s id=%s version=%d",
+        identity.team_address,
+        project_roles_version.id,
         project_roles_version.version,
     )
 
     return CreateProjectRolesResponse(
-        project_roles_id=project_roles_version.project_roles_id,
-        project_id=project_roles_version.project_id,
+        project_roles_id=project_roles_version.id,
+        team_address=project_roles_version.team_address,
         version=project_roles_version.version,
     )
 
@@ -620,24 +543,24 @@ async def get_project_roles_by_id_endpoint(
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActiveProjectRolesResponse:
     """Get a specific project roles version by ID."""
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    result = await server_db.fetch_one(
+    result = await aweb_db.fetch_one(
         """
-        SELECT pr.project_roles_id, pr.project_id, pr.version, pr.bundle_json,
-               pr.created_by_workspace_id, pr.created_at, pr.updated_at
+        SELECT pr.id, pr.team_address, pr.version, pr.bundle_json,
+               pr.created_by_alias, pr.created_at, pr.updated_at
         FROM {{tables.project_roles}} pr
-        WHERE pr.project_roles_id = $1 AND pr.project_id = $2
+        WHERE pr.id = $1 AND pr.team_address = $2
         """,
         project_roles_id,
-        project_id,
+        identity.team_address,
     )
 
     if not result:
         raise HTTPException(
             status_code=404,
-            detail="Project roles not found or do not belong to this project",
+            detail="Project roles not found or do not belong to this team",
         )
 
     bundle_data = result["bundle_json"]
@@ -655,9 +578,9 @@ async def get_project_roles_by_id_endpoint(
     }
 
     return ActiveProjectRolesResponse(
-        project_roles_id=str(result["project_roles_id"]),
+        project_roles_id=str(result["id"]),
         active_project_roles_id=None,
-        project_id=str(result["project_id"]),
+        team_address=result["team_address"],
         version=result["version"],
         updated_at=result["updated_at"],
         roles=roles,
@@ -672,51 +595,30 @@ async def activate_project_roles_endpoint(
     project_roles_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ActivateProjectRolesResponse:
-    """Set a project roles version as the active bundle for the project."""
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    """Set a project roles version as the active bundle for the team."""
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    current_active = await server_db.fetch_one(
+    previous_active = await aweb_db.fetch_one(
         """
-        SELECT active_project_roles_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
+        SELECT id FROM {{tables.project_roles}}
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
+        identity.team_address,
     )
-    previous_project_roles_id = (
-        str(current_active["active_project_roles_id"])
-        if current_active and current_active["active_project_roles_id"]
-        else None
-    )
+    previous_roles_id = str(previous_active["id"]) if previous_active else None
 
     await activate_project_roles(
-        server_db,
-        project_id=project_id,
-        project_roles_id=project_roles_id,
-    )
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "project_roles_activated",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_roles_id": project_roles_id,
-                "previous_project_roles_id": previous_project_roles_id,
-            }
-        ),
+        aweb_db,
+        team_address=identity.team_address,
+        roles_id=project_roles_id,
     )
 
     logger.info(
-        "Project roles activated via API: project=%s project_roles_id=%s (was: %s)",
-        project_id,
+        "Project roles activated via API: team=%s id=%s (was: %s)",
+        identity.team_address,
         project_roles_id,
-        previous_project_roles_id,
+        previous_roles_id,
     )
 
     return ActivateProjectRolesResponse(
@@ -730,23 +632,18 @@ async def reset_project_roles_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> ResetProjectRolesResponse:
-    """Reset the project's active project roles to the current default bundle."""
-    project_id = await get_project_from_auth(request, db)
-    server_db = db.get_manager("server")
+    """Reset the team's active project roles to the current default bundle."""
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    current_active = await server_db.fetch_one(
+    previous_active = await aweb_db.fetch_one(
         """
-        SELECT active_project_roles_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
+        SELECT id FROM {{tables.project_roles}}
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
+        identity.team_address,
     )
-    previous_project_roles_id = (
-        str(current_active["active_project_roles_id"])
-        if current_active and current_active["active_project_roles_id"]
-        else None
-    )
+    previous_roles_id = str(previous_active["id"]) if previous_active else None
 
     try:
         fresh_bundle = get_default_bundle(force_reload=True)
@@ -758,46 +655,29 @@ async def reset_project_roles_to_default_endpoint(
         ) from exc
 
     project_roles_version = await create_project_roles_version(
-        server_db,
-        project_id=project_id,
-        base_project_roles_id=previous_project_roles_id,
+        aweb_db,
+        team_address=identity.team_address,
+        base_roles_id=previous_roles_id,
         bundle=fresh_bundle,
-        created_by_workspace_id=None,
+        created_by_alias=None,
     )
     await activate_project_roles(
-        server_db,
-        project_id=project_id,
-        project_roles_id=project_roles_version.project_roles_id,
-    )
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "project_roles_reset_to_default",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_roles_id": project_roles_version.project_roles_id,
-                "version": project_roles_version.version,
-                "previous_project_roles_id": previous_project_roles_id,
-            }
-        ),
+        aweb_db,
+        team_address=identity.team_address,
+        roles_id=project_roles_version.id,
     )
 
     logger.info(
-        "Project roles reset to default via API: project=%s project_roles_id=%s version=%d (was: %s)",
-        project_id,
-        project_roles_version.project_roles_id,
+        "Project roles reset to default via API: team=%s id=%s version=%d (was: %s)",
+        identity.team_address,
+        project_roles_version.id,
         project_roles_version.version,
-        previous_project_roles_id,
+        previous_roles_id,
     )
 
     return ResetProjectRolesResponse(
         reset=True,
-        active_project_roles_id=project_roles_version.project_roles_id,
+        active_project_roles_id=project_roles_version.id,
         version=project_roles_version.version,
     )
 
@@ -808,64 +688,41 @@ async def deactivate_project_roles_endpoint(
     db: DatabaseInfra = Depends(get_db_infra),
 ) -> DeactivateProjectRolesResponse:
     """Deactivate project roles by replacing the active bundle with an empty bundle."""
-    identity = await get_identity_from_auth(request, db)
-    project_id = identity.project_id
-    server_db = db.get_manager("server")
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
 
-    current_active = await server_db.fetch_one(
+    previous_active = await aweb_db.fetch_one(
         """
-        SELECT active_project_roles_id
-        FROM {{tables.projects}}
-        WHERE id = $1 AND deleted_at IS NULL
+        SELECT id FROM {{tables.project_roles}}
+        WHERE team_address = $1 AND is_active = true
         """,
-        project_id,
+        identity.team_address,
     )
-    previous_project_roles_id = (
-        str(current_active["active_project_roles_id"])
-        if current_active and current_active["active_project_roles_id"]
-        else None
-    )
+    previous_roles_id = str(previous_active["id"]) if previous_active else None
 
     project_roles_version = await create_project_roles_version(
-        server_db,
-        project_id=project_id,
-        base_project_roles_id=previous_project_roles_id,
+        aweb_db,
+        team_address=identity.team_address,
+        base_roles_id=previous_roles_id,
         bundle={"roles": {}, "adapters": {}},
-        created_by_workspace_id=identity.agent_id if identity.agent_id else None,
+        created_by_alias=identity.alias,
     )
     await activate_project_roles(
-        server_db,
-        project_id=project_id,
-        project_roles_id=project_roles_version.project_roles_id,
-    )
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, event_type, details)
-        VALUES ($1, $2, $3::jsonb)
-        """,
-        project_id,
-        "project_roles_deactivated",
-        json.dumps(
-            {
-                "project_id": project_id,
-                "project_roles_id": project_roles_version.project_roles_id,
-                "version": project_roles_version.version,
-                "previous_project_roles_id": previous_project_roles_id,
-            }
-        ),
+        aweb_db,
+        team_address=identity.team_address,
+        roles_id=project_roles_version.id,
     )
 
     logger.info(
-        "Project roles deactivated via API: project=%s project_roles_id=%s version=%d (was: %s)",
-        project_id,
-        project_roles_version.project_roles_id,
+        "Project roles deactivated via API: team=%s id=%s version=%d (was: %s)",
+        identity.team_address,
+        project_roles_version.id,
         project_roles_version.version,
-        previous_project_roles_id,
+        previous_roles_id,
     )
 
     return DeactivateProjectRolesResponse(
         deactivated=True,
-        active_project_roles_id=project_roles_version.project_roles_id,
+        active_project_roles_id=project_roles_version.id,
         version=project_roles_version.version,
     )
