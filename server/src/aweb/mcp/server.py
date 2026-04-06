@@ -30,14 +30,12 @@ from aweb.mcp.tools.chat import chat_send as _chat_send_impl
 from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
 from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
 from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
-from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 from aweb.mcp.tools.project_instructions import instructions_history as _instructions_history_impl
 from aweb.mcp.tools.project_instructions import instructions_show as _instructions_show_impl
 from aweb.mcp.tools.project_roles import roles_show as _roles_show_impl
 from aweb.mcp.tools.project_roles import roles_list as _roles_list_impl
-from aweb.mcp.tools.signing import sign as _sign_impl
 from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
 from aweb.mcp.tools.tasks import task_close as _task_close_impl
 from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
@@ -144,28 +142,6 @@ def register_tools(
     alongside additional tools.  Pass ``redis=None`` if Redis is unavailable;
     presence-related tools will degrade gracefully.
     """
-
-    # -- Identity --
-
-    @mcp.tool(
-        name="whoami",
-        description=(
-            "Show the current agent's identity on the aweb network, "
-            "including alias, stable identity, and project scope."
-        ),
-    )
-    async def whoami() -> str:
-        return await _whoami_impl(db_infra, registry_client=registry_client)
-
-    @mcp.tool(
-        name="sign",
-        description=(
-            "Sign an arbitrary JSON payload using the authenticated custodial "
-            "agent's server-held key."
-        ),
-    )
-    async def sign(sign_payload: dict[str, Any]) -> str:
-        return await _sign_impl(db_infra, sign_payload=sign_payload)
 
     # -- Mail --
 
