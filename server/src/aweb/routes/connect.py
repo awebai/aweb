@@ -6,7 +6,6 @@ verified certificate, creates or updates a workspace.
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -331,16 +330,8 @@ async def connect_endpoint(
 
     aweb_db = db.get_manager("aweb")
 
-    # Extract team_did_key from the verified certificate for storage in
-    # the teams table. The certificate signature was already validated
-    # against the registry-resolved team key.
-    import base64 as _b64
-    cert_header = request.headers.get("X-AWID-Team-Certificate", "")
-    try:
-        cert_data = json.loads(_b64.b64decode(cert_header))
-        team_did_key = cert_data.get("team_did_key", "")
-    except Exception:
-        team_did_key = ""
+    # Use the registry-resolved team key (verified by verify_request_certificate)
+    team_did_key = cert_info.get("verified_team_did_key", "")
 
     result = await connect_agent(
         db=aweb_db,
@@ -355,3 +346,42 @@ async def connect_endpoint(
     )
 
     return ConnectResponse(**result)
+
+
+class TeamInfoResponse(BaseModel):
+    team_address: str
+    namespace: str
+    team_name: str
+    team_did_key: str
+    member_count: int
+
+
+@router.get("/team", response_model=TeamInfoResponse)
+async def get_team_info(
+    request: Request, db=Depends(get_db)
+) -> TeamInfoResponse:
+    """Get team info from the authenticated certificate."""
+    from aweb.team_auth_deps import get_team_identity
+
+    identity = await get_team_identity(request, db)
+    aweb_db = db.get_manager("aweb")
+
+    team = await aweb_db.fetch_one(
+        "SELECT * FROM {{tables.teams}} WHERE team_address = $1",
+        identity.team_address,
+    )
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    count = await aweb_db.fetch_one(
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_address = $1 AND deleted_at IS NULL",
+        identity.team_address,
+    )
+
+    return TeamInfoResponse(
+        team_address=team["team_address"],
+        namespace=team["namespace"],
+        team_name=team["team_name"],
+        team_did_key=team["team_did_key"],
+        member_count=count["cnt"] if count else 0,
+    )

@@ -192,3 +192,86 @@ async def test_usage_endpoint(aweb_cloud_db):
     assert data["team_address"] == "acme.com/backend"
     assert data["messages_sent"] >= 1
     assert data["active_agents"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/status",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["team_address"] == "acme.com/backend"
+    assert data["agent_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_roles_active_empty(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/roles/active",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["roles"] is None
+
+
+@pytest.mark.asyncio
+async def test_instructions_active_empty(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/instructions/active",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["instructions"] is None
+
+
+@pytest.mark.asyncio
+async def test_agent_not_found_returns_404(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/agents/nonexistent",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_expired_jwt_returns_401(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    token = jwt.encode(
+        {"user_id": "user-123", "team_addresses": ["acme.com/backend"], "exp": int(time.time()) - 3600},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/agents",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 401
