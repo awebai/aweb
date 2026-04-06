@@ -54,6 +54,8 @@ type certShowOutput struct {
 	TeamAddress   string `json:"team_address"`
 	Alias         string `json:"alias"`
 	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	MemberAddress string `json:"member_address,omitempty"`
 	TeamDIDKey    string `json:"team_did_key"`
 	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
@@ -338,12 +340,17 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 		lifetime = awid.LifetimeEphemeral
 	}
 
+	// Resolve identity fields for the certificate
+	memberDIDAW, memberAddress := resolveIdentityFieldsForCert(workingDir)
+
 	// Sign certificate
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:  teamAddress,
-		MemberDIDKey: memberDIDKey,
-		Alias:        alias,
-		Lifetime:     lifetime,
+		TeamAddress:   teamAddress,
+		MemberDIDKey:  memberDIDKey,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
+		Alias:         alias,
+		Lifetime:      lifetime,
 	})
 	if err != nil {
 		return err
@@ -422,12 +429,14 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve member address %s: %w", member, err)
 	}
 
-	// Sign certificate
+	// Sign certificate — include the member's stable identity from awid
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:  teamAddress,
-		MemberDIDKey: address.CurrentDIDKey,
-		Alias:        memberName,
-		Lifetime:     awid.LifetimePersistent,
+		TeamAddress:   teamAddress,
+		MemberDIDKey:  address.CurrentDIDKey,
+		MemberDIDAW:   address.DIDAW,
+		MemberAddress: member,
+		Alias:         memberName,
+		Lifetime:      awid.LifetimePersistent,
 	})
 	if err != nil {
 		return err
@@ -526,6 +535,8 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		TeamAddress:   cert.TeamAddress,
 		Alias:         cert.Alias,
 		MemberDIDKey:  cert.MemberDIDKey,
+		MemberDIDAW:   cert.MemberDIDAW,
+		MemberAddress: cert.MemberAddress,
 		TeamDIDKey:    cert.TeamDIDKey,
 		Lifetime:      cert.Lifetime,
 		IssuedAt:      cert.IssuedAt,
@@ -564,6 +575,17 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 		return "", err
 	}
 	return awid.ComputeDIDKey(pub), nil
+}
+
+// resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
+// Returns empty strings for ephemeral agents that have no identity.yaml.
+func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
+	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address)
 }
 
 func resolveAliasFromIdentity(workingDir string) string {

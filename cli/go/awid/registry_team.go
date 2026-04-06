@@ -34,15 +34,15 @@ type teamCreateRequest struct {
 	TeamDIDKey  string `json:"team_did_key"`
 }
 
+// certificateRegisterRequest sends only issuance metadata to awid.
+// The full certificate (including signature and team_did_key) stays with the agent.
 type certificateRegisterRequest struct {
 	CertificateID string `json:"certificate_id"`
-	TeamAddress   string `json:"team_address"`
-	TeamDIDKey    string `json:"team_did_key"`
 	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
 	Lifetime      string `json:"lifetime"`
-	IssuedAt      string `json:"issued_at"`
-	Signature     string `json:"signature"`
 }
 
 type certificateRevokeRequest struct {
@@ -146,13 +146,11 @@ func (c *RegistryClient) RegisterCertificate(
 		}),
 		certificateRegisterRequest{
 			CertificateID: cert.CertificateID,
-			TeamAddress:   cert.TeamAddress,
-			TeamDIDKey:    cert.TeamDIDKey,
 			MemberDIDKey:  cert.MemberDIDKey,
+			MemberDIDAW:   cert.MemberDIDAW,
+			MemberAddress: cert.MemberAddress,
 			Alias:         cert.Alias,
 			Lifetime:      cert.Lifetime,
-			IssuedAt:      cert.IssuedAt,
-			Signature:     cert.Signature,
 		},
 		nil,
 	)
