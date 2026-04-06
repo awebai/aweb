@@ -1,7 +1,7 @@
 """POST /v1/connect — agent auto-provisioning via team certificate.
 
-Called by `aw init`. Replaces bootstrap_identity, init, and spawn flows.
-Auto-provisions team and agent rows from the certificate, creates a workspace.
+Called by `aw init`. Auto-provisions team and agent rows from the
+verified certificate, creates or updates a workspace.
 """
 
 from __future__ import annotations
@@ -9,7 +9,40 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from fastapi import APIRouter
 from pgdbm import AsyncDatabaseManager
+from pydantic import BaseModel, Field
+
+from aweb.coordination.routes.repos import canonicalize_git_url
+
+router = APIRouter(prefix="/v1", tags=["connect"])
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class ConnectRequest(BaseModel):
+    hostname: str = Field(default="", max_length=256)
+    workspace_path: str = Field(default="", max_length=1024)
+    repo_origin: str = Field(default="", max_length=1024)
+    role: str = Field(default="", max_length=50)
+    human_name: str = Field(default="", max_length=64)
+    agent_type: str = Field(default="agent", max_length=32)
+
+
+class ConnectResponse(BaseModel):
+    team_address: str
+    alias: str
+    agent_id: str
+    workspace_id: str
+    role: str
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _parse_team_address(team_address: str) -> tuple[str, str]:
@@ -26,13 +59,6 @@ async def _ensure_team(
     team_did_key: str,
 ) -> None:
     """Create the team row if it doesn't exist."""
-    existing = await db.fetch_one(
-        "SELECT team_address FROM {{tables.teams}} WHERE team_address = $1",
-        team_address,
-    )
-    if existing:
-        return
-
     namespace, team_name = _parse_team_address(team_address)
     await db.execute(
         """
@@ -58,23 +84,13 @@ async def _ensure_agent(
     role: str,
 ) -> str:
     """Find or create the agent row. Returns agent_id as string."""
-    existing = await db.fetch_one(
-        """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
-        """,
-        team_address,
-        did_key,
-    )
-    if existing:
-        return str(existing["agent_id"])
-
     agent_id = uuid.uuid4()
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_address, did_key, alias, lifetime, human_name, agent_type, role)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (team_address, alias) DO NOTHING
         """,
         agent_id,
         team_address,
@@ -85,7 +101,16 @@ async def _ensure_agent(
         agent_type,
         role,
     )
-    return str(agent_id)
+    # Re-fetch to get the authoritative agent_id (may have been a no-op)
+    row = await db.fetch_one(
+        """
+        SELECT agent_id FROM {{tables.agents}}
+        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        """,
+        team_address,
+        did_key,
+    )
+    return str(row["agent_id"])
 
 
 async def _ensure_workspace(
@@ -102,7 +127,7 @@ async def _ensure_workspace(
     """Find or create a workspace row. Returns workspace_id as string.
 
     On reconnect (same team_address + alias), updates the existing workspace
-    with fresh hostname/path/role info.
+    with fresh hostname/path/role/agent_id info.
     """
     repo_id = None
     if repo_origin:
@@ -125,25 +150,37 @@ async def _ensure_workspace(
             UPDATE {{tables.workspaces}}
             SET hostname = $1, workspace_path = $2, role = $3,
                 human_name = $4, repo_id = COALESCE($5, repo_id),
-                last_seen_at = NOW(), updated_at = NOW()
-            WHERE workspace_id = $6
+                agent_id = $6, last_seen_at = NOW(), updated_at = NOW()
+            WHERE workspace_id = $7
             """,
             hostname,
             workspace_path,
             role,
             human_name,
             repo_id,
+            uuid.UUID(agent_id),
             workspace_id,
         )
         return str(workspace_id)
 
     workspace_id = uuid.uuid4()
+    workspace_type = "agent" if repo_origin else "manual"
     await db.execute(
         """
         INSERT INTO {{tables.workspaces}}
             (workspace_id, team_address, agent_id, repo_id, alias, human_name,
              role, hostname, workspace_path, workspace_type)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (team_address, alias) WHERE deleted_at IS NULL DO UPDATE SET
+            hostname = EXCLUDED.hostname,
+            workspace_path = EXCLUDED.workspace_path,
+            role = EXCLUDED.role,
+            human_name = EXCLUDED.human_name,
+            repo_id = COALESCE(EXCLUDED.repo_id, {{tables.workspaces}}.repo_id),
+            agent_id = EXCLUDED.agent_id,
+            last_seen_at = NOW(),
+            updated_at = NOW()
+        RETURNING workspace_id
         """,
         workspace_id,
         team_address,
@@ -154,9 +191,18 @@ async def _ensure_workspace(
         role,
         hostname,
         workspace_path,
-        "agent" if repo_origin else "manual",
+        workspace_type,
     )
-    return str(workspace_id)
+    # Re-fetch in case of upsert
+    row = await db.fetch_one(
+        """
+        SELECT workspace_id FROM {{tables.workspaces}}
+        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        """,
+        team_address,
+        alias,
+    )
+    return str(row["workspace_id"])
 
 
 async def _ensure_repo(
@@ -165,20 +211,10 @@ async def _ensure_repo(
     repo_origin: str,
 ) -> uuid.UUID:
     """Find or create a repo row. Returns repo id."""
-    canonical = _canonicalize_origin(repo_origin)
-    existing = await db.fetch_one(
-        """
-        SELECT id FROM {{tables.repos}}
-        WHERE team_address = $1 AND canonical_origin = $2 AND deleted_at IS NULL
-        """,
-        team_address,
-        canonical,
-    )
-    if existing:
-        return existing["id"]
+    canonical = canonicalize_git_url(repo_origin)
+    name = canonical.rsplit("/", 1)[-1] if "/" in canonical else canonical
 
     repo_id = uuid.uuid4()
-    name = canonical.rsplit("/", 1)[-1] if "/" in canonical else canonical
     await db.execute(
         """
         INSERT INTO {{tables.repos}} (id, team_address, origin_url, canonical_origin, name)
@@ -191,26 +227,20 @@ async def _ensure_repo(
         canonical,
         name,
     )
-    # Re-fetch in case of race (ON CONFLICT DO NOTHING)
     row = await db.fetch_one(
-        "SELECT id FROM {{tables.repos}} WHERE team_address = $1 AND canonical_origin = $2",
+        """
+        SELECT id FROM {{tables.repos}}
+        WHERE team_address = $1 AND canonical_origin = $2 AND deleted_at IS NULL
+        """,
         team_address,
         canonical,
     )
     return row["id"]
 
 
-def _canonicalize_origin(url: str) -> str:
-    """Normalize a git remote URL to a canonical form."""
-    url = url.strip()
-    for prefix in ("https://", "http://", "git@", "ssh://"):
-        if url.startswith(prefix):
-            url = url[len(prefix):]
-            break
-    url = url.replace(":", "/", 1) if ":" in url and "/" not in url.split(":")[0] else url
-    if url.endswith(".git"):
-        url = url[:-4]
-    return url.rstrip("/")
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 async def connect_agent(

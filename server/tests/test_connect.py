@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
-from datetime import datetime, timezone
 
 import pytest
-import pytest_asyncio
 
 from nacl.signing import SigningKey
 
 from aweb.awid.did import did_from_public_key
-from aweb.awid.signing import canonical_json_bytes, sign_message
 
 
 # ---------------------------------------------------------------------------
@@ -25,50 +20,6 @@ def _make_keypair():
     pk = bytes(sk.verify_key)
     did_key = did_from_public_key(pk)
     return bytes(sk), pk, did_key
-
-
-def _make_certificate(
-    team_sk: bytes,
-    team_did_key: str,
-    member_did_key: str,
-    *,
-    team_address: str = "acme.com/backend",
-    alias: str = "alice",
-    lifetime: str = "permanent",
-    certificate_id: str = "cert-001",
-):
-    cert = {
-        "version": 1,
-        "certificate_id": certificate_id,
-        "team": team_address,
-        "team_did_key": team_did_key,
-        "member_did_key": member_did_key,
-        "member_did_aw": "",
-        "member_address": "",
-        "alias": alias,
-        "lifetime": lifetime,
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-    }
-    payload = canonical_json_bytes(cert)
-    sig = sign_message(team_sk, payload)
-    cert["signature"] = sig
-    return cert
-
-
-def _encode_certificate(cert: dict) -> str:
-    return base64.b64encode(json.dumps(cert).encode()).decode()
-
-
-def _sign_request_headers(agent_sk: bytes, agent_did_key: str, body: dict):
-    """Build auth headers for a DIDKey-signed request."""
-    timestamp = datetime.now(timezone.utc).isoformat()
-    payload = body | {"timestamp": timestamp}
-    payload_bytes = canonical_json_bytes(payload)
-    sig = sign_message(agent_sk, payload_bytes)
-    return {
-        "Authorization": f"DIDKey {agent_did_key} {sig}",
-        "X-AWEB-Timestamp": timestamp,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +51,7 @@ class TestConnect:
             team_did_key=team_did_key,
             hostname="Mac.local",
             workspace_path="/Users/alice/project",
-            repo_origin="github.com/acme/backend",
+            repo_origin="https://github.com/acme/backend.git",
             role="developer",
             human_name="Alice",
             agent_type="agent",
@@ -164,9 +115,9 @@ class TestConnect:
         result1 = await connect_agent(**kwargs)
         result2 = await connect_agent(**kwargs)
 
-        # Same agent, same team, different workspace
         assert result1["agent_id"] == result2["agent_id"]
         assert result1["team_address"] == result2["team_address"]
+        assert result1["workspace_id"] == result2["workspace_id"]
 
     @pytest.mark.asyncio
     async def test_team_address_parsed_correctly(self, aweb_cloud_db):
