@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
 _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
+_TEAM_KEY_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+_TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
@@ -804,6 +806,25 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: [_address_from_json(item) for item in payload],
         )
 
+    async def get_team_public_key(self, domain: str, name: str) -> str | None:
+        return await self._cached_read(
+            cache_key=self._team_key_cache_key(domain, name),
+            ttl_seconds=_TEAM_KEY_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).get_team_public_key(domain, name),
+            encode=lambda value: value,
+            decode=lambda payload: payload,
+        )
+
+    async def get_team_revocations(self, domain: str, name: str) -> set[str]:
+        result = await self._cached_read(
+            cache_key=self._team_revocations_cache_key(domain, name),
+            ttl_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).get_team_revocations(domain, name),
+            encode=lambda value: sorted(value),
+            decode=lambda payload: set(payload),
+        )
+        return result if isinstance(result, set) else set()
+
     async def register_did(
         self,
         did_key: str,
@@ -1114,6 +1135,12 @@ class CachedRegistryClient(RegistryClient):
 
     def _address_cache_key(self, domain: str, name: str, *, registry_url: str) -> str:
         return f"awid:registry_cache:v1:address:{registry_url}:{domain}:{name}"
+
+    def _team_key_cache_key(self, domain: str, name: str) -> str:
+        return f"awid:registry_cache:v1:team_key:{self.registry_url}:{domain}/{name}"
+
+    def _team_revocations_cache_key(self, domain: str, name: str) -> str:
+        return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
 
 
 def _utc_timestamp() -> str:
