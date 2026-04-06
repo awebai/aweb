@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from pgdbm import AsyncDatabaseManager
 from pgdbm.migrations import AsyncMigrationManager
 
-import aweb
 from awid_service.migrate import migrate_from_aweb
 
 
 async def _prepare_source_schema(shared_test_pool, *, module_name: str) -> AsyncDatabaseManager:
     source = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
     await source.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
-    aweb_path = __import__("pathlib").Path(aweb.__file__).resolve().parent
     migrations = AsyncMigrationManager(
         source,
-        migrations_path=str(aweb_path / "migrations" / "aweb"),
+        migrations_path=str(Path(__file__).resolve().parent / "fixtures" / "legacy_aweb_migrations"),
         module_name=module_name,
         migrations_table="schema_migrations",
     )
