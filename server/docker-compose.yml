@@ -39,6 +39,8 @@ services:
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
       AWEB_CUSTODY_KEY: ${AWEB_CUSTODY_KEY:-}
       AWEB_MANAGED_DOMAIN: ${AWEB_MANAGED_DOMAIN:-}
+      # AWID_REGISTRY_URL: https://api.awid.ai
+      # AWEB_NAMESPACE_CONTROLLER_KEY: 64-char hex Ed25519 seed for managed namespace registration
     depends_on:
       redis:
         condition: service_healthy
