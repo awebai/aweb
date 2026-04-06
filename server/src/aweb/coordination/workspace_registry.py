@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional
-from uuid import UUID
 
 from redis.asyncio import Redis
 
@@ -12,23 +11,23 @@ from .routes.repos import canonicalize_git_url, extract_repo_name
 
 async def ensure_repo(
     db: DatabaseInfra,
-    project_id: UUID,
+    team_address: str,
     origin_url: str,
-) -> UUID:
-    """Ensure a repo exists for the given project and origin."""
+) -> str:
+    """Ensure a repo exists for the given team and origin."""
     canonical_origin = canonicalize_git_url(origin_url)
     repo_name = extract_repo_name(canonical_origin)
 
-    server_db = db.get_manager("server")
-    result = await server_db.fetch_one(
+    aweb_db = db.get_manager("aweb")
+    result = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.repos}} (project_id, origin_url, canonical_origin, name)
+        INSERT INTO {{tables.repos}} (team_address, origin_url, canonical_origin, name)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (project_id, canonical_origin)
+        ON CONFLICT (team_address, canonical_origin)
         DO UPDATE SET origin_url = EXCLUDED.origin_url, deleted_at = NULL
         RETURNING id
         """,
-        project_id,
+        team_address,
         origin_url,
         canonical_origin,
         repo_name,
@@ -39,8 +38,8 @@ async def ensure_repo(
 async def upsert_workspace(
     db: DatabaseInfra,
     workspace_id: str,
-    project_id: UUID,
-    repo_id: UUID,
+    team_address: str,
+    repo_id: str,
     alias: str,
     human_name: str,
     role: Optional[str] = None,
@@ -48,10 +47,10 @@ async def upsert_workspace(
     workspace_path: Optional[str] = None,
 ) -> None:
     """Upsert a workspace into the persistent registry."""
-    server_db = db.get_manager("server")
-    await server_db.execute(
+    aweb_db = db.get_manager("aweb")
+    await aweb_db.execute(
         """
-        INSERT INTO {{tables.workspaces}} (workspace_id, project_id, repo_id, alias, human_name, role, hostname, workspace_path, last_seen_at)
+        INSERT INTO {{tables.workspaces}} (workspace_id, team_address, repo_id, alias, human_name, role, hostname, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         ON CONFLICT (workspace_id) DO UPDATE SET
             repo_id = COALESCE({{tables.workspaces}}.repo_id, EXCLUDED.repo_id),
@@ -69,7 +68,7 @@ async def upsert_workspace(
             updated_at = NOW()
         """,
         workspace_id,
-        project_id,
+        team_address,
         repo_id,
         alias,
         human_name,
@@ -82,42 +81,42 @@ async def upsert_workspace(
 async def check_alias_collision(
     db: DatabaseInfra,
     redis: Redis,
-    project_id: UUID,
+    team_address: str,
     workspace_id: str,
     alias: str,
 ) -> Optional[str]:
-    """Check if an alias is already used by another workspace in the project."""
-    server_db = db.get_manager("server")
+    """Check if an alias is already used by another workspace in the team."""
+    aweb_db = db.get_manager("aweb")
 
-    row = await server_db.fetch_one(
+    row = await aweb_db.fetch_one(
         """
         SELECT workspace_id
         FROM {{tables.workspaces}}
-        WHERE project_id = $1 AND alias = $2 AND workspace_id != $3 AND deleted_at IS NULL
+        WHERE team_address = $1 AND alias = $2 AND workspace_id != $3 AND deleted_at IS NULL
         LIMIT 1
         """,
-        project_id,
+        team_address,
         alias,
-        UUID(workspace_id),
+        workspace_id,
     )
     if row:
         return str(row["workspace_id"])
 
-    row = await server_db.fetch_one(
+    row = await aweb_db.fetch_one(
         """
         SELECT DISTINCT workspace_id
         FROM {{tables.task_claims}}
-        WHERE project_id = $1 AND alias = $2 AND workspace_id != $3
+        WHERE team_address = $1 AND alias = $2 AND workspace_id != $3
         LIMIT 1
         """,
-        project_id,
+        team_address,
         alias,
-        UUID(workspace_id),
+        workspace_id,
     )
     if row:
         return str(row["workspace_id"])
 
-    colliding_workspace = await get_workspace_id_by_alias(redis, str(project_id), alias)
+    colliding_workspace = await get_workspace_id_by_alias(redis, team_address, alias)
     if colliding_workspace and colliding_workspace != workspace_id:
         return colliding_workspace
 

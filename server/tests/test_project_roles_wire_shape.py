@@ -40,7 +40,7 @@ def test_active_project_roles_response_uses_project_roles_ids():
     response = ActiveProjectRolesResponse(
         project_roles_id="550e8400-e29b-41d4-a716-446655440000",
         active_project_roles_id="550e8400-e29b-41d4-a716-446655440000",
-        project_id="660e8400-e29b-41d4-a716-446655440000",
+        team_address="acme.com/backend",
         version=3,
         updated_at="2026-01-01T00:00:00Z",
         roles={"developer": {"title": "Developer", "playbook_md": "Ship code"}},
@@ -63,7 +63,7 @@ def test_project_roles_history_response_emits_project_roles_versions():
         project_roles_id="550e8400-e29b-41d4-a716-446655440000",
         version=2,
         created_at="2026-01-01T00:00:00Z",
-        created_by_workspace_id=None,
+        created_by_alias="alice",
         is_active=True,
     )
     response = ProjectRolesHistoryResponse(project_roles_versions=[item])
@@ -105,7 +105,7 @@ def test_active_project_instructions_response_uses_project_instruction_ids():
     response = ActiveProjectInstructionsResponse(
         project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
         active_project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
-        project_id="660e8400-e29b-41d4-a716-446655440000",
+        team_address="acme.com/backend",
         version=2,
         updated_at="2026-01-01T00:00:00Z",
         document={"body_md": "Use aw", "format": "markdown"},
@@ -123,7 +123,7 @@ def test_project_instructions_history_response_emits_instruction_versions():
         project_instructions_id="770e8400-e29b-41d4-a716-446655440000",
         version=2,
         created_at="2026-01-01T00:00:00Z",
-        created_by_workspace_id=None,
+        created_by_alias="alice",
         is_active=True,
     )
     response = ProjectInstructionsHistoryResponse(project_instructions_versions=[item])

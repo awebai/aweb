@@ -109,22 +109,16 @@ async def _cascade_agent_deleted(
     if not agent_id:
         return
 
-    try:
-        agent_uuid = UUID(agent_id)
-    except ValueError:
-        logger.warning("agent.deleted event has non-UUID agent_id: %r", agent_id)
-        return
-
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
     # Check if a workspace exists for this agent (workspace_id = agent_id)
-    workspace = await server_db.fetch_one(
+    workspace = await aweb_db.fetch_one(
         """
         SELECT workspace_id, alias
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND deleted_at IS NULL
         """,
-        agent_uuid,
+        agent_id,
     )
     if workspace is None:
         return
@@ -132,14 +126,14 @@ async def _cascade_agent_deleted(
     alias = workspace["alias"]
 
     # Soft-delete the workspace and capture claimed tasks before releasing
-    async with server_db.transaction() as tx:
+    async with aweb_db.transaction() as tx:
         await tx.execute(
             """
             UPDATE {{tables.workspaces}}
             SET deleted_at = NOW()
             WHERE workspace_id = $1
             """,
-            agent_uuid,
+            agent_id,
         )
         claimed_rows = await tx.fetch_all(
             """
@@ -147,7 +141,7 @@ async def _cascade_agent_deleted(
             WHERE workspace_id = $1
             RETURNING task_ref
             """,
-            agent_uuid,
+            agent_id,
         )
 
     # Publish unclaim events for each released task claim
@@ -192,26 +186,20 @@ async def _cascade_task_status_changed(
     if not actor_id or not task_ref:
         return
 
-    try:
-        actor_uuid = UUID(actor_id)
-    except ValueError:
-        logger.warning("task.status_changed has non-UUID actor_agent_id: %r", actor_id)
-        return
-
-    server_db = db_infra.get_manager("server")
-    workspace = await server_db.fetch_one(
+    aweb_db = db_infra.get_manager("aweb")
+    workspace = await aweb_db.fetch_one(
         """
-        SELECT project_id, alias, human_name
+        SELECT team_address, alias, human_name
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND deleted_at IS NULL
         """,
-        actor_uuid,
+        actor_id,
     )
     if workspace is None:
         logger.warning("task.status_changed: no workspace for actor %s", actor_id)
         return
 
-    project_id = str(workspace["project_id"])
+    team_address = str(workspace["team_address"])
     alias = workspace["alias"]
     project_slug = await get_workspace_project_slug(redis, actor_id)
 
@@ -219,7 +207,7 @@ async def _cascade_task_status_changed(
         if not claim_preacquired:
             conflict = await upsert_claim(
                 db_infra,
-                project_id=project_id,
+                team_address=team_address,
                 workspace_id=actor_id,
                 alias=alias,
                 human_name=workspace["human_name"] or "",
@@ -244,11 +232,11 @@ async def _cascade_task_status_changed(
     else:
         claimant_ids = await release_task_claims(
             db_infra,
-            project_id=project_id,
+            team_address=team_address,
             task_ref=task_ref,
         )
         if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, project_id, claimant_ids)
+            claimant_aliases = await fetch_workspace_aliases(db_infra, team_address, claimant_ids)
             for cid in claimant_ids:
                 await publish_event(
                     redis,
@@ -266,7 +254,7 @@ async def _cascade_task_status_changed(
         TaskStatusChangedEvent(
             workspace_id=actor_id,
             project_slug=project_slug,
-            project_id=project_id,
+            team_address=team_address,
             task_ref=task_ref,
             old_status=context.get("old_status", "") or "",
             new_status=new_status,
@@ -288,22 +276,22 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
     if not task_id or not task_ref:
         return
 
-    server_db = db_infra.get_manager("server")
-    task_row = await server_db.fetch_one(
-        "SELECT project_id FROM {{tables.tasks}} WHERE task_id = $1",
-        UUID(task_id),
+    aweb_db = db_infra.get_manager("aweb")
+    task_row = await aweb_db.fetch_one(
+        "SELECT team_address FROM {{tables.tasks}} WHERE task_id = $1",
+        task_id,
     )
     if task_row is None:
         return
 
-    project_id = str(task_row["project_id"])
+    team_address = str(task_row["team_address"])
     claimant_ids = await release_task_claims(
         db_infra,
-        project_id=project_id,
+        team_address=team_address,
         task_ref=task_ref,
     )
     if claimant_ids:
-        claimant_aliases = await fetch_workspace_aliases(db_infra, project_id, claimant_ids)
+        claimant_aliases = await fetch_workspace_aliases(db_infra, team_address, claimant_ids)
         for cid in claimant_ids:
             project_slug = await get_workspace_project_slug(redis, cid)
             await publish_event(
@@ -367,14 +355,14 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
         event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
     elif isinstance(event, TaskCreatedEvent):
-        server_db = db_infra.get_manager("server")
-        workspace = await server_db.fetch_one(
+        aweb_db = db_infra.get_manager("aweb")
+        workspace = await aweb_db.fetch_one(
             """
             SELECT alias
             FROM {{tables.workspaces}}
             WHERE workspace_id = $1 AND deleted_at IS NULL
             """,
-            UUID(event.workspace_id),
+            event.workspace_id,
         )
         if workspace and workspace.get("alias"):
             event.alias = workspace["alias"]
@@ -414,7 +402,7 @@ def _translate(event_type: str, ctx: dict):
     if event_type == "task.created":
         return TaskCreatedEvent(
             workspace_id=ctx.get("actor_agent_id", ""),
-            project_id=ctx.get("project_id", ""),
+            team_address=ctx.get("team_address", ""),
             task_ref=ctx.get("task_ref", ""),
             title=ctx.get("title"),
         )

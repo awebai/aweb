@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 from typing import Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from aweb.deps import get_db, get_redis
 from aweb.team_auth_deps import get_team_identity
 
-from ..presence import update_agent_presence
+from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
@@ -118,8 +118,6 @@ async def list_agents(
 
     # Presence from Redis
     agent_ids = [str(r["agent_id"]) for r in rows]
-    from ..presence import list_agent_presences_by_workspace_ids
-
     presences = await list_agent_presences_by_workspace_ids(redis, agent_ids) if agent_ids else []
     presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
 
@@ -234,20 +232,18 @@ async def patch_agent_workspace(
     new_path = payload.workspace_path if payload.workspace_path is not None else row["workspace_path"]
     new_role = payload.role if payload.role is not None else row["role"]
     new_human_name = payload.human_name if payload.human_name is not None else row["human_name"]
-    new_branch = payload.current_branch if payload.current_branch is not None else row["current_branch"]
 
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
         SET hostname = $1, workspace_path = $2, role = $3,
-            human_name = $4, current_branch = $5, updated_at = NOW()
-        WHERE workspace_id = $6
+            human_name = $4, updated_at = NOW()
+        WHERE workspace_id = $5
         """,
         new_hostname,
         new_path,
         new_role,
         new_human_name,
-        new_branch,
         row["workspace_id"],
     )
 
@@ -258,7 +254,6 @@ async def patch_agent_workspace(
         workspace_path=new_path,
         role=new_role,
         human_name=new_human_name,
-        current_branch=new_branch,
     )
 
 
@@ -283,8 +278,6 @@ async def send_control_signal(
     )
     if not target:
         raise HTTPException(status_code=404, detail="Agent not found")
-
-    from uuid import UUID
 
     result = await aweb_db.fetch_one(
         """

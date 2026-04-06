@@ -14,7 +14,7 @@ from aweb.awid.replacement import get_sender_delivery_metadata
 from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.mcp.auth import get_auth
 from aweb.messaging.contacts import check_access, get_contact_addresses, is_address_in_contacts
-from aweb.messaging.messages import MessagePriority, deliver_message, get_agent_row
+from aweb.messaging.messages import MessagePriority, deliver_message, get_agent_by_id as get_agent_row
 from aweb.messaging.messages import utc_iso as _utc_iso
 from aweb.messaging.rotation import acknowledge_rotation, get_pending_announcements
 from aweb.service_errors import ServiceError
