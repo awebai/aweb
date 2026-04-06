@@ -1,25 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
-from aweb.awid import sign_message
 from aweb.awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
-from aweb.awid.signing import canonical_json_bytes
 
-
-def _sign(signing_key, did_key, *, domain, operation, **extra):
-    """Build Authorization header and timestamp for a signed request."""
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    payload = {"domain": domain, "operation": operation, "timestamp": ts}
-    payload.update(extra)
-    sig = sign_message(signing_key, canonical_json_bytes(payload))
-    return {
-        "Authorization": f"DIDKey {did_key} {sig}",
-        "X-AWEB-Timestamp": ts,
-    }
+from conftest import build_signed_headers as _sign
 
 
 async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_name):

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pgdbm import AsyncDatabaseManager
 
+from aweb.awid import sign_message
 from aweb.awid.did import did_from_public_key, generate_keypair
+from aweb.awid.signing import canonical_json_bytes
 from aweb.db_config import build_database_config
 from aweb.deps import get_domain_verifier
 from aweb.dns_verify import DomainAuthority
@@ -100,3 +103,15 @@ async def client(awid_db_infra, fake_redis, fake_domain_verifier):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
             yield test_client
+
+
+def build_signed_headers(signing_key, did_key, *, domain, operation, **extra):
+    """Build DIDKey Authorization + Timestamp headers for a signed request."""
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = {"domain": domain, "operation": operation, "timestamp": ts}
+    payload.update(extra)
+    sig = sign_message(signing_key, canonical_json_bytes(payload))
+    return {
+        "Authorization": f"DIDKey {did_key} {sig}",
+        "X-AWEB-Timestamp": ts,
+    }
