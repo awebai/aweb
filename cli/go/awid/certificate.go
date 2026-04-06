@@ -52,7 +52,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		return nil, fmt.Errorf("lifetime is required")
 	}
 
-	certID, err := generateUUID4()
+	certID, err := GenerateUUID4()
 	if err != nil {
 		return nil, err
 	}

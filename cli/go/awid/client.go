@@ -43,7 +43,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	env.FromDID = c.did
 	env.FromStableID = c.stableID
 	env.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	msgID, err := generateUUID4()
+	msgID, err := GenerateUUID4()
 	if err != nil {
 		return signedFields{}, err
 	}
