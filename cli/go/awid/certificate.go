@@ -17,7 +17,7 @@ import (
 type TeamCertificate struct {
 	Version       int    `json:"version"`
 	CertificateID string `json:"certificate_id"`
-	TeamAddress   string `json:"team_address"`
+	Team          string `json:"team"`
 	TeamDIDKey    string `json:"team_did_key"`
 	MemberDIDKey  string `json:"member_did_key"`
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
@@ -30,7 +30,7 @@ type TeamCertificate struct {
 
 // TeamCertificateFields are the inputs for signing a certificate.
 type TeamCertificateFields struct {
-	TeamAddress   string
+	Team          string // team address (e.g. "acme.com/backend")
 	MemberDIDKey  string
 	MemberDIDAW   string // optional; from identity.yaml, empty for ephemeral
 	MemberAddress string // optional; from identity.yaml, empty for ephemeral
@@ -44,7 +44,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	if teamKey == nil {
 		return nil, fmt.Errorf("team signing key is required")
 	}
-	if strings.TrimSpace(fields.TeamAddress) == "" {
+	if strings.TrimSpace(fields.Team) == "" {
 		return nil, fmt.Errorf("team_address is required")
 	}
 	if strings.TrimSpace(fields.MemberDIDKey) == "" {
@@ -67,13 +67,13 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	memberDIDAW := strings.TrimSpace(fields.MemberDIDAW)
 	memberAddress := strings.TrimSpace(fields.MemberAddress)
 
-	payload := canonicalCertificatePayload(certID, fields.TeamAddress, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, fields.Lifetime, issuedAt)
+	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, fields.Lifetime, issuedAt)
 	sig := ed25519.Sign(teamKey, []byte(payload))
 
 	return &TeamCertificate{
 		Version:       1,
 		CertificateID: certID,
-		TeamAddress:   fields.TeamAddress,
+		Team:          fields.Team,
 		TeamDIDKey:    teamDIDKey,
 		MemberDIDKey:  fields.MemberDIDKey,
 		MemberDIDAW:   memberDIDAW,
@@ -102,7 +102,7 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 
 	payload := canonicalCertificatePayload(
 		cert.CertificateID,
-		cert.TeamAddress,
+		cert.Team,
 		cert.TeamDIDKey,
 		cert.MemberDIDKey,
 		cert.MemberDIDAW,
@@ -168,7 +168,7 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 // canonicalCertificatePayload builds the canonical JSON for certificate signing.
 // All fields are included in the signed payload to bind the full membership identity.
 // Uses sorted-key map pattern consistent with canonicalRegistryJSON.
-func canonicalCertificatePayload(certID, teamAddress, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, lifetime, issuedAt string) string {
+func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, lifetime, issuedAt string) string {
 	fields := map[string]string{
 		"alias":          alias,
 		"certificate_id": certID,
@@ -177,7 +177,7 @@ func canonicalCertificatePayload(certID, teamAddress, teamDIDKey, memberDIDKey, 
 		"member_address": memberAddress,
 		"member_did_aw":  memberDIDAW,
 		"member_did_key": memberDIDKey,
-		"team_address":   teamAddress,
+		"team":           team,
 		"team_did_key":   teamDIDKey,
 		"version":        "1",
 	}

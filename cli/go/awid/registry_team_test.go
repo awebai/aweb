@@ -106,7 +106,7 @@ func TestRegisterCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		TeamAddress:  "acme.com/backend",
+		Team:  "acme.com/backend",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,

@@ -30,7 +30,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 
 	// Sign a certificate for the member
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:  "acme.com/backend",
+		Team:         "acme.com/backend",
 		MemberDIDKey: memberDIDKey,
 		Alias:        "alice",
 		Lifetime:     awid.LifetimePersistent,
@@ -195,7 +195,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	_ = teamPub
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:  "acme.com/backend",
+		Team:         "acme.com/backend",
 		MemberDIDKey: awid.ComputeDIDKey(memberPub),
 		Alias:        "bob",
 		Lifetime:     awid.LifetimeEphemeral,

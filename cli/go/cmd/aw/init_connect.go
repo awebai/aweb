@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,12 +132,14 @@ func postConnect(ctx context.Context, serverURL string, signingKey ed25519.Priva
 		return nil, err
 	}
 
-	// DIDKey signature over timestamp+method+path
+	// DIDKey signature over canonical_json(body | {timestamp})
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	payload := timestamp + "\n" + http.MethodPost + "\n" + "/v1/connect"
-	sig := ed25519.Sign(signingKey, []byte(payload))
-	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", did, base64.RawStdEncoding.EncodeToString(sig)))
+	_, signature, _, err := awid.SignArbitraryPayload(signingKey, bodyToSignableMap(body), timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("sign connect request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", did, signature))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
 
 	// Team certificate header
@@ -204,6 +205,19 @@ func canonicalizeGitOrigin(origin string) string {
 		}
 	}
 	return origin
+}
+
+// bodyToSignableMap converts a struct to map[string]any for signing.
+func bodyToSignableMap(v any) map[string]any {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(data, &m) != nil {
+		return nil
+	}
+	return m
 }
 
 func formatConnect(v any) string {

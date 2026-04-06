@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -658,10 +659,10 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	}
 	req.Header.Set("Accept", accept)
 	if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: DIDKey signature + team certificate
+		// Certificate auth: DIDKey signature over canonical_json(body | {timestamp})
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		payload := timestamp + "\n" + method + "\n" + path
-		sig := ed25519.Sign(c.signingKey, []byte(payload))
+		signPayload := buildCertAuthSignPayload(in, timestamp)
+		sig := ed25519.Sign(c.signingKey, []byte(signPayload))
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
@@ -677,4 +678,51 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		c.latestClientVersion.Store(v)
 	}
 	return resp, nil
+}
+
+// buildCertAuthSignPayload builds the canonical JSON payload for DIDKey
+// certificate auth: the request body merged with a timestamp field.
+// For requests with no body, signs {"timestamp":"..."}.
+func buildCertAuthSignPayload(body any, timestamp string) string {
+	fields := map[string]any{"timestamp": timestamp}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err == nil {
+			var bodyFields map[string]any
+			if json.Unmarshal(data, &bodyFields) == nil {
+				for k, v := range bodyFields {
+					fields[k] = v
+				}
+			}
+		}
+	}
+	canonical, _ := json.Marshal(fields)
+	// Re-marshal through sorted keys for deterministic output
+	var parsed map[string]any
+	_ = json.Unmarshal(canonical, &parsed)
+	sorted, _ := canonicalJSONBytes(parsed)
+	return string(sorted)
+}
+
+// canonicalJSONBytes produces canonical JSON: sorted keys, no extra whitespace.
+func canonicalJSONBytes(v map[string]any) ([]byte, error) {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(k)
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, _ := json.Marshal(v[k])
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }

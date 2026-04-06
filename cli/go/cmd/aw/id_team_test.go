@@ -246,8 +246,8 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.TeamAddress != "acme.com/backend" {
-		t.Fatalf("cert team_address=%q", cert.TeamAddress)
+	if cert.Team != "acme.com/backend" {
+		t.Fatalf("cert team_address=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
 		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, memberDIDKey)
@@ -438,7 +438,7 @@ func TestCertShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:  "acme.com/backend",
+		Team:         "acme.com/backend",
 		MemberDIDKey: awid.ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     awid.LifetimePersistent,

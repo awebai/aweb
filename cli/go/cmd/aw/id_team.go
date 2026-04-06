@@ -345,7 +345,7 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 
 	// Sign certificate
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:   teamAddress,
+		Team:          teamAddress,
 		MemberDIDKey:  memberDIDKey,
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
@@ -431,7 +431,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 
 	// Sign certificate — include the member's stable identity from awid
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		TeamAddress:   teamAddress,
+		Team:          teamAddress,
 		MemberDIDKey:  address.CurrentDIDKey,
 		MemberDIDAW:   address.DIDAW,
 		MemberAddress: member,
@@ -532,7 +532,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 	}
 
 	printOutput(certShowOutput{
-		TeamAddress:   cert.TeamAddress,
+		TeamAddress:   cert.Team,
 		Alias:         cert.Alias,
 		MemberDIDKey:  cert.MemberDIDKey,
 		MemberDIDAW:   cert.MemberDIDAW,
