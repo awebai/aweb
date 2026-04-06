@@ -7,16 +7,19 @@ the implementation spec.
 
 ## Principles
 
-1. **awid is the identity registry.** DIDs, namespaces, addresses,
-   audit log. This exists today and does not change.
-2. **Teams are named groups within namespaces.** A team has a public
-   key. That's all awid stores about a team.
-3. **Membership lives in certificates, not in awid.** The team
-   controller signs certificates for members. Agents carry their
-   certificates. awid has no members table.
-4. **Revocation is a lightweight list.** When a member is removed,
-   the team controller posts a revocation entry. Services cache the
-   revocation list.
+1. **awid is a public identity registry.** It stores public data:
+   DIDs, namespaces, addresses, team public keys, certificate records.
+   It never holds private keys or signs on behalf of anyone.
+2. **Teams are named groups within namespaces.** A team has a name,
+   display name, and public key. awid stores these and the certificate
+   issuance log.
+3. **Certificates are signed externally.** The team controller (CLI
+   for BYOD, aweb-cloud for managed namespaces) signs certificates
+   and registers them at awid. awid records the issuance but does not
+   perform the signing.
+4. **Revocation is a column update.** Revoking a certificate sets
+   `revoked_at` on the certificate record. Services cache the revoked
+   entries.
 
 ---
 
@@ -58,15 +61,6 @@ POST   /v1/did/{did_aw}/rotate         Rotate key (identity auth)
 GET    /v1/did/{did_aw}/addresses      List addresses (public)
 ```
 
-### Custody signing
-
-Sign payloads on behalf of custodial agents whose keys are held in
-escrow.
-
-```
-POST   /v1/custody/sign               Sign payload (internal auth)
-```
-
 ---
 
 ## What's added: Teams
@@ -74,13 +68,11 @@ POST   /v1/custody/sign               Sign payload (internal auth)
 ### Data model
 
 ```sql
--- Teams. A named group within a namespace.
--- The team_did_key is the public key used to verify membership
--- certificates. The team controller holds the private key.
 CREATE TABLE teams (
     team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
+    display_name    TEXT NOT NULL DEFAULT '',
     team_did_key    TEXT NOT NULL,
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -113,31 +105,27 @@ CREATE INDEX idx_team_certificates_revoked
     ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
 
-No members table. Membership is proven by certificates held by agents.
-
 ### Endpoints
 
 ```
 POST   /v1/namespaces/{domain}/teams
        Create team.
        Auth: namespace controller DIDKey signature.
-
-       BYOD mode (caller provides key):
-       Body: { "name": "backend", "team_did_key": "did:key:z6Mk..." }
-
-       Managed/escrow mode (awid generates and stores key):
-       Body: { "name": "backend", "escrow": true }
-       awid generates an Ed25519 keypair, stores the private key
-       encrypted in team_key_enc, returns the public key.
-
+       Body: { "name": "backend",
+               "display_name": "Backend Team",
+               "team_did_key": "did:key:z6Mk..." }
+       The caller generates the team keypair and provides the public
+       key. awid never sees the private key.
        Response: { "team_id": "uuid", "domain": "acme.com",
-                   "name": "backend", "team_did_key": "did:key:z6Mk...",
-                   "escrowed": true|false, "created_at": "..." }
+                   "name": "backend", "display_name": "Backend Team",
+                   "team_did_key": "did:key:z6Mk...",
+                   "created_at": "..." }
 
 GET    /v1/namespaces/{domain}/teams
        List teams in namespace.
        Auth: none (public).
        Response: { "teams": [{ "name": "backend",
+                   "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...", ... }] }
 
 GET    /v1/namespaces/{domain}/teams/{name}
@@ -145,7 +133,7 @@ GET    /v1/namespaces/{domain}/teams/{name}
        Auth: none (public). Services call this to get the team
        public key for certificate verification.
        Response: { "team_id": "uuid", "domain": "acme.com",
-                   "name": "backend",
+                   "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
                    "created_at": "..." }
 
@@ -154,11 +142,25 @@ DELETE /v1/namespaces/{domain}/teams/{name}
        Auth: namespace controller DIDKey signature.
 
 POST   /v1/namespaces/{domain}/teams/{name}/rotate
-       Rotate team key.
+       Rotate team public key.
        Auth: namespace controller DIDKey signature.
        Body: { "new_team_did_key": "did:key:z6Mk..." }
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+
+POST   /v1/namespaces/{domain}/teams/{name}/certificates
+       Register a certificate.
+       Auth: team controller DIDKey signature.
+       Body: { "certificate_id": "uuid",
+               "member_did_key": "did:key:z6Mk...",
+               "member_did_aw": "did:aw:...",
+               "member_address": "acme.com/alice",
+               "alias": "alice",
+               "lifetime": "permanent" }
+       The certificate is signed externally by whoever holds the
+       team controller private key (CLI for BYOD, aweb-cloud for
+       managed). awid records the issuance but does not sign.
+       Response: { "registered": true, "certificate_id": "uuid" }
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
@@ -191,18 +193,6 @@ GET    /v1/namespaces/{domain}/teams/{name}/revocations
                    "revoked_at": "..." }] }
        This is what services cache to reject removed members.
 ```
-
-### What awid stores vs doesn't store about teams
-
-**Stores:**
-- Team name + public key (for certificate verification by services)
-- Certificate issuance log (who was issued a certificate, when,
-  whether revoked). This enables member enumeration.
-
-**Does not store:**
-- Certificate content (the agent holds its certificate)
-- Certificate expiry tracking (certificates are long-lived)
-- Renewal infrastructure (reissuance only on key rotation)
 
 ---
 
@@ -248,24 +238,21 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
 
 ### Who signs certificates
 
-- **Self-custodial team controller**: the human or agent who created
-  the team holds the team private key locally. They sign certificates
-  via `aw id team add-member` or `aw id team accept-invite`.
-- **Managed team controller**: for managed namespaces (*.aweb.ai),
-  awid holds the team controller key in escrow. aweb-cloud calls awid
-  to issue certificates on behalf of the team.
+- **BYOD teams**: the team controller (human or agent) holds the
+  team private key locally. They sign certificates via
+  `aw id team add-member` and register them at awid.
+- **Managed teams (*.aweb.ai)**: aweb-cloud holds the team controller
+  private key (encrypted). aweb-cloud signs certificates and registers
+  them at awid. awid never sees the private key.
 
-### Issuance
-
-Certificates are issued when a member joins a team:
+### Issuance flow
 
 1. Team controller invites agent (`aw id team invite`)
 2. Agent accepts (`aw id team accept-invite <token>`)
 3. Team controller signs certificate for the agent's did:key
-4. Certificate stored at `.aw/team-cert.pem` on the agent's machine
-
-Or: team controller adds member directly (`aw id team add-member`),
-signs certificate, delivers it to the agent.
+4. Team controller registers certificate at awid
+   (`POST /v1/namespaces/{domain}/teams/{name}/certificates`)
+5. Certificate delivered to agent, stored at `.aw/team-cert.pem`
 
 ### Reissuance (rare)
 
@@ -301,49 +288,6 @@ When the team controller removes a member:
    (recommended: 5-15 minutes).
 4. The revoked certificate is rejected on next request after cache
    refresh.
-
-The revocation list is small — it only grows when members are removed.
-It can be pruned periodically (entries older than some threshold are
-unlikely to be presented).
-
----
-
-## Team key escrow for managed namespaces
-
-For namespaces managed by aweb.ai (e.g., `juanre.aweb.ai`), the
-team controller key is held in escrow by awid. This allows aweb-cloud
-to issue certificates on behalf of managed teams without the human
-holding the key locally.
-
-The escrow key is encrypted with `AWID_TEAM_KEY_ENCRYPTION_KEY`
-(AES-256-GCM, same pattern as custody key encryption).
-
-awid exposes a certificate issuance endpoint with two auth paths:
-
-**Managed teams (escrowed key):**
-```
-POST /v1/namespaces/{domain}/teams/{name}/certificates/issue
-Auth: parent controller DIDKey signature (AWEB_PARENT_CONTROLLER_KEY)
-Body: {
-  "member_did_key": "did:key:z6Mk...",
-  "member_did_aw": "did:aw:...",
-  "member_address": "juanre.aweb.ai/alice",
-  "alias": "alice",
-  "lifetime": "permanent"
-}
-Response: { certificate JSON with signature by escrowed team key }
-```
-
-The parent controller (aweb.ai namespace controller) authorizes
-certificate issuance for managed teams. awid decrypts the escrowed
-team key and signs the certificate.
-
-**BYOD teams (caller holds key):**
-The team controller signs certificates locally via `aw id team
-add-member`. awid is not involved in certificate issuance for BYOD
-teams — the certificate is signed locally and given directly to the
-agent. awid only stores the team's public key (for verification by
-services) and the revocation list.
 
 ---
 
@@ -413,8 +357,8 @@ CREATE TABLE teams (
     team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
+    display_name    TEXT NOT NULL DEFAULT '',
     team_did_key    TEXT NOT NULL,
-    team_key_enc    BYTEA,
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
@@ -456,27 +400,30 @@ DATABASE_URL=postgresql://awid:password@localhost:5432/awid
 # Server
 AWID_PORT=8001
 AWID_LOG_JSON=true
-
-# Team key escrow (for managed namespaces)
-# AES-256-GCM key for encrypting/decrypting escrowed team controller keys.
-# Required for managed namespaces (*.aweb.ai). Not needed for BYOD.
-AWID_TEAM_KEY_ENCRYPTION_KEY=
-
-# Custodial signing
-# AES-256-GCM key for agent signing keys held in escrow.
-AWID_CUSTODY_KEY=
 ```
+
+awid has no encryption keys, no custody keys, no signing keys.
+It is a public registry. All private key operations happen at
+the CLI (BYOD) or aweb-cloud (managed namespaces).
 
 ---
 
-## What awid does NOT do
+## What awid does and does not do
 
-| Concern | Owner |
-|---------|-------|
-| Track certificate issuance | awid (team_certificates table) |
-| Store certificate content | Agent (holds its own cert) |
-| Renew certificates | Not needed (long-lived, reissue on key rotation) |
-| Manage API keys | Nobody — gone |
-| Coordinate agents | aweb |
-| Manage billing | aweb-cloud |
-| Manage human accounts | aweb-cloud |
+**Does:**
+- Store team name, display name, and public key
+- Record certificate issuance (who, when, revocation status)
+- Serve team public keys for certificate verification
+- Serve revocation lists for services to cache
+- Serve active certificate lists for dashboard member enumeration
+
+**Does not:**
+- Hold private keys (no escrow, no custody keys)
+- Sign certificates (signing is external)
+- Sign on behalf of agents (custody is aweb-cloud's concern)
+- Store certificate content (agents hold their own)
+- Track certificate expiry (certificates are long-lived)
+- Manage API keys (gone)
+- Coordinate agents (aweb does this)
+- Manage billing (aweb-cloud does this)
+- Manage human accounts (aweb-cloud does this)

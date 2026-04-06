@@ -750,7 +750,7 @@ aweb does NOT call awid for:
 - Team membership checks (certificate + revocation list handles this)
 - Identity creation (awid's concern)
 - Namespace management (awid's concern)
-- Certificate issuance (awid's concern)
+- Certificate issuance (CLI for BYOD, aweb-cloud for managed)
 - Agent bootstrap (auto-provisioned from certificate)
 
 ---
@@ -863,12 +863,12 @@ Removed:
 |---------|-------|
 | Create/manage identities | awid |
 | Create/manage teams | awid |
-| Issue team certificates | awid |
+| Issue team certificates | CLI (BYOD) or aweb-cloud (managed) |
 | Manage namespaces | awid |
 | Verify team membership | Certificate (local crypto) |
 | Manage API keys | Nobody (gone) |
 | Bootstrap agents | Auto-provisioned from certificate |
-| Custody (signing on behalf) | awid |
+| Custody (signing on behalf) | aweb-cloud (managed) or agent (self) |
 | Billing | aweb-cloud |
 | Dashboard | aweb-cloud |
 | Human accounts | aweb-cloud |
