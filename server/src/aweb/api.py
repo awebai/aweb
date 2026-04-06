@@ -21,6 +21,7 @@ from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .routes.agents import router as agents_router
 from .routes.connect import router as connect_router
+from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
@@ -307,6 +308,7 @@ def create_app(
     app.include_router(agents_router)
     app.include_router(connect_router)
     app.include_router(chat_router)
+    app.include_router(dashboard_router)
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)

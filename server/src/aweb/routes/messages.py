@@ -135,10 +135,10 @@ async def send_message(
 
     await fire_mutation_hook(
         request,
-        event_type="message_sent",
-        team_address=identity.team_address,
-        alias=identity.alias,
-        details={
+        "message_sent",
+        {
+            "team_address": identity.team_address,
+            "alias": identity.alias,
             "message_id": str(message_id),
             "to_alias": to_alias,
             "subject": payload.subject,
