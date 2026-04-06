@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -189,8 +190,9 @@ async def register_namespace(
             detail="controller_did must match the signing key",
         )
 
+    skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    if not parent_auth_present:
+    if not skip_dns and not parent_auth_present:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
@@ -306,8 +308,9 @@ async def rotate_namespace_controller(
         domain=domain,
         new_controller_did=new_controller_did,
     )
+    skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    if not parent_auth_present:
+    if not skip_dns and not parent_auth_present:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
