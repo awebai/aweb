@@ -185,7 +185,8 @@ EOF
 
 cd "$SERVER_DIR"
 docker compose --env-file .env.e2e down -v 2>/dev/null || true
-docker compose --env-file .env.e2e up --build -d 2>&1 | tail -5
+docker compose --env-file .env.e2e build --no-cache 2>&1 | tail -3
+docker compose --env-file .env.e2e up -d 2>&1 | tail -5
 
 echo "Waiting for awid health..."
 for i in $(seq 1 60); do
