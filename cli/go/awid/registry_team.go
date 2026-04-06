@@ -84,7 +84,7 @@ func (c *RegistryClient) CreateTeam(
 		registryURL,
 		path,
 		signedNamespaceHeaders(domain, "create_team", controllerKey, map[string]string{
-			"team_name": name,
+			"name": name,
 		}),
 		teamCreateRequest{
 			Name:        name,
