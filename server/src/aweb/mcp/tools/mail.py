@@ -8,15 +8,10 @@ from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
 
-from aweb.address_scope import format_local_address, get_project_scope, resolve_local_recipient
-from aweb.awid.custody import sign_on_behalf
-from aweb.awid.replacement import get_sender_delivery_metadata
-from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.mcp.auth import get_auth
 from aweb.messaging.contacts import check_access, get_contact_addresses, is_address_in_contacts
 from aweb.messaging.messages import MessagePriority, deliver_message, get_agent_by_id as get_agent_row
 from aweb.messaging.messages import utc_iso as _utc_iso
-from aweb.messaging.rotation import acknowledge_rotation, get_pending_announcements
 from aweb.service_errors import ServiceError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]

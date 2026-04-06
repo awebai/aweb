@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from .awid import CachedRegistryClient, RegistryClient, get_custody_key
+from .awid import CachedRegistryClient, RegistryClient
 from .config import get_settings
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
@@ -21,6 +21,7 @@ from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .routes.agents import router as agents_router
 from .routes.connect import router as connect_router
+from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
@@ -36,12 +37,6 @@ from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
-
-_MISSING_CUSTODY_KEY_WARNING = (
-    "AWEB_CUSTODY_KEY not configured — custodial agent signing disabled. "
-    "Set AWEB_CUSTODY_KEY to a 64-char hex string to enable."
-)
-
 
 async def _mount_mcp_app(
     app: FastAPI,
@@ -127,10 +122,6 @@ def _make_standalone_lifespan():
             db_initialized = True
             logger.info("Database initialized")
 
-            custody_key = get_custody_key()
-            if custody_key is None:
-                logger.warning(_MISSING_CUSTODY_KEY_WARNING)
-
             # Phase 2: Only assign to app.state after ALL initialization succeeds
             app.state.redis = redis
             app.state.db = default_db_infra
@@ -175,13 +166,6 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         log_level = os.getenv("AWEB_LOG_LEVEL", "info")
         configure_logging(log_level=log_level, json_format=json_format)
         logger.info("Starting aweb coordination server (library mode)")
-
-        custody_key = get_custody_key()
-        if custody_key is None:
-            logger.warning(
-                "AWEB_CUSTODY_KEY not configured — custodial agent signing disabled. "
-                "Set AWEB_CUSTODY_KEY to a 64-char hex string to enable."
-            )
 
         # Use externally provided connections - no initialization needed
         app.state.redis = redis
@@ -307,6 +291,7 @@ def create_app(
     app.include_router(agents_router)
     app.include_router(connect_router)
     app.include_router(chat_router)
+    app.include_router(dashboard_router)
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)

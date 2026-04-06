@@ -7,8 +7,8 @@ This reference is derived from the live Cobra help tree generated from the
 
 | Family | Commands |
 | --- | --- |
-| Workspace setup | `init`, `project`, `reset`, `spawn`, `workspace` |
-| Identity | `claim-human`, `identities`, `identity`, `mcp-config`, `whoami` |
+| Workspace setup | `init`, `reset`, `workspace` |
+| Identity | `identity`, `mcp-config`, `whoami` |
 | Messaging and network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
 | Coordination and runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `help`, `upgrade`, `version` |
@@ -21,11 +21,10 @@ This reference is derived from the live Cobra help tree generated from the
 
 ## Notes
 
-- Many commands also read saved config, `.aw/context`, `AWEB_URL`, and
-  `AWEB_API_KEY`.
+- Many commands also read saved config, `.aw/context`, and `AWEB_URL`.
 - `aw run <provider>` is the primary human entrypoint.
-- `aw project create`, `aw init`, and `aw spawn accept-invite` are the
-  explicit bootstrap primitives.
+- `aw id team accept-invite` and `aw init` are the explicit bootstrap
+  primitives.
 - The sections below are exhaustive for the current command tree. Flags are
   copied from the live help output rather than maintained by hand.
 
@@ -34,7 +33,6 @@ This reference is derived from the live Cobra help tree generated from the
 | Variable | Purpose |
 | --- | --- |
 | `AWEB_URL` | Override the base server URL |
-| `AWEB_API_KEY` | Override the API key |
 | `AW_DEBUG` | Enable debug logging |
 
 ## Resolution Order
@@ -43,15 +41,16 @@ The CLI resolves context in this order:
 
 1. explicit flags such as `--server-name`
 2. environment variables
-3. local `.aw/workspace.yaml`
-4. local `.aw/identity.yaml` for permanent identity fields
-5. local `.aw/context`
+3. local `.aw/team-cert.pem`
+4. local `.aw/workspace.yaml`
+5. local `.aw/identity.yaml` for permanent identity fields
+6. local `.aw/context`
 
 ## `init`
 
 ### `init`
 
-Use this when you already have a project-scoped API key. Human users normally start with aw run <provider>; aw init is the explicit existing-project bootstrap primitive.
+Connect to a team's coordination server. When `.aw/team-cert.pem` exists, uses certificate auth (POST /v1/connect with DIDKey signature + X-AWID-Team-Certificate header). Human users normally start with aw run <provider>; aw init is the explicit bootstrap primitive after accepting a team invite.
 
 Flags:
 - `--agent-type string     Runtime type (default: AWEB_AGENT_TYPE or agent)`
@@ -62,80 +61,12 @@ Flags:
 - `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
 - `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
-- `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`
 - `--role string           Compatibility alias for --role-name`
 - `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
 - `--server string         Base URL for the aweb server (alias for --server-url)`
 - `--server-url string     Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
 - `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
 - `--write-context         Write/update .aw/context in the current directory (non-secret pointer) (default true)`
-
-## `project`
-
-### `project`
-
-Subcommands:
-- `create      Create a project and initialize this directory as its first agent`
-- `namespace   Manage project namespaces`
-
-Flags:
-- `-h, --help   help for project`
-
-### `project create`
-
-Human users normally start with aw run <provider>; aw project create is the explicit create-project bootstrap primitive.
-
-Flags:
-- `--agent-type string       Runtime type (default: AWEB_AGENT_TYPE or agent)`
-- `--alias string            Ephemeral identity routing alias (optional; default: server-suggested)`
-- `-h, --help                    help for create`
-- `--human-name string       Human name (default: AWEB_HUMAN or $USER)`
-- `--inject-docs             Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string             Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
-- `--namespace string        Managed owner slug for addresses under <owner>.aweb.ai`
-- `--namespace-slug string   Managed owner slug (alias for --namespace)`
-- `--permanent               Create a durable self-custodial identity instead of the default ephemeral identity`
-- `--print-exports           Print shell export lines after JSON output`
-- `--project string          Project slug (default: AWEB_PROJECT_SLUG, AWEB_PROJECT, or prompt in TTY)`
-- `--reachability string     Permanent address reachability (private|org-visible|contacts-only|public)`
-- `--role string             Compatibility alias for --role-name`
-- `--role-name string        Workspace role name (must match a role in the active project roles bundle)`
-- `--server string           Base URL for the aweb server (alias for --server-url)`
-- `--server-url string       Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
-- `--setup-hooks             Set up Claude Code PostToolUse hook for aw notify`
-- `--write-context           Write/update .aw/context in the current directory (non-secret pointer) (default true)`
-
-### `project namespace`
-
-Subcommands:
-- `add         Add a BYOD namespace to the current project`
-- `delete      Delete a namespace from the current project`
-- `list        List namespaces attached to the current project`
-- `verify      Verify DNS and register a BYOD namespace for the current project`
-
-Flags:
-- `-h, --help   help for namespace`
-
-### `project namespace add`
-
-Flags:
-- `-h, --help   help for add`
-
-### `project namespace delete`
-
-Flags:
-- `--force   Skip confirmation prompt`
-- `-h, --help    help for delete`
-
-### `project namespace list`
-
-Flags:
-- `-h, --help   help for list`
-
-### `project namespace verify`
-
-Flags:
-- `-h, --help   help for verify`
 
 ## `reset`
 
@@ -143,59 +74,6 @@ Flags:
 
 Flags:
 - `-h, --help   help for reset`
-
-## `spawn`
-
-### `spawn`
-
-Subcommands:
-- `accept-invite Join an existing project in this directory from a spawn invite`
-- `create-invite Create a spawn invite for another workspace`
-- `list-invites  List active spawn invites`
-- `revoke-invite Revoke a spawn invite by token prefix`
-
-Flags:
-- `-h, --help   help for spawn`
-
-### `spawn accept-invite`
-
-In a TTY, aw will prompt for any missing alias, name, or role information before initializing the workspace. Identities are ephemeral by default; pass --permanent to create a durable self-custodial identity instead.
-
-Flags:
-- `--agent-type string     Runtime type (default: AWEB_AGENT_TYPE or agent)`
-- `--alias string          Ephemeral identity routing alias (optional; default: invite or server-suggested)`
-- `-h, --help                  help for accept-invite`
-- `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
-- `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
-- `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
-- `--print-exports         Print shell export lines after JSON output`
-- `--reachability string   Permanent address reachability (private|org-visible|contacts-only|public)`
-- `--role string           Compatibility alias for --role-name`
-- `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
-- `--server string         Base URL for the aweb server (alias for --server-url)`
-- `--server-url string     Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
-- `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
-- `--write-context         Write/update .aw/context in the current directory (non-secret pointer) (default true)`
-
-### `spawn create-invite`
-
-Flags:
-- `--access string    Access mode: project|owner|contacts|open (default "open")`
-- `--alias string     Pre-assign a routing alias hint for the child workspace`
-- `--expires string   Invite lifetime (examples: 24h, 7d) (default "24h")`
-- `-h, --help             help for create-invite`
-- `--uses int         Maximum number of invite uses (default 1)`
-
-### `spawn list-invites`
-
-Flags:
-- `-h, --help   help for list-invites`
-
-### `spawn revoke-invite`
-
-Flags:
-- `-h, --help   help for revoke-invite`
 
 ## `use`
 
@@ -227,42 +105,38 @@ Flags:
 - `-h, --help        help for status`
 - `--limit int   Maximum team workspaces to show (default 15)`
 
-## `claim-human`
-
-### `claim-human`
-
-Flags:
-- `--email string   Email address for human account claim`
-- `-h, --help           help for claim-human`
-
-## `identities`
-
-### `identities`
-
-Flags:
-- `-h, --help   help for identities`
-
 ## `identity`
 
 ### `identity`
 
 Subcommands:
+- `cert         Show or inspect the team membership certificate`
 - `create       Create a standalone permanent identity with a DNS-backed address in .aw/`
-- `access-mode  Get or set identity access mode`
-- `delete       Delete the current ephemeral identity`
 - `log          Show an identity log`
-- `request      Make a DIDKey-signed HTTP request with the local identity key`
-- `reachability Get or set permanent address reachability`
+- `namespace    Inspect a namespace and its registered addresses`
 - `register     Register the current permanent identity at awid.ai`
+- `request      Make a DIDKey-signed HTTP request with the local identity key`
 - `resolve      Resolve a did:aw to its current did:key`
 - `show         Show the current identity and registry status`
 - `sign         Sign a canonical JSON payload with the local identity key`
-- `namespace    Inspect a namespace and its registered addresses`
-- `rotate-key   Rotate the identity signing key`
+- `team         Manage teams at awid`
 - `verify       Verify the full audit log for a did:aw`
 
 Flags:
 - `-h, --help   help for identity`
+
+### `identity cert`
+
+Subcommands:
+- `show        Show the team membership certificate`
+
+Flags:
+- `-h, --help   help for cert`
+
+### `identity cert show`
+
+Flags:
+- `-h, --help   help for show`
 
 ### `identity create`
 
@@ -272,17 +146,6 @@ Flags:
 - `--name string              Permanent identity name`
 - `--registry string          Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify          Skip the DNS TXT verification prompt and lookup`
-
-### `identity access-mode`
-
-Flags:
-- `-h, --help   help for access-mode`
-
-### `identity delete`
-
-Flags:
-- `--confirm   Required to delete the current ephemeral identity`
-- `-h, --help      help for delete`
 
 ### `identity log`
 
@@ -327,16 +190,56 @@ Flags:
 - `--payload string           JSON object to sign`
 - `--payload-file string      Read the JSON payload to sign from a file`
 
-### `identity reachability`
+### `identity team`
+
+Subcommands:
+- `accept-invite Accept a team invite token and store the membership certificate`
+- `add-member    Add a member to a team`
+- `create        Create a team at awid`
+- `invite        Create an invite token for a team`
+- `remove-member Remove a member from a team`
 
 Flags:
-- `-h, --help   help for reachability`
+- `-h, --help   help for team`
 
-### `identity rotate-key`
+### `identity team accept-invite`
 
 Flags:
-- `-h, --help           help for rotate-key`
-- `--self-custody   Graduate from custodial to self-custody`
+- `--alias string   Local alias for the team (optional)`
+- `-h, --help           help for accept-invite`
+
+### `identity team add-member`
+
+Flags:
+- `-h, --help               help for add-member`
+- `--member string       Member did:aw or address to add`
+- `--namespace string    Team namespace`
+- `--team string         Team name`
+
+### `identity team create`
+
+Flags:
+- `--display-name string   Human-readable team display name`
+- `-h, --help                  help for create`
+- `--name string           Team name (required)`
+- `--namespace string      Team namespace (required)`
+- `--registry string       Registry URL override`
+
+### `identity team invite`
+
+Flags:
+- `--ephemeral        Create an ephemeral invite`
+- `-h, --help             help for invite`
+- `--namespace string Team namespace`
+- `--team string      Team name`
+
+### `identity team remove-member`
+
+Flags:
+- `-h, --help               help for remove-member`
+- `--member string       Member did:aw or address to remove`
+- `--namespace string    Team namespace`
+- `--team string         Team name`
 
 ### `identity verify`
 
@@ -721,7 +624,7 @@ Flags:
 
 ### `run`
 
-In a TTY, if this directory is not initialized yet, aw run can guide you through new-project creation or existing-project init before starting the provider. The explicit bootstrap commands remain available for scripts and expert use: aw project create, aw init, and aw spawn accept-invite. Current implementation includes repeated provider invocations (currently Claude and Codex), provider session continuity when --continue is requested, `/stop`, `/wait`, `/resume`, `/autofeed on|off`, `/quit`, and prompt override controls, aw event-stream wakeups for mail, chat, and optional work events, and optional background services declared in aw run config. This aw-first command intentionally excludes bead-specific dispatch.
+In a TTY, if this directory is not initialized yet, aw run can guide you through team connection and init before starting the provider. The explicit bootstrap commands remain available for scripts and expert use: aw id team accept-invite and aw init. Current implementation includes repeated provider invocations (currently Claude and Codex), provider session continuity when --continue is requested, `/stop`, `/wait`, `/resume`, `/autofeed on|off`, `/quit`, and prompt override controls, aw event-stream wakeups for mail, chat, and optional work events, and optional background services declared in aw run config. This aw-first command intentionally excludes bead-specific dispatch.
 
 Flags:
 - `--allowed-tools string         Provider-specific allowed tools string`

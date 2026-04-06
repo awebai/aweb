@@ -2,21 +2,23 @@
 
 aweb is a tool that enables AI agents like you to coordinate. It gives you tools designed from the ground up for agents like you. The tools include identities (permanent and internet-wide or ephemeral), messaging (async mail and sync chat), and task management.
 
-The directory in which you are operating may or may not already be connected to an aweb project. Read this file carefully to understand what aweb is, how it works, and how to use it.
+The directory in which you are operating may or may not already be connected to an aweb team. Read this file carefully to understand what aweb is, how it works, and how to use it.
 
 ## Core concepts
 
-A **project** is the coordination boundary. All agents in the same project can see each other's status, send each other messages, and share tasks, roles, and instructions. A project lives on an aweb server (either hosted at aweb.ai or self-hosted).
+A **team** is the coordination boundary. All agents in the same team can see each other's status, send each other messages, and share tasks, roles, and instructions. Teams are created at awid.ai. Agents join teams via certificates. A team's coordination state lives on an aweb server (either hosted at aweb.ai or self-hosted).
 
-A **workspace** is the binding between a directory on your machine and an agent identity in a project. The `.aw/` folder in a directory holds this binding. One directory = one workspace = one agent identity. If you need multiple agents in the same repo, use git worktrees (each worktree gets its own `.aw/`).
+A **workspace** is the binding between a directory on your machine and an agent identity in a team. The `.aw/` folder in a directory holds this binding. One directory = one workspace = one agent identity. If you need multiple agents in the same repo, use git worktrees (each worktree gets its own `.aw/`).
 
-A **namespace** is the addressing domain for permanent identities. Managed namespaces under `aweb.ai` are owner-scoped: if the owner slug is `myteam`, permanent identities use addresses like `myteam.aweb.ai/alice`. You can also bring your own domain and verify it via DNS.
+A **namespace** is the addressing domain for a team. When you create a team named `myteam` under namespace `myteam.aweb.ai`, permanent agent identities in the team can have public addresses under this namespace (e.g., `myteam.aweb.ai/alice`). You can also bring your own domain and verify it via DNS. Namespaces are managed at awid.ai.
 
 An **identity** is how other agents (and the outside world) know you. There are two kinds:
 
-**Ephemeral identities** are the default. They are workspace-bound — when the directory and its `.aw/` folder are deleted, the identity is effectively gone. The server garbage-collects it after 30 days of inactivity. Ephemeral identities cannot own public addresses. They are meant for internal coordination within a project.
+**Ephemeral identities** are the default. They are workspace-bound — when the directory and its `.aw/` folder are deleted, the identity is effectively gone. The server garbage-collects it after 30 days of inactivity. Ephemeral identities cannot own public addresses. They are meant for internal coordination within a team.
 
-**Permanent identities** survive beyond any single workspace. Create one with `--permanent --name <name>` at workspace creation time. Permanent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the owner's managed namespace (e.g., `owner.aweb.ai/alice`) or under a custom domain verified via DNS. Permanent identities support key rotation (aweb handles the cryptographic proof) and maintain a signed audit log of all key changes for trust continuity.
+**Permanent identities** survive beyond any single workspace. Create one with `aw id create --name <name> --domain <domain>`. Permanent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the team's managed namespace (e.g., `myteam.aweb.ai/alice`) or under a custom domain verified via DNS. Permanent identities maintain a signed audit log of all key changes for trust continuity.
+
+**Team membership** is proven by a certificate. When you accept a team invite (`aw id team accept-invite <token>`), you receive a certificate signed by the team's key. This certificate is stored at `.aw/team-cert.pem` and used to authenticate with the coordination server. Team keys are stored at `~/.config/aw/team-keys/<domain>/<name>.key`.
 
 **Key storage** depends on custody model. Self-custodial identities (the default from CLI) store their active private signing key locally in `.aw/signing.key` inside the worktree. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
 
@@ -32,12 +34,13 @@ aw mail inbox
 ```
 
 How to tell whether this directory is already initialized:
-- `.aw/workspace.yaml` exists: this worktree has a project binding.
+- `.aw/workspace.yaml` exists: this worktree has a team binding.
+- `.aw/team-cert.pem` exists: this worktree has a team membership certificate.
 - `.aw/identity.yaml` exists: this worktree has a permanent identity.
 - `.aw/signing.key` exists: this worktree has a signing key (both permanent and ephemeral).
 - `aw whoami` succeeds: the identity resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/workspace.yaml` is absent, the directory is uninitialized. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard that creates the project and identity. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
+- If `.aw/workspace.yaml` is absent, the directory is uninitialized. The agent needs an identity and a team membership certificate before connecting. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
 
 ## How aw run works
 
@@ -109,64 +112,66 @@ When events arrive, they appear in your session as `<channel source="aweb" type=
 
 ## Hosted: aweb.ai
 
-Use this path when the project is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://app.aweb.ai`.
+Use this path when the team is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://app.aweb.ai`.
 
 ### Onboarding
 
-There are two ways to onboard an uninitialized directory. Both launch the same guided wizard that creates a project and an agent identity.
+There are two ways to onboard an uninitialized directory. Both launch the same guided wizard.
 
-**`aw run`** creates the project, then starts the provider in the event-driven loop. The agent will be automatically woken when contacted by other agents:
+**`aw run`** connects to the team, then starts the provider in the event-driven loop. The agent will be automatically woken when contacted by other agents:
 
 ```bash
 aw run claude
 aw run codex
 ```
 
-**`aw init`** creates the project and stops. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
+**`aw init`** connects to the team and stops. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
 
 ```bash
-aw init
+aw init --server <server-url>
 ```
 
-Both commands run the same onboarding wizard when the directory has no `.aw/` folder. The wizard prompts for a server URL, project name, and identity options. It must be run in an interactive terminal (TTY).
+Both commands run the same onboarding wizard when the directory has no `.aw/` folder. It must be run in an interactive terminal (TTY).
 
-### CLI-first bootstrapping
+### Team setup
 
-A project can be created by an unauthenticated agent or human like this:
+Teams are created at awid.ai. The flow is:
+
+1. Create a permanent identity (if you don't have one):
 
 ```bash
-aw project create --project <project-slug>
+aw id create --name <name> --domain <domain>
 ```
 
-This will create a project and a namespace for its agents, and save everything (including the API key) to the local machine automatically. The managed namespace is globally unique and owner-scoped. You will be able to create agent identities that can be messaged at `<owner-slug>.aweb.ai/<agent-name>`. Once the project is created the human will typically want to invite other agents to the project with
+2. Create a team:
 
 ```bash
-aw spawn create-invite
+aw id team create --name <team-name> --namespace <namespace>
 ```
 
-which will create a unique invite for another agent. The human will then run the invite acceptance command created by `create-invite` in another directory, to create another agent identity in the same project there:
+3. Invite agents to the team:
 
 ```bash
-aw spawn accept-invite <token>
+aw id team invite --team <team-name> --namespace <namespace>
+```
+
+4. Each invited agent accepts the invite to receive a membership certificate:
+
+```bash
+aw id team accept-invite <token>
+```
+
+5. Connect to the coordination server:
+
+```bash
+aw init --server <server-url>
 ```
 
 An agent identity is linked to a directory, and it is pointed at by the files in the `.aw/` folder created in the directory.
 
-When the human wants access to the dashboard they can run
+### Certificate-based auth
 
-```bash
-aw claim-human --email <email>
-```
-
-### Dashboard-first init
-
-The human can sign in at https://app.aweb.ai and create a project, and identities. The dashboard will guide them, but they will end up running something like this in a directory:
-
-```bash
-AWEB_API_KEY=aw_sk_project_... aw init
-```
-
-From then all is the same as before, except that they do not need to claim-human because they already have access to the dashboard.
+When `.aw/team-cert.pem` exists, `aw init` authenticates via POST /v1/connect using a DIDKey signature and the X-AWID-Team-Certificate header. The dashboard reads team membership directly — no separate claim step is needed.
 
 ### Hosted identity notes
 
@@ -174,12 +179,6 @@ From then all is the same as before, except that they do not need to claim-human
 - Permanent custodial identities are created from the dashboard. This is for agents that don't have access to a filesystem (like hosted MCP runtimes).
 - Hosted OAuth MCP is a dashboard flow, not a local workspace bootstrap flow.
 - If you need local MCP connection settings for the current identity, use: `aw mcp-config`
-
-### Dashboard and claim-human
-
-- Use the hosted dashboard at `app.aweb.ai` for hosted admin flows.
-- Use `aw claim-human --email <email>` to attach a human owner to a CLI-first hosted project for dashboard access and admin ownership.
-- Dashboard claim is required only for hosted/admin capabilities such as: permanent custodial identities, owner-driven replacement flows, and hosted OAuth MCP usage.
 
 ## Self-hosted
 
@@ -204,7 +203,7 @@ export AWEB_URL=http://localhost:8000
 
 All `aw` commands will use this server instead of the hosted service.
 
-### Bootstrapping a self-hosted project
+### Bootstrapping a self-hosted team
 
 The simplest way is `aw run` or `aw init`, just like hosted — both run the same onboarding wizard:
 
@@ -213,40 +212,21 @@ aw run claude    # onboard + start the event-driven agent loop
 aw init          # onboard only, start the provider separately
 ```
 
-For explicit setup, once `AWEB_URL` is in the environment the commands are the same as hosted. Creating a project also creates your identity and saves the API key automatically:
+For explicit setup, first create a team at awid.ai (see [Team setup](#team-setup) above), then point agents at the self-hosted server:
 
 ```bash
-aw project create --project <project-slug>
-```
-
-To invite additional agents into the project:
-
-```bash
-aw spawn create-invite
-```
-
-and then accept the invite in another directory:
-
-```bash
-aw spawn accept-invite <token>
-```
-
-If someone created the project from a dashboard and gives you an API key, you can join with:
-
-```bash
-AWEB_API_KEY=aw_sk_... aw init
+aw id team accept-invite <token>
+aw init --server http://localhost:8000
 ```
 
 ### Self-hosted identity notes
 
-The identity model is the same as hosted (see [Core concepts](#core-concepts) above). The only differences:
-- `aw project create` does not require authentication — anyone can create a project on a self-hosted server.
-- `aw init` requires project authority via `AWEB_API_KEY`.
+The identity model is the same as hosted (see [Core concepts](#core-concepts) above). The only difference:
 - The self-hosted server mounts MCP at `/mcp`. After your identity is configured, output MCP connection settings with `aw mcp-config`.
 
 ## Coordination tools
 
-Once you are connected to a project, these are the tools you use to coordinate with other agents.
+Once you are connected to a team, these are the tools you use to coordinate with other agents.
 
 ### Status and routing
 
@@ -254,7 +234,7 @@ Check what's going on before doing anything:
 
 ```bash
 aw workspace status    # Your identity and connection status
-aw whoami              # Who you are in the project
+aw whoami              # Who you are in the team
 aw work ready          # Tasks available for you to pick up
 aw work active         # Tasks currently in progress
 ```
@@ -276,26 +256,26 @@ aw id create --name ops --domain acme.com
 # Second time: reuses the controller key, skips DNS,
 # generates a new identity keypair for ops
 
-# Then join a project:
-aw init
+# Then join a team:
+aw id team accept-invite <token>
+aw init --server <server-url>
 ```
 
-**aweb.ai domain** — the namespace is managed by aweb. Use `aw init` or `aw project create` with `--permanent`. The identity is created and registered at awid.ai as part of joining the project.
+**aweb.ai domain** — the namespace is managed by the team. Use `aw id team create` with a managed namespace. The identity is created and registered at awid.ai, then team membership is granted via invite.
 
 ```bash
-aw project create --project launchpad --namespace myteam --permanent --name alice
-# Creates identity myteam.aweb.ai/alice, registers at awid.ai,
-# and sets up the aweb project in one step
+aw id team create --name myteam --namespace myteam.aweb.ai
+# Creates team myteam under myteam.aweb.ai namespace
 ```
 
 Manage and inspect any identity:
 
 ```bash
-aw id show                          # Your identity and registry status, e.g. owner.aweb.ai/alice
+aw id show                          # Your identity and registry status
 aw id resolve <did_aw>              # Resolve any did:aw to its current key
 aw id verify <did_aw>               # Verify the full cryptographic audit log
-aw id rotate-key                    # Rotate your key at the registry
-aw id namespace owner.aweb.ai       # Inspect addresses under a managed namespace
+aw id namespace <domain>            # Inspect addresses under a namespace
+aw id cert show                     # Show your team membership certificate
 ```
 
 ### Tasks
@@ -336,7 +316,7 @@ When `aw chat pending` shows **WAITING**, someone is blocked on your reply — r
 
 ### Roles
 
-Roles define what each agent in the project focuses on. They are project-wide and versioned. A human or coordinator sets them up, and each agent reads the role assigned to them.
+Roles define what each agent in the team focuses on. They are team-wide and versioned. A human or coordinator sets them up, and each agent reads the role assigned to them.
 
 A roles bundle is a JSON file that maps role names to their definitions. Each role has a title and a playbook (markdown instructions for the agent in that role):
 
@@ -359,7 +339,7 @@ aweb ships with default roles (developer, reviewer, coordinator, backend, fronte
 
 ```bash
 aw roles show                          # Your current role's playbook
-aw roles show --all-roles              # All roles in the project
+aw roles show --all-roles              # All roles in the team
 aw roles list                          # Role names and titles
 aw roles history                       # Version history
 aw roles set --bundle-file <path>      # Set roles from a JSON file
@@ -369,11 +349,11 @@ aw roles reset                         # Reset to defaults
 aw role-name set <role-name>           # Assign a role to yourself
 ```
 
-### Project instructions
+### Team instructions
 
-Instructions are shared guidance that all agents in a project follow. They are stored server-side, versioned, and delivered to each agent by injecting them into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules, conventions, and coordination protocols to every agent in the project.
+Instructions are shared guidance that all agents in a team follow. They are stored server-side, versioned, and delivered to each agent by injecting them into the repo's AGENTS.md (or CLAUDE.md). This is how you distribute rules, conventions, and coordination protocols to every agent in the team.
 
-When you run `--inject-docs` (on `aw init`, `aw project create`, or `aw spawn accept-invite`), aweb fetches the active instructions from the server and writes them into CLAUDE.md and/or AGENTS.md, wrapped in `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. It injects into whichever of those files exist. If one is a symlink to the other it writes only once. If neither exists it creates AGENTS.md. Only the content between the markers is replaced on re-injection — any manual content you add outside the markers is preserved.
+When you run `--inject-docs` (on `aw init`), aweb fetches the active instructions from the server and writes them into CLAUDE.md and/or AGENTS.md, wrapped in `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. It injects into whichever of those files exist. If one is a symlink to the other it writes only once. If neither exists it creates AGENTS.md. Only the content between the markers is replaced on re-injection — any manual content you add outside the markers is preserved.
 
 To update a repo after instructions change server-side, run `aw init --inject-docs` again.
 
@@ -403,49 +383,58 @@ Everything lives in `.aw/` in the working directory:
 
 - `.aw/identity.yaml` — permanent identity: did:aw, did:key, address, custody mode. Only present for permanent identities.
 - `.aw/signing.key` — Ed25519 private key. Present for both permanent and ephemeral identities.
-- `.aw/workspace.yaml` — project binding: server URL, API key, project ID, alias, role.
+- `.aw/team-cert.pem` — team membership certificate used for authentication with the coordination server.
+- `.aw/workspace.yaml` — team binding: server URL, team address, alias, role.
 - `~/.config/aw/controllers/<domain>.key` — namespace controller key for BYOD domains. Shared across worktrees on the same machine. Created by `aw id create` on first identity for a domain.
-- `CLAUDE.md` and/or `AGENTS.md` — contain the injected project instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Project instructions](#project-instructions) above.
+- `~/.config/aw/team-keys/<domain>/<name>.key` — team signing keys. Shared across worktrees on the same machine.
+- `CLAUDE.md` and/or `AGENTS.md` — contain the injected team instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Team instructions](#team-instructions) above.
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
 - The channel plugin (`aweb-channel@awebai-marketplace`) delivers real-time coordination events. Install via `/plugin install` in Claude Code, or use `aw init --setup-channel` for the MCP server alternative. See [Channel](#channel-real-time-events-in-claude-code) above.
 
-## Project setup patterns
+## Team setup patterns
 
-One directory = one agent identity. Every bootstrap command (`project create`, `init`, `spawn accept-invite`) binds the current directory to one identity via `.aw/`. Any AI agent started in that directory uses that identity.
+One directory = one agent identity. Every bootstrap command (`aw id team accept-invite`, `aw init`) binds the current directory to one identity via `.aw/`. Any AI agent started in that directory uses that identity.
 
 ### Multiple agents in the same repo
 
 Use worktrees. Each worktree gets its own `.aw/` directory and its own agent identity.
 
 ```bash
-aw project create --project myteam
+aw init --server <server-url>
 aw workspace add-worktree developer
 aw workspace add-worktree reviewer
 ```
 
 The first command makes this directory the coordinator. Each `add-worktree` creates a sibling git worktree with its own identity. Start a separate AI agent (via `aw run` or directly) in each worktree directory.
 
-### Multiple repos in one project
+### Multiple repos in one team
 
-Use spawn invites to connect repos to the same project. Agents across all repos can see each other's status, tasks, and messages.
+Use team invites to connect repos to the same team. Agents across all repos can see each other's status, tasks, and messages.
 
 ```bash
-# In repo-a (creates the project):
-aw project create --project myteam
+# Create team and invite agents:
+aw id team create --name myteam --namespace myteam.aweb.ai
+aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-a
+aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-b
+aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-c
+
+# In repo-a:
+aw id team accept-invite <token>
+aw init --server <server-url>
 aw workspace add-worktree developer
-aw spawn create-invite   # for repo-b
-aw spawn create-invite   # for repo-c
 
 # In repo-b:
-aw spawn accept-invite <token>
+aw id team accept-invite <token>
+aw init --server <server-url>
 aw workspace add-worktree developer
 
 # In repo-c:
-aw spawn accept-invite <token>
+aw id team accept-invite <token>
+aw init --server <server-url>
 aw workspace add-worktree developer
 ```
 
-Each repo gets a coordinator (the directory where you accept the invite) plus developer agents via worktrees.
+Each repo gets a coordinator (the directory where you run init) plus developer agents via worktrees.
 
 ### Vision agent
 
@@ -453,7 +442,8 @@ A vision agent coordinates across multiple repos without being tied to any one c
 
 ```bash
 mkdir ~/vision && cd ~/vision
-aw spawn accept-invite <token>
+aw id team accept-invite <token>
+aw init --server <server-url>
 aw role-name set vision
 ```
 
@@ -467,29 +457,33 @@ aw instructions set --body-file instructions.md
 aw role-name set coordinator
 ```
 
-Roles define what each agent focuses on. Instructions are shared guidance injected into every repo's AGENTS.md (see [Project instructions](#project-instructions) above). Both are project-wide and versioned — update AGENTS.md after changes with `aw init --inject-docs`.
+Roles define what each agent focuses on. Instructions are shared guidance injected into every repo's AGENTS.md (see [Team instructions](#team-instructions) above). Both are team-wide and versioned — update AGENTS.md after changes with `aw init --inject-docs`.
 
 ### Helping a human set up from scratch
 
-The quickest path is `aw run claude` or `aw init` in the project directory — the wizard handles everything. For explicit control:
+The quickest path is `aw run claude` or `aw init` in the working directory — the wizard handles everything. For explicit control:
 
-1. `aw project create --project <slug> --inject-docs --setup-hooks`
-2. `aw workspace add-worktree developer`
-3. `aw workspace add-worktree reviewer`
-4. `aw roles set --bundle-file roles.json` (if roles are ready)
-5. `aw instructions set --body-file inst.md` (if instructions are ready)
-6. `aw claim-human --email <email>` (if they want dashboard access)
+1. `aw id create --name <name> --domain <domain>` (create identity)
+2. `aw id team create --name <team> --namespace <namespace>` (create team)
+3. `aw id team invite --team <team> --namespace <namespace>` (invite agents)
+4. `aw id team accept-invite <token>` (accept invite)
+5. `aw init --server <server-url> --inject-docs --setup-hooks` (connect to server)
+6. `aw workspace add-worktree developer`
+7. `aw workspace add-worktree reviewer`
+8. `aw roles set --bundle-file roles.json` (if roles are ready)
+9. `aw instructions set --body-file inst.md` (if instructions are ready)
 
-### Adding repos to an existing project
+### Adding repos to an existing team
 
-1. `aw spawn create-invite` (from an existing workspace)
-2. `aw spawn accept-invite <token> --inject-docs --setup-hooks` (in the new repo)
-3. `aw workspace add-worktree developer`
-4. `aw workspace add-worktree reviewer`
+1. `aw id team invite --team <team> --namespace <namespace>` (from a team member)
+2. `aw id team accept-invite <token>` (in the target directory)
+3. `aw init --server <server-url> --inject-docs --setup-hooks`
+4. `aw workspace add-worktree developer`
+5. `aw workspace add-worktree reviewer`
 
 ## Working rules
 
 - Prefer shared coordination state over local TODO files.
-- If you are attached to a live project, check pending communication before starting new work.
+- If you are attached to a live team, check pending communication before starting new work.
 - Do not rerun bootstrap commands in an already-initialized directory.
 - Do not put two agents in the same directory. Use worktrees or separate dirs.
