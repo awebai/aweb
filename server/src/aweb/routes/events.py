@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from aweb.deps import get_db, get_redis
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -247,10 +247,10 @@ async def event_stream(
     deadline: str = Query(..., min_length=1),
     db=Depends(get_db),
     redis=Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ):
     """Per-agent SSE event stream. Emits lightweight wake events when the agent
     has new mail, chat messages, or available work."""
-    identity = await get_team_identity(request, db)
 
     try:
         deadline_dt = _parse_deadline(deadline)

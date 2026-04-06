@@ -266,13 +266,25 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Read registry URL from the identity in the working directory
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	var registryURL string
+	identity, _, identErr := awconfig.LoadWorktreeIdentityFromDir(workingDir)
+	if identErr == nil && identity != nil {
+		registryURL = strings.TrimSpace(identity.RegistryURL)
+	}
+
 	invite := &awconfig.TeamInvite{
-		InviteID:  inviteID,
-		Domain:    domain,
-		TeamName:  team,
-		Ephemeral: teamInviteEphemeral,
-		Secret:    secret,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		InviteID:    inviteID,
+		Domain:      domain,
+		TeamName:    team,
+		Ephemeral:   teamInviteEphemeral,
+		Secret:      secret,
+		RegistryURL: registryURL,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
@@ -356,15 +368,19 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Register certificate at awid
+	// Register certificate at awid — use the registry URL from the invite token
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		return err
 	}
+	registryURL := strings.TrimSpace(decoded.RegistryURL)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), invite.Domain, invite.TeamName, cert, teamKey); err != nil {
+	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		return fmt.Errorf("register certificate at registry: %w", err)
 	}
 

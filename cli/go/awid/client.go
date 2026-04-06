@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,6 +103,7 @@ type Client struct {
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
+	teamAddress         string             // team address from the certificate (e.g. "acme.com/backend")
 	address             string             // namespace/alias, used in signed envelopes
 	projectSlug         string             // current local project slug, used for project~alias addressing
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
@@ -181,6 +184,7 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	c.signingKey = signingKey
 	c.did = did
 	c.teamCertHeader = certHeader
+	c.teamAddress = cert.Team
 	return c, nil
 }
 
@@ -659,9 +663,13 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	}
 	req.Header.Set("Accept", accept)
 	if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: DIDKey signature over canonical_json(body | {timestamp})
+		// Certificate auth: DIDKey signature over {body_sha256, team, timestamp}.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := buildCertAuthSignPayload(in, timestamp)
+		var bodyBytes []byte
+		if in != nil {
+			bodyBytes, _ = json.Marshal(in)
+		}
+		signPayload := buildCertAuthSignPayload(c.teamAddress, timestamp, bodyBytes)
 		sig := ed25519.Sign(c.signingKey, []byte(signPayload))
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
@@ -683,24 +691,20 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 // buildCertAuthSignPayload builds the canonical JSON payload for DIDKey
 // certificate auth: the request body merged with a timestamp field.
 // For requests with no body, signs {"timestamp":"..."}.
-func buildCertAuthSignPayload(body any, timestamp string) string {
-	fields := map[string]any{"timestamp": timestamp}
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err == nil {
-			var bodyFields map[string]any
-			if json.Unmarshal(data, &bodyFields) == nil {
-				for k, v := range bodyFields {
-					fields[k] = v
-				}
-			}
-		}
+func buildCertAuthSignPayload(teamAddress, timestamp string, body []byte) string {
+	return CertAuthSignPayload(teamAddress, timestamp, body)
+}
+
+// CertAuthSignPayload produces the canonical JSON for cert auth request signing.
+// Includes a SHA256 hash of the request body for integrity without ASGI stream conflicts.
+func CertAuthSignPayload(teamAddress, timestamp string, body []byte) string {
+	h := sha256.Sum256(body)
+	fields := map[string]any{
+		"body_sha256": hex.EncodeToString(h[:]),
+		"team":        teamAddress,
+		"timestamp":   timestamp,
 	}
-	canonical, _ := json.Marshal(fields)
-	// Re-marshal through sorted keys for deterministic output
-	var parsed map[string]any
-	_ = json.Unmarshal(canonical, &parsed)
-	sorted, _ := canonicalJSONBytes(parsed)
+	sorted, _ := canonicalJSONBytes(fields)
 	return string(sorted)
 }
 

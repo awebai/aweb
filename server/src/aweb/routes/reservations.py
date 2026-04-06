@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
 from aweb.deps import get_db
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ._reservation_utils import reservation_metadata, reservation_prefix_like
 
@@ -137,8 +137,8 @@ async def list_reservations(
     request: Request,
     prefix: Optional[str] = Query(None, description="Optional resource key prefix filter"),
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ReservationListResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
@@ -176,8 +176,8 @@ async def acquire_reservation(
     request: Request,
     payload: ReservationAcquireRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ReservationAcquireResponse | JSONResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=payload.ttl_seconds)
@@ -260,8 +260,8 @@ async def renew_reservation(
     request: Request,
     payload: ReservationRenewRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ReservationRenewResponse | JSONResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=payload.ttl_seconds)
@@ -313,8 +313,8 @@ async def release_reservation(
     request: Request,
     payload: ReservationReleaseRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ReservationReleaseResponse | JSONResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
@@ -355,8 +355,8 @@ async def revoke_reservations(
     request: Request,
     payload: ReservationRevokeRequest,
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ReservationRevokeResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     params: list[object] = [identity.team_address]

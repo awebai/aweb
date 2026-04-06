@@ -16,7 +16,7 @@ from aweb.messaging.messages import (
     get_agent_by_id,
     utc_iso as _utc_iso,
 )
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
@@ -87,9 +87,9 @@ class AckResponse(BaseModel):
 
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
-    request: Request, payload: SendMessageRequest, db=Depends(get_db)
+    request: Request, payload: SendMessageRequest, db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> SendMessageResponse:
-    identity = await get_team_identity(request, db)
 
     # Resolve recipient
     to_agent_id: str | None = payload.to_agent_id
@@ -158,8 +158,8 @@ async def get_inbox(
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
     unread_only: bool = Query(default=False),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> InboxResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     where_clause = "WHERE m.team_address = $1 AND m.to_agent_id = $2"
@@ -204,9 +204,9 @@ async def get_inbox(
 
 @router.post("/{message_id}/ack", response_model=AckResponse)
 async def ack_message(
-    request: Request, message_id: str, db=Depends(get_db)
+    request: Request, message_id: str, db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> AckResponse:
-    identity = await get_team_identity(request, db)
 
     try:
         msg_uuid = UUID(message_id.strip())

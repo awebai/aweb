@@ -12,11 +12,10 @@ from redis.asyncio import from_url as async_redis_from_url
 
 from aweb.logging import configure_logging
 from aweb.ratelimit import MemoryFixedWindowRateLimiter, RedisFixedWindowRateLimiter
-from aweb.routes.did import router as did_router
-from aweb.routes.dns_addresses import router as dns_addresses_router
-from aweb.routes.dns_namespaces import router as dns_namespaces_router
-
 from .config import get_settings
+from .routes.did import router as did_router
+from .routes.dns_addresses import router as dns_addresses_router
+from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.teams import router as teams_router
 from .db import AwidDatabaseInfra
 

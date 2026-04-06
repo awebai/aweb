@@ -51,27 +51,16 @@ class AwidDatabaseInfra:
             await self._manager.execute(f'CREATE SCHEMA IF NOT EXISTS "{quoted_schema}"')
 
             if run_migrations:
-                import aweb
-
-                aweb_path = Path(aweb.__file__).resolve().parent
-                migrations = AsyncMigrationManager(
-                    self._manager,
-                    migrations_path=str(aweb_path / "migrations" / "aweb"),
-                    module_name="awid-registry",
-                    migrations_table="schema_migrations",
-                )
-                await migrations.apply_pending_migrations()
-
                 import awid_service
 
                 awid_path = Path(awid_service.__file__).resolve().parent
-                awid_migrations = AsyncMigrationManager(
+                migrations = AsyncMigrationManager(
                     self._manager,
                     migrations_path=str(awid_path / "migrations"),
                     module_name="awid-service",
                     migrations_table="schema_migrations",
                 )
-                await awid_migrations.apply_pending_migrations()
+                await migrations.apply_pending_migrations()
 
             self._initialized = True
 

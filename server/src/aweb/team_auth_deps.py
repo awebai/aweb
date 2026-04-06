@@ -12,7 +12,9 @@ import json
 import logging
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+
+from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
 from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
@@ -172,12 +174,17 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     return cert_info
 
 
-async def get_team_identity(request: Request, db) -> TeamIdentity:
+async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentity:
     """FastAPI dependency: authenticate request via team certificate.
 
     Full auth pipeline (steps 1-6): verifies the certificate and
     resolves the agent from the local DB. For routes where the agent
     must already exist.
+
+    IMPORTANT: this must be used as Depends(get_team_identity) so FastAPI
+    evaluates it before body parameter injection. Calling it directly
+    inside a route handler deadlocks on POST requests because
+    request.body() blocks after FastAPI has already consumed the stream.
 
     Returns a TeamIdentity or raises HTTPException(401/403).
     """

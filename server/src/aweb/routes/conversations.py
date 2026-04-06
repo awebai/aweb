@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from aweb.deps import get_db
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
@@ -34,8 +34,8 @@ async def list_conversations(
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ConversationsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     actor_uuid = UUID(identity.agent_id)

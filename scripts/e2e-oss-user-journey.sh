@@ -24,7 +24,7 @@
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
 
-set -euo pipefail
+set -uo pipefail
 
 canonicalize_dir() {
   local dir="$1"
@@ -135,7 +135,21 @@ run_aw_in() {
 }
 
 jq_field() {
-  python3 -c "import sys,json; print(json.load(sys.stdin).get('$1',''))"
+  # Extract the first JSON object from mixed output (CLI may print
+  # non-JSON text before the JSON when --json is used).
+  python3 -c "
+import sys, json
+text = sys.stdin.read()
+start = text.find('{')
+if start >= 0:
+    try:
+        d = json.loads(text[start:])
+        print(d.get('$1', ''))
+    except json.JSONDecodeError:
+        print('')
+else:
+    print('')
+"
 }
 
 # ---------------------------------------------------------------------------
@@ -166,6 +180,7 @@ POSTGRES_PORT=$PG_PORT
 AWEB_LOG_JSON=true
 AWID_LOG_JSON=true
 AWID_RATE_LIMIT_BACKEND=redis
+AWID_SKIP_DNS_VERIFY=1
 EOF
 
 cd "$SERVER_DIR"

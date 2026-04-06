@@ -1,14 +1,10 @@
 package main
 
 import (
-	"context"
-	"time"
-
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
-// introspectOutput combines the server's introspect response with local identity fields.
 type introspectOutput struct {
 	awid.IntrospectResponse
 	DID      string `json:"did,omitempty"`
@@ -22,40 +18,26 @@ var introspectCmd = &cobra.Command{
 	Aliases: []string{"introspect"},
 	Short:   "Show the current identity",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, sel, err := resolveAPIKeyOnly()
+		_, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		resp, err := client.Introspect(ctx)
-		if err != nil {
-			return err
-		}
-
-		alias := resp.IdentityHandle()
-		if alias == "" {
-			alias = sel.IdentityHandle
-		}
+		alias := sel.IdentityHandle
 
 		out := introspectOutput{
-			IntrospectResponse: *resp,
-			DID:                sel.DID,
-			StableID:           sel.StableID,
-			Custody:            sel.Custody,
-			Lifetime:           sel.Lifetime,
-		}
-		// Prefer server-returned values; fall back to local config.
-		if out.NamespaceSlug == "" {
-			out.NamespaceSlug = sel.NamespaceSlug
+			IntrospectResponse: awid.IntrospectResponse{
+				Alias:         alias,
+				NamespaceSlug: sel.NamespaceSlug,
+				Address:       selectionAddress(sel),
+			},
+			DID:      sel.DID,
+			StableID: sel.StableID,
+			Custody:  sel.Custody,
+			Lifetime: sel.Lifetime,
 		}
 		if out.Address == "" {
-			out.Address = selectionAddress(sel)
-			if out.Address == "" {
-				out.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, alias)
-			}
+			out.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, alias)
 		}
 		printOutput(out, formatIntrospect)
 		return nil

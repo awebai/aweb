@@ -27,7 +27,7 @@ async def _setup_team(client, ns_key, ns_did, domain, team_name):
     return team_key, team_did
 
 
-async def _register_cert(client, team_key, team_did, domain, team_name, alias, *, lifetime="permanent"):
+async def _register_cert(client, team_key, team_did, domain, team_name, alias, *, lifetime="persistent"):
     _, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     cert_id = str(uuid4())

@@ -67,7 +67,7 @@ async def test_full_team_lifecycle(client, controller_identity):
             "member_did_aw": alice_did_aw,
             "member_address": f"{domain}/alice",
             "alias": "alice",
-            "lifetime": "permanent",
+            "lifetime": "persistent",
         },
         headers=headers,
     )
@@ -109,7 +109,7 @@ async def test_full_team_lifecycle(client, controller_identity):
     assert alice_cert["member_did_key"] == alice_did_key
     assert alice_cert["member_did_aw"] == alice_did_aw
     assert alice_cert["member_address"] == f"{domain}/alice"
-    assert alice_cert["lifetime"] == "permanent"
+    assert alice_cert["lifetime"] == "persistent"
     assert alice_cert["revoked_at"] is None
 
     bob_cert = next(c for c in certs if c["alias"] == "bob")

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -166,39 +165,54 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 }
 
 // canonicalCertificatePayload builds the canonical JSON for certificate signing.
-// All fields are included in the signed payload to bind the full membership identity.
-// Uses sorted-key map pattern consistent with canonicalRegistryJSON.
+// The payload must match exactly what the verifier reconstructs: the certificate
+// JSON (minus signature) serialized with sorted keys, no whitespace, and native
+// types (version as int, omitted empty optional fields).
 func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, lifetime, issuedAt string) string {
-	fields := map[string]string{
-		"alias":          alias,
-		"certificate_id": certID,
-		"issued_at":      issuedAt,
-		"lifetime":       lifetime,
-		"member_address": memberAddress,
-		"member_did_aw":  memberDIDAW,
-		"member_did_key": memberDIDKey,
-		"team":           team,
-		"team_did_key":   teamDIDKey,
-		"version":        "1",
+	type entry struct {
+		key string
+		val string // serialized JSON value (already quoted for strings)
 	}
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 
+	entries := []entry{
+		{"alias", jsonString(alias)},
+		{"certificate_id", jsonString(certID)},
+		{"issued_at", jsonString(issuedAt)},
+		{"lifetime", jsonString(lifetime)},
+	}
+	if memberAddress != "" {
+		entries = append(entries, entry{"member_address", jsonString(memberAddress)})
+	}
+	if memberDIDAW != "" {
+		entries = append(entries, entry{"member_did_aw", jsonString(memberDIDAW)})
+	}
+	entries = append(entries,
+		entry{"member_did_key", jsonString(memberDIDKey)},
+		entry{"team", jsonString(team)},
+		entry{"team_did_key", jsonString(teamDIDKey)},
+		entry{"version", "1"},
+	)
+
+	// Keys are already in sorted order by construction above.
 	var b strings.Builder
 	b.WriteByte('{')
-	for i, k := range keys {
+	for i, e := range entries {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteByte('"')
-		b.WriteString(k)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, fields[k])
-		b.WriteByte('"')
+		b.WriteString(e.key)
+		b.WriteString(`":`)
+		b.WriteString(e.val)
 	}
 	b.WriteByte('}')
+	return b.String()
+}
+
+func jsonString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	writeEscapedString(&b, s)
+	b.WriteByte('"')
 	return b.String()
 }

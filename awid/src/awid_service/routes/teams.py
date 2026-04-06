@@ -143,7 +143,7 @@ class CertificateRegisterRequest(BaseModel):
     member_did_aw: str | None = Field(default=None, max_length=256)
     member_address: str | None = Field(default=None, max_length=256)
     alias: str = Field(..., min_length=1, max_length=128)
-    lifetime: str = Field(default="permanent", max_length=32)
+    lifetime: str = Field(default="persistent", max_length=32)
 
     @field_validator("member_did_key")
     @classmethod
@@ -153,8 +153,8 @@ class CertificateRegisterRequest(BaseModel):
     @field_validator("lifetime")
     @classmethod
     def validate_lifetime(cls, value: str) -> str:
-        if value not in ("permanent", "ephemeral"):
-            raise ValueError("must be 'permanent' or 'ephemeral'")
+        if value not in ("persistent", "ephemeral"):
+            raise ValueError("must be 'persistent' or 'ephemeral'")
         return value
 
 
