@@ -728,9 +728,6 @@ func executeInit(opts initOptions) (*initResult, error) {
 	bootstrapAlias, bootstrapName := initBootstrapHandleValues(opts, identityMaterial, lifetime)
 	var resp *awid.BootstrapIdentityResponse
 	switch opts.Flow {
-	case flowInvite:
-		resp, err = acceptInviteViaCloud(ctx, opts.BaseURL, opts.InviteToken, bootstrapAlias, bootstrapName, opts.AddressReachability, opts.HumanName, opts.AgentType, did, pubKeyB64, lifetime)
-
 	case flowProjectKey:
 		var client *aweb.Client
 		client, err = aweb.NewWithAPIKey(opts.BaseURL, opts.AuthToken)
@@ -785,6 +782,9 @@ func executeInit(opts initOptions) (*initResult, error) {
 			createReq.Name = &name
 		}
 		resp, err = client.CreateProject(ctx, createReq)
+
+	default:
+		return nil, fmt.Errorf("unsupported init flow %d", opts.Flow)
 	}
 	if err != nil {
 		return nil, err
@@ -1185,60 +1185,6 @@ func shouldSuggestClaimHuman(result *initResult) bool {
 		}
 	}
 	return false
-}
-
-func acceptInviteViaCloud(
-	ctx context.Context,
-	baseURL string,
-	token string,
-	alias string,
-	name string,
-	addressReachability string,
-	humanName string,
-	agentType string,
-	did string,
-	publicKey string,
-	lifetime string,
-) (*awid.BootstrapIdentityResponse, error) {
-	client, err := newUnauthenticatedCloudClient(baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("invite accept requires a valid URL: %w", err)
-	}
-	req := &awid.SpawnAcceptInviteRequest{
-		Token:               token,
-		AddressReachability: addressReachability,
-		HumanName:           humanName,
-		AgentType:           agentType,
-		DID:                 did,
-		PublicKey:           publicKey,
-		Custody:             awid.CustodySelf,
-		Lifetime:            lifetime,
-	}
-	if trimmed := strings.TrimSpace(alias); trimmed != "" {
-		req.Alias = &trimmed
-	}
-	if trimmed := strings.TrimSpace(name); trimmed != "" {
-		req.Name = &trimmed
-	}
-	resp, err := client.SpawnAcceptInvite(ctx, req)
-	if err != nil {
-		if code, ok := awid.HTTPStatusCode(err); ok && code == 422 {
-			if body, ok := awid.HTTPErrorBody(err); ok {
-				lower := strings.ToLower(body)
-				if strings.TrimSpace(alias) == "" && strings.Contains(lower, "alias") {
-					return nil, usageError("alias is required (use --alias)")
-				}
-				if strings.TrimSpace(name) == "" && strings.Contains(lower, "name") {
-					return nil, usageError("name is required (use --name)")
-				}
-			}
-		}
-		return nil, err
-	}
-	if strings.TrimSpace(resp.APIKey) == "" {
-		return nil, fmt.Errorf("invite accept failed: missing api_key in response")
-	}
-	return resp, nil
 }
 
 func resolveInitLifetime(permanent bool) string {

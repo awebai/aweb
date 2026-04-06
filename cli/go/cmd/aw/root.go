@@ -61,14 +61,11 @@ func init() {
 	)
 	initCmd.GroupID = groupWorkspace
 	projectCmd.GroupID = groupWorkspace
-	spawnCmd.GroupID = groupWorkspace
 	resetCmd.GroupID = groupWorkspace
 	workspaceCmd.GroupID = groupWorkspace
 
 	introspectCmd.GroupID = groupIdentity
 	identityCmd.GroupID = groupIdentity
-	identitiesCmd.GroupID = groupIdentity
-	claimHumanCmd.GroupID = groupIdentity
 	mcpConfigCmd.GroupID = groupIdentity
 
 	chatCmd.GroupID = groupNetwork
