@@ -135,7 +135,21 @@ run_aw_in() {
 }
 
 jq_field() {
-  python3 -c "import sys,json; print(json.load(sys.stdin).get('$1',''))"
+  # Extract the first JSON object from mixed output (CLI may print
+  # non-JSON text before the JSON when --json is used).
+  python3 -c "
+import sys, json
+text = sys.stdin.read()
+start = text.find('{')
+if start >= 0:
+    try:
+        d = json.loads(text[start:])
+        print(d.get('$1', ''))
+    except json.JSONDecodeError:
+        print('')
+else:
+    print('')
+"
 }
 
 # ---------------------------------------------------------------------------
