@@ -34,7 +34,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "member_did_aw": "",
         "member_address": "",
         "alias": kwargs.get("alias", "alice"),
-        "lifetime": kwargs.get("lifetime", "permanent"),
+        "lifetime": kwargs.get("lifetime", "persistent"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     payload = canonical_json_bytes(cert)
@@ -111,7 +111,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
         team_sk, team_did_key, agent_did_key,
         team_address="acme.com/backend",
         alias="alice",
-        lifetime="permanent",
+        lifetime="persistent",
     )
     cert_header = _encode_certificate(cert)
 

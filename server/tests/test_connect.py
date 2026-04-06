@@ -41,7 +41,7 @@ class TestConnect:
             "team_address": "acme.com/backend",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "permanent",
+            "lifetime": "persistent",
             "certificate_id": "cert-001",
         }
 
@@ -81,7 +81,7 @@ class TestConnect:
         assert agent is not None
         assert agent["alias"] == "alice"
         assert agent["did_key"] == agent_did_key
-        assert agent["lifetime"] == "permanent"
+        assert agent["lifetime"] == "persistent"
 
     @pytest.mark.asyncio
     async def test_idempotent_reconnect(self, aweb_cloud_db):
@@ -96,7 +96,7 @@ class TestConnect:
             "team_address": "acme.com/backend",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "permanent",
+            "lifetime": "persistent",
             "certificate_id": "cert-001",
         }
 
@@ -168,7 +168,7 @@ class TestConnect:
             "team_address": "acme.com/backend",
             "alias": "alice",
             "did_key": agent_did_key,
-            "lifetime": "permanent",
+            "lifetime": "persistent",
             "certificate_id": "cert-001",
         }
 

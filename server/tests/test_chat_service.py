@@ -48,7 +48,7 @@ async def _setup_team_and_agents(aweb_db, team_address="acme.com/backend"):
     alice = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime)
-        VALUES ($1, $2, 'alice', 'permanent')
+        VALUES ($1, $2, 'alice', 'persistent')
         RETURNING agent_id
         """,
         team_address, alice_did,
@@ -56,7 +56,7 @@ async def _setup_team_and_agents(aweb_db, team_address="acme.com/backend"):
     bob = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime)
-        VALUES ($1, $2, 'bob', 'permanent')
+        VALUES ($1, $2, 'bob', 'persistent')
         RETURNING agent_id
         """,
         team_address, bob_did,
