@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,6 +99,7 @@ type Client struct {
 	apiKey              string
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
+	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	address             string             // namespace/alias, used in signed envelopes
 	projectSlug         string             // current local project slug, used for project~alias addressing
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
@@ -151,6 +153,33 @@ func NewWithIdentity(baseURL, apiKey string, signingKey ed25519.PrivateKey, did 
 	}
 	c.signingKey = signingKey
 	c.did = did
+	return c, nil
+}
+
+// NewWithCertificate creates an authenticated client that uses DIDKey signatures
+// and a team certificate instead of API key authentication.
+func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *TeamCertificate) (*Client, error) {
+	if signingKey == nil {
+		return nil, fmt.Errorf("signingKey must not be nil")
+	}
+	if cert == nil {
+		return nil, fmt.Errorf("certificate must not be nil")
+	}
+	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if did != cert.MemberDIDKey {
+		return nil, fmt.Errorf("signing key did:key %s does not match certificate member_did_key %s", did, cert.MemberDIDKey)
+	}
+	certHeader, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		return nil, fmt.Errorf("encode team certificate: %w", err)
+	}
+	c, err := New(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.signingKey = signingKey
+	c.did = did
+	c.teamCertHeader = certHeader
 	return c, nil
 }
 
@@ -628,7 +657,15 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", accept)
-	if c.apiKey != "" {
+	if c.teamCertHeader != "" && c.signingKey != nil {
+		// Certificate auth: DIDKey signature + team certificate
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		payload := timestamp + "\n" + method + "\n" + path
+		sig := ed25519.Sign(c.signingKey, []byte(payload))
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 

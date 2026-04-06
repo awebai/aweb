@@ -40,3 +40,13 @@ func NewWithIdentity(baseURL, apiKey string, signingKey ed25519.PrivateKey, did 
 	}
 	return &Client{Client: c}, nil
 }
+
+// NewWithCertificate creates a client authenticated with DIDKey signatures
+// and a team certificate.
+func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate) (*Client, error) {
+	c, err := awid.NewWithCertificate(baseURL, signingKey, cert)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{Client: c}, nil
+}
