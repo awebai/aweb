@@ -251,10 +251,12 @@ Subcommands:
 - `access-mode  Get or set identity access mode`
 - `delete       Delete the current ephemeral identity`
 - `log          Show an identity log`
+- `request      Make a DIDKey-signed HTTP request with the local identity key`
 - `reachability Get or set permanent address reachability`
 - `register     Register the current permanent identity at awid.ai`
 - `resolve      Resolve a did:aw to its current did:key`
 - `show         Show the current identity and registry status`
+- `sign         Sign a canonical JSON payload with the local identity key`
 - `namespace    Inspect a namespace and its registered addresses`
 - `rotate-key   Rotate the identity signing key`
 - `verify       Verify the full audit log for a did:aw`
@@ -265,8 +267,11 @@ Flags:
 ### `identity create`
 
 Flags:
-- `-h, --help      help for create`
-- `--name string   Permanent identity name`
+- `--domain string            Permanent identity domain`
+- `-h, --help                 help for create`
+- `--name string              Permanent identity name`
+- `--registry string          Registry origin override (default: api.awid.ai)`
+- `--skip-dns-verify          Skip the DNS TXT verification prompt and lookup`
 
 ### `identity access-mode`
 
@@ -283,6 +288,17 @@ Flags:
 
 Flags:
 - `-h, --help   help for log`
+
+### `identity request`
+
+Flags:
+- `--body string            Request body to send`
+- `--body-file string       Read the request body from a file`
+- `-h, --help               help for request`
+- `--header stringArray     Additional header in 'Name: Value' form`
+- `--raw                    Print only the upstream response body`
+- `--sign string            JSON object describing the signed payload fields`
+- `--sign-file string       Read the JSON sign payload from a file`
 
 ### `identity namespace`
 
@@ -303,6 +319,13 @@ Flags:
 
 Flags:
 - `-h, --help   help for show`
+
+### `identity sign`
+
+Flags:
+- `-h, --help                 help for sign`
+- `--payload string           JSON object to sign`
+- `--payload-file string      Read the JSON payload to sign from a file`
 
 ### `identity reachability`
 

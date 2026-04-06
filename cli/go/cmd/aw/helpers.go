@@ -68,7 +68,7 @@ func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 }
 
 func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
-	sel, err := awconfig.Resolve(awconfig.ResolveOptions{
+	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
 		ServerName:        serverFlag,
 		WorkingDir:        workingDir,
 		AllowEnvOverrides: true,
@@ -77,6 +77,11 @@ func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
 		return nil, err
 	}
 	return sel, nil
+}
+
+func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
+	wd, _ := os.Getwd()
+	return awconfig.ResolveIdentity(wd)
 }
 
 func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {

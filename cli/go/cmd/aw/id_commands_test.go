@@ -772,6 +772,177 @@ func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 	}
 }
 
+func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	address := "acme.com/alice"
+
+	var registerCalls atomic.Int32
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did":
+			registerCalls.Add(1)
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["did_aw"] != stableID {
+				t.Fatalf("did_aw=%v want %v", payload["did_aw"], stableID)
+			}
+			if payload["did_key"] != did {
+				t.Fatalf("did_key=%v want %v", payload["did_key"], did)
+			}
+			if payload["server"] != "" {
+				t.Fatalf("server=%v want empty string", payload["server"])
+			}
+			if payload["address"] != address {
+				t.Fatalf("address=%v want %v", payload["address"], address)
+			}
+			if payload["handle"] != "alice" {
+				t.Fatalf("handle=%v want alice", payload["handle"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case "/v1/did/" + stableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"server":          "",
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-05T00:00:00Z",
+				"updated_at":      "2026-04-05T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, address, did, stableID, registryServer.URL, priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "register", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id register failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "registered" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["registry_url"] != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	}
+	if got["did_aw"] != stableID {
+		t.Fatalf("did_aw=%v want %v", got["did_aw"], stableID)
+	}
+	if got["did_key"] != did {
+		t.Fatalf("did_key=%v want %v", got["did_key"], did)
+	}
+	if registerCalls.Load() != 1 {
+		t.Fatalf("register calls=%d want 1", registerCalls.Load())
+	}
+}
+
+func TestAwIDRotateKeyWorksWithStandaloneIdentity(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	address := "acme.com/alice"
+
+	currentRegistryDID := oldDID
+	createEntry := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("a", 64))
+	currentHead := createEntry
+	var rotateCalls atomic.Int32
+
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentRegistryDID,
+				"log_head":        didLogJSON(currentHead),
+			})
+		case "/v1/did/" + stableID + "/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentRegistryDID,
+				"server":          "",
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-05T00:00:00Z",
+				"updated_at":      "2026-04-05T00:00:00Z",
+			})
+		case "/v1/did/" + stableID:
+			rotateCalls.Add(1)
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			currentRegistryDID = payload["new_did_key"].(string)
+			currentHead = testDidLogEntry(t, stableID, oldPriv, currentRegistryDID, "rotate_key", &oldDID, &createEntry.EntryHash, 2, strings.Repeat("b", 64))
+			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, address, oldDID, stableID, registryServer.URL, oldPriv)
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rotate-key failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "rotated" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["registry_url"] != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	}
+	if rotateCalls.Load() != 1 {
+		t.Fatalf("rotate calls=%d want 1", rotateCalls.Load())
+	}
+	identity := loadIdentityForTest(t, tmp)
+	if identity.DID != currentRegistryDID {
+		t.Fatalf("identity DID=%q want %q", identity.DID, currentRegistryDID)
+	}
+}
+
 func TestVerifyIDCreateDomainAuthorityMatchesControllerAndRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -1497,6 +1668,27 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 		Custody:   awid.CustodySelf,
 		Lifetime:  awid.LifetimePersistent,
 		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeStandaloneSelfCustodyIdentity(t *testing.T, workingDir, address, did, stableID, registryURL string, signingKey ed25519.PrivateKey) {
+	t.Helper()
+	pub := signingKey.Public().(ed25519.PublicKey)
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if err := awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, signingKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            did,
+		StableID:       stableID,
+		Address:        address,
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    registryURL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-05T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
