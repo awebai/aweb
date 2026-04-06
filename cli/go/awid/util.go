@@ -19,8 +19,8 @@ func itoa(v int) string {
 	return strconv.Itoa(v)
 }
 
-// generateUUID4 returns a random UUID v4 string.
-func generateUUID4() (string, error) {
+// GenerateUUID4 returns a random UUID v4 string.
+func GenerateUUID4() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("generate UUID: %w", err)

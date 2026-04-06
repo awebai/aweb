@@ -101,7 +101,16 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	sel.BaseURL = baseURL
 
 	var c *aweb.Client
-	if sel.SigningKey != "" && sel.DID != "" {
+
+	// Certificate auth: team certificate + signing key
+	certClient, certErr := resolveCertificateClient(workingDir, baseURL)
+	if certErr == nil && certClient != nil {
+		c = certClient
+		c.SetAddress(selectionAddress(sel))
+		if sel.StableID != "" {
+			c.SetStableID(sel.StableID)
+		}
+	} else if sel.SigningKey != "" && sel.DID != "" {
 		priv, err := awid.LoadSigningKey(sel.SigningKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load signing key: %w", err)
@@ -148,6 +157,23 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	configureBaseURLFallback(c, sel, baseURL)
 	lastClient = c
 	return c, sel, nil
+}
+
+// resolveCertificateClient attempts to create a certificate-authenticated client.
+// Returns (nil, nil) if no team certificate exists. Returns an error only if the
+// certificate exists but is invalid.
+func resolveCertificateClient(workingDir, baseURL string) (*aweb.Client, error) {
+	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	cert, err := awid.LoadTeamCertificate(certPath)
+	if err != nil {
+		return nil, nil // no certificate → fall through to legacy auth
+	}
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("team certificate found but signing key missing: %w", err)
+	}
+	return aweb.NewWithCertificate(baseURL, signingKey, cert)
 }
 
 func resolveClient() (*aweb.Client, error) {

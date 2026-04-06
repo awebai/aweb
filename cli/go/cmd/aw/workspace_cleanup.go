@@ -64,15 +64,9 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 			WorkspacePath: path,
 		}
 
-		deleteIdentityCtx, deleteIdentityCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		identityDeleted, deleteIdentityErr := deleteEphemeralIdentityByWorkspace(deleteIdentityCtx, client, ws)
-		deleteIdentityCancel()
-		if deleteIdentityErr != nil {
-			g.CleanupBlocked = deleteIdentityErr.Error()
-			gone = append(gone, g)
-			continue
-		}
-		g.IdentityDeleted = identityDeleted
+		// Identity lifecycle is managed by team membership (certificate revocation),
+		// not by workspace cleanup. Skip identity deletion.
+		g.IdentityDeleted = false
 
 		deleteWorkspaceCtx, deleteWorkspaceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		deleteWorkspaceErr := client.WorkspaceDelete(deleteWorkspaceCtx, ws.WorkspaceID)

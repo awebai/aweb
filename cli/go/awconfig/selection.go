@@ -101,8 +101,9 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	if overrideAPIKey != "" {
 		apiKey = overrideAPIKey
 	}
-	if baseURL == "" || apiKey == "" {
-		return nil, errors.New("worktree workspace binding is missing server_url or api_key")
+	teamAddress := strings.TrimSpace(workspace.TeamAddress)
+	if baseURL == "" || (apiKey == "" && teamAddress == "") {
+		return nil, errors.New("worktree workspace binding is missing server_url and either api_key or team_address")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
