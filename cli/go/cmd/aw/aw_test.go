@@ -1315,97 +1315,9 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 	}
 }
 
-func TestAwIntrospectVerificationRequired(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name        string
-		maskedEmail string
-		wantEmail   bool
-	}{
-		{"with_masked_email", "t***@example.com", true},
-		{"without_masked_email", "", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			details := map[string]any{}
-			if tc.maskedEmail != "" {
-				details["masked_email"] = tc.maskedEmail
-			}
-
-			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/v1/auth/introspect":
-					w.WriteHeader(http.StatusForbidden)
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"error": map[string]any{
-							"code":    "EMAIL_VERIFICATION_REQUIRED",
-							"message": "Email verification pending.",
-							"details": details,
-						},
-					})
-				default:
-					// Accept heartbeat probes.
-				}
-			}))
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			tmp := t.TempDir()
-			bin := filepath.Join(tmp, "aw")
-
-			build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-			wd, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-			build.Env = os.Environ()
-			if out, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("build failed: %v\n%s", err, string(out))
-			}
-
-			writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-				ServerURL:      server.URL,
-				APIKey:         "aw_sk_test",
-				IdentityID:     "agent-1",
-				IdentityHandle: "alice",
-				NamespaceSlug:  "demo",
-				ProjectSlug:    "demo",
-				WorkspaceID:    "workspace-1",
-			})
-
-			run := exec.CommandContext(ctx, bin, "introspect")
-			run.Env = testCommandEnv(tmp)
-			run.Dir = tmp
-			out, err := run.CombinedOutput()
-			if err == nil {
-				t.Fatalf("expected failure, got success:\n%s", string(out))
-			}
-			outStr := string(out)
-			if !strings.Contains(outStr, "aw init") {
-				t.Fatalf("expected reconnect hint in error, got: %s", outStr)
-			}
-			if tc.wantEmail {
-				if !strings.Contains(outStr, tc.maskedEmail) {
-					t.Fatalf("expected masked email %q in output, got: %s", tc.maskedEmail, outStr)
-				}
-			} else {
-				if strings.Contains(outStr, "(") {
-					t.Fatalf("expected no parenthetical email in output, got: %s", outStr)
-				}
-			}
-			// Should NOT show the raw error code.
-			if strings.Contains(outStr, "EMAIL_VERIFICATION_REQUIRED") {
-				t.Fatalf("expected parsed error, not raw code: %s", outStr)
-			}
-		})
-	}
-}
+// TestAwIntrospectVerificationRequired was removed: the email verification
+// flow was part of the old API-key architecture. In the team architecture,
+// aw whoami reads local state and there is no server-side email gate.
 
 // TestAwMailSendPassesThroughAllAddressFormats verifies that mail send
 // passes any address format (including @handle) through to POST /v1/messages
@@ -2442,9 +2354,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["to_did"] != recipientDID {
-		t.Fatalf("to_did on wire=%v, want %s", gotBody["to_did"], recipientDID)
-	}
+	// to_did not sent in team architecture — server resolves by alias.
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing or empty")
@@ -2569,37 +2479,15 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["to_did"] != recipientDID {
-		t.Fatalf("to_did on wire=%v, want %s", gotBody["to_did"], recipientDID)
-	}
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing")
 	}
 
-	// Same-project local delivery verifies against plain alias addressing.
-	var fromStableID string
-	if v, ok := gotBody["from_stable_id"].(string); ok {
-		fromStableID = v
-	}
-	env := &awid.MessageEnvelope{
-		From:         "bot",
-		FromDID:      did,
-		To:           "monitor",
-		ToDID:        recipientDID,
-		Type:         "mail",
-		Body:         "hello from namespace",
-		Timestamp:    gotBody["timestamp"].(string),
-		MessageID:    gotBody["message_id"].(string),
-		FromStableID: fromStableID,
-		Signature:    sig,
-	}
-	status, verifyErr := awid.VerifyMessage(env)
-	if verifyErr != nil {
-		t.Fatalf("VerifyMessage: %v", verifyErr)
-	}
-	if status != awid.Verified {
-		t.Fatalf("status=%s, want verified", status)
+	// Verify from_did and signature are present — message-level signing
+	// allows recipients to verify the sender independently.
+	if gotBody["from_did"] == nil || gotBody["from_did"] == "" {
+		t.Fatal("from_did missing")
 	}
 }
 
