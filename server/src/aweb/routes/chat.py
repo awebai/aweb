@@ -18,27 +18,17 @@ from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
-from aweb.address_scope import (
-    format_local_address,
-    get_project_scope,
-    parse_recipient_ref,
-    resolve_local_recipient,
-)
-from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
     get_agent_by_id,
+    get_agents_by_aliases,
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
     send_in_session,
 )
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
-from aweb.awid.custody import sign_on_behalf
-from aweb.awid.did import validate_stable_id
-from aweb.awid.replacement import get_sender_delivery_metadata
-from aweb.awid.stable_id import ensure_agent_stable_ids
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
@@ -50,6 +40,7 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
+from aweb.team_auth_deps import get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -89,50 +80,13 @@ def _parse_signed_timestamp(value: str) -> datetime:
 
 
 def _chat_to_address(participant_rows: list[dict[str, Any]], *, from_agent_id: str) -> str:
-    sender = next((r for r in participant_rows if str(r["agent_id"]) == str(from_agent_id)), None)
-    if sender is None:
-        return ""
-    sender_project_slug = sender["project_slug"]
     refs = [
-        format_local_address(
-            base_project_slug=sender_project_slug,
-            target_project_slug=r["project_slug"],
-            alias=r["alias"],
-        )
+        r["alias"]
         for r in participant_rows
         if str(r["agent_id"]) != str(from_agent_id)
     ]
     refs.sort()
     return ",".join(refs)
-
-
-def _chat_signature_fields(
-    *,
-    from_address: str,
-    message_id: UUID,
-    to_address: str,
-    to_did: str | None,
-    body: str,
-    created_at: datetime,
-    from_stable_id: str | None,
-    to_stable_id: str | None,
-) -> dict[str, str]:
-    fields: dict[str, str] = {
-        "from": from_address,
-        "from_did": "",
-        "message_id": str(message_id),
-        "to": to_address,
-        "to_did": to_did or "",
-        "type": "chat",
-        "subject": "",
-        "body": body,
-        "timestamp": _utc_iso(created_at),
-    }
-    if from_stable_id:
-        fields["from_stable_id"] = from_stable_id
-    if to_stable_id:
-        fields["to_stable_id"] = to_stable_id
-    return fields
 
 
 def _group_participants_by_session(
@@ -164,7 +118,7 @@ async def _targets_left(db, *, session_id: UUID, target_agent_ids: list[str]) ->
     part_rows = await aweb_db.fetch_all(
         """
         SELECT agent_id, alias
-        FROM {{tables.chat_session_participants}}
+        FROM {{tables.chat_participants}}
         WHERE session_id = $1 AND agent_id = ANY($2::uuid[])
         """,
         session_id,
@@ -181,14 +135,10 @@ class CreateSessionRequest(BaseModel):
     leaving: bool = False
     wait_seconds: int | None = None
     message_id: str | None = None
-    reply_to_message_id: str | None = None
+    reply_to: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
-    from_stable_id: str | None = Field(default=None, max_length=256)
-    to_did: str | None = Field(default=None, max_length=256)
-    to_stable_id: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
-    signing_key_id: str | None = Field(default=None, max_length=256)
     signed_payload: str | None = None
 
     @field_validator("to_aliases")
@@ -199,28 +149,17 @@ class CreateSessionRequest(BaseModel):
             value = (value or "").strip()
             if not value:
                 continue
-            parse_recipient_ref(value)
             cleaned.append(value)
         if not cleaned:
             raise ValueError("to_aliases must not be empty")
         return cleaned
 
-    @field_validator("message_id", "reply_to_message_id")
+    @field_validator("message_id", "reply_to")
     @classmethod
     def _validate_message_id(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
             return None
         return _parse_uuid(v, field=str(info.field_name or "message_id"))
-
-    @field_validator("from_stable_id", "to_stable_id")
-    @classmethod
-    def _validate_stable_id(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip()
-        if not v:
-            return None
-        return validate_stable_id(v)
 
 
 class CreateSessionResponse(BaseModel):
@@ -236,15 +175,14 @@ class CreateSessionResponse(BaseModel):
 async def create_or_send(
     request: Request, payload: CreateSessionRequest, db=Depends(get_db), redis=Depends(get_redis)
 ):
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    viewer_scope = await get_project_scope(db, project_id=project_id)
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
+    actor_id = identity.agent_id
 
-    sender = await get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
+    sender = await get_agent_by_id(db, team_address=team_address, agent_id=actor_id)
     if sender is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    sender_scope = await get_project_scope(db, project_id=project_id)
     to_aliases = [a for a in payload.to_aliases if a]
     if not to_aliases:
         raise HTTPException(status_code=422, detail="to_aliases must not be empty")
@@ -253,76 +191,23 @@ async def create_or_send(
     if sender["alias"] in to_aliases:
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
-    resolved_targets = [
-        await resolve_local_recipient(
-            db,
-            sender_project_id=project_id,
-            sender_agent_id=actor_id,
-            ref=ref,
-            registry_client=getattr(request.app.state, "awid_registry_client", None),
-        )
-        for ref in to_aliases
-    ]
-    targets = [
-        {"agent_id": r.agent_id, "alias": r.agent_alias, "project_id": r.project_id}
-        for r in resolved_targets
-    ]
+    target_rows = await get_agents_by_aliases(db, team_address=team_address, aliases=to_aliases)
+    resolved_aliases = {r["alias"] for r in target_rows}
+    missing = [a for a in to_aliases if a not in resolved_aliases]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Unknown aliases: {', '.join(missing)}")
 
-    # Enforce access_mode: contacts_only agents reject non-contacts.
-    from aweb.messaging.contacts import check_access
+    target_ids = sorted({str(t["agent_id"]) for t in target_rows})
+    agent_rows = [sender] + [t for t in target_rows if str(t["agent_id"]) != sender["agent_id"]]
 
-    for target in targets:
-        sender_from_address = format_local_address(
-            base_project_slug=(
-                await get_project_scope(db, project_id=target["project_id"])
-            ).project_slug,
-            target_project_slug=sender_scope.project_slug,
-            alias=sender["alias"],
-        )
-        allowed = await check_access(
-            db,
-            target_project_id=target["project_id"],
-            target_agent_id=target["agent_id"],
-            sender_project_id=project_id,
-            sender_address=sender_from_address,
-            sender_owner_type=sender_scope.owner_type,
-            sender_owner_ref=sender_scope.owner_ref,
-        )
-        if not allowed:
-            raise HTTPException(
-                status_code=403,
-                detail="Recipient only accepts messages from contacts",
-            )
-
-    # Ensure no duplicate aliases.
-    target_ids = sorted({str(t["agent_id"]) for t in targets})
-    agent_rows = [sender] + [t for t in targets if str(t["agent_id"]) not in {sender["agent_id"]}]
-
-    session_id = await ensure_session(db, project_id=project_id, agent_rows=agent_rows)
+    session_id = await ensure_session(
+        db, team_address=team_address, agent_rows=agent_rows, created_by_alias=identity.alias
+    )
 
     aweb_db = db.get_manager("aweb")
 
-    stable_ids = await ensure_agent_stable_ids(aweb_db, agent_ids=[actor_id, *target_ids])
-    sender_stable_id = stable_ids.get(actor_id)
-    expected_to_stable_id: str | None = None
-    if to_aliases:
-        stable_targets: list[str] = []
-        for ref, target in sorted(zip(to_aliases, resolved_targets), key=lambda item: item[0]):
-            stable = stable_ids.get(target.agent_id)
-            if not stable:
-                stable_targets = []
-                break
-            stable_targets.append(stable)
-        if stable_targets:
-            expected_to_stable_id = ",".join(stable_targets)
-
-    # Server-side custodial signing: sign before INSERT so the message is
-    # never observable without its signature.
     msg_from_did = payload.from_did
-    msg_from_stable_id = payload.from_stable_id
     msg_signature = payload.signature
-    msg_signing_key_id = payload.signing_key_id
-    msg_to_stable_id = payload.to_stable_id
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
@@ -340,15 +225,7 @@ async def create_or_send(
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
-    if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
-        raise HTTPException(
-            status_code=403, detail="from_stable_id does not match sender stable_id"
-        )
-    if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
-        raise HTTPException(
-            status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
-        )
-    if payload.reply_to_message_id is not None:
+    if payload.reply_to is not None:
         reply_target = await aweb_db.fetch_one(
             """
             SELECT 1
@@ -356,36 +233,10 @@ async def create_or_send(
             WHERE session_id = $1 AND message_id = $2
             """,
             session_id,
-            uuid_mod.UUID(payload.reply_to_message_id),
+            uuid_mod.UUID(payload.reply_to),
         )
         if reply_target is None:
             raise HTTPException(status_code=404, detail="Replied-to message not found")
-
-    cross_project = any(r.project_slug != sender_scope.project_slug for r in resolved_targets)
-    msg_from_stable_id = sender_stable_id
-    msg_to_stable_id = expected_to_stable_id
-    to_address = ",".join(sorted(payload.to_aliases))
-    message_fields = _chat_signature_fields(
-        from_address=(
-            f"{sender_scope.project_slug}~{sender['alias']}" if cross_project else sender["alias"]
-        ),
-        message_id=pre_message_id,
-        to_address=to_address,
-        to_did=payload.to_did,
-        body=payload.message,
-        created_at=msg_created_at,
-        from_stable_id=msg_from_stable_id,
-        to_stable_id=msg_to_stable_id,
-    )
-
-    if payload.signature is None:
-        sign_result = await sign_on_behalf(
-            actor_id,
-            message_fields,
-            db,
-        )
-        if sign_result is not None:
-            msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
 
     try:
         msg_row = await send_in_session(
@@ -393,13 +244,14 @@ async def create_or_send(
             session_id=session_id,
             agent_id=actor_id,
             body=payload.message,
+            reply_to=(
+                uuid_mod.UUID(payload.reply_to)
+                if payload.reply_to is not None
+                else None
+            ),
             leaving=payload.leaving,
             from_did=msg_from_did,
-            from_stable_id=msg_from_stable_id,
-            to_did=payload.to_did,
-            to_stable_id=msg_to_stable_id,
             signature=msg_signature,
-            signing_key_id=msg_signing_key_id,
             signed_payload=msg_signed_payload,
             created_at=msg_created_at,
             message_id=pre_message_id,
@@ -417,7 +269,7 @@ async def create_or_send(
             UPDATE {{tables.chat_sessions}}
             SET wait_seconds = $2,
                 wait_started_at = $3,
-                wait_started_by_agent_id = $4
+                wait_started_by = $4
             WHERE session_id = $1
             """,
             session_id,
@@ -429,7 +281,7 @@ async def create_or_send(
     participants_rows = await aweb_db.fetch_all(
         """
         SELECT agent_id, alias
-        FROM {{tables.chat_session_participants}}
+        FROM {{tables.chat_participants}}
         WHERE session_id = $1
         ORDER BY alias ASC
         """,
@@ -476,13 +328,14 @@ async def pending(
     db=Depends(get_db),
     redis=Depends(get_redis),
 ) -> PendingResponse:
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
-    owner = await get_agent_by_id(db, project_id=project_id, agent_id=actor_id)
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
+    actor_id = identity.agent_id
+
+    owner = await get_agent_by_id(db, team_address=team_address, agent_id=actor_id)
     if owner is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    owner_scope = await get_project_scope(db, project_id=project_id)
     conversations = await get_pending_conversations(db, agent_id=actor_id)
 
     # Unread mail count (best-effort; used only as informational field).
@@ -491,9 +344,9 @@ async def pending(
         """
         SELECT COUNT(*)::int
         FROM {{tables.messages}}
-        WHERE recipient_project_id = $1 AND to_agent_id = $2 AND read_at IS NULL
+        WHERE team_address = $1 AND to_agent_id = $2 AND read_at IS NULL
         """,
-        UUID(project_id),
+        team_address,
         UUID(actor_id),
     )
 
@@ -503,11 +356,10 @@ async def pending(
     if session_ids:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.session_id, p.agent_id, p.alias, pr.slug AS project_slug
-            FROM {{tables.chat_session_participants}} p
-            JOIN {{tables.projects}} pr ON pr.project_id = p.project_id
+            SELECT p.session_id, p.agent_id, p.alias
+            FROM {{tables.chat_participants}} p
             WHERE p.session_id = ANY($1::uuid[])
-            ORDER BY p.session_id, pr.slug, p.alias
+            ORDER BY p.session_id, p.alias
             """,
             session_ids,
         )
@@ -524,26 +376,11 @@ async def pending(
         participant_rows = participants_by_session.get(r["session_id"], [])
         waiting = waiting_by_session.get(r["session_id"], [])
         participants = [
-            format_local_address(
-                base_project_slug=owner_scope.project_slug,
-                target_project_slug=row["project_slug"],
-                alias=row["alias"],
-            )
+            row["alias"]
             for row in participant_rows
             if str(row["agent_id"]) != actor_id
         ]
-        last_from = next(
-            (
-                format_local_address(
-                    base_project_slug=owner_scope.project_slug,
-                    target_project_slug=row["project_slug"],
-                    alias=row["alias"],
-                )
-                for row in participant_rows
-                if row["alias"] == r["last_from"]
-            ),
-            r["last_from"],
-        )
+        last_from = r["last_from"]
         time_remaining_seconds = (
             max(
                 0,
@@ -591,14 +428,14 @@ async def history(
     limit: int = Query(200, ge=1, le=2000),
     db=Depends(get_db),
 ) -> HistoryResponse:
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
+    actor_id = identity.agent_id
+
     try:
         session_uuid = UUID(session_id.strip())
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid id format")
-
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
-    viewer_scope = await get_project_scope(db, project_id=project_id)
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
@@ -606,11 +443,10 @@ async def history(
         raise HTTPException(status_code=404, detail="Session not found")
     participant_rows = await aweb_db.fetch_all(
         """
-        SELECT p.agent_id, p.alias, pr.slug AS project_slug
-        FROM {{tables.chat_session_participants}} p
-        JOIN {{tables.projects}} pr ON pr.project_id = p.project_id
+        SELECT p.agent_id, p.alias
+        FROM {{tables.chat_participants}} p
         WHERE session_id = $1
-        ORDER BY pr.slug ASC, p.alias ASC
+        ORDER BY p.alias ASC
         """,
         session_uuid,
     )
@@ -625,23 +461,11 @@ async def history(
         limit=limit,
     )
 
-    contact_addrs = await get_contact_addresses(db, project_id=project_id)
-    sender_delivery = await get_sender_delivery_metadata(
-        aweb_db,
-        sender_ids=[UUID(str(m["from_agent_id"])) for m in messages],
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
-    )
+    contact_addrs = await get_contact_addresses(db, team_address=team_address)
 
     history_items: list[dict[str, Any]] = []
     for m in messages:
-        sender_row = next(r for r in participant_rows if str(r["agent_id"]) == str(m["from_agent_id"]))
-        local_from_address = format_local_address(
-            base_project_slug=viewer_scope.project_slug,
-            target_project_slug=sender_row["project_slug"],
-            alias=m["from_alias"],
-        )
-        sender_meta = sender_delivery.get(str(m["from_agent_id"]), {})
-        from_address = sender_meta.get("from_address") or local_from_address
+        from_address = m["from_alias"]
         history_items.append(
             {
                 "message_id": m["message_id"],
@@ -650,16 +474,12 @@ async def history(
                 "body": m["body"],
                 "timestamp": _utc_iso(m["created_at"]),
                 "sender_leaving": m["sender_leaving"],
-                "reply_to_message_id": m.get("reply_to_message_id"),
+                "reply_to": m.get("reply_to"),
                 "to_address": _chat_to_address(
                     participant_rows, from_agent_id=m["from_agent_id"]
                 ),
-                "from_did": m["from_did"],
-                "from_stable_id": m.get("from_stable_id"),
-                "to_did": m["to_did"],
-                "to_stable_id": m.get("to_stable_id"),
-                "signature": m["signature"],
-                "signing_key_id": m["signing_key_id"],
+                "from_did": m.get("from_did"),
+                "signature": m.get("signature"),
                 "signed_payload": m.get("signed_payload"),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
@@ -687,10 +507,10 @@ async def mark_read(
     db=Depends(get_db),
     redis=Depends(get_redis),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    session_uuid = UUID(session_id.strip())
+    identity = await get_team_identity(request, db)
+    actor_id = identity.agent_id
 
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
@@ -736,6 +556,7 @@ async def _sse_events(
     agent_id: UUID,
     deadline: datetime,
     after: datetime | None = None,
+    team_address: str,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     agent_id_str = str(agent_id)
@@ -755,11 +576,10 @@ async def _sse_events(
     try:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.agent_id, p.alias, pr.project_id, pr.slug AS project_slug
-            FROM {{tables.chat_session_participants}} p
-            JOIN {{tables.projects}} pr ON pr.project_id = p.project_id
+            SELECT p.agent_id, p.alias
+            FROM {{tables.chat_participants}} p
             WHERE p.session_id = $1
-            ORDER BY pr.slug ASC, p.alias ASC
+            ORDER BY p.alias ASC
             """,
             session_id,
         )
@@ -773,16 +593,9 @@ async def _sse_events(
         if viewer_row is None:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
-        sse_project_id = str(viewer_row["project_id"])
-        viewer_project_slug = viewer_row["project_slug"]
-        # Fetched once per SSE session — contact changes during the stream
+        # Fetched once per SSE session -- contact changes during the stream
         # won't be reflected until the next connection.
-        contact_addrs = await get_contact_addresses(db, project_id=sse_project_id)
-        sender_delivery = await get_sender_delivery_metadata(
-            aweb_db,
-            sender_ids=[UUID(str(row["agent_id"])) for row in participant_rows],
-            registry_client=getattr(request.app.state, "awid_registry_client", None),
-        )
+        contact_addrs = await get_contact_addresses(db, team_address=team_address)
 
         async def _connect_pubsub() -> PubSub:
             ps: PubSub = redis.pubsub()
@@ -810,12 +623,12 @@ async def _sse_events(
 
         if after is not None:
             # Replay only messages newer than the given timestamp (catches the
-            # send→SSE connect race window without replaying full history).
+            # send->SSE connect race window without replaying full history).
             recent = await aweb_db.fetch_all(
                 """
                 SELECT message_id, from_agent_id, from_alias, body, created_at,
-                       sender_leaving, hang_on, reply_to_message_id,
-                       from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
+                       sender_leaving, hang_on, reply_to,
+                       from_did, signature, signed_payload
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -831,16 +644,7 @@ async def _sse_events(
 
             for r in recent:
                 is_hang_on = bool(r["hang_on"])
-                sender_row = next(
-                    row for row in participant_rows if str(row["agent_id"]) == str(r["from_agent_id"])
-                )
-                local_from_address = format_local_address(
-                    base_project_slug=viewer_project_slug,
-                    target_project_slug=sender_row["project_slug"],
-                    alias=r["from_alias"],
-                )
-                sender_meta = sender_delivery.get(str(r["from_agent_id"]), {})
-                from_address = sender_meta.get("from_address") or local_from_address
+                from_address = r["from_alias"]
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
@@ -849,28 +653,24 @@ async def _sse_events(
                     "from_address": from_address,
                     "body": r["body"],
                     "sender_leaving": bool(r["sender_leaving"]),
-                        "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
-                        "hang_on": is_hang_on,
-                        "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                        "reply_to_message_id": (
-                            str(r["reply_to_message_id"])
-                            if r.get("reply_to_message_id") is not None
-                            else None
-                        ),
-                        "timestamp": _utc_iso(r["created_at"]),
+                    "sender_waiting": str(r["from_agent_id"]) in replay_waiting,
+                    "hang_on": is_hang_on,
+                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                    "reply_to": (
+                        str(r["reply_to"])
+                        if r.get("reply_to") is not None
+                        else None
+                    ),
+                    "timestamp": _utc_iso(r["created_at"]),
                     "to_address": _chat_to_address(participant_rows, from_agent_id=str(r["from_agent_id"])),
-                    "from_did": r["from_did"],
-                    "from_stable_id": r.get("from_stable_id"),
-                    "to_did": r["to_did"],
-                    "to_stable_id": r.get("to_stable_id"),
-                    "signature": r["signature"],
-                    "signing_key_id": r["signing_key_id"],
+                    "from_did": r.get("from_did"),
+                    "signature": r.get("signature"),
                     "signed_payload": r.get("signed_payload"),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
         else:
-            # No replay — poll only for messages arriving after now.
+            # No replay -- poll only for messages arriving after now.
             last_message_at = datetime.now(timezone.utc)
 
         last_receipt_at = datetime.now(timezone.utc)
@@ -948,8 +748,8 @@ async def _sse_events(
                 new_msgs = await aweb_db.fetch_all(
                     """
                     SELECT message_id, from_agent_id, from_alias, body, created_at,
-                           sender_leaving, hang_on, reply_to_message_id,
-                           from_did, from_stable_id, to_did, to_stable_id, signature, signing_key_id, signed_payload
+                           sender_leaving, hang_on, reply_to,
+                           from_did, signature, signed_payload
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
                     ORDER BY created_at ASC
@@ -972,16 +772,7 @@ async def _sse_events(
                 for r in new_msgs:
                     last_message_at = max(last_message_at, r["created_at"])
                     is_hang_on = bool(r["hang_on"])
-                    sender_row = next(
-                        row for row in participant_rows if str(row["agent_id"]) == str(r["from_agent_id"])
-                    )
-                    local_from_address = format_local_address(
-                        base_project_slug=viewer_project_slug,
-                        target_project_slug=sender_row["project_slug"],
-                        alias=r["from_alias"],
-                    )
-                    sender_meta = sender_delivery.get(str(r["from_agent_id"]), {})
-                    from_address = sender_meta.get("from_address") or local_from_address
+                    from_address = r["from_alias"]
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
@@ -993,19 +784,15 @@ async def _sse_events(
                         "sender_waiting": str(r["from_agent_id"]) in sender_waiting_ids,
                         "hang_on": is_hang_on,
                         "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                        "reply_to_message_id": (
-                            str(r["reply_to_message_id"])
-                            if r.get("reply_to_message_id") is not None
+                        "reply_to": (
+                            str(r["reply_to"])
+                            if r.get("reply_to") is not None
                             else None
                         ),
                         "timestamp": _utc_iso(r["created_at"]),
                         "to_address": _chat_to_address(participant_rows, from_agent_id=str(r["from_agent_id"])),
-                        "from_did": r["from_did"],
-                        "from_stable_id": r.get("from_stable_id"),
-                        "to_did": r["to_did"],
-                        "to_stable_id": r.get("to_stable_id"),
-                        "signature": r["signature"],
-                        "signing_key_id": r["signing_key_id"],
+                        "from_did": r.get("from_did"),
+                        "signature": r.get("signature"),
                         "signed_payload": r.get("signed_payload"),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }
@@ -1016,7 +803,7 @@ async def _sse_events(
                     """
                     SELECT rr.agent_id, rr.last_read_message_id, rr.last_read_at, p.alias
                     FROM {{tables.chat_read_receipts}} rr
-                    JOIN {{tables.chat_session_participants}} p
+                    JOIN {{tables.chat_participants}} p
                       ON p.session_id = rr.session_id AND p.agent_id = rr.agent_id
                     WHERE rr.session_id = $1
                       AND rr.agent_id <> $2
@@ -1078,13 +865,15 @@ async def stream(
     db=Depends(get_db),
     redis=Depends(get_redis),
 ):
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
+    actor_id = identity.agent_id
+    team_address = identity.team_address
+
     try:
         session_uuid = UUID(session_id.strip())
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid id format")
 
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
     agent_uuid = UUID(actor_id)
 
     aweb_db = db.get_manager("aweb")
@@ -1095,7 +884,7 @@ async def stream(
     is_participant = await aweb_db.fetch_one(
         """
         SELECT 1
-        FROM {{tables.chat_session_participants}}
+        FROM {{tables.chat_participants}}
         WHERE session_id = $1 AND agent_id = $2
         """,
         session_uuid,
@@ -1122,6 +911,7 @@ async def stream(
             agent_id=agent_uuid,
             deadline=deadline_dt,
             after=after_dt,
+            team_address=team_address,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -1138,33 +928,19 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(..., min_length=1)
     hang_on: bool = Field(default=False)
-    reply_to_message_id: str | None = None
+    reply_to: str | None = None
     message_id: str | None = None
     timestamp: str | None = None
     from_did: str | None = Field(default=None, max_length=256)
-    from_stable_id: str | None = Field(default=None, max_length=256)
-    to_did: str | None = Field(default=None, max_length=256)
-    to_stable_id: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
-    signing_key_id: str | None = Field(default=None, max_length=256)
     signed_payload: str | None = None
 
-    @field_validator("message_id", "reply_to_message_id")
+    @field_validator("message_id", "reply_to")
     @classmethod
     def _validate_message_id(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return _parse_uuid(v, field="message_id")
-
-    @field_validator("from_stable_id", "to_stable_id")
-    @classmethod
-    def _validate_stable_id(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip()
-        if not v:
-            return None
-        return validate_stable_id(v)
 
 
 class SendMessageResponse(BaseModel):
@@ -1186,8 +962,8 @@ async def send_message(
     Uses canonical alias from participants table to prevent spoofing.
     Supports hang_on flag for requesting more time to reply.
     """
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
+    actor_id = identity.agent_id
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -1206,7 +982,7 @@ async def send_message(
     participant = await aweb_db.fetch_one(
         """
         SELECT alias
-        FROM {{tables.chat_session_participants}}
+        FROM {{tables.chat_participants}}
         WHERE session_id = $1 AND agent_id = $2
         """,
         session_uuid,
@@ -1214,47 +990,11 @@ async def send_message(
     )
     if not participant:
         raise HTTPException(status_code=404, detail="Session not found")
-    canonical_alias = participant["alias"]
-
-    participant_rows = await aweb_db.fetch_all(
-        """
-        SELECT p.agent_id, p.alias, pr.slug AS project_slug
-        FROM {{tables.chat_session_participants}} p
-        JOIN {{tables.projects}} pr ON pr.project_id = p.project_id
-        WHERE session_id = $1
-        ORDER BY pr.slug ASC, p.alias ASC
-        """,
-        session_uuid,
-    )
-    participant_ids = [str(r["agent_id"]) for r in participant_rows]
-    stable_ids = await ensure_agent_stable_ids(aweb_db, agent_ids=participant_ids)
-    sender_stable_id = stable_ids.get(actor_id)
-    sender_row = next(r for r in participant_rows if str(r["agent_id"]) == actor_id)
-    stable_targets: list[str] = []
-    for row in sorted(
-        [r for r in participant_rows if str(r["agent_id"]) != actor_id],
-        key=lambda r: format_local_address(
-            base_project_slug=sender_row["project_slug"],
-            target_project_slug=r["project_slug"],
-            alias=r["alias"],
-        ),
-    ):
-        stable = stable_ids.get(str(row["agent_id"]))
-        if not stable:
-            stable_targets = []
-            break
-        stable_targets.append(stable)
-    expected_to_stable_id = ",".join(stable_targets) if stable_targets else None
 
     extends_wait_seconds = HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0
 
-    # Server-side custodial signing: sign before INSERT so the message is
-    # never observable without its signature.
     msg_from_did = payload.from_did
-    msg_from_stable_id = payload.from_stable_id
     msg_signature = payload.signature
-    msg_signing_key_id = payload.signing_key_id
-    msg_to_stable_id = payload.to_stable_id
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
     msg_signed_payload = payload.signed_payload
@@ -1272,64 +1012,20 @@ async def send_message(
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
-    if payload.from_stable_id is not None and payload.from_stable_id != sender_stable_id:
-        raise HTTPException(
-            status_code=403, detail="from_stable_id does not match sender stable_id"
-        )
-    if payload.to_stable_id is not None and payload.to_stable_id != expected_to_stable_id:
-        raise HTTPException(
-            status_code=403, detail="to_stable_id does not match recipient stable_id(s)"
-        )
-
-    sender_row = next(r for r in participant_rows if str(r["agent_id"]) == actor_id)
-    cross_project = any(
-        r["project_slug"] != sender_row["project_slug"]
-        for r in participant_rows
-        if str(r["agent_id"]) != actor_id
-    )
-    msg_from_stable_id = sender_stable_id
-    msg_to_stable_id = expected_to_stable_id
-    to_address = _chat_to_address(participant_rows, from_agent_id=actor_id)
-    message_fields = _chat_signature_fields(
-        from_address=(
-            f"{sender_row['project_slug']}~{canonical_alias}" if cross_project else canonical_alias
-        ),
-        message_id=pre_message_id,
-        to_address=to_address,
-        to_did=payload.to_did,
-        body=payload.body,
-        created_at=msg_created_at,
-        from_stable_id=msg_from_stable_id,
-        to_stable_id=msg_to_stable_id,
-    )
-
-    if payload.signature is None:
-        sign_result = await sign_on_behalf(
-            actor_id,
-            message_fields,
-            db,
-        )
-        if sign_result is not None:
-            msg_from_did, msg_signature, msg_signing_key_id, msg_signed_payload = sign_result
-
     try:
         msg_row = await send_in_session(
             db,
             session_id=session_uuid,
             agent_id=actor_id,
             body=payload.body,
-            reply_to_message_id=(
-                uuid_mod.UUID(payload.reply_to_message_id)
-                if payload.reply_to_message_id is not None
+            reply_to=(
+                uuid_mod.UUID(payload.reply_to)
+                if payload.reply_to is not None
                 else None
             ),
             hang_on=payload.hang_on,
             from_did=msg_from_did,
-            from_stable_id=msg_from_stable_id,
-            to_did=payload.to_did,
-            to_stable_id=msg_to_stable_id,
             signature=msg_signature,
-            signing_key_id=msg_signing_key_id,
             signed_payload=msg_signed_payload,
             created_at=msg_created_at,
             message_id=pre_message_id,
@@ -1381,10 +1077,10 @@ async def list_sessions(
 
     Sessions are persistent. Returns sessions where agent is a participant.
     """
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
+    actor_id = identity.agent_id
+
     agent_uuid = UUID(actor_id)
-    viewer_scope = await get_project_scope(db, project_id=project_id)
 
     aweb_db = db.get_manager("aweb")
 
@@ -1394,9 +1090,9 @@ async def list_sessions(
                array_agg(p2.alias ORDER BY p2.alias) AS participants,
                array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids
         FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_session_participants}} p
+        JOIN {{tables.chat_participants}} p
           ON p.session_id = s.session_id AND p.agent_id = $1
-        JOIN {{tables.chat_session_participants}} p2
+        JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         WHERE p.agent_id = $1
         GROUP BY s.session_id, s.created_at
@@ -1411,11 +1107,10 @@ async def list_sessions(
     if session_ids:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.session_id, p.agent_id, p.alias, pr.slug AS project_slug
-            FROM {{tables.chat_session_participants}} p
-            JOIN {{tables.projects}} pr ON pr.project_id = p.project_id
+            SELECT p.session_id, p.agent_id, p.alias
+            FROM {{tables.chat_participants}} p
             WHERE p.session_id = ANY($1::uuid[])
-            ORDER BY p.session_id, pr.slug, p.alias
+            ORDER BY p.session_id, p.alias
             """,
             session_ids,
         )
@@ -1435,11 +1130,7 @@ async def list_sessions(
             SessionListItem(
                 session_id=str(row["session_id"]),
                 participants=[
-                    format_local_address(
-                        base_project_slug=viewer_scope.project_slug,
-                        target_project_slug=p["project_slug"],
-                        alias=p["alias"],
-                    )
+                    p["alias"]
                     for p in participant_rows
                     if str(p["agent_id"]) != actor_id
                 ],

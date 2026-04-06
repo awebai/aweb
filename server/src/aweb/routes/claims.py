@@ -6,8 +6,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from aweb.auth import validate_workspace_id
-from aweb.internal_auth import is_public_reader
+from uuid import UUID
+
 from aweb.team_auth_deps import get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
@@ -62,8 +62,6 @@ async def list_claims(
     """
     identity = await get_team_identity(request, db_infra)
     team_address = identity.team_address
-    public_reader = is_public_reader(request)
-
     aweb_db = db_infra.get_manager("aweb")
 
     # Validate pagination params
@@ -76,7 +74,7 @@ async def list_claims(
     validated_workspace_id = None
     if workspace_id:
         try:
-            validated_workspace_id = validate_workspace_id(workspace_id)
+            validated_workspace_id = str(UUID(workspace_id.strip()))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -127,7 +125,7 @@ async def list_claims(
             task_ref=row["task_ref"],
             workspace_id=str(row["workspace_id"]),
             alias=row["alias"],
-            human_name=None if public_reader else row["human_name"],
+            human_name=row["human_name"],
             claimed_at=row["claimed_at"].isoformat(),
             team_address=row["team_address"],
         )
