@@ -88,11 +88,9 @@ type ChatCreateSessionRequest struct {
 	Message       string   `json:"message"`
 	Leaving       bool     `json:"leaving,omitempty"`
 	WaitSeconds   *int     `json:"wait_seconds,omitempty"`
+	ReplyTo       string   `json:"reply_to,omitempty"`
 	FromDID       string   `json:"from_did,omitempty"`
-	ToDID         string   `json:"to_did,omitempty"`
-	FromStableID  string   `json:"from_stable_id,omitempty"`
 	Signature     string   `json:"signature,omitempty"`
-	SigningKeyID  string   `json:"signing_key_id,omitempty"`
 	Timestamp     string   `json:"timestamp,omitempty"`
 	MessageID     string   `json:"message_id,omitempty"`
 	SignedPayload string   `json:"signed_payload,omitempty"`
@@ -149,10 +147,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		return nil, err
 	}
 	payload.FromDID = sf.FromDID
-	payload.ToDID = sf.ToDID
-	payload.FromStableID = sf.FromStableID
 	payload.Signature = sf.Signature
-	payload.SigningKeyID = sf.SigningKeyID
 	payload.Timestamp = sf.Timestamp
 	payload.MessageID = sf.MessageID
 	payload.SignedPayload = sf.SignedPayload
@@ -329,14 +324,11 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 
 // ChatSendMessage sends a message in an existing chat session.
 type ChatSendMessageRequest struct {
-	Body             string `json:"body"`
-	ExtendWait       bool   `json:"hang_on,omitempty"`
-	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
-	FromDID          string `json:"from_did,omitempty"`
-	ToDID         string `json:"to_did,omitempty"`
-	FromStableID  string `json:"from_stable_id,omitempty"`
+	Body          string `json:"body"`
+	ExtendWait    bool   `json:"hang_on,omitempty"`
+	ReplyTo       string `json:"reply_to,omitempty"`
+	FromDID       string `json:"from_did,omitempty"`
 	Signature     string `json:"signature,omitempty"`
-	SigningKeyID  string `json:"signing_key_id,omitempty"`
 	Timestamp     string `json:"timestamp,omitempty"`
 	MessageID     string `json:"message_id,omitempty"`
 	SignedPayload string `json:"signed_payload,omitempty"`
@@ -380,10 +372,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		return nil, err
 	}
 	payload.FromDID = sf.FromDID
-	payload.ToDID = sf.ToDID
-	payload.FromStableID = sf.FromStableID
 	payload.Signature = sf.Signature
-	payload.SigningKeyID = sf.SigningKeyID
 	payload.Timestamp = sf.Timestamp
 	payload.MessageID = sf.MessageID
 	payload.SignedPayload = sf.SignedPayload

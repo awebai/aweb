@@ -71,7 +71,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		hasUpdate = true
 	}
 	if v, _ := cmd.Flags().GetString("assignee"); v != "" {
-		req.AssigneeAgentID = &v
+		req.AssigneeAlias = &v
 		hasUpdate = true
 	}
 
