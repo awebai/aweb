@@ -62,6 +62,17 @@ class AwidDatabaseInfra:
                 )
                 await migrations.apply_pending_migrations()
 
+                import awid_service
+
+                awid_path = Path(awid_service.__file__).resolve().parent
+                awid_migrations = AsyncMigrationManager(
+                    self._manager,
+                    migrations_path=str(awid_path / "migrations"),
+                    module_name="awid-service",
+                    migrations_table="schema_migrations",
+                )
+                await awid_migrations.apply_pending_migrations()
+
             self._initialized = True
 
     async def close(self) -> None:
