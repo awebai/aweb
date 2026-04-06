@@ -93,7 +93,8 @@ CREATE TABLE team_certificates (
     member_did_aw   TEXT,
     member_address  TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'permanent',
+    lifetime        TEXT NOT NULL DEFAULT 'permanent'
+                    CHECK (lifetime IN ('permanent', 'ephemeral')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
@@ -101,7 +102,8 @@ CREATE TABLE team_certificates (
 );
 
 CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_id) WHERE revoked_at IS NULL;
+    ON team_certificates (team_id, member_did_key)
+    WHERE revoked_at IS NULL;
 CREATE INDEX idx_team_certificates_revoked
     ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
@@ -375,7 +377,8 @@ CREATE TABLE team_certificates (
     member_did_aw   TEXT,
     member_address  TEXT,
     alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'permanent',
+    lifetime        TEXT NOT NULL DEFAULT 'permanent'
+                    CHECK (lifetime IN ('permanent', 'ephemeral')),
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
@@ -383,7 +386,8 @@ CREATE TABLE team_certificates (
 );
 
 CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_id) WHERE revoked_at IS NULL;
+    ON team_certificates (team_id, member_did_key)
+    WHERE revoked_at IS NULL;
 CREATE INDEX idx_team_certificates_revoked
     ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ```

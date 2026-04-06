@@ -17,6 +17,7 @@ from aweb.routes.dns_addresses import router as dns_addresses_router
 from aweb.routes.dns_namespaces import router as dns_namespaces_router
 
 from .config import get_settings
+from .routes.teams import router as teams_router
 from .db import AwidDatabaseInfra
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ def create_app(
     app.include_router(did_router)
     app.include_router(dns_namespaces_router)
     app.include_router(dns_addresses_router)
+    app.include_router(teams_router)
     return app
 
 
