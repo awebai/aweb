@@ -10,6 +10,7 @@ from aweb.awid.custody import (
     destroy_signing_key,
     encrypt_signing_key,
     get_custody_key,
+    get_namespace_controller_key,
     reset_custody_key_cache,
     sign_on_behalf,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "ensure_agent_stable_ids",
     "generate_keypair",
     "get_custody_key",
+    "get_namespace_controller_key",
     "get_sender_delivery_metadata",
     "log_entry_payload",
     "public_key_from_did",

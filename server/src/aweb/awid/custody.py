@@ -19,6 +19,8 @@ _NONCE_LEN = 12
 _UNSET = object()
 _cached_custody_key: bytes | None | object = _UNSET
 _cached_custody_key_error: ValueError | None = None
+_cached_namespace_controller_key: bytes | None | object = _UNSET
+_cached_namespace_controller_key_error: ValueError | None = None
 
 
 class CustodyError(RuntimeError):
@@ -53,34 +55,62 @@ def decrypt_signing_key(encrypted: bytes, master_key: bytes) -> bytes:
 def reset_custody_key_cache() -> None:
     global _cached_custody_key
     global _cached_custody_key_error
+    global _cached_namespace_controller_key
+    global _cached_namespace_controller_key_error
     _cached_custody_key = _UNSET
     _cached_custody_key_error = None
+    _cached_namespace_controller_key = _UNSET
+    _cached_namespace_controller_key_error = None
 
 
-def get_custody_key() -> bytes | None:
-    global _cached_custody_key
-    global _cached_custody_key_error
-    if _cached_custody_key is not _UNSET:
-        if _cached_custody_key_error is not None:
-            raise _cached_custody_key_error
-        return _cached_custody_key
+def _get_hex_key_from_env(
+    *,
+    env_name: str,
+    cached_value_name: str,
+    cached_error_name: str,
+) -> bytes | None:
+    global_vars = globals()
+    cached_value = global_vars[cached_value_name]
+    cached_error = global_vars[cached_error_name]
+    if cached_value is not _UNSET:
+        if cached_error is not None:
+            raise cached_error
+        return cached_value
 
-    key_hex = os.environ.get("AWEB_CUSTODY_KEY", "")
+    key_hex = os.environ.get(env_name, "")
     if not key_hex:
-        _cached_custody_key = None
+        global_vars[cached_value_name] = None
         return None
     try:
         key_bytes = bytes.fromhex(key_hex)
     except ValueError:
-        _cached_custody_key_error = ValueError("AWEB_CUSTODY_KEY must be a hex-encoded 32 bytes")
-        raise _cached_custody_key_error
+        error = ValueError(f"{env_name} must be a hex-encoded 32 bytes")
+        global_vars[cached_error_name] = error
+        raise error
     if len(key_bytes) != _AES_KEY_LEN:
-        _cached_custody_key_error = ValueError(
-            f"AWEB_CUSTODY_KEY must be 32 bytes (64 hex chars), got {len(key_bytes)} bytes"
+        error = ValueError(
+            f"{env_name} must be 32 bytes (64 hex chars), got {len(key_bytes)} bytes"
         )
-        raise _cached_custody_key_error
-    _cached_custody_key = key_bytes
+        global_vars[cached_error_name] = error
+        raise error
+    global_vars[cached_value_name] = key_bytes
     return key_bytes
+
+
+def get_custody_key() -> bytes | None:
+    return _get_hex_key_from_env(
+        env_name="AWEB_CUSTODY_KEY",
+        cached_value_name="_cached_custody_key",
+        cached_error_name="_cached_custody_key_error",
+    )
+
+
+def get_namespace_controller_key() -> bytes | None:
+    return _get_hex_key_from_env(
+        env_name="AWEB_NAMESPACE_CONTROLLER_KEY",
+        cached_value_name="_cached_namespace_controller_key",
+        cached_error_name="_cached_namespace_controller_key_error",
+    )
 
 
 async def _load_custodial_signing_key(agent_id: str, db) -> tuple[bytes, str]:

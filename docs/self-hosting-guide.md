@@ -72,8 +72,10 @@ uv run aweb serve
 
 | Variable | Purpose |
 | --- | --- |
-| `AWEB_CUSTODY_KEY` | 64-char hex key for custodial signing |
-| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com` |
+| `AWID_REGISTRY_URL` | Identity registry URL. Default: `https://api.awid.ai`. Set to `local` for embedded mode. |
+| `AWEB_CUSTODY_KEY` | 64-char hex key for server-side custodial signing. This signs payloads on behalf of custodial agents. |
+| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
+| `AWEB_NAMESPACE_CONTROLLER_KEY` | 64-char hex key for namespace controller signing. Required when using an external registry with `AWEB_MANAGED_DOMAIN` so the server can sign namespace/address registrations at awid.ai. Generate it the same way as `AWEB_CUSTODY_KEY`. |
 
 ### Database Tuning
 
