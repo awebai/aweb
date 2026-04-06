@@ -26,14 +26,14 @@ router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
 # ---------------------------------------------------------------------------
 
 
-def _verify_namespace_controller(
+def _verify_signed_request(
     request: Request,
     *,
     domain: str,
     operation: str,
     extra_payload: dict[str, str] | None = None,
 ) -> str:
-    """Verify DIDKey signature from the namespace controller."""
+    """Verify DIDKey signature over a domain-scoped payload. Returns caller did:key."""
     payload = {"domain": domain, "operation": operation}
     if extra_payload:
         payload.update(extra_payload)
@@ -42,7 +42,7 @@ def _verify_namespace_controller(
 
 async def _require_namespace_controller(request: Request, db, *, domain: str, operation: str, **extra) -> str:
     """Verify auth and check that the signer is the namespace controller. Returns caller DID."""
-    caller_did = _verify_namespace_controller(
+    caller_did = _verify_signed_request(
         request, domain=domain, operation=operation, extra_payload=extra or None,
     )
     row = await db.fetch_one(
@@ -58,6 +58,30 @@ async def _require_namespace_controller(request: Request, db, *, domain: str, op
     if caller_did != row["controller_did"]:
         raise HTTPException(status_code=403, detail="Only the namespace controller can manage teams")
     return caller_did
+
+
+async def _require_team_controller(
+    request: Request, db, *, domain: str, name: str, operation: str, **extra,
+) -> tuple[str, dict]:
+    """Verify auth against the team's own public key. Returns (caller_did, team_row)."""
+    caller_did = _verify_signed_request(
+        request, domain=domain, operation=operation,
+        extra_payload={"team_name": name, **extra} if extra else {"team_name": name},
+    )
+    row = await db.fetch_one(
+        """
+        SELECT team_id, team_did_key
+        FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        """,
+        domain,
+        name,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if caller_did != row["team_did_key"]:
+        raise HTTPException(status_code=403, detail="Only the team controller can perform this action")
+    return caller_did, row
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +133,34 @@ class TeamListResponse(BaseModel):
     teams: list[TeamResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class CertificateRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    certificate_id: str = Field(..., min_length=1, max_length=256)
+    member_did_key: str = Field(..., min_length=1, max_length=256)
+    member_did_aw: str | None = Field(default=None, max_length=256)
+    member_address: str | None = Field(default=None, max_length=256)
+    alias: str = Field(..., min_length=1, max_length=128)
+    lifetime: str = Field(default="permanent", max_length=32)
+
+    @field_validator("member_did_key")
+    @classmethod
+    def validate_member_did_key(cls, value: str) -> str:
+        return _validate_did_key(value)
+
+    @field_validator("lifetime")
+    @classmethod
+    def validate_lifetime(cls, value: str) -> str:
+        if value not in ("permanent", "ephemeral"):
+            raise ValueError("must be 'permanent' or 'ephemeral'")
+        return value
+
+
+class CertificateRegisterResponse(BaseModel):
+    registered: bool
+    certificate_id: str
 
 
 class TeamRotateResponse(BaseModel):
@@ -328,6 +380,48 @@ async def rotate_team_key(
         **resp.model_dump(),
         key_changed=key_changed,
     )
+
+
+@router.post(
+    "/{name}/certificates",
+    response_model=CertificateRegisterResponse,
+    dependencies=[Depends(rate_limit_dep("certificate_register"))],
+)
+async def register_certificate(
+    request: Request,
+    domain: str,
+    name: str,
+    body: CertificateRegisterRequest,
+    db_infra=Depends(get_db),
+) -> CertificateRegisterResponse:
+    db = db_infra.get_manager("aweb")
+    _, team_row = await _require_team_controller(
+        request, db, domain=domain, name=name,
+        operation="register_certificate", certificate_id=body.certificate_id,
+    )
+
+    try:
+        await db.execute(
+            """
+            INSERT INTO {{tables.team_certificates}}
+                (team_id, certificate_id, member_did_key, member_did_aw,
+                 member_address, alias, lifetime)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            team_row["team_id"],
+            body.certificate_id,
+            body.member_did_key,
+            body.member_did_aw,
+            body.member_address,
+            body.alias,
+            body.lifetime,
+        )
+    except QueryError as exc:
+        if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+            raise
+        raise HTTPException(status_code=409, detail="Certificate already registered")
+
+    return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
 
 
 # ---------------------------------------------------------------------------
