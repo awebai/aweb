@@ -76,6 +76,65 @@ async def _assert_api_key_maps_to_identity(*, aweb_db, api_key: str, project_id:
 
 
 @pytest.mark.asyncio
+async def test_create_project_uses_owner_ref_for_managed_namespace(aweb_cloud_db, monkeypatch):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "aweb.ai")
+    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "acme-billing",
+                "owner_type": "organization",
+                "owner_ref": "acme",
+                "alias": "alice",
+            },
+        )
+
+    assert created.status_code == 200, created.text
+    data = created.json()
+    assert data["project_slug"] == "acme-billing"
+    assert data["namespace_slug"] == "acme"
+    assert data["namespace"] == "acme.aweb.ai"
+    assert data["address"] == "acme.aweb.ai/alice"
+
+
+@pytest.mark.asyncio
+async def test_projects_under_same_owner_share_namespace_domain(aweb_cloud_db, monkeypatch):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "aweb.ai")
+    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        billing = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "acme-billing",
+                "owner_type": "organization",
+                "owner_ref": "acme",
+                "alias": "alice",
+            },
+        )
+        support = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "acme-support",
+                "owner_type": "organization",
+                "owner_ref": "acme",
+                "alias": "bob",
+            },
+        )
+
+    assert billing.status_code == 200, billing.text
+    assert support.status_code == 200, support.text
+    billing_data = billing.json()
+    support_data = support.json()
+    assert billing_data["namespace_slug"] == "acme"
+    assert support_data["namespace_slug"] == "acme"
+    assert billing_data["namespace"] == "acme.aweb.ai"
+    assert support_data["namespace"] == "acme.aweb.ai"
+
+
+@pytest.mark.asyncio
 async def test_spawn_invite_lifecycle_in_oss(aweb_cloud_db):
     app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
 
@@ -84,7 +143,6 @@ async def test_spawn_invite_lifecycle_in_oss(aweb_cloud_db):
             "/api/v1/create-project",
             json={
                 "project_slug": "oss-spawn-project",
-                "namespace_slug": "oss-spawn-team",
                 "alias": "parent-bot",
             },
         )
@@ -103,8 +161,8 @@ async def test_spawn_invite_lifecycle_in_oss(aweb_cloud_db):
         assert created.status_code == 201, created.text
         created_data = created.json()
         assert created_data["token"].startswith("aw_inv_")
-        assert created_data["namespace_slug"] == "oss-spawn-team"
-        assert created_data["namespace"] == "oss-spawn-team"
+        assert created_data["namespace_slug"] == "oss-spawn-project"
+        assert created_data["namespace"] == "oss-spawn-project"
         assert created_data["server_url"] == "http://test"
 
         listed = await client.get(
@@ -125,11 +183,11 @@ async def test_spawn_invite_lifecycle_in_oss(aweb_cloud_db):
         accepted_data = accepted.json()
         assert accepted_data["project_id"] == bootstrap_data["project_id"]
         assert accepted_data["project_slug"] == "oss-spawn-project"
-        assert accepted_data["namespace_slug"] == "oss-spawn-team"
-        assert accepted_data["namespace"] == "oss-spawn-team"
+        assert accepted_data["namespace_slug"] == "oss-spawn-project"
+        assert accepted_data["namespace"] == "oss-spawn-project"
         assert accepted_data["alias"] == "reviewer"
         assert accepted_data["name"] is None
-        assert accepted_data["address"] == "oss-spawn-team/reviewer"
+        assert accepted_data["address"] == "oss-spawn-project/reviewer"
         assert accepted_data["access_mode"] == "contacts_only"
         await _assert_api_key_maps_to_identity(
             aweb_db=aweb_cloud_db.aweb_db,
@@ -160,7 +218,6 @@ async def test_spawn_invite_revoke_is_creator_only(aweb_cloud_db):
             "/api/v1/create-project",
             json={
                 "project_slug": "oss-spawn-revoke-project",
-                "namespace_slug": "oss-spawn-revoke-team",
                 "alias": "parent-bot",
             },
         )
@@ -207,6 +264,7 @@ async def test_spawn_invite_revoke_is_creator_only(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_spawn_accept_allows_explicit_permanent_self_custodial_identity(aweb_cloud_db, monkeypatch):
     monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "aweb.ai")
+    monkeypatch.setenv("AWID_REGISTRY_URL", "local")
     app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -214,7 +272,6 @@ async def test_spawn_accept_allows_explicit_permanent_self_custodial_identity(aw
             "/api/v1/create-project",
             json={
                 "project_slug": "oss-spawn-permanent",
-                "namespace_slug": "oss-spawn-permanent-team",
                 "alias": "parent-bot",
             },
         )
@@ -248,13 +305,62 @@ async def test_spawn_accept_allows_explicit_permanent_self_custodial_identity(aw
         data = accepted.json()
         assert data["alias"] is None
         assert data["name"] == "durable-child"
-        assert data["namespace_slug"] == "oss-spawn-permanent-team"
-        assert data["namespace"] == "oss-spawn-permanent-team.aweb.ai"
-        assert data["address"] == "oss-spawn-permanent-team.aweb.ai/durable-child"
+        assert data["namespace_slug"] == "oss-spawn-permanent"
+        assert data["namespace"] == "oss-spawn-permanent.aweb.ai"
+        assert data["address"] == "oss-spawn-permanent.aweb.ai/durable-child"
         assert data["lifetime"] == "persistent"
         assert data["custody"] == "self"
         assert data["did"] == did
         assert data["address_reachability"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_spawn_accept_persistent_identity_requires_namespace_controller_key_for_external_registry(
+    aweb_cloud_db, monkeypatch
+):
+    monkeypatch.setenv("AWEB_MANAGED_DOMAIN", "aweb.ai")
+    monkeypatch.setenv("AWID_REGISTRY_URL", "https://api.awid.ai")
+    monkeypatch.delenv("AWEB_NAMESPACE_CONTROLLER_KEY", raising=False)
+    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        bootstrap = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "oss-spawn-controller-key",
+                "alias": "parent-bot",
+            },
+        )
+        assert bootstrap.status_code == 200, bootstrap.text
+
+        created = await client.post(
+            "/api/v1/spawn/create-invite",
+            headers=_auth_headers(bootstrap.json()["api_key"]),
+            json={"alias_hint": "durable-child"},
+        )
+        assert created.status_code == 201, created.text
+
+        seed, public_key = generate_keypair()
+        del seed
+        did = did_from_public_key(public_key)
+        public_key_b64 = encode_public_key(public_key)
+
+        accepted = await client.post(
+            "/api/v1/spawn/accept-invite",
+            json={
+                "token": created.json()["token"],
+                "name": "durable-child",
+                "lifetime": "persistent",
+                "custody": "self",
+                "did": did,
+                "public_key": public_key_b64,
+            },
+        )
+
+    assert accepted.status_code == 422, accepted.text
+    assert accepted.json()["detail"] == (
+        "AWEB_NAMESPACE_CONTROLLER_KEY not set — cannot register managed namespace with external awid registry"
+    )
 
 
 @pytest.mark.asyncio
@@ -267,7 +373,6 @@ async def test_spawn_accept_persistent_identity_requires_managed_domain(aweb_clo
             "/api/v1/create-project",
             json={
                 "project_slug": "oss-spawn-unavailable",
-                "namespace_slug": "oss-spawn-unavailable-team",
                 "alias": "parent-bot",
             },
         )
@@ -299,6 +404,82 @@ async def test_spawn_accept_persistent_identity_requires_managed_domain(aweb_clo
 
     assert accepted.status_code == 503, accepted.text
     assert accepted.json()["detail"] == "Permanent identity bootstrap is unavailable on this server"
+
+
+@pytest.mark.asyncio
+async def test_init_rejects_malformed_stored_owner_ref(aweb_cloud_db):
+    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "owner-ref-bad-init",
+                "alias": "alice",
+            },
+        )
+        assert created.status_code == 200, created.text
+        created_data = created.json()
+
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.projects}}
+            SET owner_type = 'organization',
+                owner_ref = 'bad owner ref'
+            WHERE project_id = $1
+            """,
+            uuid.UUID(created_data["project_id"]),
+        )
+
+        response = await client.post(
+            "/v1/workspaces/init",
+            headers=_auth_headers(created_data["api_key"]),
+            json={"alias": "bob"},
+        )
+
+    assert response.status_code == 422, response.text
+    assert "Subnamespace label" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_spawn_accept_rejects_malformed_stored_owner_ref(aweb_cloud_db):
+    app = _build_spawn_test_app(aweb_db=aweb_cloud_db.aweb_db, server_db=aweb_cloud_db.oss_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/create-project",
+            json={
+                "project_slug": "owner-ref-bad-spawn",
+                "alias": "alice",
+            },
+        )
+        assert created.status_code == 200, created.text
+        created_data = created.json()
+
+        invite = await client.post(
+            "/api/v1/spawn/create-invite",
+            headers=_auth_headers(created_data["api_key"]),
+            json={"alias_hint": "helper"},
+        )
+        assert invite.status_code == 201, invite.text
+
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.projects}}
+            SET owner_type = 'organization',
+                owner_ref = 'bad owner ref'
+            WHERE project_id = $1
+            """,
+            uuid.UUID(created_data["project_id"]),
+        )
+
+        accepted = await client.post(
+            "/api/v1/spawn/accept-invite",
+            json={"token": invite.json()["token"], "alias": "helper-two"},
+        )
+
+    assert accepted.status_code == 422, accepted.text
+    assert "Subnamespace label" in accepted.json()["detail"]
 
 
 @pytest.mark.asyncio

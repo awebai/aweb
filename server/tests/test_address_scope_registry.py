@@ -428,7 +428,6 @@ async def test_resolve_agent_route_uses_registry_lookup(aweb_cloud_db):
             "/api/v1/create-project",
             json={
                 "project_slug": f"resolve-{uuid.uuid4().hex[:8]}",
-                "namespace_slug": f"resolve-{uuid.uuid4().hex[:8]}",
                 "alias": "alice",
             },
         )
@@ -500,7 +499,6 @@ async def test_retire_agent_uses_registry_successor_address(aweb_cloud_db):
             "/api/v1/create-project",
             json={
                 "project_slug": f"retire-{uuid.uuid4().hex[:8]}",
-                "namespace_slug": f"retire-{uuid.uuid4().hex[:8]}",
                 "alias": "alice",
             },
         )

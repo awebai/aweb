@@ -1550,15 +1550,14 @@ def _coordination_summary(event_type: str, details: dict | None) -> str:
 async def _address_state_by_stable_id(
     *,
     api_db,
-    aweb_db,
-    server_db,
+    registry_client,
     project_id: str,
     stable_ids: list[str],
 ) -> dict[str, dict[str, str]]:
     if not stable_ids:
         return {}
 
-    if api_db is None:
+    if api_db is None or registry_client is None:
         return {}
 
     rows = await api_db.fetch_all(
@@ -1579,7 +1578,10 @@ async def _address_state_by_stable_id(
     if not remaining:
         return address_state
     for domain in domains:
-        for address in await list_namespace_addresses(aweb_db=aweb_db, domain=domain):
+        for address in await list_namespace_addresses(
+            registry_client=registry_client,
+            domain=domain,
+        ):
             stable_id = str(address.get("did_aw") or "").strip()
             if stable_id not in remaining:
                 continue
@@ -1642,8 +1644,7 @@ async def list_agents(
         )
     address_state_by_stable_id = await _address_state_by_stable_id(
         api_db=api_db,
-        aweb_db=aweb_db,
-        server_db=server_db,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
         project_id=project_id,
         stable_ids=[str(r.get("stable_id") or "") for r in rows],
     )

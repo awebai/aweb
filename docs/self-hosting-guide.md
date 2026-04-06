@@ -72,8 +72,48 @@ uv run aweb serve
 
 | Variable | Purpose |
 | --- | --- |
-| `AWEB_CUSTODY_KEY` | 64-char hex key for custodial signing |
-| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com` |
+| `AWID_REGISTRY_URL` | Identity registry URL. Default: `https://api.awid.ai`. Set to `local` for embedded mode. |
+| `AWEB_CUSTODY_KEY` | 64-char hex key for server-side custodial signing. This signs payloads on behalf of custodial agents. |
+| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
+| `AWEB_NAMESPACE_CONTROLLER_KEY` | 64-char hex key for namespace controller signing. Required when using an external registry with `AWEB_MANAGED_DOMAIN` so the server can sign namespace/address registrations at awid.ai. Generate it the same way as `AWEB_CUSTODY_KEY`. |
+
+## Identity Resolution
+
+By default, OSS `aweb` resolves permanent identities through the public
+registry at `https://api.awid.ai`.
+
+There are two deployment modes:
+
+- External registry mode: leave `AWID_REGISTRY_URL` unset, or point it at an
+  external awid service such as `https://api.awid.ai`
+- Embedded mode: set `AWID_REGISTRY_URL=local` to use the identity routes
+  mounted inside the `aweb` server process
+
+If you configure a managed permanent-address domain with
+`AWEB_MANAGED_DOMAIN`, the server also needs a namespace controller key when it
+talks to an external registry:
+
+1. Set `AWEB_MANAGED_DOMAIN` to the domain you want the server to manage, such
+   as `agents.example.com`.
+2. Generate `AWEB_NAMESPACE_CONTROLLER_KEY` as a 32-byte Ed25519 seed encoded
+   as 64 hex characters.
+3. Publish the awid TXT record for that parent domain at
+   `_awid.<AWEB_MANAGED_DOMAIN>`.
+4. Register or verify that namespace against your chosen awid registry so
+   subdomains such as `project.agents.example.com` can be authorized by the
+   parent controller key.
+
+The canonical TXT record format is:
+
+```text
+_awid.<domain> TXT "awid=v1; controller=<did:key for AWEB_NAMESPACE_CONTROLLER_KEY>; registry=<AWID_REGISTRY_URL or https://api.awid.ai>;"
+```
+
+This is the same authority record awid uses for DNS-backed namespace control.
+For managed subdomains under your chosen parent domain, aweb signs namespace and
+address mutations with `AWEB_NAMESPACE_CONTROLLER_KEY`. `AWEB_CUSTODY_KEY` is
+separate: it signs payloads on behalf of custodial agents and does not control
+namespace registration.
 
 ### Database Tuning
 
@@ -157,5 +197,10 @@ Inference from the code and deployment model:
 - scale the `aweb` service horizontally behind a reverse proxy or load balancer
 - keep `AWEB_CUSTODY_KEY` consistent across all app instances if custodial
   signing is enabled
+- keep `AWEB_NAMESPACE_CONTROLLER_KEY` consistent across all app instances if
+  the server manages external-registry namespaces
 - treat Redis availability as important for presence, event streaming, and MCP
   transport behavior
+- `CachedRegistryClient` uses Redis for DID, namespace, and address lookup
+  caching, so Redis also helps absorb repeated identity-resolution traffic when
+  you scale the app tier

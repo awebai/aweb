@@ -28,7 +28,8 @@ These are the shapes most developers usually need first.
 - `CreateProjectRequest`
   - required: `project_slug`
   - optional: `alias`, `name`, `human_name`, `agent_type`, `lifetime`,
-    `custody`, `address_reachability`, `did`, `public_key`, `namespace_slug`
+    `custody`, `address_reachability`, `did`, `public_key`, `namespace_slug`,
+    `owner_type`, `owner_ref`
 - `InitRequest`
   - optional identity fields: `alias`, `name`, `human_name`, `agent_type`,
     `lifetime`, `custody`, `address_reachability`, `did`, `public_key`

@@ -9,6 +9,8 @@ import (
 type CreateProjectRequest struct {
 	ProjectSlug         string  `json:"project_slug"`
 	NamespaceSlug       string  `json:"namespace_slug,omitempty"`
+	OwnerType           string  `json:"owner_type,omitempty"`
+	OwnerRef            string  `json:"owner_ref,omitempty"`
 	Alias               *string `json:"alias,omitempty"`
 	Name                *string `json:"name,omitempty"`
 	AddressReachability string  `json:"address_reachability,omitempty"`

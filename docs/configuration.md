@@ -118,3 +118,39 @@ aw mail inbox
 ```
 
 Use that file for `aw run` prompt defaults and background service settings.
+
+## Server Environment Variables
+
+The server also relies on a small set of deployment-time environment variables.
+These are not stored in `.aw/`, but they determine how permanent identity
+resolution and custodial signing behave.
+
+### Identity Resolution
+
+- `AWID_REGISTRY_URL`: selects the awid registry. Unset defaults to
+  `https://api.awid.ai`. Set `local` for embedded mode.
+- `APP_ENV`: when set to `production` or left unset, registry URLs must use
+  HTTPS. Only explicit development values such as `dev`, `development`, or
+  `local` relax that check.
+
+### Managed Namespace Control
+
+- `AWEB_MANAGED_DOMAIN`: the parent domain used for server-managed permanent
+  addresses
+- `AWEB_NAMESPACE_CONTROLLER_KEY`: 64-char hex Ed25519 seed used to sign
+  namespace and address registrations for `AWEB_MANAGED_DOMAIN` when
+  `AWID_REGISTRY_URL` points at an external registry
+
+### Custodial Agent Signing
+
+- `AWEB_CUSTODY_KEY`: 64-char hex key used to decrypt custodial agent signing
+  keys and sign payloads on behalf of custodial identities
+
+The two signing keys serve different roles:
+
+- `AWEB_CUSTODY_KEY` is for agent-level custodial signing
+- `AWEB_NAMESPACE_CONTROLLER_KEY` is for namespace/address control at the awid
+  registry
+
+If you run with `APP_ENV=production`, keep `AWID_REGISTRY_URL` on HTTPS and
+set both keys consistently across all app instances that need those features.
