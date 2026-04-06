@@ -24,7 +24,7 @@
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
 
-set -euo pipefail
+set -uo pipefail
 
 canonicalize_dir() {
   local dir="$1"
