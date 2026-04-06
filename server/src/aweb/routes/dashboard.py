@@ -42,8 +42,12 @@ async def _require_dashboard_auth(request: Request, team_address: str) -> dict[s
     try:
         return verify_dashboard_token(token, secret, required_team=team_address)
     except ValueError as e:
-        status = 403 if "not authorized" in str(e) else 401
-        raise HTTPException(status_code=status, detail=str(e))
+        msg = str(e)
+        if "not configured" in msg:
+            raise HTTPException(status_code=500, detail="Dashboard auth misconfigured")
+        if "not authorized" in msg:
+            raise HTTPException(status_code=403, detail=msg)
+        raise HTTPException(status_code=401, detail=msg)
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +368,7 @@ async def get_team_status(
         SELECT resource_key, holder_alias, acquired_at, expires_at
         FROM {{tables.reservations}}
         WHERE team_address = $1
+          AND (expires_at IS NULL OR expires_at > NOW())
         """,
         team_address,
     )
