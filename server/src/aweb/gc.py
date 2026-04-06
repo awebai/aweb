@@ -45,6 +45,7 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
         SELECT t.team_address
         FROM {{tables.teams}} t
         WHERE t.created_at < $1
+          AND t.deleted_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.messages}} m
               WHERE m.team_address = t.team_address

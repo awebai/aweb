@@ -366,7 +366,7 @@ CREATE TABLE teams (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (domain, name)
+    UNIQUE (domain, name) WHERE deleted_at IS NULL
 );
 
 CREATE TABLE team_certificates (
