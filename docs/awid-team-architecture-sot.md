@@ -294,9 +294,9 @@ Steps 1-3 are local crypto, no network. Step 4 is a cache lookup
 
 When the team controller removes a member:
 1. `aw id team remove-member` calls awid:
-   `POST /v1/namespaces/{domain}/teams/{name}/revocations`
+   `POST /v1/namespaces/{domain}/teams/{name}/certificates/revoke`
    with the `certificate_id`.
-2. awid adds the entry to `team_revocations`.
+2. awid sets `revoked_at` on the `team_certificates` row.
 3. Services refresh their cached revocation list within their TTL
    (recommended: 5-15 minutes).
 4. The revoked certificate is rejected on next request after cache
