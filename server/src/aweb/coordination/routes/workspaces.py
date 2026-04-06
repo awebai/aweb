@@ -2,29 +2,21 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid as uuid_module
 from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
-import asyncpg.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
-from aweb.auth import validate_workspace_id
-from aweb.aweb_context import resolve_aweb_identity
-from aweb.aweb_introspection import get_identity_from_auth, get_project_from_auth
-from aweb.bootstrap import delete_agent_identity
+from aweb.team_auth_deps import get_team_identity
 
 from ...config import get_settings
 from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
-from ...internal_auth import is_public_reader
-from ...names import CLASSIC_NAMES
 from ...pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     clear_workspace_presence,
@@ -32,17 +24,10 @@ from ...presence import (
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
-from ..project_registry import ensure_server_project_row
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..roles import (
     ROLE_MAX_LENGTH,
-)
-from .repos import canonicalize_git_url, extract_repo_name
-from ..workspace_registry import (
-    check_alias_collision,
-    ensure_repo,
-    upsert_workspace,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,726 +36,20 @@ TEAM_STATUS_DEFAULT_LIMIT = 15
 TEAM_STATUS_MAX_LIMIT = 200
 TEAM_STATUS_CANDIDATE_MULTIPLIER = 5
 TEAM_STATUS_CANDIDATE_MAX = 500
-REGISTRY_MAX_LIMIT = 1000
 
 router = APIRouter(prefix="/v1/workspaces", tags=["workspaces"])
 
-# Request/Response models for suggest-name-prefix
 
-
-class SuggestNamePrefixRequest(BaseModel):
-    """Request body for /v1/workspaces/suggest-name-prefix endpoint."""
-
-    origin_url: str = Field(..., min_length=1, max_length=2048, description="Git origin URL")
-
-    @field_validator("origin_url")
-    @classmethod
-    def validate_origin_url(cls, v: str) -> str:
-        try:
-            canonicalize_git_url(v)
-        except ValueError as e:
-            raise ValueError(f"Invalid origin_url: {e}")
-        return v
-
-
-class SuggestNamePrefixResponse(BaseModel):
-    """Response for /v1/workspaces/suggest-name-prefix endpoint."""
-
-    name_prefix: str  # The next available name (e.g., "alice", "bob", "alice-01")
-    project_id: str
-    project_slug: str
-    repo_id: str
-    canonical_origin: str
-
-
-async def _resolve_project_for_name_suggestion(
-    server_db, canonical_origin: str, auth_project_id: UUID | None
-) -> tuple[UUID, str, str]:
-    """Resolve (project_id, project_slug, repo_id) for a name prefix suggestion.
-
-    When authenticated, scopes to the authenticated project to prevent
-    classic-name allocation from leaking across projects.
-    """
-    results = await server_db.fetch_all(
-        """
-        SELECT r.id as repo_id, r.canonical_origin,
-               p.id as project_id, p.slug as project_slug
-        FROM {{tables.repos}} r
-        JOIN {{tables.projects}} p ON r.project_id = p.id AND p.deleted_at IS NULL
-        WHERE r.canonical_origin = $1 AND r.deleted_at IS NULL
-        ORDER BY p.slug
-        """,
-        canonical_origin,
-    )
-
-    if auth_project_id is not None:
-        project_row = await server_db.fetch_one(
-            """
-            SELECT id, slug
-            FROM {{tables.projects}}
-            WHERE id = $1 AND deleted_at IS NULL
-            """,
-            auth_project_id,
-        )
-        if not project_row:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        matched_repo = next((r for r in results if r["project_id"] == auth_project_id), None)
-        return (
-            project_row["id"],
-            project_row["slug"],
-            str(matched_repo["repo_id"]) if matched_repo is not None else "",
-        )
-
-    if not results:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Repo not registered: {canonical_origin}. Run 'aw init' or 'aw use' from this repo to register it.",
-        )
-    if len(results) > 1:
-        project_slugs = [r["project_slug"] for r in results]
-        raise HTTPException(
-            status_code=409,
-            detail=f"Repo exists in multiple projects: {', '.join(project_slugs)}. "
-            "Authenticate with the correct project account, then run 'aw init' or 'aw use' from this repo.",
-        )
-
-    result = results[0]
-    return result["project_id"], result["project_slug"], str(result["repo_id"])
-
-
-def _extract_used_prefixes(aliases: list[str]) -> set[str]:
-    """Extract name prefixes from existing aliases.
-
-    An alias like "alice-programmer" has prefix "alice".
-    An alias like "alice-01-programmer" has prefix "alice-01".
-    An alias like "alice" (no role) also has prefix "alice".
-    """
-    used: set[str] = set()
-    for alias in aliases:
-        parts = alias.split("-")
-        if len(parts) >= 2 and parts[1].isdigit():
-            prefix = f"{parts[0]}-{parts[1]}".lower()
-        else:
-            prefix = parts[0].lower()
-        if prefix:
-            used.add(prefix)
-    return used
-
-
-def _find_available_prefix(used_prefixes: set[str]) -> str | None:
-    """Find the first available classic name prefix.
-
-    Tries base names first (alice, bob, ...), then numbered (alice-01, bob-01, ...).
-    """
-    for name in CLASSIC_NAMES:
-        if name not in used_prefixes:
-            return name
-
-    for num in range(1, 100):
-        for name in CLASSIC_NAMES:
-            numbered = f"{name}-{num:02d}"
-            if numbered not in used_prefixes:
-                return numbered
-
-    return None
-
-
-@router.post("/suggest-name-prefix", response_model=SuggestNamePrefixResponse)
-async def suggest_name_prefix(
-    request: Request,
-    payload: SuggestNamePrefixRequest,
-    db: DatabaseInfra = Depends(get_db_infra),
-) -> SuggestNamePrefixResponse:
-    """
-    Get the next available name prefix for a new workspace.
-
-    Given an origin_url, this endpoint:
-    1. Looks up the repo to find the project
-    2. Queries existing aliases to find used name prefixes
-    3. Returns the first available classic name (e.g., alice, bob, alice-01)
-
-    Classic names are used: alice, bob, charlie, etc. The client combines
-    the name_prefix with their role to form the full alias.
-
-    Returns 404 if the repo is not registered and the caller is not authenticated.
-    Returns 409 if the repo exists in multiple projects and the caller is not authenticated
-    (or the authenticated project is not among them), or all names are taken.
-    """
-    server_db = db.get_manager("server")
-    canonical_origin = canonicalize_git_url(payload.origin_url)
-
-    auth_project_id: UUID | None = None
-    if "Authorization" in request.headers or "X-AWEB-Auth" in request.headers:
-        auth_project_id = UUID(await get_project_from_auth(request, db))
-
-    project_id, project_slug, repo_id = await _resolve_project_for_name_suggestion(
-        server_db, canonical_origin, auth_project_id
-    )
-
-    # Query aweb.agents (not server.workspaces) for used aliases.
-    # bootstrap_identity creates agents in aweb.agents, and an agent can exist
-    # there without a corresponding workspace in server.workspaces.
-    aweb_db = db.get_manager("aweb")
-    existing = await aweb_db.fetch_all(
-        """
-        SELECT alias FROM {{tables.agents}}
-        WHERE project_id = $1
-          AND deleted_at IS NULL
-        ORDER BY alias
-        """,
-        project_id,
-    )
-
-    used_prefixes = _extract_used_prefixes([row["alias"] for row in existing])
-    available_prefix = _find_available_prefix(used_prefixes)
-
-    if available_prefix is None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"All name prefixes are taken (tried {len(CLASSIC_NAMES)} names × 100 variants). "
-            "Use --alias to specify a custom alias.",
-        )
-
-    return SuggestNamePrefixResponse(
-        name_prefix=available_prefix,
-        project_id=str(project_id),
-        project_slug=project_slug,
-        repo_id=repo_id,
-        canonical_origin=canonical_origin,
-    )
-
-
-# Request/Response models for registration
-
-
-class RegisterWorkspaceRequest(BaseModel):
-    """Request body for /v1/workspaces/register endpoint (clean-slate split)."""
-
-    repo_origin: str = Field(..., min_length=1, max_length=2048)
-    role: Optional[str] = Field(
-        None,
-        max_length=ROLE_MAX_LENGTH,
-        description="Brief description of workspace purpose",
-    )
-    role_name: Optional[str] = Field(
-        None,
-        max_length=ROLE_MAX_LENGTH,
-        description="Canonical selector name for the workspace role",
-    )
-    hostname: Optional[str] = Field(
-        None,
-        max_length=255,
-        description="Machine hostname for gone workspace detection",
-    )
-    workspace_path: Optional[str] = Field(
-        None,
-        max_length=4096,
-        description="Directory path for gone workspace detection",
-    )
-
-    @field_validator("repo_origin")
-    @classmethod
-    def validate_repo_origin(cls, v: str) -> str:
-        try:
-            canonicalize_git_url(v)
-        except ValueError as e:
-            raise ValueError(f"Invalid repo_origin: {e}")
-        return v
-
-    @field_validator("role", "role_name")
-    @classmethod
-    def validate_role(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_optional_role_name(v)
-
-    @model_validator(mode="after")
-    def sync_role_aliases(self):
-        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
-        self.role = resolved
-        self.role_name = resolved
-        return self
-
-    @field_validator("hostname")
-    @classmethod
-    def validate_hostname(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if "\x00" in v or any(ord(c) < 32 for c in v):
-            raise ValueError(
-                "hostname contains invalid characters (null bytes or control characters)"
-            )
-        return v
-
-    @field_validator("workspace_path")
-    @classmethod
-    def validate_workspace_path(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if "\x00" in v or any(ord(c) < 32 and c not in "\t\n" for c in v):
-            raise ValueError(
-                "workspace_path contains invalid characters (null bytes or control characters)"
-            )
-        return v
-
-
-class RegisterWorkspaceResponse(BaseModel):
-    """Response for /v1/workspaces/register endpoint."""
-
-    workspace_id: str
-    project_id: str
-    project_slug: str
-    repo_id: str
-    canonical_origin: str
-    alias: str
-    human_name: str
-    created: bool  # True if new workspace, False if already existed
-
-
-class RegisterAttachmentRequest(BaseModel):
-    """Request body for /v1/workspaces/attach endpoint."""
-
-    attachment_type: Literal["local_dir", "service_process", "manual"] = Field(
-        ...,
-        description="Non-repo runtime attachment type",
-    )
-    role: Optional[str] = Field(
-        None,
-        max_length=ROLE_MAX_LENGTH,
-        description="Role used for project roles selection and coordination",
-    )
-    role_name: Optional[str] = Field(
-        None,
-        max_length=ROLE_MAX_LENGTH,
-        description="Canonical selector name for the workspace role",
-    )
-    hostname: Optional[str] = Field(
-        None,
-        max_length=255,
-        description="Optional coarse host label for runtime coordination",
-    )
-    workspace_path: Optional[str] = Field(
-        None,
-        max_length=4096,
-        description="Directory path for runtime coordination",
-    )
-
-    @field_validator("role", "role_name")
-    @classmethod
-    def validate_attachment_role(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_optional_role_name(v)
-
-    @model_validator(mode="after")
-    def sync_role_aliases(self):
-        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
-        self.role = resolved
-        self.role_name = resolved
-        return self
-
-    @field_validator("hostname")
-    @classmethod
-    def validate_attachment_hostname(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if "\x00" in v or any(ord(c) < 32 for c in v):
-            raise ValueError(
-                "hostname contains invalid characters (null bytes or control characters)"
-            )
-        return v
-
-    @field_validator("workspace_path")
-    @classmethod
-    def validate_attachment_workspace_path(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        if "\x00" in v or any(ord(c) < 32 and c not in "\t\n" for c in v):
-            raise ValueError(
-                "workspace_path contains invalid characters (null bytes or control characters)"
-            )
-        return v
-
-
-class RegisterAttachmentResponse(BaseModel):
-    """Response for /v1/workspaces/attach endpoint."""
-
-    workspace_id: str
-    project_id: str
-    project_slug: str
-    alias: str
-    human_name: str
-    attachment_type: str
-    created: bool
-
-
-@router.post("/register", response_model=RegisterWorkspaceResponse)
-async def register_workspace(
-    request: Request,
-    payload: RegisterWorkspaceRequest,
-    db: DatabaseInfra = Depends(get_db_infra),
-) -> RegisterWorkspaceResponse:
-    """
-    Register a workspace for the authenticated aweb agent.
-
-    Identity and project scoping are derived from the unified aweb core:
-    - project_id comes from aweb auth/introspection
-    - workspace_id is the aweb agent_id (v1 mapping)
-    - alias/human_name come from the canonical agent profile
-    """
-    server_db = db.get_manager("server")
-
-    identity = await resolve_aweb_identity(request, db)
-    project_id = identity.project_id
-    workspace_id = identity.agent_id
-    alias = identity.alias
-    human_name = identity.human_name
-    if not is_valid_alias(alias):
-        raise HTTPException(status_code=502, detail="aweb returned invalid alias format")
-    if human_name and not is_valid_human_name(human_name):
-        raise HTTPException(status_code=502, detail="aweb returned invalid human_name format")
-
-    project_slug = identity.project_slug
-    project_name = identity.project_name or ""
-
-    canonical_origin = canonicalize_git_url(payload.repo_origin)
-    repo_name = extract_repo_name(canonical_origin)
-
-    created = False
-    async with server_db.transaction() as tx:
-        await ensure_server_project_row(
-            server_db=tx,
-            aweb_db=db.get_manager("aweb"),
-            project_id=project_id,
-            project_slug=project_slug,
-            project_name=project_name,
-        )
-
-        repo = await tx.fetch_one(
-            """
-            INSERT INTO {{tables.repos}} (project_id, origin_url, canonical_origin, name)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (project_id, canonical_origin)
-            DO UPDATE SET origin_url = EXCLUDED.origin_url, deleted_at = NULL
-            RETURNING id
-            """,
-            UUID(project_id),
-            payload.repo_origin,
-            canonical_origin,
-            repo_name,
-        )
-        assert repo is not None
-        repo_id = str(repo["id"])
-
-        existing = await tx.fetch_one(
-            """
-            SELECT workspace_id, project_id, repo_id, alias, deleted_at
-            FROM {{tables.workspaces}}
-            WHERE workspace_id = $1
-            """,
-            UUID(workspace_id),
-        )
-        if existing:
-            if str(existing["project_id"]) != project_id:
-                raise HTTPException(
-                    status_code=409, detail="Workspace already registered in another project"
-                )
-            if existing["repo_id"] is not None and str(existing["repo_id"]) != repo_id:
-                raise HTTPException(
-                    status_code=409, detail="Workspace already registered for another repo"
-                )
-            if existing["alias"] != alias:
-                raise HTTPException(
-                    status_code=409, detail="Workspace already registered with a different alias"
-                )
-
-            await tx.execute(
-                """
-                UPDATE {{tables.workspaces}}
-                SET deleted_at = NULL,
-                    repo_id = COALESCE(repo_id, $2),
-                    hostname = $3,
-                    workspace_path = $4,
-                    role = COALESCE($5, role),
-                    human_name = $6,
-                    workspace_type = 'agent',
-                    updated_at = NOW()
-                WHERE workspace_id = $1
-                """,
-                UUID(workspace_id),
-                UUID(repo_id),
-                payload.hostname,
-                payload.workspace_path,
-                payload.role,
-                human_name,
-            )
-            created = False
-        else:
-            try:
-                await tx.execute(
-                    """
-                    INSERT INTO {{tables.workspaces}}
-                        (workspace_id, project_id, repo_id, alias, human_name, role, hostname, workspace_path, workspace_type)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'agent')
-                    """,
-                    UUID(workspace_id),
-                    UUID(project_id),
-                    UUID(repo_id),
-                    alias,
-                    human_name,
-                    payload.role,
-                    payload.hostname,
-                    payload.workspace_path,
-                )
-            except (QueryError, asyncpg.exceptions.UniqueViolationError) as e:
-                # Alias uniqueness violation within the project.
-                if isinstance(e, QueryError) and not isinstance(
-                    e.__cause__, asyncpg.exceptions.UniqueViolationError
-                ):
-                    raise
-                raise HTTPException(
-                    status_code=409, detail=f"Alias '{alias}' is already used in this project"
-                )
-            created = True
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, agent_id, event_type, alias, resource, details)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        """,
-        UUID(project_id),
-        UUID(workspace_id),
-        UUID(workspace_id),
-        "context.attached",
-        alias,
-        "agent_context",
-        json.dumps(
-            {
-                "context_kind": "repo_worktree",
-                "canonical_origin": canonical_origin,
-                "repo_id": repo_id,
-                "created": created,
-            }
-        ),
-    )
-
-    return RegisterWorkspaceResponse(
-        workspace_id=workspace_id,
-        project_id=project_id,
-        project_slug=project_slug,
-        repo_id=repo_id,
-        canonical_origin=canonical_origin,
-        alias=alias,
-        human_name=human_name,
-        created=created,
-    )
-
-
-@router.post("/attach", response_model=RegisterAttachmentResponse)
-async def register_attachment(
-    request: Request,
-    payload: RegisterAttachmentRequest,
-    redis: Redis = Depends(get_redis),
-    db: DatabaseInfra = Depends(get_db_infra),
-) -> RegisterAttachmentResponse:
-    """
-    Register a non-repo runtime attachment for the authenticated aweb agent.
-
-    This creates a first-class coordination participant without requiring a
-    shared repo identity or disclosing a local path.
-    """
-    server_db = db.get_manager("server")
-
-    identity = await resolve_aweb_identity(request, db)
-    project_id = identity.project_id
-    workspace_id = identity.agent_id
-    alias = identity.alias
-    human_name = identity.human_name
-    if not is_valid_alias(alias):
-        raise HTTPException(status_code=502, detail="aweb returned invalid alias format")
-    if human_name and not is_valid_human_name(human_name):
-        raise HTTPException(status_code=502, detail="aweb returned invalid human_name format")
-
-    project_slug = identity.project_slug
-    project_name = identity.project_name or ""
-    created = False
-
-    async with server_db.transaction() as tx:
-        await ensure_server_project_row(
-            server_db=tx,
-            aweb_db=db.get_manager("aweb"),
-            project_id=project_id,
-            project_slug=project_slug,
-            project_name=project_name,
-        )
-
-        existing_workspace = await tx.fetch_one(
-            """
-            SELECT workspace_id, project_id, alias
-            FROM {{tables.workspaces}}
-            WHERE workspace_id = $1
-            """,
-            UUID(workspace_id),
-        )
-        if existing_workspace:
-            if str(existing_workspace["project_id"]) != project_id:
-                raise HTTPException(
-                    status_code=409, detail="Agent is already attached in another project"
-                )
-            if existing_workspace["alias"] != alias:
-                raise HTTPException(
-                    status_code=409, detail="Agent is already attached with a different alias"
-                )
-
-        colliding_workspace = await check_alias_collision(
-            db, redis, UUID(project_id), workspace_id, alias
-        )
-        if colliding_workspace:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Alias '{alias}' is already used by another participant in this project",
-            )
-
-        if existing_workspace is None:
-            try:
-                await tx.execute(
-                    """
-                    INSERT INTO {{tables.workspaces}}
-                        (
-                            workspace_id,
-                            project_id,
-                            repo_id,
-                            alias,
-                            human_name,
-                            role,
-                            hostname,
-                            workspace_path,
-                            workspace_type,
-                            last_seen_at
-                        )
-                    VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, NOW())
-                    """,
-                    UUID(workspace_id),
-                    UUID(project_id),
-                    alias,
-                    human_name,
-                    payload.role,
-                    payload.hostname,
-                    payload.workspace_path,
-                    payload.attachment_type,
-                )
-            except (QueryError, asyncpg.exceptions.UniqueViolationError) as e:
-                if isinstance(e, QueryError) and not isinstance(
-                    e.__cause__, asyncpg.exceptions.UniqueViolationError
-                ):
-                    raise
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Alias '{alias}' is already used in this project",
-                ) from e
-            created = True
-        else:
-            await tx.execute(
-                """
-                UPDATE {{tables.workspaces}}
-                SET deleted_at = NULL,
-                    repo_id = NULL,
-                    human_name = $2,
-                    role = COALESCE($3, role),
-                    hostname = $4,
-                    workspace_path = $5,
-                    workspace_type = $6,
-                    last_seen_at = NOW(),
-                    updated_at = NOW()
-                WHERE workspace_id = $1
-                """,
-                UUID(workspace_id),
-                human_name,
-                payload.role,
-                payload.hostname,
-                payload.workspace_path,
-                payload.attachment_type,
-            )
-            created = False
-
-    settings = get_settings()
-    try:
-        await update_agent_presence(
-            redis,
-            workspace_id=workspace_id,
-            alias=alias,
-            human_name=human_name,
-            project_id=project_id,
-            project_slug=project_slug,
-            repo_id=None,
-            program="aw",
-            model=None,
-            role=payload.role,
-            ttl_seconds=settings.presence_ttl_seconds,
-        )
-    except Exception as e:
-        logger.warning(
-            "Attachment SQL upsert succeeded but presence update failed",
-            extra={
-                "workspace_id": workspace_id,
-                "project_id": project_id,
-                "error": str(e),
-            },
-        )
-
-    try:
-        await update_agent_presence(
-            redis,
-            agent_id=workspace_id,
-            alias=alias,
-            project_id=project_id,
-            ttl_seconds=settings.presence_ttl_seconds,
-        )
-    except Exception as e:
-        logger.warning(
-            "Aweb agent presence update failed for non-repo attachment",
-            extra={
-                "workspace_id": workspace_id,
-                "project_id": project_id,
-                "error": str(e),
-            },
-        )
-
-    await server_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (project_id, workspace_id, agent_id, event_type, alias, resource, details)
-        VALUES ($1, $2, $2, $3, $4, $5, $6::jsonb)
-        """,
-        UUID(project_id),
-        UUID(workspace_id),
-        "context.attached",
-        alias,
-        "agent_context",
-        json.dumps(
-            {
-                "context_kind": payload.attachment_type,
-                "created": created,
-            }
-        ),
-    )
-
-    return RegisterAttachmentResponse(
-        workspace_id=workspace_id,
-        project_id=project_id,
-        project_slug=project_slug,
-        alias=alias,
-        human_name=human_name,
-        attachment_type=payload.attachment_type,
-        created=created,
-    )
-
-
+# ---------------------------------------------------------------------------
 # Heartbeat models and endpoint
 # IMPORTANT: This endpoint MUST be defined BEFORE /{workspace_id} to prevent
 # "heartbeat" from matching as a workspace_id parameter.
+# ---------------------------------------------------------------------------
 
 
 class WorkspaceHeartbeatRequest(BaseModel):
     workspace_id: str = Field(..., min_length=1)
     alias: str = Field(..., min_length=1, max_length=64)
-    repo_origin: str = Field(..., min_length=1, max_length=512, description="Git remote origin URL")
 
     role: Optional[str] = Field(
         None,
@@ -782,8 +61,6 @@ class WorkspaceHeartbeatRequest(BaseModel):
         max_length=ROLE_MAX_LENGTH,
         description="Canonical selector name for the workspace role",
     )
-    current_branch: Optional[str] = Field(None, max_length=255)
-    timezone: Optional[str] = Field(None, max_length=64)
     hostname: Optional[str] = Field(None, max_length=255)
     workspace_path: Optional[str] = Field(None, max_length=1024)
     human_name: Optional[str] = Field(None, max_length=64)
@@ -792,9 +69,10 @@ class WorkspaceHeartbeatRequest(BaseModel):
     @classmethod
     def validate_workspace_id_field(cls, v: str) -> str:
         try:
-            return validate_workspace_id(v)
-        except ValueError as e:
-            raise ValueError(str(e))
+            UUID(v)
+        except ValueError:
+            raise ValueError("workspace_id must be a valid UUID")
+        return v
 
     @field_validator("alias")
     @classmethod
@@ -803,15 +81,6 @@ class WorkspaceHeartbeatRequest(BaseModel):
             raise ValueError(
                 "Invalid alias: must be alphanumeric with hyphens/underscores, 1-64 chars"
             )
-        return v
-
-    @field_validator("repo_origin")
-    @classmethod
-    def validate_repo_origin_field(cls, v: str) -> str:
-        try:
-            canonicalize_git_url(v)
-        except ValueError as e:
-            raise ValueError(f"Invalid repo_origin: {e}")
         return v
 
     @field_validator("role", "role_name")
@@ -825,19 +94,6 @@ class WorkspaceHeartbeatRequest(BaseModel):
         self.role = resolved
         self.role_name = resolved
         return self
-
-    @field_validator("timezone")
-    @classmethod
-    def validate_timezone_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        import re
-
-        if not re.match(r"^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$", v):
-            raise ValueError(
-                "timezone must be a valid IANA identifier (e.g. 'Europe/Madrid', 'America/New_York')"
-            )
-        return v
 
 
 class WorkspaceHeartbeatResponse(BaseModel):
@@ -856,23 +112,22 @@ async def heartbeat(
     Refresh workspace presence, enforcing "presence is a cache of SQL".
 
     Order of operations:
-    1) Ensure repo/workspace exists (SQL)
+    1) Ensure workspace exists (SQL)
     2) Update presence (Redis)
 
     Note: If Redis is unavailable, SQL is still authoritative; presence updates
     are best-effort and will converge once the client retries.
     """
-    identity = await get_identity_from_auth(request, db)
-    enforce_actor_binding(identity, payload.workspace_id)
-    project_id = UUID(identity.project_id)
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
     settings = get_settings()
 
-    server_db = db.get_manager("server")
+    aweb_db = db.get_manager("aweb")
 
-    # Pre-check immutability to avoid leaking DB trigger errors as 500s.
-    existing = await server_db.fetch_one(
+    # Pre-check: workspace must exist and belong to this team.
+    existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, project_id, alias, repo_id, deleted_at
+        SELECT workspace_id, team_address, alias, repo_id, deleted_at
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1
         """,
@@ -882,13 +137,12 @@ async def heartbeat(
         if existing.get("deleted_at") is not None:
             raise HTTPException(
                 status_code=410,
-                detail="Workspace was deleted. Run 'aw init' or 'aw use' from this repo to re-register.",
+                detail="Workspace was deleted. Run 'aw connect' to re-register.",
             )
-        if existing.get("project_id") and existing["project_id"] != project_id:
+        if existing.get("team_address") != team_address:
             raise HTTPException(
                 status_code=400,
-                detail=f"Workspace {payload.workspace_id} does not belong to this project. "
-                "This may indicate a corrupted .aw/workspace.yaml file. Try running 'aw use' from this repo again.",
+                detail=f"Workspace {payload.workspace_id} does not belong to this team.",
             )
         if existing.get("alias") and existing["alias"] != payload.alias:
             raise HTTPException(
@@ -896,93 +150,44 @@ async def heartbeat(
                 detail=(
                     f"Alias mismatch for workspace {payload.workspace_id} "
                     f"(expected '{existing['alias']}', got '{payload.alias}'). "
-                    "Run 'aw init' or 'aw use' from this repo to re-register."
-                ),
-            )
-
-    # Resolve repo_id without creating partial state in mismatch scenarios.
-    canonical_origin = canonicalize_git_url(payload.repo_origin)
-    repo_id: UUID
-    if existing and existing.get("repo_id"):
-        repo_id = existing["repo_id"]
-
-        repo_row = await server_db.fetch_one(
-            """
-            SELECT canonical_origin
-            FROM {{tables.repos}}
-            WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL
-            """,
-            repo_id,
-            project_id,
-        )
-        if not repo_row:
-            raise HTTPException(
-                status_code=410,
-                detail="Workspace repository was deleted. Run 'aw init' or 'aw use' from this repo to re-register.",
-            )
-        if repo_row.get("canonical_origin") != canonical_origin:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Repo mismatch: workspace is registered with a different repository. "
-                    "This may indicate a corrupted .aw/workspace.yaml file. Run 'aw use' from this repo again."
+                    "Run 'aw connect' to re-register."
                 ),
             )
     else:
-        colliding_workspace = await check_alias_collision(
-            db, redis, project_id, payload.workspace_id, payload.alias
-        )
-        if colliding_workspace:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Alias '{payload.alias}' is already used by another workspace in this project. "
-                "Please choose a different alias and run 'aw init' or 'aw use' again from this repo.",
-            )
-
-        # Ensure repo exists for this project (normalizes to canonical_origin).
-        repo_id = await ensure_repo(db, project_id, payload.repo_origin)
-
-    # Upsert workspace record first (SQL), then update presence (Redis; best-effort).
-    try:
-        await upsert_workspace(
-            db,
-            workspace_id=payload.workspace_id,
-            project_id=project_id,
-            repo_id=repo_id,
-            alias=payload.alias,
-            human_name=payload.human_name or "",
-            role=payload.role,
-            hostname=payload.hostname,
-            workspace_path=payload.workspace_path,
-        )
-    except QueryError as e:
-        if isinstance(e.__cause__, asyncpg.exceptions.UniqueViolationError):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Alias '{payload.alias}' is already used by another workspace in this project. "
-                "Please choose a different alias and run 'aw init' or 'aw use' again from this repo.",
-            ) from e
-        raise
-
-    if payload.current_branch is not None or payload.timezone is not None:
-        await server_db.execute(
-            """
-            UPDATE {{tables.workspaces}}
-            SET current_branch = COALESCE($1, current_branch),
-                timezone = COALESCE($2, timezone),
-                last_seen_at = NOW()
-            WHERE workspace_id = $3
-            """,
-            payload.current_branch,
-            payload.timezone,
-            UUID(payload.workspace_id),
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workspace {payload.workspace_id} not found. Run 'aw connect' to register.",
         )
 
-    project_row = await server_db.fetch_one(
-        "SELECT slug FROM {{tables.projects}} WHERE id = $1",
-        project_id,
+    # Update mutable workspace fields.
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.workspaces}}
+        SET role = COALESCE($2, role),
+            hostname = COALESCE($3, hostname),
+            workspace_path = COALESCE($4, workspace_path),
+            human_name = COALESCE(NULLIF($5, ''), human_name),
+            last_seen_at = NOW(),
+            updated_at = NOW()
+        WHERE workspace_id = $1
+        """,
+        UUID(payload.workspace_id),
+        payload.role,
+        payload.hostname,
+        payload.workspace_path,
+        payload.human_name or "",
     )
-    project_slug = project_row["slug"] if project_row else None
+
+    repo_row = None
+    if existing.get("repo_id"):
+        repo_row = await aweb_db.fetch_one(
+            """
+            SELECT canonical_origin
+            FROM {{tables.repos}}
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            existing["repo_id"],
+        )
 
     try:
         await update_agent_presence(
@@ -990,15 +195,12 @@ async def heartbeat(
             workspace_id=payload.workspace_id,
             alias=payload.alias,
             human_name=payload.human_name or "",
-            project_id=str(project_id),
-            project_slug=project_slug,
-            repo_id=str(repo_id),
+            project_id=team_address,
+            repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
             model=None,
-            current_branch=payload.current_branch,
+            canonical_origin=repo_row["canonical_origin"] if repo_row else None,
             role=payload.role,
-            canonical_origin=canonical_origin,
-            timezone=payload.timezone,
             ttl_seconds=settings.presence_ttl_seconds,
         )
     except Exception as e:
@@ -1006,31 +208,150 @@ async def heartbeat(
             "Heartbeat SQL upsert succeeded but presence update failed",
             extra={
                 "workspace_id": payload.workspace_id,
-                "project_id": str(project_id),
-                "error": str(e),
-            },
-        )
-
-    # Update aweb agent-level presence (best-effort, non-blocking).
-    try:
-        await update_agent_presence(
-            redis,
-            agent_id=payload.workspace_id,
-            alias=payload.alias,
-            project_id=str(project_id),
-            ttl_seconds=settings.presence_ttl_seconds,
-        )
-    except Exception as e:
-        logger.warning(
-            "Aweb agent presence update failed",
-            extra={
-                "workspace_id": payload.workspace_id,
-                "project_id": str(project_id),
+                "team_address": team_address,
                 "error": str(e),
             },
         )
 
     return WorkspaceHeartbeatResponse(ok=True, workspace_id=payload.workspace_id)
+
+
+# ---------------------------------------------------------------------------
+# Update workspace (PATCH)
+# ---------------------------------------------------------------------------
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    """Request body for PATCH /v1/workspaces/{workspace_id}."""
+
+    role: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Brief description of workspace purpose",
+    )
+    role_name: Optional[str] = Field(
+        None,
+        max_length=ROLE_MAX_LENGTH,
+        description="Canonical selector name for the workspace role",
+    )
+    hostname: Optional[str] = Field(None, max_length=255)
+    workspace_path: Optional[str] = Field(None, max_length=4096)
+    human_name: Optional[str] = Field(None, max_length=64)
+    focus_task_ref: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("role", "role_name")
+    @classmethod
+    def validate_role_field(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_optional_role_name(v)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
+
+    @field_validator("human_name")
+    @classmethod
+    def validate_human_name_field(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not is_valid_human_name(v):
+            raise ValueError("Invalid human_name format")
+        return v
+
+
+class UpdateWorkspaceResponse(BaseModel):
+    workspace_id: str
+    alias: str
+    updated: bool
+
+
+@router.patch("/{workspace_id}", response_model=UpdateWorkspaceResponse)
+async def update_workspace(
+    request: Request,
+    workspace_id: str = Path(..., description="Workspace ID to update"),
+    payload: UpdateWorkspaceRequest = None,
+    db: DatabaseInfra = Depends(get_db_infra),
+) -> UpdateWorkspaceResponse:
+    """Update mutable workspace fields."""
+    try:
+        validated_id = str(UUID(workspace_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
+
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
+
+    aweb_db = db.get_manager("aweb")
+
+    existing = await aweb_db.fetch_one(
+        """
+        SELECT workspace_id, alias, team_address, deleted_at
+        FROM {{tables.workspaces}}
+        WHERE workspace_id = $1 AND team_address = $2
+        """,
+        UUID(validated_id),
+        team_address,
+    )
+
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+
+    if existing["deleted_at"] is not None:
+        raise HTTPException(status_code=410, detail=f"Workspace {workspace_id} is deleted")
+
+    set_clauses = []
+    params: list = [UUID(validated_id)]
+    idx = 2
+
+    if payload.role is not None:
+        set_clauses.append(f"role = ${idx}")
+        params.append(payload.role)
+        idx += 1
+
+    if payload.hostname is not None:
+        set_clauses.append(f"hostname = ${idx}")
+        params.append(payload.hostname)
+        idx += 1
+
+    if payload.workspace_path is not None:
+        set_clauses.append(f"workspace_path = ${idx}")
+        params.append(payload.workspace_path)
+        idx += 1
+
+    if payload.human_name is not None:
+        set_clauses.append(f"human_name = ${idx}")
+        params.append(payload.human_name)
+        idx += 1
+
+    if payload.focus_task_ref is not None:
+        set_clauses.append(f"focus_task_ref = ${idx}")
+        params.append(payload.focus_task_ref)
+        idx += 1
+        set_clauses.append("focus_updated_at = NOW()")
+
+    updated = False
+    if set_clauses:
+        set_clauses.append("updated_at = NOW()")
+        await aweb_db.execute(
+            f"""
+            UPDATE {{{{tables.workspaces}}}}
+            SET {', '.join(set_clauses)}
+            WHERE workspace_id = $1
+            """,
+            *params,
+        )
+        updated = True
+
+    return UpdateWorkspaceResponse(
+        workspace_id=validated_id,
+        alias=existing["alias"],
+        updated=updated,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Delete workspace
+# ---------------------------------------------------------------------------
 
 
 class DeleteWorkspaceResponse(BaseModel):
@@ -1048,30 +369,25 @@ async def delete_workspace(
     db: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
 ) -> DeleteWorkspaceResponse:
-    """Delete an ephemeral workspace and its bound identity."""
-    # Validate workspace_id format
+    """Soft-delete an ephemeral workspace."""
     try:
-        validated_id = validate_workspace_id(workspace_id)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        validated_id = str(UUID(workspace_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
 
-    identity = await get_identity_from_auth(request, db)
-    # Note: No workspace identity check here - any workspace in the project can
-    # delete any other workspace. This enables peer cleanup of stale workspaces
-    # (whose directories no longer exist and thus can't delete themselves).
-    project_id = identity.project_id
+    identity = await get_team_identity(request, db)
+    team_address = identity.team_address
 
-    server_db = db.get_manager("server")
     aweb_db = db.get_manager("aweb")
 
-    existing = await server_db.fetch_one(
+    existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, alias, project_id, deleted_at
+        SELECT workspace_id, alias, team_address, deleted_at
         FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND project_id = $2
+        WHERE workspace_id = $1 AND team_address = $2
         """,
         UUID(validated_id),
-        UUID(project_id),
+        team_address,
     )
 
     if not existing:
@@ -1086,16 +402,17 @@ async def delete_workspace(
             detail=f"Workspace {workspace_id} is already deleted",
         )
 
+    # Check lifetime from agent table to restrict deletion to ephemeral agents.
     agent_row = await aweb_db.fetch_one(
         """
         SELECT lifetime
         FROM {{tables.agents}}
         WHERE agent_id = $1
-          AND project_id = $2
+          AND team_address = $2
           AND deleted_at IS NULL
         """,
         UUID(validated_id),
-        UUID(project_id),
+        team_address,
     )
     if agent_row is None:
         raise HTTPException(status_code=409, detail="Workspace is missing its bound identity")
@@ -1106,36 +423,37 @@ async def delete_workspace(
         )
 
     deleted_at = datetime.now(timezone.utc)
-    await server_db.execute(
+    await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
         SET deleted_at = $2
         WHERE workspace_id = $1
         """,
-        validated_id,
+        UUID(validated_id),
         deleted_at,
     )
 
     # Release all task claims for this workspace.
-    # The CASCADE constraint only fires on hard delete, not soft-delete.
-    await server_db.execute(
+    await aweb_db.execute(
         """
         DELETE FROM {{tables.task_claims}}
         WHERE workspace_id = $1
         """,
-        validated_id,
+        UUID(validated_id),
     )
 
     await clear_workspace_presence(redis, [validated_id])
-
-    # Delete the matching ephemeral identity after the workspace is gone.
-    await delete_agent_identity(db, agent_id=validated_id, project_id=project_id)
 
     return DeleteWorkspaceResponse(
         workspace_id=validated_id,
         alias=existing["alias"],
         deleted_at=deleted_at.isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Listing models and helpers
+# ---------------------------------------------------------------------------
 
 
 class Claim(BaseModel):
@@ -1160,18 +478,15 @@ class WorkspaceInfo(BaseModel):
     alias: str
     human_name: Optional[str] = None
     context_kind: Optional[str] = None
-    project_id: Optional[str] = None
-    project_slug: Optional[str] = None
+    team_address: Optional[str] = None
     program: Optional[str] = None
     model: Optional[str] = None
     repo: Optional[str] = None
-    branch: Optional[str] = None
-    member_email: Optional[str] = None
     role: Optional[str] = None
     role_name: Optional[str] = None
-    hostname: Optional[str] = None  # For gone workspace detection
-    workspace_path: Optional[str] = None  # For gone workspace detection
-    apex_task_ref: Optional[str] = None  # Apex from first claim (root of parent chain)
+    hostname: Optional[str] = None
+    workspace_path: Optional[str] = None
+    apex_task_ref: Optional[str] = None
     apex_title: Optional[str] = None
     apex_type: Optional[str] = None
     focus_task_ref: Optional[str] = None
@@ -1180,8 +495,8 @@ class WorkspaceInfo(BaseModel):
     focus_updated_at: Optional[str] = None
     status: str  # "active", "idle", "offline"
     last_seen: Optional[str] = None
-    deleted_at: Optional[str] = None  # ISO timestamp if soft-deleted
-    claims: List[Claim] = []  # All active task claims for this workspace (with apex computed)
+    deleted_at: Optional[str] = None
+    claims: List[Claim] = []
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
@@ -1199,36 +514,41 @@ class ListWorkspacesResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+def _get_team_slug(team_address: str) -> str:
+    return team_address.split("/")[-1]
+
+
 def _title_join(
     alias: str,
-    project_col: str,
+    team_address_col: str,
     task_ref_col: str,
     *,
     include_type: bool = False,
     guard_col: str | None = None,
 ) -> str:
-    """Lateral join resolving title (+ optional type) from native aweb tasks only."""
+    """Lateral join resolving title (+ optional type) from tasks."""
     select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
 
-    guard_aweb = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
+    guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
 
+    # task_ref = slug || '-' || task_ref_suffix, where slug is the last
+    # component of team_address (after '/').
     return f"""
         LEFT JOIN LATERAL (
             SELECT {select_expr}
-            FROM server.tasks t
-            JOIN server.projects p ON t.project_id = p.id AND p.deleted_at IS NULL
-            WHERE t.project_id = {project_col}
-              AND p.slug || '-' || t.task_ref_suffix = {task_ref_col}
-              AND t.deleted_at IS NULL{guard_aweb}
+            FROM aweb.tasks t
+            WHERE t.team_address = {team_address_col}
+              AND split_part({team_address_col}, '/', -1) || '-' || t.task_ref_suffix = {task_ref_col}
+              AND t.deleted_at IS NULL{guard}
             LIMIT 1
         ) {alias} ON true"""
 
 
 def _build_workspace_claims_query(placeholders: str) -> str:
-    claim_join = _title_join("claim_info", "c.project_id", "c.task_ref")
+    claim_join = _title_join("claim_info", "c.team_address", "c.task_ref")
     apex_join = _title_join(
         "apex_info",
-        "c.project_id",
+        "c.team_address",
         "c.apex_task_ref",
         include_type=True,
         guard_col="c.apex_task_ref",
@@ -1269,7 +589,7 @@ def _timestamp(value: Optional[datetime] | Optional[str]) -> float:
 
 _TEAM_FOCUS_JOIN = _title_join(
     "focus_issue",
-    "w.project_id",
+    "w.team_address",
     "w.focus_task_ref",
     include_type=True,
     guard_col="w.focus_task_ref",
@@ -1284,8 +604,7 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
                 WHEN w.workspace_type = 'agent' THEN 'repo_worktree'::TEXT
                 ELSE w.workspace_type
             END AS context_kind,
-            w.current_branch,
-            w.project_id,
+            w.team_address,
             w.role,
             w.hostname,
             w.workspace_path,
@@ -1294,13 +613,11 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             w.focus_updated_at,
             focus_issue.title AS focus_task_title,
             focus_issue.issue_type AS focus_task_type,
-            p.slug AS project_slug,
             r.canonical_origin AS repo,
             COALESCE(cs.claim_count, 0) AS claim_count,
             cs.last_claimed_at,
             w.updated_at
         FROM {{{{tables.workspaces}}}} w
-        JOIN {{{{tables.projects}}}} p ON w.project_id = p.id AND p.deleted_at IS NULL
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
         {_TEAM_FOCUS_JOIN}
@@ -1308,15 +625,15 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
 
 
 async def _fetch_extra_team_workspace(
-    server_db,
+    aweb_db,
     workspace_id: str,
-    project_id: str,
+    team_address: str,
     *,
     human_name: str | None,
     repo: str | None,
 ):
     """Fetch a single workspace by ID for the always_include_workspace_id guarantee."""
-    params: list = [uuid_module.UUID(workspace_id), uuid_module.UUID(project_id)]
+    params: list = [uuid_module.UUID(workspace_id), team_address]
 
     query = f"""
         WITH claim_stats AS (
@@ -1324,7 +641,7 @@ async def _fetch_extra_team_workspace(
                    COUNT(*) AS claim_count,
                    MAX(claimed_at) AS last_claimed_at
             FROM {{{{tables.task_claims}}}}
-            WHERE project_id = $2
+            WHERE team_address = $2
             GROUP BY workspace_id
         )
         SELECT *
@@ -1332,7 +649,7 @@ async def _fetch_extra_team_workspace(
             {_TEAM_PARTICIPANT_WORKSPACE_SELECT}
             WHERE w.deleted_at IS NULL
         ) participants
-        WHERE workspace_id = $1 AND project_id = $2
+        WHERE workspace_id = $1 AND team_address = $2
     """
 
     if human_name:
@@ -1343,7 +660,7 @@ async def _fetch_extra_team_workspace(
         query += f" AND repo = ${len(params) + 1}"
         params.append(repo)
 
-    return await server_db.fetch_one(query, *params)
+    return await aweb_db.fetch_one(query, *params)
 
 
 def _row_to_workspace_info(
@@ -1351,7 +668,6 @@ def _row_to_workspace_info(
     presence: dict | None,
     workspace_claims: list[Claim],
     *,
-    public_reader: bool,
     include_presence: bool,
 ) -> WorkspaceInfo:
     workspace_id = str(row["workspace_id"])
@@ -1366,46 +682,27 @@ def _row_to_workspace_info(
     last_seen = _to_iso(row["last_seen_at"])
     program = None
     model = None
-    member_email = None
-    branch = row["current_branch"]
 
     if include_presence and presence:
         program = presence.get("program")
         model = presence.get("model")
-        member_email = presence.get("member_email")
-        branch = presence.get("current_branch") or branch
         role = presence.get("role") or role
         status = presence.get("status") or "active"
         last_seen = presence.get("last_seen") or last_seen
 
-    human_name_value = row["human_name"]
-    member_email_value = member_email
-    role_value = role
-    hostname_value = row["hostname"]
-    workspace_path_value = row["workspace_path"]
-    if public_reader:
-        human_name_value = None
-        member_email_value = None
-        role_value = None
-        hostname_value = None
-        workspace_path_value = None
-
     return WorkspaceInfo(
         workspace_id=workspace_id,
         alias=row["alias"],
-        human_name=human_name_value,
+        human_name=row["human_name"],
         context_kind=row.get("context_kind"),
-        project_id=str(row["project_id"]),
-        project_slug=row["project_slug"],
+        team_address=row["team_address"],
         program=program,
         model=model,
         repo=row["repo"],
-        branch=branch,
-        member_email=member_email_value,
-        role=role_value,
-        role_name=role_value,
-        hostname=hostname_value,
-        workspace_path=workspace_path_value,
+        role=role,
+        role_name=role,
+        hostname=row["hostname"],
+        workspace_path=row["workspace_path"],
         apex_task_ref=first_apex_id,
         apex_title=first_apex_title,
         apex_type=first_apex_type,
@@ -1425,11 +722,11 @@ async def _fetch_presence_map(redis: Redis, workspace_id_strings: list[str]) -> 
     return {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
 
 
-async def _fetch_claims_map(server_db, workspace_ids: list) -> Dict[str, List[Claim]]:
+async def _fetch_claims_map(aweb_db, workspace_ids: list) -> Dict[str, List[Claim]]:
     if not workspace_ids:
         return {}
     placeholders = ", ".join(f"${i}" for i in range(1, len(workspace_ids) + 1))
-    claim_rows = await server_db.fetch_all(
+    claim_rows = await aweb_db.fetch_all(
         _build_workspace_claims_query(placeholders),
         *workspace_ids,
     )
@@ -1448,6 +745,11 @@ async def _fetch_claims_map(server_db, workspace_ids: list) -> Dict[str, List[Cl
             claims_map[ws_id] = []
         claims_map[ws_id].append(claim)
     return claims_map
+
+
+# ---------------------------------------------------------------------------
+# List workspaces
+# ---------------------------------------------------------------------------
 
 
 @router.get("", response_model=ListWorkspacesResponse)
@@ -1474,9 +776,6 @@ async def list_workspaces(
     Workspaces without active presence show status='offline'.
     Deleted workspaces are excluded by default (use include_deleted=true to show).
 
-    Tenant isolation:
-    - Always derived from authentication (project API key or proxy-injected internal context).
-
     Args:
         limit: Maximum number of workspaces to return (default 50, max 200).
         cursor: Pagination cursor from previous response for fetching next page.
@@ -1487,26 +786,23 @@ async def list_workspaces(
 
     Use /v1/workspaces/online for only currently active workspaces.
     """
-    project_id = await get_project_from_auth(request, db_infra)
-    public_reader = is_public_reader(request)
+    identity = await get_team_identity(request, db_infra)
+    team_address = identity.team_address
 
-    # Validate pagination params
     try:
         validated_limit, cursor_data = validate_pagination_params(limit, cursor)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
-    # Build query with optional filters
     query = (
         """
         SELECT
             w.workspace_id,
             w.alias,
             w.human_name,
-            w.current_branch,
-            w.project_id,
+            w.team_address,
             w.role,
             w.hostname,
             w.workspace_path,
@@ -1517,15 +813,13 @@ async def list_workspaces(
             w.focus_updated_at,
             focus_issue.title AS focus_task_title,
             focus_issue.issue_type AS focus_task_type,
-            p.slug as project_slug,
             r.canonical_origin as repo
         FROM {{tables.workspaces}} w
-        JOIN {{tables.projects}} p ON w.project_id = p.id AND p.deleted_at IS NULL
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
         + _title_join(
             "focus_issue",
-            "w.project_id",
+            "w.team_address",
             "w.focus_task_ref",
             include_type=True,
             guard_col="w.focus_task_ref",
@@ -1537,8 +831,8 @@ async def list_workspaces(
     params: list = []
     param_idx = 1
 
-    query += f" AND w.project_id = ${param_idx}"
-    params.append(uuid_module.UUID(project_id))
+    query += f" AND w.team_address = ${param_idx}"
+    params.append(team_address)
     param_idx += 1
 
     if human_name:
@@ -1567,7 +861,6 @@ async def list_workspaces(
         param_idx += 1
 
     if hostname:
-        # Validate hostname (same as RegisterWorkspaceRequest)
         if "\x00" in hostname or any(ord(c) < 32 for c in hostname):
             raise HTTPException(
                 status_code=422,
@@ -1577,11 +870,9 @@ async def list_workspaces(
         params.append(hostname)
         param_idx += 1
 
-    # Filter deleted workspaces by default
     if not include_deleted:
         query += " AND w.deleted_at IS NULL"
 
-    # Apply cursor (updated_at < cursor_timestamp for DESC order)
     if cursor_data and "updated_at" in cursor_data:
         try:
             cursor_timestamp = datetime.fromisoformat(cursor_data["updated_at"])
@@ -1593,18 +884,16 @@ async def list_workspaces(
 
     query += " ORDER BY w.updated_at DESC"
 
-    # Fetch limit + 1 to detect has_more
     query += f" LIMIT ${param_idx}"
     params.append(validated_limit + 1)
     param_idx += 1
 
-    rows = await server_db.fetch_all(query, *params)
+    rows = await aweb_db.fetch_all(query, *params)
 
-    # Check if there are more results
     has_more = len(rows) > validated_limit
-    rows = rows[:validated_limit]  # Trim to requested limit
+    rows = rows[:validated_limit]
 
-    workspace_ids = [row["workspace_id"] for row in rows]  # UUIDs from database
+    workspace_ids = [row["workspace_id"] for row in rows]
     workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
 
     presence_map: Dict[str, dict] = {}
@@ -1613,7 +902,7 @@ async def list_workspaces(
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
-        claims_map = await _fetch_claims_map(server_db, workspace_ids)
+        claims_map = await _fetch_claims_map(aweb_db, workspace_ids)
 
     workspaces: List[WorkspaceInfo] = []
     for row in rows:
@@ -1623,18 +912,21 @@ async def list_workspaces(
                 row,
                 presence_map.get(str(row["workspace_id"])),
                 workspace_claims,
-                public_reader=public_reader,
                 include_presence=include_presence,
             )
         )
 
-    # Generate next_cursor if there are more results
     next_cursor = None
     if has_more and rows:
         last_row = rows[-1]
         next_cursor = encode_cursor({"updated_at": last_row["updated_at"].isoformat()})
 
     return ListWorkspacesResponse(workspaces=workspaces, has_more=has_more, next_cursor=next_cursor)
+
+
+# ---------------------------------------------------------------------------
+# Team view (prioritized, bounded)
+# ---------------------------------------------------------------------------
 
 
 @router.get("/team", response_model=ListWorkspacesResponse)
@@ -1666,15 +958,14 @@ async def list_team_workspaces(
     This endpoint is optimized for CLI usage and always returns a limited,
     prioritized set of workspaces.
     """
-    project_id = await get_project_from_auth(request, db_infra)
-    public_reader = is_public_reader(request)
+    identity = await get_team_identity(request, db_infra)
+    team_address = identity.team_address
 
-    server_db = db_infra.get_manager("server")
+    aweb_db = db_infra.get_manager("aweb")
 
-    params: list = [uuid_module.UUID(project_id)]
+    params: list = [team_address]
     param_idx = 2
-    claim_stats_where = ""
-    claim_stats_where = "WHERE project_id = $1"
+    claim_stats_where = "WHERE team_address = $1"
 
     query = f"""
         WITH claim_stats AS (
@@ -1694,7 +985,7 @@ async def list_team_workspaces(
         WHERE 1=1
     """
 
-    query += " AND project_id = $1"
+    query += " AND team_address = $1"
 
     if human_name:
         query += f" AND human_name = ${param_idx}"
@@ -1731,19 +1022,19 @@ async def list_team_workspaces(
     query += f" LIMIT ${param_idx}"
     params.append(candidate_limit)
 
-    rows = await server_db.fetch_all(query, *params)
+    rows = await aweb_db.fetch_all(query, *params)
 
     if always_include_workspace_id:
         try:
-            validated_id = validate_workspace_id(always_include_workspace_id)
+            validated_id = str(UUID(always_include_workspace_id))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
         if validated_id not in {str(row["workspace_id"]) for row in rows}:
             extra_row = await _fetch_extra_team_workspace(
-                server_db,
+                aweb_db,
                 validated_id,
-                project_id,
+                team_address,
                 human_name=human_name,
                 repo=repo,
             )
@@ -1759,7 +1050,7 @@ async def list_team_workspaces(
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
-        claims_map = await _fetch_claims_map(server_db, workspace_ids)
+        claims_map = await _fetch_claims_map(aweb_db, workspace_ids)
 
     entries: List[tuple[WorkspaceInfo, int, float, float, int, int]] = []
     for row in rows:
@@ -1771,7 +1062,6 @@ async def list_team_workspaces(
             row,
             presence,
             workspace_claims,
-            public_reader=public_reader,
             include_presence=include_presence,
         )
 
@@ -1799,8 +1089,12 @@ async def list_team_workspaces(
 
     workspaces = [entry[0] for entry in entries][:limit]
 
-    # /team endpoint doesn't support cursor-based pagination (uses complex sorting)
     return ListWorkspacesResponse(workspaces=workspaces, has_more=False)
+
+
+# ---------------------------------------------------------------------------
+# Online workspaces (presence-only view)
+# ---------------------------------------------------------------------------
 
 
 @router.get("/online", response_model=ListWorkspacesResponse)
@@ -1818,8 +1112,8 @@ async def list_online_workspaces(
 
     For all registered workspaces (including offline), use GET /v1/workspaces.
     """
-    project_id = await get_project_from_auth(request, db_infra)
-    public_reader = is_public_reader(request)
+    identity = await get_team_identity(request, db_infra)
+    team_address = identity.team_address
 
     presences = await list_agent_presences(redis)
 
@@ -1830,10 +1124,9 @@ async def list_online_workspaces(
         if not workspace_id or not alias:
             continue
 
-        if presence.get("project_id") != project_id:
+        if presence.get("project_id") != team_address:
             continue
 
-        # Filter by human_name if specified
         if human_name and presence.get("human_name") != human_name:
             continue
 
@@ -1842,21 +1135,17 @@ async def list_online_workspaces(
                 workspace_id=workspace_id,
                 alias=alias,
                 human_name=presence.get("human_name"),
-                project_slug=presence.get("project_slug"),
+                team_address=team_address,
                 program=presence.get("program"),
                 model=presence.get("model"),
-                repo=None,  # Not stored in presence
-                branch=presence.get("current_branch"),
-                member_email=None if public_reader else presence.get("member_email"),
-                role=None if public_reader else (presence.get("role") or None),
-                role_name=None if public_reader else (presence.get("role") or None),
+                repo=None,
+                role=presence.get("role") or None,
+                role_name=presence.get("role") or None,
                 status=presence.get("status") or "unknown",
                 last_seen=presence.get("last_seen") or "",
             )
         )
 
-    # Sort by last_seen descending (most recent first)
     workspaces.sort(key=lambda w: w.last_seen or "", reverse=True)
 
-    # /online endpoint returns all currently online workspaces (no pagination needed)
     return ListWorkspacesResponse(workspaces=workspaces, has_more=False)

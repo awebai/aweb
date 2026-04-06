@@ -324,6 +324,7 @@ async def list_tasks(
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
+    q: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_address)
     aweb_db = db.get_manager("aweb")
@@ -360,6 +361,15 @@ async def list_tasks(
         conditions.append(f"labels @> ${idx}")
         params.append(labels)
         idx += 1
+    if q is not None:
+        q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q_pattern = f"%{q_escaped}%"
+        conditions.append(
+            f"(title ILIKE ${idx} OR (${idx + 1} || '-' || task_ref_suffix) ILIKE ${idx})"
+        )
+        params.append(q_pattern)
+        params.append(slug)
+        idx += 2
 
     rows = await aweb_db.fetch_all(
         f"""
@@ -386,7 +396,7 @@ async def list_tasks(
             "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
-            "updated_at": r["updated_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
         }
         for r in rows
     ]

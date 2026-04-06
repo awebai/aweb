@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -329,81 +328,6 @@ func formatChatExtendWait(v any) string {
 	if result.ExtendsWaitSeconds > 0 {
 		minutes := result.ExtendsWaitSeconds / 60
 		sb.WriteString(fmt.Sprintf("%s's wait extended by %d min\n", result.TargetAgent, minutes))
-	}
-	return sb.String()
-}
-
-// --- agents ---
-
-func formatAgentsList(v any) string {
-	out := v.(agentsListOutput)
-	resp := out.ListIdentitiesResponse
-	var sb strings.Builder
-	if out.ProjectSlug != "" {
-		sb.WriteString(fmt.Sprintf("Project: %s\n\n", out.ProjectSlug))
-	}
-
-	var online, offline []awid.IdentityView
-	for _, agent := range resp.Identities {
-		if agent.Online {
-			online = append(online, agent)
-		} else {
-			offline = append(offline, agent)
-		}
-	}
-	sort.Slice(online, func(i, j int) bool { return online[i].Alias < online[j].Alias })
-	sort.Slice(offline, func(i, j int) bool { return offline[i].Alias < offline[j].Alias })
-
-	if len(online) > 0 {
-		sb.WriteString("ONLINE\n")
-		for _, agent := range online {
-			desc := strings.TrimSpace(agent.Status)
-			if desc == "" {
-				desc = "active"
-			}
-			sb.WriteString(fmt.Sprintf("  %s (%s) — %s\n", agent.Alias, agent.AgentType, desc))
-		}
-		sb.WriteString("\n")
-	}
-	if len(offline) > 0 {
-		sb.WriteString("OFFLINE\n")
-		for _, agent := range offline {
-			sb.WriteString(fmt.Sprintf("  %s (%s)\n", agent.Alias, agent.AgentType))
-		}
-	}
-	return sb.String()
-}
-
-func formatAgentAccessMode(v any) string {
-	m := v.(map[string]string)
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Identity:    %s\n", m["alias"]))
-	sb.WriteString(fmt.Sprintf("Access mode: %s\n", m["access_mode"]))
-	return sb.String()
-}
-
-func formatIdentityReachability(v any) string {
-	m := v.(map[string]string)
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Identity: %s\n", m["alias"]))
-	sb.WriteString(fmt.Sprintf("Reachability: %s\n", m["address_reachability"]))
-	return sb.String()
-}
-
-func formatAgentPatch(v any) string {
-	out := v.(identityPatchOutput)
-	var sb strings.Builder
-	currentID := out.CurrentIdentityID()
-	if out.Alias != "" {
-		sb.WriteString(fmt.Sprintf("Identity:    %s\n", out.Alias))
-	} else if currentID != "" {
-		sb.WriteString(fmt.Sprintf("Identity:    %s\n", currentID))
-	}
-	if out.AccessMode != "" {
-		sb.WriteString(fmt.Sprintf("Access mode: %s\n", out.AccessMode))
-	}
-	if out.AddressReachability != "" {
-		sb.WriteString(fmt.Sprintf("Reachability: %s\n", out.AddressReachability))
 	}
 	return sb.String()
 }

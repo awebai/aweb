@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +45,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	env.FromDID = c.did
 	env.FromStableID = c.stableID
 	env.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	msgID, err := generateUUID4()
+	msgID, err := GenerateUUID4()
 	if err != nil {
 		return signedFields{}, err
 	}
@@ -98,6 +100,7 @@ type Client struct {
 	apiKey              string
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
+	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	address             string             // namespace/alias, used in signed envelopes
 	projectSlug         string             // current local project slug, used for project~alias addressing
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
@@ -151,6 +154,33 @@ func NewWithIdentity(baseURL, apiKey string, signingKey ed25519.PrivateKey, did 
 	}
 	c.signingKey = signingKey
 	c.did = did
+	return c, nil
+}
+
+// NewWithCertificate creates an authenticated client that uses DIDKey signatures
+// and a team certificate instead of API key authentication.
+func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *TeamCertificate) (*Client, error) {
+	if signingKey == nil {
+		return nil, fmt.Errorf("signingKey must not be nil")
+	}
+	if cert == nil {
+		return nil, fmt.Errorf("certificate must not be nil")
+	}
+	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if did != cert.MemberDIDKey {
+		return nil, fmt.Errorf("signing key did:key %s does not match certificate member_did_key %s", did, cert.MemberDIDKey)
+	}
+	certHeader, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		return nil, fmt.Errorf("encode team certificate: %w", err)
+	}
+	c, err := New(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.signingKey = signingKey
+	c.did = did
+	c.teamCertHeader = certHeader
 	return c, nil
 }
 
@@ -628,7 +658,15 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", accept)
-	if c.apiKey != "" {
+	if c.teamCertHeader != "" && c.signingKey != nil {
+		// Certificate auth: DIDKey signature over canonical_json(body | {timestamp})
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signPayload := buildCertAuthSignPayload(in, timestamp)
+		sig := ed25519.Sign(c.signingKey, []byte(signPayload))
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
@@ -640,4 +678,51 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		c.latestClientVersion.Store(v)
 	}
 	return resp, nil
+}
+
+// buildCertAuthSignPayload builds the canonical JSON payload for DIDKey
+// certificate auth: the request body merged with a timestamp field.
+// For requests with no body, signs {"timestamp":"..."}.
+func buildCertAuthSignPayload(body any, timestamp string) string {
+	fields := map[string]any{"timestamp": timestamp}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err == nil {
+			var bodyFields map[string]any
+			if json.Unmarshal(data, &bodyFields) == nil {
+				for k, v := range bodyFields {
+					fields[k] = v
+				}
+			}
+		}
+	}
+	canonical, _ := json.Marshal(fields)
+	// Re-marshal through sorted keys for deterministic output
+	var parsed map[string]any
+	_ = json.Unmarshal(canonical, &parsed)
+	sorted, _ := canonicalJSONBytes(parsed)
+	return string(sorted)
+}
+
+// canonicalJSONBytes produces canonical JSON: sorted keys, no extra whitespace.
+func canonicalJSONBytes(v map[string]any) ([]byte, error) {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, _ := json.Marshal(k)
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, _ := json.Marshal(v[k])
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }

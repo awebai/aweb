@@ -34,8 +34,8 @@ async def task_create(
     try:
         result = await create_task(
             db_infra,
-            project_id=auth.project_id,
-            created_by_agent_id=auth.agent_id,
+            team_address=auth.team_address,
+            created_by_alias=auth.alias,
             title=title,
             description=description,
             notes=notes,
@@ -43,7 +43,7 @@ async def task_create(
             task_type=task_type,
             labels=labels or [],
             parent_task_id=parent_task_id or None,
-            assignee_agent_id=assignee or None,
+            assignee_alias=assignee or None,
         )
     except ValidationError as exc:
         return json.dumps({"error": exc.detail})
@@ -64,9 +64,9 @@ async def task_list(
     try:
         tasks = await list_tasks(
             db_infra,
-            project_id=auth.project_id,
+            team_address=auth.team_address,
             status=status or None,
-            assignee_agent_id=assignee or None,
+            assignee_alias=assignee or None,
             task_type=task_type or None,
             priority=priority if priority >= 0 else None,
             labels=labels or None,
@@ -81,7 +81,7 @@ async def task_ready(db_infra, *, unclaimed_only: bool = True) -> str:
     auth = get_auth()
     tasks = await list_ready_tasks(
         db_infra,
-        project_id=auth.project_id,
+        team_address=auth.team_address,
         unclaimed=bool(unclaimed_only),
     )
     return json.dumps({"tasks": tasks})
@@ -91,7 +91,7 @@ async def task_get(db_infra, *, ref: str) -> str:
     """Get a task by ref or UUID."""
     auth = get_auth()
     try:
-        task = await get_task(db_infra, project_id=auth.project_id, ref=ref)
+        task = await get_task(db_infra, team_address=auth.team_address, ref=ref)
     except NotFoundError:
         return json.dumps({"error": "Task not found"})
     return json.dumps(task)
@@ -103,9 +103,9 @@ async def task_close(db_infra, *, ref: str) -> str:
     try:
         task = await update_task(
             db_infra,
-            project_id=auth.project_id,
+            team_address=auth.team_address,
             ref=ref,
-            actor_agent_id=auth.agent_id,
+            actor_alias=auth.alias,
             status="closed",
         )
     except (NotFoundError, ValidationError) as exc:
@@ -147,7 +147,7 @@ async def task_update(
     if labels is not None:
         kwargs["labels"] = labels
     if assignee:
-        kwargs["assignee_agent_id"] = assignee
+        kwargs["assignee_alias"] = assignee
 
     if not kwargs:
         return json.dumps(
@@ -159,9 +159,9 @@ async def task_update(
     try:
         task = await update_task(
             db_infra,
-            project_id=auth.project_id,
+            team_address=auth.team_address,
             ref=ref,
-            actor_agent_id=auth.agent_id,
+            actor_alias=auth.alias,
             **kwargs,
         )
     except (ConflictError, NotFoundError, ValidationError) as exc:
@@ -187,9 +187,9 @@ async def task_comment_add(db_infra, *, ref: str, body: str) -> str:
     try:
         comment = await add_comment(
             db_infra,
-            project_id=auth.project_id,
+            team_address=auth.team_address,
             ref=ref,
-            agent_id=auth.agent_id,
+            author_alias=auth.alias,
             body=body,
         )
     except (NotFoundError, ValidationError) as exc:
@@ -201,7 +201,7 @@ async def task_comment_list(db_infra, *, ref: str) -> str:
     """List comments on a task."""
     auth = get_auth()
     try:
-        comments = await list_comments(db_infra, project_id=auth.project_id, ref=ref)
+        comments = await list_comments(db_infra, team_address=auth.team_address, ref=ref)
     except NotFoundError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"comments": comments})

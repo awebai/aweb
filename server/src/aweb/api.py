@@ -19,21 +19,15 @@ from .ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
-from .routes.auth import router as auth_router
 from .routes.agents import router as agents_router
 from .routes.connect import router as connect_router
 from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
-from .routes.custody_sign import router as custody_sign_router
 from .routes.events import router as events_router
-from .routes.init import bootstrap_router, router as init_router
 from .routes.messages import router as messages_router
-from .routes.projects import router as projects_router
 from .routes.reservations import router as reservations_router
-from .routes.scopes import router as scopes_router
-from .routes.spawn import router as spawn_router
 from .routes.status import router as status_router
 from .coordination.routes.project_instructions import instructions_router
 from .coordination.routes.project_roles import roles_router
@@ -213,7 +207,6 @@ def create_app(
     *,
     db_infra: Optional[DatabaseInfra] = None,
     redis: Optional[Redis] = None,
-    enable_bootstrap_routes: bool = True,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -222,8 +215,6 @@ def create_app(
                   If None, creates own connections (standalone mode).
         redis: External async Redis client (library mode).
                If None, creates own connection (standalone mode).
-        enable_bootstrap_routes: If True, expose bootstrap routes such as `/v1/workspaces/init`.
-                                 Embedded/proxy deployments should set this to False.
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
@@ -313,23 +304,15 @@ def create_app(
 
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}
 
-    app.include_router(bootstrap_router)
-    if enable_bootstrap_routes:
-        app.include_router(init_router)
-        app.include_router(spawn_router)
-    app.include_router(auth_router)
     app.include_router(agents_router)
     app.include_router(connect_router)
     app.include_router(chat_router)
     app.include_router(claims_router)
     app.include_router(contacts_router)
     app.include_router(conversations_router)
-    app.include_router(custody_sign_router)
     app.include_router(events_router)
     app.include_router(messages_router)
-    app.include_router(projects_router)
     app.include_router(reservations_router)
-    app.include_router(scopes_router)
     app.include_router(status_router)
     app.include_router(instructions_router)
     app.include_router(roles_router)

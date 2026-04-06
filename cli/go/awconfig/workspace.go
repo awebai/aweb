@@ -12,6 +12,7 @@ import (
 
 type WorktreeWorkspace struct {
 	ServerURL       string `yaml:"server_url,omitempty"`
+	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
 	IdentityID      string `yaml:"identity_id,omitempty"`
 	IdentityHandle  string `yaml:"identity_handle,omitempty"`
@@ -28,6 +29,7 @@ type WorktreeWorkspace struct {
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
 	Alias           string `yaml:"alias,omitempty"`
 	HumanName       string `yaml:"human_name,omitempty"`
+	AgentType       string `yaml:"agent_type,omitempty"`
 	RoleName        string `yaml:"role_name,omitempty"`
 	Role            string `yaml:"-"`
 	Hostname        string `yaml:"hostname,omitempty"`
@@ -37,6 +39,7 @@ type WorktreeWorkspace struct {
 
 type worktreeWorkspaceYAML struct {
 	ServerURL       string `yaml:"server_url,omitempty"`
+	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
 	IdentityID      string `yaml:"identity_id,omitempty"`
 	IdentityHandle  string `yaml:"identity_handle,omitempty"`
@@ -53,6 +56,7 @@ type worktreeWorkspaceYAML struct {
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
 	Alias           string `yaml:"alias,omitempty"`
 	HumanName       string `yaml:"human_name,omitempty"`
+	AgentType       string `yaml:"agent_type,omitempty"`
 	RoleName        string `yaml:"role_name,omitempty"`
 	Role            string `yaml:"role,omitempty"`
 	Hostname        string `yaml:"hostname,omitempty"`
@@ -98,7 +102,14 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false
 	}
-	return strings.TrimSpace(w.ServerURL) != "" && strings.TrimSpace(w.APIKey) != ""
+	return strings.TrimSpace(w.ServerURL) != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
+}
+
+func (w *WorktreeWorkspace) HasTeamBinding() bool {
+	if w == nil {
+		return false
+	}
+	return strings.TrimSpace(w.ServerURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
 func (w *WorktreeWorkspace) hasIdentityFields() bool {
@@ -153,6 +164,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 
 	*w = WorktreeWorkspace{
 		ServerURL:       raw.ServerURL,
+		TeamAddress:     raw.TeamAddress,
 		APIKey:          raw.APIKey,
 		IdentityID:      raw.IdentityID,
 		IdentityHandle:  raw.IdentityHandle,
@@ -169,6 +181,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		CanonicalOrigin: raw.CanonicalOrigin,
 		Alias:           raw.Alias,
 		HumanName:       raw.HumanName,
+		AgentType:       raw.AgentType,
 		RoleName:        raw.RoleName,
 		Role:            raw.Role,
 		Hostname:        raw.Hostname,
@@ -183,6 +196,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	w.normalize()
 	return worktreeWorkspaceYAML{
 		ServerURL:       w.ServerURL,
+		TeamAddress:     w.TeamAddress,
 		APIKey:          w.APIKey,
 		IdentityID:      w.IdentityID,
 		IdentityHandle:  w.IdentityHandle,
@@ -199,6 +213,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 		CanonicalOrigin: w.CanonicalOrigin,
 		Alias:           w.Alias,
 		HumanName:       w.HumanName,
+		AgentType:       w.AgentType,
 		RoleName:        w.RoleName,
 		Hostname:        w.Hostname,
 		WorkspacePath:   w.WorkspacePath,
