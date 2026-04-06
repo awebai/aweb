@@ -35,6 +35,7 @@ class Settings:
     database_statement_cache_size: Optional[int]
     presence_ttl_seconds: int
     awid_registry_url: str
+    dashboard_jwt_secret: str
 
 
 def get_awid_registry_url() -> str:
@@ -103,4 +104,5 @@ def get_settings() -> Settings:
         ),
         presence_ttl_seconds=presence_ttl,
         awid_registry_url=get_awid_registry_url(),
+        dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
     )

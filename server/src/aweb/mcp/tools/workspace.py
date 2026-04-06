@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from uuid import UUID
 
 from aweb.mcp.auth import get_auth
 from aweb.presence import list_agent_presences_by_ids
@@ -14,16 +13,15 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     """Show self/team coordination status for the authenticated agent."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
-    server_db = db_infra.get_manager("server")
 
     agents = await aweb_db.fetch_all(
         """
         SELECT agent_id, alias, human_name, role
         FROM {{tables.agents}}
-        WHERE project_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
+        WHERE team_address = $1 AND deleted_at IS NULL AND agent_type != 'human'
         ORDER BY alias
         """,
-        UUID(auth.project_id),
+        auth.team_address,
     )
     agent_ids = [str(row["agent_id"]) for row in agents]
     presences = await list_agent_presences_by_ids(redis, agent_ids)
@@ -33,29 +31,24 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
         if presence_id:
             presence_map[presence_id] = presence
 
-    claim_rows = await server_db.fetch_all(
+    claim_rows = await aweb_db.fetch_all(
         """
-        SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.project_id,
-               counts.claimant_count, bi.title
+        SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_address,
+               counts.claimant_count, t.title
         FROM {{tables.task_claims}} c
         JOIN (
-            SELECT project_id, task_ref, COUNT(*) AS claimant_count
+            SELECT team_address, task_ref, COUNT(*) AS claimant_count
             FROM {{tables.task_claims}}
-            GROUP BY project_id, task_ref
-        ) counts ON c.project_id = counts.project_id AND c.task_ref = counts.task_ref
-        LEFT JOIN LATERAL (
-            SELECT t.title
-            FROM server.tasks t
-            JOIN server.projects p ON t.project_id = p.id AND p.deleted_at IS NULL
-            WHERE t.project_id = c.project_id
-              AND p.slug || '-' || t.task_ref_suffix = c.task_ref
-              AND t.deleted_at IS NULL
-            LIMIT 1
-        ) bi ON true
-        WHERE c.project_id = $1
+            GROUP BY team_address, task_ref
+        ) counts ON c.team_address = counts.team_address AND c.task_ref = counts.task_ref
+        LEFT JOIN {{tables.tasks}} t
+            ON t.team_address = c.team_address
+            AND t.task_ref_suffix = SUBSTRING(c.task_ref FROM POSITION('-' IN c.task_ref) + 1)
+            AND t.deleted_at IS NULL
+        WHERE c.team_address = $1
         ORDER BY c.claimed_at DESC
         """,
-        UUID(auth.project_id),
+        auth.team_address,
     )
 
     claims_by_workspace = {}
@@ -127,7 +120,7 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
 
     return json.dumps(
         {
-            "project_id": auth.project_id,
+            "team_address": auth.team_address,
             "workspace_id": auth.agent_id,
             "self": self_entry,
             "team": team,

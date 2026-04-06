@@ -1,17 +1,14 @@
 """MCP authentication middleware.
 
 Resolves the calling agent's identity and makes it available to MCP tool
-handlers via a contextvar.  Supports two auth modes:
-
-1. **Direct mode** (OSS / standalone): Bearer token validated against the aweb
-   API key store.
-2. **Proxy mode** (embedded / hosted): Signed internal headers injected by the
-   outer auth middleware (requires ``AWEB_TRUST_PROXY_HEADERS=1``).
+handlers via a contextvar. Authenticates using team certificates.
 """
 
 from __future__ import annotations
 
+import base64
 import contextvars
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -21,8 +18,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aweb.auth import verify_bearer_token_details
-from aweb.internal_auth import _trust_aweb_proxy_headers, parse_internal_auth_context
+from aweb.routes.dns_auth import parse_didkey_auth
+from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from aweb.team_auth import parse_and_verify_certificate
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +29,10 @@ logger = logging.getLogger(__name__)
 class AuthContext:
     """Resolved identity for the current MCP request."""
 
-    project_id: str
+    team_address: str
     agent_id: str
-    api_key_id: str | None = None
-    principal_type: str = "k"
-    principal_id: str | None = None
+    alias: str
+    did_key: str
 
 
 _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
@@ -57,7 +54,7 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves agent identity for MCP requests.
 
-    Supports proxy-header auth (for claweb) and direct Bearer token auth (OSS).
+    Authenticates via team certificate (DIDKey signature + X-AWID-Team-Certificate).
     """
 
     def __init__(self, app: ASGIApp, db_infra: Any) -> None:
@@ -71,30 +68,24 @@ class MCPAuthMiddleware:
 
         request = Request(scope)
 
-        if _trust_aweb_proxy_headers():
-            # Proxy mode: proxy auth is the only path — never fall back to Bearer.
-            try:
-                ctx = self._resolve_proxy_auth(request)
-            except HTTPException as exc:
-                response = JSONResponse(
-                    {"error": exc.detail},
-                    status_code=exc.status_code,
-                    headers=exc.headers,
-                )
-                await response(scope, receive, send)
-                return
-            if ctx is None:
-                response = JSONResponse(
-                    {"error": "Authentication required"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-                await response(scope, receive, send)
-                return
-        else:
-            ctx = await self._resolve_bearer_auth(request, scope, receive, send)
-            if ctx is None:
-                return  # Response already sent by _resolve_bearer_auth.
+        try:
+            ctx = await self._resolve_certificate_auth(request)
+        except HTTPException as exc:
+            response = JSONResponse(
+                {"error": exc.detail},
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+            await response(scope, receive, send)
+            return
+
+        if ctx is None:
+            response = JSONResponse(
+                {"error": "Authentication required"},
+                status_code=401,
+            )
+            await response(scope, receive, send)
+            return
 
         cv_token = _auth_context.set(ctx)
         try:
@@ -102,72 +93,93 @@ class MCPAuthMiddleware:
         finally:
             _auth_context.reset(cv_token)
 
-    @staticmethod
-    def _resolve_proxy_auth(request: Request) -> AuthContext | None:
-        """Resolve auth from signed proxy headers (proxy mode).
-
-        Raises HTTPException on invalid signatures — callers must not swallow it.
-        Returns None only when no proxy headers are present at all.
-        """
-        internal = parse_internal_auth_context(request)
-        if internal is None:
-            return None
-        principal_type = (internal.get("principal_type") or "").strip()
-        if principal_type not in {"k", "m"}:
-            raise HTTPException(status_code=403, detail="MCP requires an agent-bound principal")
-        actor_id = (internal.get("actor_id") or "").strip()
-        if not actor_id:
-            return None
-        return AuthContext(
-            project_id=internal["project_id"],
-            agent_id=actor_id,
-            api_key_id=internal.get("principal_id") if principal_type == "k" else None,
-            principal_type=principal_type,
-            principal_id=internal.get("principal_id") or None,
-        )
-
-    async def _resolve_bearer_auth(
-        self, request: Request, scope: Scope, receive: Receive, send: Send
-    ) -> AuthContext | None:
-        """Resolve auth from Bearer token (OSS mode). Sends error response on failure."""
+    async def _resolve_certificate_auth(self, request: Request) -> AuthContext | None:
+        """Resolve auth from team certificate headers."""
         auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            response = JSONResponse(
-                {"error": "Authentication required"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
+        if not auth_header.startswith("DIDKey "):
             return None
 
-        token = auth_header[7:]
+        cert_header = request.headers.get("x-awid-team-certificate", "")
+        if not cert_header:
+            return None
+
+        did_key, signature_b64 = parse_didkey_auth(auth_header)
+
+        # Verify DIDKey signature over request body + timestamp
+        timestamp = request.headers.get("x-aweb-timestamp", "")
+        if not timestamp:
+            raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp header")
+
         try:
-            details = await verify_bearer_token_details(self.db_infra, token, manager_name="aweb")
-        except HTTPException:
-            response = JSONResponse(
-                {"error": "Invalid API key"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            await response(scope, receive, send)
-            return None
+            body_bytes = await request.body()
+            body_dict = json.loads(body_bytes) if body_bytes else {}
         except Exception:
-            logger.exception("Unexpected error validating API key")
-            raise
+            body_dict = {}
 
-        agent_id = (details.get("agent_id") or "").strip()
-        if not agent_id:
-            response = JSONResponse(
-                {"error": "API key is not bound to an agent"},
-                status_code=403,
+        payload_bytes = canonical_json_bytes(body_dict | {"timestamp": timestamp})
+        try:
+            verify_did_key_signature(did_key=did_key, payload=payload_bytes, signature_b64=signature_b64)
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
+
+        # Decode certificate and resolve team key from awid
+        try:
+            cert_data = json.loads(base64.b64decode(cert_header))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Malformed certificate")
+
+        cert_team_address = cert_data.get("team", "")
+
+        # Resolve team key from awid registry
+        registry_client = getattr(request.app.state, "awid_registry_client", None)
+        team_did_key = ""
+        if registry_client is not None:
+            parts = cert_team_address.split("/", 1)
+            if len(parts) == 2:
+                try:
+                    team_did_key = await registry_client.get_team_public_key(parts[0], parts[1]) or ""
+                except Exception:
+                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
+
+        if not team_did_key:
+            raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_address}")
+
+        # Check revocations
+        revoked_certs: set[str] = set()
+        if registry_client is not None:
+            parts = cert_team_address.split("/", 1)
+            if len(parts) == 2:
+                try:
+                    revoked_certs = await registry_client.get_team_revocations(parts[0], parts[1])
+                except Exception:
+                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
+
+        try:
+            cert_info = parse_and_verify_certificate(
+                cert_header,
+                request_did_key=did_key,
+                team_public_key_resolver=lambda _ta: team_did_key,
+                revocation_checker=lambda _ta, cid: cid in revoked_certs,
             )
-            await response(scope, receive, send)
-            return None
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+
+        # Look up agent
+        aweb_db = self.db_infra.get_manager("aweb")
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, alias FROM {{tables.agents}}
+            WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+            """,
+            cert_info["team_address"],
+            cert_info["did_key"],
+        )
+        if not row:
+            raise HTTPException(status_code=403, detail="Agent not connected")
 
         return AuthContext(
-            project_id=str(details["project_id"]),
-            agent_id=agent_id,
-            api_key_id=str(details["api_key_id"]),
-            principal_type="k",
-            principal_id=str(details["api_key_id"]),
+            team_address=cert_info["team_address"],
+            agent_id=str(row["agent_id"]),
+            alias=row["alias"],
+            did_key=cert_info["did_key"],
         )

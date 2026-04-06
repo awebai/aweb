@@ -16,7 +16,7 @@ from aweb.access_modes import validate_access_mode
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from aweb.routes.agents import parse_context
+from aweb.scope_agents import _parse_context as parse_context
 
 router = APIRouter(prefix="/v1/scopes", tags=["scopes"])
 

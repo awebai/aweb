@@ -119,7 +119,7 @@ class TaskStatusChangedEvent(Event):
     """Event emitted when a task's status changes."""
 
     type: str = field(default="task.status_changed", init=False)
-    project_id: str = ""
+    team_address: str = ""
     task_ref: str = ""
     old_status: str = ""
     new_status: str = ""
@@ -132,7 +132,7 @@ class TaskCreatedEvent(Event):
     """Event emitted when a task is created."""
 
     type: str = field(default="task.created", init=False)
-    project_id: str = ""
+    team_address: str = ""
     task_ref: str = ""
     title: str | None = None
     alias: str = ""

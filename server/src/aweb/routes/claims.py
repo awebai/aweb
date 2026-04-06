@@ -2,14 +2,13 @@
 
 from datetime import datetime
 from typing import List, Optional
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from aweb.auth import validate_workspace_id
-from aweb.aweb_introspection import get_project_from_auth
-from aweb.internal_auth import is_public_reader
+from uuid import UUID
+
+from aweb.team_auth_deps import get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
 from ..pagination import encode_cursor, validate_pagination_params
@@ -25,7 +24,7 @@ class Claim(BaseModel):
     alias: str
     human_name: Optional[str]
     claimed_at: str
-    project_id: str
+    team_address: str
 
 
 class ClaimsResponse(BaseModel):
@@ -61,10 +60,9 @@ async def list_claims(
         Ordered by most recently claimed first.
         Includes has_more and next_cursor for pagination.
     """
-    project_id = await get_project_from_auth(request, db_infra)
-    public_reader = is_public_reader(request)
-
-    server_db = db_infra.get_manager("server")
+    identity = await get_team_identity(request, db_infra)
+    team_address = identity.team_address
+    aweb_db = db_infra.get_manager("aweb")
 
     # Validate pagination params
     try:
@@ -76,7 +74,7 @@ async def list_claims(
     validated_workspace_id = None
     if workspace_id:
         try:
-            validated_workspace_id = validate_workspace_id(workspace_id)
+            validated_workspace_id = str(UUID(workspace_id.strip()))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -85,8 +83,8 @@ async def list_claims(
     params: list[object] = []
     param_idx = 1
 
-    conditions.append(f"project_id = ${param_idx}")
-    params.append(UUID(project_id))
+    conditions.append(f"team_address = ${param_idx}")
+    params.append(team_address)
     param_idx += 1
 
     if validated_workspace_id:
@@ -109,14 +107,14 @@ async def list_claims(
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"""
-        SELECT task_ref, workspace_id, alias, human_name, claimed_at, project_id
+        SELECT task_ref, workspace_id, alias, human_name, claimed_at, team_address
         FROM {{{{tables.task_claims}}}}
         {where_clause}
         ORDER BY claimed_at DESC
         LIMIT ${param_idx}
     """
 
-    rows = await server_db.fetch_all(query, *params)
+    rows = await aweb_db.fetch_all(query, *params)
 
     # Check if there are more results
     has_more = len(rows) > validated_limit
@@ -127,9 +125,9 @@ async def list_claims(
             task_ref=row["task_ref"],
             workspace_id=str(row["workspace_id"]),
             alias=row["alias"],
-            human_name=None if public_reader else row["human_name"],
+            human_name=row["human_name"],
             claimed_at=row["claimed_at"].isoformat(),
-            project_id=str(row["project_id"]),
+            team_address=row["team_address"],
         )
         for row in rows
     ]

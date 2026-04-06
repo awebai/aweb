@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID
 
 from aweb.mcp.auth import get_auth
 from aweb.presence import (
@@ -20,13 +19,13 @@ async def list_agents(db_infra, redis) -> str:
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, human_name, agent_type, access_mode,
-               did, custody, lifetime, status
+        SELECT agent_id, alias, human_name, agent_type,
+               lifetime, status
         FROM {{tables.agents}}
-        WHERE project_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
+        WHERE team_address = $1 AND deleted_at IS NULL AND agent_type != 'human'
         ORDER BY alias
         """,
-        UUID(auth.project_id),
+        auth.team_address,
     )
 
     agent_ids = [str(r["agent_id"]) for r in rows]
@@ -47,16 +46,13 @@ async def list_agents(db_infra, redis) -> str:
                 "alias": r["alias"],
                 "human_name": r.get("human_name") or "",
                 "agent_type": r.get("agent_type") or "agent",
-                "access_mode": r.get("access_mode", "open"),
                 "online": p is not None,
-                "did": r.get("did") or "",
-                "custody": r.get("custody") or "",
                 "lifetime": r.get("lifetime") or "ephemeral",
                 "status": r.get("status") or "active",
             }
         )
 
-    return json.dumps({"project_id": auth.project_id, "agents": agents})
+    return json.dumps({"team_address": auth.team_address, "agents": agents})
 
 
 async def heartbeat(db_infra, redis) -> str:
@@ -68,10 +64,10 @@ async def heartbeat(db_infra, redis) -> str:
         """
         SELECT alias
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND project_id = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
         """,
-        UUID(auth.agent_id),
-        UUID(auth.project_id),
+        auth.agent_id,
+        auth.team_address,
     )
     if not row:
         return json.dumps({"error": "Agent not found"})
@@ -81,7 +77,7 @@ async def heartbeat(db_infra, redis) -> str:
         redis,
         agent_id=auth.agent_id,
         alias=row["alias"],
-        project_id=auth.project_id,
+        project_id=auth.team_address,
         ttl_seconds=ttl,
     )
 

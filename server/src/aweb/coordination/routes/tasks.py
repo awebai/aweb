@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Literal, Optional
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from aweb.aweb_introspection import get_identity_from_auth, get_project_from_auth
+from aweb.team_auth_deps import get_team_identity
 from aweb.hooks import fire_mutation_hook
 from aweb.service_errors import NotFoundError
 from aweb.coordination.tasks_service import (
@@ -41,7 +40,7 @@ class CreateTaskRequest(BaseModel):
     task_type: Literal["task", "bug", "feature", "epic", "chore"] = "task"
     labels: list[str] = Field(default_factory=list)
     parent_task_id: Optional[str] = None
-    assignee_agent_id: Optional[str] = None
+    assignee_alias: Optional[str] = None
 
 
 class UpdateTaskRequest(BaseModel):
@@ -54,7 +53,7 @@ class UpdateTaskRequest(BaseModel):
     priority: Optional[int] = Field(None, ge=0, le=4)
     task_type: Optional[Literal["task", "bug", "feature", "epic", "chore"]] = None
     labels: Optional[list[str]] = None
-    assignee_agent_id: Optional[str] = None
+    assignee_alias: Optional[str] = None
 
 
 class AddDependencyRequest(BaseModel):
@@ -77,8 +76,8 @@ class ActiveWorkTaskSummary(BaseModel):
     status: str
     priority: int
     task_type: str
-    assignee_agent_id: Optional[str] = None
-    created_by_agent_id: Optional[str] = None
+    assignee_alias: Optional[str] = None
+    created_by_alias: Optional[str] = None
     parent_task_id: Optional[str] = None
     labels: list[str] = Field(default_factory=list)
     created_at: str
@@ -98,18 +97,12 @@ class ActiveWorkResponse(BaseModel):
 async def create_task_route(
     request: Request, payload: CreateTaskRequest, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    identity = await get_identity_from_auth(request, db_infra)
-    if identity.user_id:
-        raise HTTPException(status_code=403, detail="Endpoint not available for human principals")
-    actor_id = (identity.agent_id or "").strip()
-    if not actor_id:
-        raise HTTPException(status_code=403, detail="API key is not bound to an agent")
+    identity = await get_team_identity(request, db_infra)
 
     result = await create_task(
         db_infra,
-        project_id=project_id,
-        created_by_agent_id=actor_id,
+        team_address=identity.team_address,
+        created_by_alias=identity.alias,
         title=payload.title,
         description=payload.description,
         notes=payload.notes,
@@ -117,19 +110,19 @@ async def create_task_route(
         task_type=payload.task_type,
         labels=payload.labels,
         parent_task_id=payload.parent_task_id,
-        assignee_agent_id=payload.assignee_agent_id,
+        assignee_alias=payload.assignee_alias,
     )
     await fire_mutation_hook(
         request,
         "task.created",
         {
             "task_id": result["task_id"],
-            "project_id": project_id,
+            "team_address": identity.team_address,
             "task_ref": result["task_ref"],
             "title": result["title"],
             "parent_task_id": result["parent_task_id"],
-            "assignee_agent_id": result["assignee_agent_id"],
-            "actor_agent_id": actor_id,
+            "assignee_alias": result["assignee_alias"],
+            "actor_alias": identity.alias,
         },
     )
     return result
@@ -139,21 +132,21 @@ async def create_task_route(
 async def list_tasks_unified(
     request: Request,
     status: Optional[str] = Query(None),
-    assignee_agent_id: Optional[str] = Query(None),
+    assignee_alias: Optional[str] = Query(None),
     task_type: Optional[str] = Query(None),
     priority: Optional[int] = Query(None, ge=0, le=4),
     labels: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
+    identity = await get_team_identity(request, db_infra)
     label_list = [s.strip() for s in labels.split(",") if s.strip()] if labels else None
 
     tasks = await list_tasks(
         db_infra,
-        project_id=project_id,
+        team_address=identity.team_address,
         status=status,
-        assignee_agent_id=assignee_agent_id,
+        assignee_alias=assignee_alias,
         task_type=task_type,
         priority=priority,
         labels=label_list,
@@ -167,9 +160,9 @@ async def list_tasks_unified(
 async def list_ready_tasks_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    tasks = await list_ready_tasks(db_infra, project_id=project_id)
-    unclaimed = [t for t in tasks if t.get("assignee_agent_id") is None]
+    identity = await get_team_identity(request, db_infra)
+    tasks = await list_ready_tasks(db_infra, team_address=identity.team_address)
+    unclaimed = [t for t in tasks if t.get("assignee_alias") is None]
     return {"tasks": unclaimed}
 
 
@@ -177,8 +170,8 @@ async def list_ready_tasks_route(
 async def list_blocked_tasks_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    tasks = await list_blocked_tasks(db_infra, project_id=project_id)
+    identity = await get_team_identity(request, db_infra)
+    tasks = await list_blocked_tasks(db_infra, team_address=identity.team_address)
     return {"tasks": tasks}
 
 
@@ -186,8 +179,8 @@ async def list_blocked_tasks_route(
 async def list_active_work_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> ActiveWorkResponse:
-    project_id = await get_project_from_auth(request, db_infra)
-    tasks = await list_active_work(db_infra, project_id=project_id)
+    identity = await get_team_identity(request, db_infra)
+    tasks = await list_active_work(db_infra, team_address=identity.team_address)
     return ActiveWorkResponse(tasks=tasks)
 
 
@@ -195,10 +188,10 @@ async def list_active_work_route(
 async def get_task_unified(
     request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
+    identity = await get_team_identity(request, db_infra)
 
     try:
-        return await get_task(db_infra, project_id=project_id, ref=ref)
+        return await get_task(db_infra, team_address=identity.team_address, ref=ref)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Task not found") from None
 
@@ -210,11 +203,7 @@ async def update_task_route(
     payload: UpdateTaskRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    identity = await get_identity_from_auth(request, db_infra)
-    actor_id = (identity.agent_id or "").strip()
-    if not actor_id:
-        raise HTTPException(status_code=403, detail="API key is not bound to an agent")
+    identity = await get_team_identity(request, db_infra)
 
     kwargs: dict[str, Any] = {}
     if payload.title is not None:
@@ -231,14 +220,14 @@ async def update_task_route(
         kwargs["task_type"] = payload.task_type
     if payload.labels is not None:
         kwargs["labels"] = payload.labels
-    if "assignee_agent_id" in payload.model_fields_set:
-        kwargs["assignee_agent_id"] = payload.assignee_agent_id
+    if "assignee_alias" in payload.model_fields_set:
+        kwargs["assignee_alias"] = payload.assignee_alias
 
     result = await update_task(
         db_infra,
-        project_id=project_id,
+        team_address=identity.team_address,
         ref=ref,
-        actor_agent_id=actor_id,
+        actor_alias=identity.alias,
         **kwargs,
     )
 
@@ -253,9 +242,9 @@ async def update_task_route(
                 "title": result["title"],
                 "old_status": old_status,
                 "new_status": result["status"],
-                "assignee_agent_id": result["assignee_agent_id"],
+                "assignee_alias": result["assignee_alias"],
                 "parent_task_id": result["parent_task_id"],
-                "actor_agent_id": actor_id,
+                "actor_alias": identity.alias,
                 "claim_preacquired": result.pop("claim_preacquired", False),
             },
         )
@@ -272,8 +261,8 @@ async def update_task_route(
 async def delete_task_route(
     request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    result = await soft_delete_task(db_infra, project_id=project_id, ref=ref)
+    identity = await get_team_identity(request, db_infra)
+    result = await soft_delete_task(db_infra, team_address=identity.team_address, ref=ref)
     await fire_mutation_hook(
         request,
         "task.deleted",
@@ -289,9 +278,9 @@ async def add_dependency_route(
     payload: AddDependencyRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
+    identity = await get_team_identity(request, db_infra)
     result = await add_dependency(
-        db_infra, project_id=project_id, task_ref=ref, depends_on_ref=payload.depends_on
+        db_infra, team_address=identity.team_address, task_ref=ref, depends_on_ref=payload.depends_on
     )
     await fire_mutation_hook(
         request,
@@ -308,8 +297,8 @@ async def remove_dependency_route(
     dep_ref: str,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    result = await remove_dependency(db_infra, project_id=project_id, task_ref=ref, dep_ref=dep_ref)
+    identity = await get_team_identity(request, db_infra)
+    result = await remove_dependency(db_infra, team_address=identity.team_address, task_ref=ref, dep_ref=dep_ref)
     await fire_mutation_hook(
         request,
         "task.dependency_removed",
@@ -328,13 +317,9 @@ async def add_comment_route(
     payload: AddCommentRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    identity = await get_identity_from_auth(request, db_infra)
-    actor_id = (identity.agent_id or "").strip()
-    if not actor_id:
-        raise HTTPException(status_code=403, detail="API key is not bound to an agent")
+    identity = await get_team_identity(request, db_infra)
 
-    result = await add_comment(db_infra, project_id=project_id, ref=ref, agent_id=actor_id, body=payload.body)
+    result = await add_comment(db_infra, team_address=identity.team_address, ref=ref, author_alias=identity.alias, body=payload.body)
     await fire_mutation_hook(
         request,
         "task.comment_added",
@@ -347,6 +332,6 @@ async def add_comment_route(
 async def list_comments_route(
     request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
-    project_id = await get_project_from_auth(request, db_infra)
-    comments = await list_comments(db_infra, project_id=project_id, ref=ref)
+    identity = await get_team_identity(request, db_infra)
+    comments = await list_comments(db_infra, team_address=identity.team_address, ref=ref)
     return {"comments": comments}

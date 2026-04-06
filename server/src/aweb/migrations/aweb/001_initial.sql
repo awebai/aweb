@@ -1,236 +1,120 @@
 -- 001_initial.sql
--- Clean baseline for the embedded aweb protocol schema.
+-- Consolidated aweb schema: teams, agents, and all coordination tables.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------------------------------------------------------------------------
--- Projects
+-- Teams
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.projects}} (
-    project_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    slug TEXT NOT NULL,
-    name TEXT NOT NULL DEFAULT '',
-    tenant_id UUID,
-    owner_type TEXT,
-    owner_ref TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ
+CREATE TABLE IF NOT EXISTS {{tables.teams}} (
+    team_address    TEXT PRIMARY KEY,
+    namespace       TEXT NOT NULL,
+    team_name       TEXT NOT NULL,
+    team_did_key    TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_unique_active_oss
-ON {{tables.projects}} (slug)
-WHERE tenant_id IS NULL AND deleted_at IS NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_tenant_slug_unique_active
-ON {{tables.projects}} (tenant_id, slug)
-WHERE tenant_id IS NOT NULL AND deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_projects_owner_scope
-ON {{tables.projects}} (owner_type, owner_ref, slug)
-WHERE deleted_at IS NULL AND owner_ref IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Agents
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.agents}} (
-    agent_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    alias TEXT NOT NULL,
-    human_name TEXT NOT NULL DEFAULT '',
-    agent_type TEXT NOT NULL DEFAULT 'agent',
-    access_mode TEXT NOT NULL DEFAULT 'open',
-    did TEXT,
-    public_key TEXT,
-    custody TEXT,
-    signing_key_enc BYTEA,
-    stable_id TEXT,
-    lifetime TEXT NOT NULL DEFAULT 'persistent',
-    status TEXT NOT NULL DEFAULT 'active',
-    successor_agent_id UUID REFERENCES {{tables.agents}}(agent_id),
-    role TEXT,
-    program TEXT,
-    context JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ,
-    CONSTRAINT chk_agents_alias_no_slash CHECK (POSITION('/' IN alias) = 0),
-    CONSTRAINT chk_agents_access_mode CHECK (access_mode IN ('project_only', 'owner_only', 'contacts_only', 'open')),
-    CONSTRAINT chk_agents_custody CHECK (custody IN ('self', 'custodial')),
-    CONSTRAINT chk_agents_lifetime CHECK (lifetime IN ('persistent', 'ephemeral')),
-    CONSTRAINT chk_agents_status CHECK (status IN ('active', 'retired', 'archived', 'deleted'))
+    agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    did_key         TEXT NOT NULL,
+    did_aw          TEXT,
+    address         TEXT,
+    alias           TEXT NOT NULL,
+    lifetime        TEXT NOT NULL DEFAULT 'ephemeral'
+                    CHECK (lifetime IN ('permanent', 'ephemeral')),
+    human_name      TEXT NOT NULL DEFAULT '',
+    agent_type      TEXT NOT NULL DEFAULT 'agent',
+    role            TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'retired', 'deleted')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ,
+
+    UNIQUE (team_address, alias),
+    UNIQUE (team_address, did_key)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_alias_unique_active
-ON {{tables.agents}} (project_id, alias)
-WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_agents_did_key
+    ON {{tables.agents}} (did_key) WHERE deleted_at IS NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_did_unique_active
-ON {{tables.agents}} (project_id, did)
-WHERE deleted_at IS NULL AND did IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_agents_did
-ON {{tables.agents}} (did)
-WHERE deleted_at IS NULL AND did IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_stable_id
-ON {{tables.agents}} (stable_id)
-WHERE deleted_at IS NULL AND stable_id IS NOT NULL;
-
--- ---------------------------------------------------------------------------
--- API Keys
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS {{tables.api_keys}} (
-    api_key_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    agent_id UUID REFERENCES {{tables.agents}}(agent_id),
-    user_id UUID,
-    key_prefix TEXT NOT NULL,
-    key_hash TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_used_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_project
-ON {{tables.api_keys}} (project_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash
-ON {{tables.api_keys}} (key_hash);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_agent_id
-ON {{tables.api_keys}} (agent_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_user
-ON {{tables.api_keys}} (user_id)
-WHERE user_id IS NOT NULL;
-
--- ---------------------------------------------------------------------------
--- Spawn invite tokens
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS {{tables.spawn_invite_tokens}} (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id) ON DELETE CASCADE,
-    created_by_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    token_prefix TEXT NOT NULL,
-    alias_hint TEXT,
-    access_mode TEXT NOT NULL DEFAULT 'open',
-    max_uses INTEGER NOT NULL DEFAULT 1,
-    current_uses INTEGER NOT NULL DEFAULT 0,
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_spawn_invite_access_mode CHECK (access_mode IN ('project_only', 'owner_only', 'contacts_only', 'open')),
-    CONSTRAINT chk_spawn_invite_max_uses CHECK (max_uses >= 1),
-    CONSTRAINT chk_spawn_invite_current_uses CHECK (current_uses >= 0)
-);
-
-CREATE INDEX IF NOT EXISTS idx_spawn_invite_tokens_project
-ON {{tables.spawn_invite_tokens}} (project_id);
-
-CREATE INDEX IF NOT EXISTS idx_spawn_invite_tokens_creator
-ON {{tables.spawn_invite_tokens}} (created_by_agent_id);
-
-CREATE INDEX IF NOT EXISTS idx_spawn_invite_tokens_prefix
-ON {{tables.spawn_invite_tokens}} (token_prefix);
+CREATE INDEX IF NOT EXISTS idx_agents_did_aw
+    ON {{tables.agents}} (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Messages (async mail)
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.messages}} (
-    message_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    recipient_project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    from_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    to_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    from_alias TEXT NOT NULL,
-    subject TEXT NOT NULL DEFAULT '',
-    body TEXT NOT NULL,
-    priority TEXT NOT NULL DEFAULT 'normal',
-    thread_id UUID,
-    read_at TIMESTAMPTZ,
-    from_did TEXT,
-    to_did TEXT,
-    from_stable_id TEXT,
-    to_stable_id TEXT,
-    signature TEXT,
-    signing_key_id TEXT,
-    signed_payload TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    to_agent_id     UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    from_alias      TEXT NOT NULL,
+    to_alias        TEXT NOT NULL,
+    subject         TEXT NOT NULL DEFAULT '',
+    body            TEXT NOT NULL,
+    priority        TEXT NOT NULL DEFAULT 'normal',
+    from_did        TEXT,
+    signature       TEXT,
+    signed_payload  TEXT,
+    read_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_inbox
-ON {{tables.messages}} (recipient_project_id, to_agent_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_messages_unread
-ON {{tables.messages}} (recipient_project_id, to_agent_id, read_at)
-WHERE read_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_messages_project_created
-ON {{tables.messages}} (project_id, created_at DESC);
+    ON {{tables.messages}} (team_address, to_agent_id, created_at)
+    WHERE read_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Chat
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_sessions}} (
-    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    participant_hash TEXT NOT NULL,
-    wait_seconds INTEGER,
+    session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    created_by      TEXT NOT NULL,
+    wait_seconds    INTEGER,
     wait_started_at TIMESTAMPTZ,
-    wait_started_by_agent_id UUID REFERENCES {{tables.agents}}(agent_id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_chat_sessions_wait_seconds CHECK (wait_seconds IS NULL OR wait_seconds >= 1),
-    UNIQUE (participant_hash)
+    wait_started_by UUID,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_project_created
-ON {{tables.chat_sessions}} (project_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS {{tables.chat_session_participants}} (
-    session_id UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id) ON DELETE CASCADE,
-    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
-    alias TEXT NOT NULL,
-    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CREATE TABLE IF NOT EXISTS {{tables.chat_participants}} (
+    session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
+    agent_id        UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    alias           TEXT NOT NULL,
+    joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (session_id, agent_id)
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_messages}} (
-    message_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id) ON DELETE CASCADE,
-    from_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    from_alias TEXT NOT NULL,
-    body TEXT NOT NULL,
-    reply_to_message_id UUID REFERENCES {{tables.chat_messages}}(message_id),
-    sender_leaving BOOLEAN NOT NULL DEFAULT FALSE,
-    hang_on BOOLEAN NOT NULL DEFAULT FALSE,
-    from_did TEXT,
-    to_did TEXT,
-    from_stable_id TEXT,
-    to_stable_id TEXT,
-    signature TEXT,
-    signing_key_id TEXT,
-    signed_payload TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
+    from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    from_alias      TEXT NOT NULL,
+    body            TEXT NOT NULL,
+    reply_to        UUID,
+    sender_leaving  BOOLEAN NOT NULL DEFAULT FALSE,
+    hang_on         BOOLEAN NOT NULL DEFAULT FALSE,
+    from_did        TEXT,
+    signature       TEXT,
+    signed_payload  TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
-ON {{tables.chat_messages}} (session_id, created_at ASC);
-
-CREATE INDEX IF NOT EXISTS idx_chat_messages_reply_to
-ON {{tables.chat_messages}} (reply_to_message_id)
-WHERE reply_to_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+    ON {{tables.chat_messages}} (session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
-    session_id UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id) ON DELETE CASCADE,
-    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    last_read_message_id UUID REFERENCES {{tables.chat_messages}}(message_id) ON DELETE SET NULL,
-    last_read_at TIMESTAMPTZ,
+    session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
+    agent_id        UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    last_read_message_id UUID REFERENCES {{tables.chat_messages}}(message_id),
+    last_read_at    TIMESTAMPTZ,
     PRIMARY KEY (session_id, agent_id)
 );
 
@@ -239,60 +123,13 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.contacts}} (
-    contact_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
+    contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
     contact_address TEXT NOT NULL,
-    label TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    label           TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_project_address
-ON {{tables.contacts}} (project_id, contact_address);
-
--- ---------------------------------------------------------------------------
--- Agent audit log
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS {{tables.agent_log}} (
-    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    project_id UUID NOT NULL,
-    operation TEXT NOT NULL,
-    old_did TEXT,
-    new_did TEXT,
-    signed_by TEXT,
-    entry_signature TEXT,
-    metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_log_agent_id
-ON {{tables.agent_log}} (agent_id, created_at);
-
--- ---------------------------------------------------------------------------
--- Rotation announcements
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS {{tables.rotation_announcements}} (
-    announcement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    project_id UUID NOT NULL,
-    old_did TEXT NOT NULL,
-    new_did TEXT NOT NULL,
-    rotation_timestamp TEXT NOT NULL,
-    old_key_signature TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_rotation_announcements_agent
-ON {{tables.rotation_announcements}} (agent_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS {{tables.rotation_peer_acks}} (
-    announcement_id UUID NOT NULL REFERENCES {{tables.rotation_announcements}}(announcement_id),
-    peer_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    acknowledged_at TIMESTAMPTZ,
-    PRIMARY KEY (announcement_id, peer_agent_id)
+    UNIQUE (team_address, contact_address)
 );
 
 -- ---------------------------------------------------------------------------
@@ -300,15 +137,199 @@ CREATE TABLE IF NOT EXISTS {{tables.rotation_peer_acks}} (
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.control_signals}} (
-    signal_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES {{tables.projects}}(project_id),
+    signal_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
     target_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    from_agent_id UUID REFERENCES {{tables.agents}}(agent_id),
-    signal_type TEXT NOT NULL CHECK (signal_type IN ('pause', 'resume', 'interrupt')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    consumed_at TIMESTAMPTZ
+    from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    signal_type     TEXT NOT NULL
+                    CHECK (signal_type IN ('pause', 'resume', 'interrupt')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    consumed_at     TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_control_signals_pending
-ON {{tables.control_signals}} (project_id, target_agent_id)
-WHERE consumed_at IS NULL;
+    ON {{tables.control_signals}} (team_address, target_agent_id, created_at)
+    WHERE consumed_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Repos
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.repos}} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    origin_url      TEXT NOT NULL,
+    canonical_origin TEXT NOT NULL,
+    name            TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ,
+
+    UNIQUE (team_address, canonical_origin)
+);
+
+-- ---------------------------------------------------------------------------
+-- Workspaces
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
+    workspace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    agent_id        UUID NOT NULL,
+    repo_id         UUID REFERENCES {{tables.repos}}(id),
+    alias           TEXT NOT NULL,
+    human_name      TEXT NOT NULL DEFAULT '',
+    role            TEXT,
+    hostname        TEXT,
+    workspace_path  TEXT,
+    workspace_type  TEXT NOT NULL DEFAULT 'manual',
+    focus_task_ref  TEXT,
+    focus_updated_at TIMESTAMPTZ,
+    last_seen_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+    deleted_at      TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_active_alias
+    ON {{tables.workspaces}} (team_address, alias)
+    WHERE deleted_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Tasks
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.tasks}} (
+    task_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    task_number     INTEGER NOT NULL,
+    root_task_seq   INTEGER,
+    task_ref_suffix TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    notes           TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'open'
+                    CHECK (status IN ('open', 'in_progress', 'closed')),
+    priority        INTEGER NOT NULL DEFAULT 2
+                    CHECK (priority BETWEEN 0 AND 4),
+    task_type       TEXT NOT NULL DEFAULT 'task'
+                    CHECK (task_type IN ('task', 'bug', 'feature', 'epic', 'chore')),
+    assignee_alias  TEXT,
+    created_by_alias TEXT,
+    closed_by_alias TEXT,
+    labels          TEXT[] NOT NULL DEFAULT '{}',
+    parent_task_id  UUID REFERENCES {{tables.tasks}}(task_id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+    closed_at       TIMESTAMPTZ,
+    deleted_at      TIMESTAMPTZ,
+
+    UNIQUE (team_address, task_number),
+    UNIQUE (team_address, task_ref_suffix)
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_comments}} (
+    comment_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id         UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
+    team_address    TEXT NOT NULL,
+    author_alias    TEXT NOT NULL,
+    body            TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_dependencies}} (
+    task_id         UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
+    depends_on_id   UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
+    team_address    TEXT NOT NULL,
+    PRIMARY KEY (task_id, depends_on_id)
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_counters}} (
+    team_address    TEXT PRIMARY KEY,
+    next_number     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS {{tables.task_root_counters}} (
+    team_address    TEXT PRIMARY KEY,
+    next_number     INTEGER NOT NULL DEFAULT 1
+);
+
+-- ---------------------------------------------------------------------------
+-- Task claims
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.task_claims}} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    workspace_id    UUID NOT NULL,
+    alias           TEXT NOT NULL,
+    human_name      TEXT NOT NULL DEFAULT '',
+    task_ref        TEXT NOT NULL,
+    apex_task_ref   TEXT,
+    claimed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (team_address, task_ref, workspace_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- Reservations (resource locks)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
+    team_address    TEXT NOT NULL,
+    resource_key    TEXT NOT NULL,
+    holder_alias    TEXT NOT NULL,
+    holder_agent_id UUID NOT NULL,
+    acquired_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ,
+    metadata_json   JSONB,
+
+    PRIMARY KEY (team_address, resource_key)
+);
+
+-- ---------------------------------------------------------------------------
+-- Roles (versioned per team)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    version         INTEGER NOT NULL DEFAULT 1,
+    bundle_json     JSONB NOT NULL DEFAULT '[]',
+    is_active       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by_alias TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+
+    UNIQUE (team_address, version)
+);
+
+-- ---------------------------------------------------------------------------
+-- Instructions (versioned per team)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.project_instructions}} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    version         INTEGER NOT NULL DEFAULT 1,
+    document_json   JSONB NOT NULL DEFAULT '{}',
+    is_active       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by_alias TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+
+    UNIQUE (team_address, version)
+);
+
+-- ---------------------------------------------------------------------------
+-- Audit log
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS {{tables.audit_log}} (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_address    TEXT NOT NULL,
+    alias           TEXT,
+    event_type      TEXT NOT NULL,
+    resource        TEXT,
+    details         JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

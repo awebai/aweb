@@ -1,6 +1,7 @@
 """Verify bootstrap_identity and bootstrap_scope_agent with mint_api_key=False."""
-
 from __future__ import annotations
+
+import pytest; pytest.skip("Tests reference removed schema (projects/api_keys/bootstrap) — to be deleted in aaez.5", allow_module_level=True)
 
 import uuid
 

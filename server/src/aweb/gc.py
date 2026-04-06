@@ -42,20 +42,20 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
 
     inactive = await aweb_db.fetch_all(
         """
-        SELECT p.project_id
-        FROM {{tables.projects}} p
-        WHERE p.created_at < $1
-          AND p.deleted_at IS NULL
+        SELECT t.team_address
+        FROM {{tables.teams}} t
+        WHERE t.created_at < $1
+          AND t.deleted_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.messages}} m
-              WHERE (m.project_id = p.project_id OR m.recipient_project_id = p.project_id)
+              WHERE (m.team_address = t.team_address OR m.recipient_team_address = t.team_address)
                 AND m.created_at >= $1
           )
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.chat_session_participants}} csp
               JOIN {{tables.chat_messages}} cm ON cm.session_id = csp.session_id
               JOIN {{tables.agents}} a ON a.agent_id = csp.agent_id
-              WHERE a.project_id = p.project_id
+              WHERE a.team_address = t.team_address
                 AND cm.created_at >= $1
           )
         """,
@@ -64,32 +64,32 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
 
     deleted_count = 0
     for row in inactive:
-        await _hard_delete_scope(aweb_db, project_id=row["project_id"])
+        await _hard_delete_scope(aweb_db, team_address=row["team_address"])
         deleted_count += 1
 
     logger.info("gc_inactive_scopes: deleted %d scopes (cutoff=%s)", deleted_count, cutoff.isoformat())
     return {"scopes_deleted": deleted_count}
 
 
-async def _hard_delete_scope(aweb_db, *, project_id) -> None:
+async def _hard_delete_scope(aweb_db, *, team_address) -> None:
     async with aweb_db.transaction() as tx:
         await tx.execute(
             """
             DELETE FROM {{tables.chat_read_receipts}}
             WHERE agent_id IN (
-                SELECT agent_id FROM {{tables.agents}} WHERE project_id = $1
+                SELECT agent_id FROM {{tables.agents}} WHERE team_address = $1
             )
             """,
-            project_id,
+            team_address,
         )
         await tx.execute(
             """
             DELETE FROM {{tables.chat_session_participants}}
             WHERE agent_id IN (
-                SELECT agent_id FROM {{tables.agents}} WHERE project_id = $1
+                SELECT agent_id FROM {{tables.agents}} WHERE team_address = $1
             )
             """,
-            project_id,
+            team_address,
         )
         await tx.execute(
             """
@@ -101,26 +101,26 @@ async def _hard_delete_scope(aweb_db, *, project_id) -> None:
             """,
         )
         await tx.execute(
-            "DELETE FROM {{tables.messages}} WHERE project_id = $1 OR recipient_project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.messages}} WHERE team_address = $1 OR recipient_team_address = $1",
+            team_address,
         )
         await tx.execute(
-            "DELETE FROM {{tables.control_signals}} WHERE project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.control_signals}} WHERE team_address = $1",
+            team_address,
         )
         await tx.execute(
-            "DELETE FROM {{tables.agent_log}} WHERE project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.agent_log}} WHERE team_address = $1",
+            team_address,
         )
         await tx.execute(
-            "DELETE FROM {{tables.api_keys}} WHERE project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.api_keys}} WHERE team_address = $1",
+            team_address,
         )
         await tx.execute(
-            "DELETE FROM {{tables.agents}} WHERE project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.agents}} WHERE team_address = $1",
+            team_address,
         )
         await tx.execute(
-            "DELETE FROM {{tables.projects}} WHERE project_id = $1",
-            project_id,
+            "DELETE FROM {{tables.teams}} WHERE team_address = $1",
+            team_address,
         )

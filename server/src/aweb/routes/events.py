@@ -13,10 +13,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
 from aweb.deps import get_db, get_redis
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
+from aweb.team_auth_deps import get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +44,14 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
-async def _current_actionable_mail(aweb_db, *, project_id: UUID, agent_id: UUID) -> list[dict[str, Any]]:
+async def _current_actionable_mail(aweb_db, *, team_address: str, agent_id: UUID) -> list[dict[str, Any]]:
     """Return the current actionable unread mail state for an agent."""
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
             SELECT message_id, from_alias, subject, priority, created_at
             FROM {{tables.messages}}
-            WHERE recipient_project_id = $1
+            WHERE team_address = $1
               AND to_agent_id = $2
               AND read_at IS NULL
         )
@@ -66,7 +66,7 @@ async def _current_actionable_mail(aweb_db, *, project_id: UUID, agent_id: UUID)
         ORDER BY created_at ASC
         LIMIT 50
         """,
-        project_id,
+        team_address,
         agent_id,
     )
     return [
@@ -90,11 +90,7 @@ async def _current_actionable_chat(
     *,
     agent_id: UUID,
 ) -> list[dict[str, Any]]:
-    """Return the current actionable unread chat state for an agent.
-
-    This uses the same pending-conversation truth as `aw chat pending`, then
-    overlays sender waiting state to derive wake urgency.
-    """
+    """Return the current actionable unread chat state for an agent."""
     pending = await get_pending_conversations(db, agent_id=str(agent_id))
     actionable: list[dict[str, Any]] = []
     for item in pending:
@@ -139,7 +135,7 @@ def _new_or_changed_events(
     return changed
 
 
-async def _poll_control_signals(aweb_db, *, project_id: UUID, agent_id: UUID) -> list[dict]:
+async def _poll_control_signals(aweb_db, *, team_address: str, agent_id: UUID) -> list[dict]:
     """Consume and return pending control signals for this agent.
 
     At-most-once delivery: signals are marked consumed atomically with the read.
@@ -153,7 +149,7 @@ async def _poll_control_signals(aweb_db, *, project_id: UUID, agent_id: UUID) ->
         SET consumed_at = NOW()
         WHERE signal_id IN (
             SELECT signal_id FROM {{tables.control_signals}}
-            WHERE project_id = $1
+            WHERE team_address = $1
               AND target_agent_id = $2
               AND consumed_at IS NULL
             ORDER BY created_at ASC
@@ -161,7 +157,7 @@ async def _poll_control_signals(aweb_db, *, project_id: UUID, agent_id: UUID) ->
         )
         RETURNING signal_id, signal_type, created_at
         """,
-        project_id,
+        team_address,
         agent_id,
     )
     return [
@@ -178,25 +174,22 @@ async def _sse_agent_events(
     request: Request,
     db,
     redis,
-    project_id: str,
+    team_address: str,
     agent_id: str,
     deadline: datetime,
 ) -> AsyncIterator[str]:
     """Generate per-agent SSE actionable coordination events."""
     aweb_db = db.get_manager("aweb")
-    pid = UUID(project_id)
     aid = UUID(agent_id)
 
     yield ": keepalive\n\n"
 
-    # Connected event
-    yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'project_id': project_id})}\n\n"
+    yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_address': team_address})}\n\n"
 
-    # Initial snapshot: emit the current actionable coordination state on
-    # connect. Subsequent polls only emit new or changed actionable state.
-    mail_events = await _current_actionable_mail(aweb_db, project_id=pid, agent_id=aid)
+    # Initial snapshot
+    mail_events = await _current_actionable_mail(aweb_db, team_address=team_address, agent_id=aid)
     chat_events = await _current_actionable_chat(db, redis, agent_id=aid)
-    control_events = await _poll_control_signals(aweb_db, project_id=pid, agent_id=aid)
+    control_events = await _poll_control_signals(aweb_db, team_address=team_address, agent_id=aid)
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
 
@@ -218,9 +211,9 @@ async def _sse_agent_events(
             break
 
         try:
-            current_mail = await _current_actionable_mail(aweb_db, project_id=pid, agent_id=aid)
+            current_mail = await _current_actionable_mail(aweb_db, team_address=team_address, agent_id=aid)
             current_chat = await _current_actionable_chat(db, redis, agent_id=aid)
-            control_events = await _poll_control_signals(aweb_db, project_id=pid, agent_id=aid)
+            control_events = await _poll_control_signals(aweb_db, team_address=team_address, agent_id=aid)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
@@ -257,8 +250,7 @@ async def event_stream(
 ):
     """Per-agent SSE event stream. Emits lightweight wake events when the agent
     has new mail, chat messages, or available work."""
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    agent_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
 
     try:
         deadline_dt = _parse_deadline(deadline)
@@ -275,10 +267,10 @@ async def event_stream(
             request=request,
             db=db,
             redis=redis,
-            project_id=project_id,
-            agent_id=agent_id,
+            team_address=identity.team_address,
+            agent_id=identity.agent_id,
             deadline=deadline_dt,
         ),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

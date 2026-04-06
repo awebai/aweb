@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from aweb.auth import get_actor_agent_id_from_auth, get_project_from_auth
+from aweb.team_auth_deps import get_team_identity
 from aweb.deps import get_db
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
@@ -35,12 +35,10 @@ async def list_conversations(
     limit: int = Query(50, ge=1, le=100),
     db=Depends(get_db),
 ) -> ConversationsResponse:
-    project_id = await get_project_from_auth(request, db, manager_name="aweb")
-    actor_id = await get_actor_agent_id_from_auth(request, db, manager_name="aweb")
+    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    project_uuid = UUID(project_id)
-    actor_uuid = UUID(actor_id)
+    actor_uuid = UUID(identity.agent_id)
 
     cursor_dt: datetime | None = None
     if cursor:
@@ -50,24 +48,23 @@ async def list_conversations(
             raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     # --- Mail conversations ---
-    # Group by COALESCE(thread_id, message_id) to treat standalone mails as their own thread.
-    # Only include conversations where this agent is sender or receiver.
+    # Each message is a standalone conversation.
     mail_rows = await aweb_db.fetch_all(
         """
         SELECT
-            COALESCE(m.thread_id, m.message_id)::text AS conversation_id,
+            m.message_id::text AS conversation_id,
             MAX(m.created_at) AS last_message_at,
             (array_agg(m.body ORDER BY m.created_at DESC))[1] AS last_body,
             (array_agg(m.from_alias ORDER BY m.created_at DESC))[1] AS last_from,
             (array_agg(m.subject ORDER BY m.created_at DESC))[1] AS subject,
             COUNT(*) FILTER (WHERE m.to_agent_id = $2 AND m.read_at IS NULL)::int AS unread_count
         FROM {{tables.messages}} m
-        WHERE m.project_id = $1
+        WHERE m.team_address = $1
           AND (m.from_agent_id = $2 OR m.to_agent_id = $2)
-        GROUP BY COALESCE(m.thread_id, m.message_id)
+        GROUP BY m.message_id
         ORDER BY MAX(m.created_at) DESC
         """,
-        project_uuid,
+        identity.team_address,
         actor_uuid,
     )
 
@@ -77,15 +74,15 @@ async def list_conversations(
     if conv_ids:
         part_rows = await aweb_db.fetch_all(
             """
-            SELECT COALESCE(m.thread_id, m.message_id)::text AS conv_id, a.alias
+            SELECT m.message_id::text AS conv_id, a.alias
             FROM {{tables.messages}} m
             JOIN {{tables.agents}} a ON a.agent_id IN (m.from_agent_id, m.to_agent_id)
-            WHERE m.project_id = $1
-              AND COALESCE(m.thread_id, m.message_id)::text = ANY($2)
-            GROUP BY COALESCE(m.thread_id, m.message_id), a.alias
+            WHERE m.team_address = $1
+              AND m.message_id::text = ANY($2)
+            GROUP BY m.message_id, a.alias
             ORDER BY a.alias
             """,
-            project_uuid,
+            identity.team_address,
             conv_ids,
         )
         for r in part_rows:
@@ -120,9 +117,9 @@ async def list_conversations(
             lm.created_at AS last_message_at,
             COALESCE(unread.cnt, 0)::int AS unread_count
         FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_session_participants}} p
+        JOIN {{tables.chat_participants}} p
           ON p.session_id = s.session_id AND p.agent_id = $2
-        JOIN {{tables.chat_session_participants}} p2
+        JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
             SELECT body, from_alias, created_at
@@ -142,12 +139,12 @@ async def list_conversations(
               AND cm.from_agent_id <> $2
               AND cm.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
         ) unread ON TRUE
-        WHERE s.project_id = $1
+        WHERE s.team_address = $1
           AND lm.created_at IS NOT NULL
         GROUP BY s.session_id, lm.body, lm.from_alias, lm.created_at, unread.cnt
         ORDER BY lm.created_at DESC
         """,
-        project_uuid,
+        identity.team_address,
         actor_uuid,
     )
 
