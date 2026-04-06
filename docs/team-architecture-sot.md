@@ -388,8 +388,8 @@ CREATE TABLE audit_log (
 | `spawn_invite_tokens` | Invites move to awid |
 | `agents.did` column | awid owns identity |
 | `agents.public_key` column | Embedded in did:key |
-| `agents.custody` column | awid manages custody |
-| `agents.signing_key_enc` column | awid/custody service handles |
+| `agents.custody` column | aweb-cloud manages custody for managed namespaces |
+| `agents.signing_key_enc` column | aweb-cloud holds custodial signing keys |
 | `agents.stable_id` column | Stored as `did_aw` (reference only) |
 | `agents.program` column | Unused |
 | `agents.context` column | Unused |
@@ -430,7 +430,7 @@ CREATE TABLE audit_log (
 | `PUT /v1/agents/me/retire` | Team membership removal at awid |
 | `PUT /v1/agents/{id}/retire` | Team membership removal at awid |
 | `GET /v1/agents/me/log` | awid audit log |
-| `POST /v1/custody/sign` | Moves to awid (custody is awid's concern) |
+| `POST /v1/custody/sign` | Moves to aweb-cloud (custody is aweb-cloud's concern) |
 | All `/v1/did/*` routes | awid routes, no longer mounted |
 | All `/v1/dns/*` routes | awid routes, no longer mounted |
 | `POST /v1/agents/suggest-alias-prefix` | Alias comes from address or is auto-generated |
@@ -850,7 +850,7 @@ AWEB_LOG_JSON=true
 ```
 
 Removed:
-- `AWEB_CUSTODY_KEY` — custody is awid's concern
+- `AWEB_CUSTODY_KEY` — custody is aweb-cloud's concern
 - `AWEB_MANAGED_DOMAIN` — namespaces are awid's concern
 - `AWEB_NAMESPACE_CONTROLLER_KEY` — namespaces are awid's concern
 - `AWEB_API_KEY` / any API key config — certificates replace API keys
