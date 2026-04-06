@@ -89,20 +89,28 @@ CREATE TABLE teams (
     UNIQUE (domain, name)
 );
 
--- Revocations. When a member is removed from a team, the
--- certificate_id is added here. Services cache this list
--- and reject revoked certificates.
-CREATE TABLE team_revocations (
+-- Certificate issuance log. Records every certificate issued for
+-- a team. Active members = rows where revoked_at IS NULL.
+-- Services cache the revoked rows to reject removed members.
+CREATE TABLE team_certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id         UUID NOT NULL REFERENCES teams(team_id),
     certificate_id  TEXT NOT NULL,
-    revoked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    member_did_key  TEXT NOT NULL,
+    member_did_aw   TEXT,
+    member_address  TEXT,
+    alias           TEXT NOT NULL,
+    lifetime        TEXT NOT NULL DEFAULT 'permanent',
+    issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at      TIMESTAMPTZ,
 
     UNIQUE (team_id, certificate_id)
 );
 
-CREATE INDEX idx_team_revocations_team
-    ON team_revocations (team_id, revoked_at);
+CREATE INDEX idx_team_certificates_active
+    ON team_certificates (team_id) WHERE revoked_at IS NULL;
+CREATE INDEX idx_team_certificates_revoked
+    ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
 
 No members table. Membership is proven by certificates held by agents.
@@ -152,28 +160,49 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
 
-POST   /v1/namespaces/{domain}/teams/{name}/revocations
+GET    /v1/namespaces/{domain}/teams/{name}/certificates
+       List issued certificates (active and revoked).
+       Auth: none (public).
+       Query params: active_only (boolean), since (timestamp)
+       Response: { "certificates": [{
+                   "certificate_id": "uuid",
+                   "member_did_key": "did:key:z6Mk...",
+                   "member_did_aw": "did:aw:...",
+                   "member_address": "acme.com/alice",
+                   "alias": "alice",
+                   "lifetime": "permanent",
+                   "issued_at": "...",
+                   "revoked_at": null }] }
+       With active_only=true: only rows where revoked_at IS NULL.
+       This is how the dashboard lists team members.
+
+POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Revoke a certificate.
        Auth: team controller DIDKey signature.
        Body: { "certificate_id": "uuid" }
        Response: { "revoked": true }
-       Called when removing a member from the team.
+       Sets revoked_at on the certificate row.
 
 GET    /v1/namespaces/{domain}/teams/{name}/revocations
-       List revocations.
+       List revoked certificates only.
        Auth: none (public). Services cache this.
        Query params: since (timestamp, optional — for incremental sync)
        Response: { "revocations": [{ "certificate_id": "uuid",
                    "revoked_at": "..." }] }
+       This is what services cache to reject removed members.
 ```
 
-### What awid does NOT store about teams
+### What awid stores vs doesn't store about teams
 
-- No members list. The certificate is the membership proof.
-- No certificate copies. The agent holds its certificate.
-- No certificate expiry tracking. Certificates are long-lived.
-- No renewal infrastructure. Certificates are reissued only on key
-  rotation.
+**Stores:**
+- Team name + public key (for certificate verification by services)
+- Certificate issuance log (who was issued a certificate, when,
+  whether revoked). This enables member enumeration.
+
+**Does not store:**
+- Certificate content (the agent holds its certificate)
+- Certificate expiry tracking (certificates are long-lived)
+- Renewal infrastructure (reissuance only on key rotation)
 
 ---
 
@@ -393,17 +422,25 @@ CREATE TABLE teams (
     UNIQUE (domain, name)
 );
 
-CREATE TABLE team_revocations (
+CREATE TABLE team_certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id         UUID NOT NULL REFERENCES teams(team_id),
     certificate_id  TEXT NOT NULL,
-    revoked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    member_did_key  TEXT NOT NULL,
+    member_did_aw   TEXT,
+    member_address  TEXT,
+    alias           TEXT NOT NULL,
+    lifetime        TEXT NOT NULL DEFAULT 'permanent',
+    issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at      TIMESTAMPTZ,
 
     UNIQUE (team_id, certificate_id)
 );
 
-CREATE INDEX idx_team_revocations_team
-    ON team_revocations (team_id, revoked_at);
+CREATE INDEX idx_team_certificates_active
+    ON team_certificates (team_id) WHERE revoked_at IS NULL;
+CREATE INDEX idx_team_certificates_revoked
+    ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
 
 ---
@@ -436,8 +473,9 @@ AWID_CUSTODY_KEY=
 
 | Concern | Owner |
 |---------|-------|
-| Store team member lists | Nobody — certificates are the proof |
-| Renew certificates | Agent runtime or aweb-cloud |
+| Track certificate issuance | awid (team_certificates table) |
+| Store certificate content | Agent (holds its own cert) |
+| Renew certificates | Not needed (long-lived, reissue on key rotation) |
 | Manage API keys | Nobody — gone |
 | Coordinate agents | aweb |
 | Manage billing | aweb-cloud |
