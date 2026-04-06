@@ -92,8 +92,8 @@ Flags:
 - `--human-name string       Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs             Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--name string             Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
-- `--namespace string        Authoritative namespace slug when it differs from the project slug (default: project slug)`
-- `--namespace-slug string   Authoritative namespace slug (alias for --namespace)`
+- `--namespace string        Managed owner slug for addresses under <owner>.aweb.ai`
+- `--namespace-slug string   Managed owner slug (alias for --namespace)`
 - `--permanent               Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports           Print shell export lines after JSON output`
 - `--project string          Project slug (default: AWEB_PROJECT_SLUG, AWEB_PROJECT, or prompt in TTY)`

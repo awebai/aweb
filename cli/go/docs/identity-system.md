@@ -69,11 +69,14 @@ Usage:
 aw project create --project myteam
 ```
 
-If the authoritative namespace must differ from the project slug:
+If the managed owner slug must differ from the project slug:
 
 ```bash
 aw project create --project platform --namespace acme
 ```
+
+In that case, permanent managed addresses are still owner-scoped, for example
+`acme.aweb.ai/alice`.
 
 Creates:
 
