@@ -29,11 +29,11 @@ RUN groupadd --system --gid 1001 awid \
 
 WORKDIR /app
 
-COPY --from=builder --chown=awid:awid /app/awid/.venv /app/.venv
+COPY --from=builder --chown=awid:awid /app/awid/.venv /app/awid/.venv
 COPY --from=builder --chown=awid:awid /app/awid/src /app/awid/src
 COPY --from=builder --chown=awid:awid /app/server /app/server
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/awid/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 USER awid
