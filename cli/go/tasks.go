@@ -31,9 +31,9 @@ type Task struct {
 	TaskType         string        `json:"task_type"`
 	Labels           []string      `json:"labels,omitempty"`
 	ParentTaskID     *string       `json:"parent_task_id"`
-	AssigneeAgentID  *string       `json:"assignee_agent_id"`
-	CreatedByAgentID *string       `json:"created_by_agent_id"`
-	ClosedByAgentID  *string       `json:"closed_by_agent_id"`
+	AssigneeAlias  *string       `json:"assignee_alias"`
+	CreatedByAlias *string       `json:"created_by_alias"`
+	ClosedByAlias  *string       `json:"closed_by_alias"`
 	BlockedBy        []TaskDepView `json:"blocked_by,omitempty"`
 	Blocks           []TaskDepView `json:"blocks,omitempty"`
 	CreatedAt        string        `json:"created_at"`
@@ -49,8 +49,8 @@ type TaskSummary struct {
 	Status           string   `json:"status"`
 	Priority         int      `json:"priority"`
 	TaskType         string   `json:"task_type"`
-	AssigneeAgentID  *string  `json:"assignee_agent_id"`
-	CreatedByAgentID *string  `json:"created_by_agent_id"`
+	AssigneeAlias  *string  `json:"assignee_alias"`
+	CreatedByAlias *string  `json:"created_by_alias"`
 	Labels           []string `json:"labels,omitempty"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
@@ -59,30 +59,30 @@ type TaskSummary struct {
 // Request/response types
 
 type TaskCreateRequest struct {
-	Title           string   `json:"title"`
-	Description     string   `json:"description,omitempty"`
-	Notes           string   `json:"notes,omitempty"`
-	Priority        int      `json:"priority"`
-	TaskType        string   `json:"task_type,omitempty"`
-	Labels          []string `json:"labels,omitempty"`
-	ParentTaskID    *string  `json:"parent_task_id,omitempty"`
-	AssigneeAgentID *string  `json:"assignee_agent_id,omitempty"`
+	Title         string   `json:"title"`
+	Description   string   `json:"description,omitempty"`
+	Notes         string   `json:"notes,omitempty"`
+	Priority      int      `json:"priority"`
+	TaskType      string   `json:"task_type,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	ParentTaskID  *string  `json:"parent_task_id,omitempty"`
+	AssigneeAlias *string  `json:"assignee_alias,omitempty"`
 }
 
 type TaskUpdateRequest struct {
-	Title           *string  `json:"title,omitempty"`
-	Description     *string  `json:"description,omitempty"`
-	Notes           *string  `json:"notes,omitempty"`
-	Status          *string  `json:"status,omitempty"`
-	TaskType        *string  `json:"task_type,omitempty"`
-	Priority        *int     `json:"priority,omitempty"`
-	Labels          []string `json:"labels,omitempty"`
-	AssigneeAgentID *string  `json:"assignee_agent_id,omitempty"`
+	Title         *string  `json:"title,omitempty"`
+	Description   *string  `json:"description,omitempty"`
+	Notes         *string  `json:"notes,omitempty"`
+	Status        *string  `json:"status,omitempty"`
+	TaskType      *string  `json:"task_type,omitempty"`
+	Priority      *int     `json:"priority,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	AssigneeAlias *string  `json:"assignee_alias,omitempty"`
 }
 
 type TaskListParams struct {
 	Status          string
-	AssigneeAgentID string
+	AssigneeAlias string
 	TaskType        string
 	Priority        *int
 	Labels          []string
@@ -104,8 +104,8 @@ type ActiveTaskSummary struct {
 	Status           string   `json:"status"`
 	Priority         int      `json:"priority"`
 	TaskType         string   `json:"task_type"`
-	AssigneeAgentID  *string  `json:"assignee_agent_id"`
-	CreatedByAgentID *string  `json:"created_by_agent_id"`
+	AssigneeAlias  *string  `json:"assignee_alias"`
+	CreatedByAlias *string  `json:"created_by_alias"`
 	ParentTaskID     *string  `json:"parent_task_id"`
 	Labels           []string `json:"labels,omitempty"`
 	CreatedAt        string   `json:"created_at"`
@@ -133,12 +133,12 @@ type TaskUpdateResponse struct {
 type TaskHeldError struct {
 	Detail          string `json:"detail"`
 	HolderAgentID   string `json:"holder_agent_id"`
-	AssigneeAgentID string `json:"assignee_agent_id"`
+	AssigneeAlias string `json:"assignee_alias"`
 }
 
 func (e *TaskHeldError) Error() string {
-	if e.AssigneeAgentID != "" {
-		return "aweb: task already held by " + e.AssigneeAgentID
+	if e.AssigneeAlias != "" {
+		return "aweb: task already held by " + e.AssigneeAlias
 	}
 	if e.Detail != "" {
 		return "aweb: " + e.Detail
@@ -163,8 +163,8 @@ func (c *Client) TaskList(ctx context.Context, params TaskListParams) (*TaskList
 		path += sep + "status=" + urlQueryEscape(params.Status)
 		sep = "&"
 	}
-	if params.AssigneeAgentID != "" {
-		path += sep + "assignee_agent_id=" + urlQueryEscape(params.AssigneeAgentID)
+	if params.AssigneeAlias != "" {
+		path += sep + "assignee_alias=" + urlQueryEscape(params.AssigneeAlias)
 		sep = "&"
 	}
 	if params.TaskType != "" {

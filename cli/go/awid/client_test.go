@@ -126,7 +126,7 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if gotBody.Signature == "" || gotBody.Timestamp == "" || gotBody.MessageID == "" || gotBody.SigningKeyID == "" {
+	if gotBody.Signature == "" || gotBody.Timestamp == "" || gotBody.MessageID == "" {
 		t.Fatalf("missing identity fields in request: %+v", gotBody)
 	}
 
@@ -289,7 +289,7 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if gotSend.Signature == "" || gotSend.Timestamp == "" || gotSend.MessageID == "" || gotSend.SigningKeyID == "" {
+	if gotSend.Signature == "" || gotSend.Timestamp == "" || gotSend.MessageID == "" {
 		t.Fatalf("missing identity fields in request: %+v", gotSend)
 	}
 

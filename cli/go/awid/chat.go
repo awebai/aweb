@@ -84,11 +84,16 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 }
 
 type ChatCreateSessionRequest struct {
-	ToAliases        []string `json:"to_aliases"`
-	Message          string   `json:"message"`
-	Leaving          bool     `json:"leaving,omitempty"`
-	WaitSeconds      *int     `json:"wait_seconds,omitempty"`
-	ReplyToMessageID string   `json:"reply_to_message_id,omitempty"`
+	ToAliases     []string `json:"to_aliases"`
+	Message       string   `json:"message"`
+	Leaving       bool     `json:"leaving,omitempty"`
+	WaitSeconds   *int     `json:"wait_seconds,omitempty"`
+	ReplyTo       string   `json:"reply_to,omitempty"`
+	FromDID       string   `json:"from_did,omitempty"`
+	Signature     string   `json:"signature,omitempty"`
+	Timestamp     string   `json:"timestamp,omitempty"`
+	MessageID     string   `json:"message_id,omitempty"`
+	SignedPayload string   `json:"signed_payload,omitempty"`
 }
 
 type ChatCreateSessionResponse struct {
@@ -110,6 +115,42 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
+
+	to := strings.Join(payload.ToAliases, ",")
+	from := c.address
+	if c.signingKey != nil {
+		if toAddr := c.toAddressForAliases(payload.ToAliases); toAddr != "" {
+			to = toAddr
+		}
+		crossProject := false
+		for _, alias := range payload.ToAliases {
+			if strings.Contains(alias, "~") {
+				crossProject = true
+				break
+			}
+		}
+		if crossProject {
+			if project := c.defaultProjectSlug(); project != "" {
+				from = project + "~" + c.alias()
+			}
+		} else {
+			from = c.alias()
+		}
+	}
+	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
+		From: from,
+		To:   to,
+		Type: "chat",
+		Body: payload.Message,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload.FromDID = sf.FromDID
+	payload.Signature = sf.Signature
+	payload.Timestamp = sf.Timestamp
+	payload.MessageID = sf.MessageID
+	payload.SignedPayload = sf.SignedPayload
 
 	var out ChatCreateSessionResponse
 	if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
@@ -283,9 +324,14 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 
 // ChatSendMessage sends a message in an existing chat session.
 type ChatSendMessageRequest struct {
-	Body             string `json:"body"`
-	ExtendWait       bool   `json:"hang_on,omitempty"`
-	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+	Body          string `json:"body"`
+	ExtendWait    bool   `json:"hang_on,omitempty"`
+	ReplyTo       string `json:"reply_to,omitempty"`
+	FromDID       string `json:"from_did,omitempty"`
+	Signature     string `json:"signature,omitempty"`
+	Timestamp     string `json:"timestamp,omitempty"`
+	MessageID     string `json:"message_id,omitempty"`
+	SignedPayload string `json:"signed_payload,omitempty"`
 }
 
 type ChatSendMessageResponse struct {
@@ -299,6 +345,37 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
+
+	// In-session messages: include deterministic To for signature verification.
+	// (aweb returns to_address for reconstruction; we sign the same value.)
+	to := ""
+	from := c.address
+	if c.signingKey != nil {
+		if toAddr, err := c.toAddressForSession(ctx, sessionID); err == nil {
+			to = toAddr
+		}
+		if strings.Contains(to, "~") {
+			if project := c.defaultProjectSlug(); project != "" {
+				from = project + "~" + c.alias()
+			}
+		} else {
+			from = c.alias()
+		}
+	}
+	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
+		From: from,
+		To:   to,
+		Type: "chat",
+		Body: payload.Body,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload.FromDID = sf.FromDID
+	payload.Signature = sf.Signature
+	payload.Timestamp = sf.Timestamp
+	payload.MessageID = sf.MessageID
+	payload.SignedPayload = sf.SignedPayload
 
 	var out ChatSendMessageResponse
 	if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {

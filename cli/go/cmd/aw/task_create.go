@@ -65,7 +65,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		req.Labels = splitAndTrimLabels(v)
 	}
 	if v, _ := cmd.Flags().GetString("assignee"); v != "" {
-		req.AssigneeAgentID = &v
+		req.AssigneeAlias = &v
 	}
 	if v, _ := cmd.Flags().GetString("parent"); v != "" {
 		req.ParentTaskID = &v

@@ -57,7 +57,7 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		params.Labels = splitAndTrimLabels(v)
 	}
 	if v, _ := cmd.Flags().GetString("assignee"); v != "" {
-		params.AssigneeAgentID = v
+		params.AssigneeAlias = v
 	}
 
 	var resp *aweb.TaskListResponse
