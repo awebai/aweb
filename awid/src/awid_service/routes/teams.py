@@ -163,6 +163,43 @@ class CertificateRegisterResponse(BaseModel):
     certificate_id: str
 
 
+class CertificateResponse(BaseModel):
+    certificate_id: str
+    member_did_key: str
+    member_did_aw: str | None = None
+    member_address: str | None = None
+    alias: str
+    lifetime: str
+    issued_at: str
+    revoked_at: str | None = None
+
+
+class CertificateListResponse(BaseModel):
+    certificates: list[CertificateResponse]
+    has_more: bool
+    next_cursor: str | None = None
+
+
+class CertificateRevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    certificate_id: str = Field(..., min_length=1, max_length=256)
+
+
+class CertificateRevokeResponse(BaseModel):
+    revoked: bool
+    certificate_id: str
+
+
+class RevocationEntry(BaseModel):
+    certificate_id: str
+    revoked_at: str
+
+
+class RevocationListResponse(BaseModel):
+    revocations: list[RevocationEntry]
+
+
 class TeamRotateResponse(BaseModel):
     team_id: str
     domain: str
@@ -424,6 +461,185 @@ async def register_certificate(
     return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
 
 
+@router.get(
+    "/{name}/certificates",
+    response_model=CertificateListResponse,
+    dependencies=[Depends(rate_limit_dep("certificate_list"))],
+)
+async def list_certificates(
+    domain: str,
+    name: str,
+    active_only: bool = Query(default=False),
+    since: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    cursor: str | None = Query(default=None),
+    db_infra=Depends(get_db),
+) -> CertificateListResponse:
+    db = db_infra.get_manager("aweb")
+
+    # Resolve team_id
+    team_row = await db.fetch_one(
+        "SELECT team_id FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        domain, name,
+    )
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    try:
+        validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    where_clauses = ["team_id = $1"]
+    params: list[object] = [team_row["team_id"]]
+
+    if active_only:
+        where_clauses.append("revoked_at IS NULL")
+
+    if since is not None:
+        try:
+            since_ts = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid since timestamp") from exc
+        params.append(since_ts)
+        where_clauses.append(f"issued_at > ${len(params)}::timestamptz")
+
+    if decoded_cursor is not None:
+        cursor_issued_at = decoded_cursor.get("issued_at")
+        cursor_id = decoded_cursor.get("id")
+        if not isinstance(cursor_issued_at, str) or not isinstance(cursor_id, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        try:
+            cursor_ts = datetime.fromisoformat(cursor_issued_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        params.extend([cursor_ts, cursor_id])
+        where_clauses.append(
+            f"(issued_at, id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+        )
+
+    params.append(validated_limit + 1)
+    query = (
+        "SELECT id, certificate_id, member_did_key, member_did_aw, member_address,"
+        " alias, lifetime, issued_at, revoked_at"
+        " FROM {{tables.team_certificates}}"
+        " WHERE " + " AND ".join(where_clauses)
+        + f" ORDER BY issued_at, id"
+        f" LIMIT ${len(params)}"
+    )
+    rows = await db.fetch_all(query, *params)
+    has_more = len(rows) > validated_limit
+    page_rows = rows[:validated_limit]
+    next_cursor = None
+    if has_more and page_rows:
+        last = page_rows[-1]
+        next_cursor = encode_cursor({
+            "issued_at": last["issued_at"].isoformat(),
+            "id": str(last["id"]),
+        })
+
+    return CertificateListResponse(
+        certificates=[_cert_response(r) for r in page_rows],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/{name}/certificates/revoke",
+    response_model=CertificateRevokeResponse,
+    dependencies=[Depends(rate_limit_dep("certificate_revoke"))],
+)
+async def revoke_certificate(
+    request: Request,
+    domain: str,
+    name: str,
+    body: CertificateRevokeRequest,
+    db_infra=Depends(get_db),
+) -> CertificateRevokeResponse:
+    db = db_infra.get_manager("aweb")
+    _, team_row = await _require_team_controller(
+        request, db, domain=domain, name=name,
+        operation="revoke_certificate", certificate_id=body.certificate_id,
+    )
+
+    row = await db.fetch_one(
+        """
+        UPDATE {{tables.team_certificates}}
+        SET revoked_at = NOW()
+        WHERE team_id = $1 AND certificate_id = $2 AND revoked_at IS NULL
+        RETURNING certificate_id
+        """,
+        team_row["team_id"],
+        body.certificate_id,
+    )
+    if row is None:
+        # Distinguish between not found and already revoked
+        exists = await db.fetch_one(
+            "SELECT 1 FROM {{tables.team_certificates}} WHERE team_id = $1 AND certificate_id = $2",
+            team_row["team_id"],
+            body.certificate_id,
+        )
+        if exists is not None:
+            raise HTTPException(status_code=409, detail="Certificate already revoked")
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    return CertificateRevokeResponse(revoked=True, certificate_id=body.certificate_id)
+
+
+@router.get(
+    "/{name}/revocations",
+    response_model=RevocationListResponse,
+    dependencies=[Depends(rate_limit_dep("revocation_list"))],
+)
+async def list_revocations(
+    domain: str,
+    name: str,
+    since: str | None = Query(default=None),
+    db_infra=Depends(get_db),
+) -> RevocationListResponse:
+    db = db_infra.get_manager("aweb")
+
+    team_row = await db.fetch_one(
+        "SELECT team_id FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        domain, name,
+    )
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    where_clauses = ["team_id = $1", "revoked_at IS NOT NULL"]
+    params: list[object] = [team_row["team_id"]]
+
+    if since is not None:
+        try:
+            since_ts = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid since timestamp") from exc
+        params.append(since_ts)
+        where_clauses.append(f"revoked_at > ${len(params)}::timestamptz")
+
+    _REVOCATION_HARD_LIMIT = 1000
+    params.append(_REVOCATION_HARD_LIMIT)
+    query = (
+        "SELECT certificate_id, revoked_at"
+        " FROM {{tables.team_certificates}}"
+        " WHERE " + " AND ".join(where_clauses)
+        + f" ORDER BY revoked_at"
+        f" LIMIT ${len(params)}"
+    )
+    rows = await db.fetch_all(query, *params)
+
+    return RevocationListResponse(
+        revocations=[
+            RevocationEntry(
+                certificate_id=r["certificate_id"],
+                revoked_at=r["revoked_at"].isoformat(),
+            )
+            for r in rows
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -437,4 +653,17 @@ def _team_response(row) -> TeamResponse:
         display_name=row["display_name"],
         team_did_key=row["team_did_key"],
         created_at=row["created_at"].isoformat(),
+    )
+
+
+def _cert_response(row) -> CertificateResponse:
+    return CertificateResponse(
+        certificate_id=row["certificate_id"],
+        member_did_key=row["member_did_key"],
+        member_did_aw=row["member_did_aw"],
+        member_address=row["member_address"],
+        alias=row["alias"],
+        lifetime=row["lifetime"],
+        issued_at=row["issued_at"].isoformat(),
+        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
     )
