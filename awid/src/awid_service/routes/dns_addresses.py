@@ -191,6 +191,12 @@ class AddressReassignRequest(BaseModel):
     _check_did_key = field_validator("current_did_key")(_validate_did_key)
 
 
+class AddressDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=512)
+
+
 class AddressResponse(BaseModel):
     address_id: str
     domain: str
@@ -477,6 +483,7 @@ async def delete_address(
     request: Request,
     domain: str,
     name: str,
+    body: AddressDeleteRequest | None = None,
     db_infra=Depends(get_db),
 ) -> dict:
     """Soft-delete an address. Must be signed by the controller.
@@ -497,7 +504,7 @@ async def delete_address(
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT address_id
+            SELECT address_id, did_aw
             FROM {{tables.public_addresses}}
             WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
@@ -508,12 +515,34 @@ async def delete_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
+        active_cert = await tx.fetch_one(
+            """
+            SELECT tc.certificate_id
+            FROM {{tables.team_certificates}} tc
+            JOIN {{tables.teams}} t ON t.team_id = tc.team_id
+            WHERE t.domain = $1
+              AND t.deleted_at IS NULL
+              AND tc.revoked_at IS NULL
+              AND tc.member_address = $2
+            LIMIT 1
+            """,
+            domain,
+            f"{domain}/{name}",
+        )
+        if active_cert is not None:
+            raise HTTPException(status_code=409, detail="Address has active certificates")
+
         await tx.execute(
             "UPDATE {{tables.public_addresses}} SET deleted_at = NOW() WHERE address_id = $1",
             row["address_id"],
         )
 
-    return {"status": "deleted", "domain": domain, "name": name}
+    return {
+        "deleted": True,
+        "address_id": str(row["address_id"]),
+        "domain": domain,
+        "name": name,
+    }
 
 
 @router.post(

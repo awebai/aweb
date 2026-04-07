@@ -72,6 +72,37 @@ async def _register_certificate(client, team_key, team_did, domain, team_name, c
     assert resp.status_code == 200, resp.text
 
 
+async def _register_persistent_certificate_for_address(
+    client,
+    team_key,
+    team_did,
+    domain,
+    team_name,
+    certificate_id,
+    member_address,
+):
+    _, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    headers = _sign(
+        team_key, team_did,
+        domain=domain, operation="register_certificate",
+        team_name=team_name, certificate_id=certificate_id,
+    )
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/teams/{team_name}/certificates",
+        json={
+            "certificate_id": certificate_id,
+            "member_did_key": member_did_key,
+            "member_did_aw": stable_id_from_did_key(member_did_key),
+            "member_address": member_address,
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
 async def _revoke_certificate(client, team_key, team_did, domain, team_name, certificate_id):
     headers = _sign(
         team_key, team_did,
@@ -210,4 +241,103 @@ async def test_delete_namespace_wrong_operation_returns_401(client, controller_i
 
     headers = _sign(ns_key, ns_did, domain=domain, operation="delete")
     resp = await client.delete(f"/v1/namespaces/{domain}", headers=headers)
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_address_happy_path(client, controller_identity, awid_db_infra):
+    ns_key, ns_did = controller_identity
+    domain = "delete-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    address = await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
+    resp = await client.request(
+        "DELETE",
+        f"/v1/namespaces/{domain}/addresses/alice",
+        headers=headers,
+        json={"reason": "rollback after downstream failure"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "deleted": True,
+        "address_id": address["address_id"],
+        "domain": domain,
+        "name": "alice",
+    }
+
+    resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert resp.status_code == 404
+
+    db = awid_db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        "SELECT deleted_at FROM {{tables.public_addresses}} WHERE address_id = $1",
+        address["address_id"],
+    )
+    assert row["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_address_with_active_certificates_returns_409(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "active-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address(client, ns_key, ns_did, domain, "alice")
+    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_persistent_certificate_for_address(
+        client,
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        f"{domain}/alice",
+    )
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
+    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    assert resp.status_code == 409
+    assert "active certificates" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_delete_address_already_deleted_returns_404(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "deleted-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
+    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    assert resp.status_code == 200
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
+    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_address_bad_signature_returns_401(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    wrong_key, _ = generate_keypair()
+    domain = "bad-sig-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    headers = _bad_signature_headers(
+        wrong_key, ns_did, domain=domain, operation="delete_address", name="alice",
+    )
+    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_address_wrong_operation_returns_401(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "wrong-op-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete", name="alice")
+    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
     assert resp.status_code == 401
