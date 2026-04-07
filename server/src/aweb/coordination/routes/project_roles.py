@@ -66,7 +66,7 @@ class ProjectRolesVersion(BaseModel):
     bundle: ProjectRolesBundle
     created_by_alias: Optional[str]
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 async def get_active_project_roles(
@@ -306,7 +306,7 @@ class ActiveProjectRolesResponse(BaseModel):
     active_project_roles_id: Optional[str] = None
     team_address: str
     version: int
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
     roles: Dict[str, RoleDefinition]
     selected_role: Optional[SelectedRoleInfo] = None
     adapters: Dict[str, Any] = Field(default_factory=dict)
@@ -402,7 +402,7 @@ async def get_active_project_roles_endpoint(
 
     etag = _generate_etag(
         project_roles_version.id,
-        project_roles_version.updated_at,
+        project_roles_version.updated_at or project_roles_version.created_at,
     )
     response.headers["ETag"] = etag
 

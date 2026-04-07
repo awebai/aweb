@@ -50,7 +50,7 @@ class ProjectInstructionsVersion(BaseModel):
     document: ProjectInstructionsDocument
     created_by_alias: Optional[str]
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 class ActiveProjectInstructionsResponse(BaseModel):
@@ -58,7 +58,7 @@ class ActiveProjectInstructionsResponse(BaseModel):
     active_project_instructions_id: Optional[str] = None
     team_address: str
     version: int
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
     document: ProjectInstructionsDocument
 
 
@@ -347,7 +347,7 @@ async def get_active_project_instructions_endpoint(
     if not version:
         raise HTTPException(status_code=404, detail="No active project instructions found")
 
-    etag = _generate_etag(version.id, version.updated_at)
+    etag = _generate_etag(version.id, version.updated_at or version.created_at)
     response.headers["ETag"] = etag
     if if_none_match and if_none_match == etag:
         return Response(status_code=304, headers={"ETag": etag})

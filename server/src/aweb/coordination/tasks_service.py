@@ -207,7 +207,7 @@ async def create_task(
         "created_by_alias": created_by_alias,
         "closed_by_alias": None,
         "created_at": row["created_at"].isoformat(),
-        "updated_at": row["updated_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
         "closed_at": None,
     }
 

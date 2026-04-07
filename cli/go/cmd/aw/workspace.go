@@ -127,7 +127,11 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(sel.IdentityID) == "" {
+	// Cert-auth workspaces have alias/did but no IdentityID. Either form is valid.
+	hasIdentity := strings.TrimSpace(sel.IdentityID) != "" ||
+		strings.TrimSpace(sel.DID) != "" ||
+		strings.TrimSpace(sel.IdentityHandle) != ""
+	if !hasIdentity {
 		return usageError("selected account has no identity; run 'aw init' first")
 	}
 
