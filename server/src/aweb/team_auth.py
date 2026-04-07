@@ -70,7 +70,9 @@ def parse_and_verify_certificate(
             True if the certificate has been revoked.
 
     Returns:
-        Dict with team_address, alias, did_key, lifetime, certificate_id.
+        Dict with team_address, alias, did_key, lifetime, certificate_id,
+        member_did_aw, member_address. The last two are empty strings for
+        ephemeral certificates.
 
     Raises:
         ValueError: If the certificate is invalid, tampered, revoked, or mismatched.
@@ -115,6 +117,8 @@ def parse_and_verify_certificate(
         "did_key": member_did_key,
         "lifetime": cert.get("lifetime", "ephemeral"),
         "certificate_id": certificate_id,
+        "member_did_aw": cert.get("member_did_aw", ""),
+        "member_address": cert.get("member_address", ""),
     }
 
 

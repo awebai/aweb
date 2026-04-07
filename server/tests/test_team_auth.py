@@ -213,6 +213,54 @@ class TestParseAndVerifyCertificate:
                 revocation_checker=lambda _ta, _cid: False,
             )
 
+    def test_persistent_cert_returns_member_did_aw_and_address(self):
+        from aweb.team_auth import parse_and_verify_certificate
+
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+
+        cert = _make_certificate(
+            team_sk, team_did_key, agent_did_key,
+            lifetime="persistent",
+            member_did_aw="did:aw:z6Mkstable",
+            member_address="acme.com/alice",
+        )
+        encoded = _encode_certificate(cert)
+
+        result = parse_and_verify_certificate(
+            encoded,
+            request_did_key=agent_did_key,
+            team_public_key_resolver=lambda _ta: team_did_key,
+            revocation_checker=lambda _ta, _cid: False,
+        )
+
+        assert result["member_did_aw"] == "did:aw:z6Mkstable"
+        assert result["member_address"] == "acme.com/alice"
+
+    def test_ephemeral_cert_returns_empty_member_fields(self):
+        from aweb.team_auth import parse_and_verify_certificate
+
+        team_sk, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+
+        cert = _make_certificate(
+            team_sk, team_did_key, agent_did_key,
+            lifetime="ephemeral",
+            member_did_aw="",
+            member_address="",
+        )
+        encoded = _encode_certificate(cert)
+
+        result = parse_and_verify_certificate(
+            encoded,
+            request_did_key=agent_did_key,
+            team_public_key_resolver=lambda _ta: team_did_key,
+            revocation_checker=lambda _ta, _cid: False,
+        )
+
+        assert result["member_did_aw"] == ""
+        assert result["member_address"] == ""
+
 
 # ---------------------------------------------------------------------------
 # Dashboard JWT auth

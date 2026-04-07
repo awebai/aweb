@@ -101,9 +101,11 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     4. Resolve team public key from awid registry
     5. Check revocation list from awid registry
 
-    Returns cert_info dict (team_address, alias, did_key, lifetime, certificate_id).
-    Does NOT look up the agent in the local DB — suitable for /v1/connect
-    where the agent may not exist yet.
+    Returns cert_info dict (team_address, alias, did_key, lifetime,
+    certificate_id, member_did_aw, member_address). The last two are
+    empty strings for ephemeral certificates. Does NOT look up the agent
+    in the local DB — suitable for /v1/connect where the agent may not
+    exist yet.
 
     Raises HTTPException on any failure.
     """
