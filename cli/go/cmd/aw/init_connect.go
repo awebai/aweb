@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,11 +135,12 @@ func postConnect(ctx context.Context, serverURL string, signingKey ed25519.Priva
 		return nil, err
 	}
 
-	// DIDKey signature over {"team": team_address, "timestamp": ts}
+	// DIDKey signature over {body_sha256, team, timestamp}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	teamAddress := cert.Team
-	sigPayload := fmt.Sprintf(`{"team":%q,"timestamp":%q}`, teamAddress, timestamp)
+	bodyHash := sha256.Sum256(bodyJSON)
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	sigPayload := fmt.Sprintf(`{"body_sha256":%q,"team":%q,"timestamp":%q}`, bodyHashHex, cert.Team, timestamp)
 	sig := ed25519.Sign(signingKey, []byte(sigPayload))
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", did, base64.RawStdEncoding.EncodeToString(sig)))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)

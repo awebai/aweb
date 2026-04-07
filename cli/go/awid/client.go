@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -640,11 +642,13 @@ func (c *Client) Do(ctx context.Context, method, path string, in any, out any) e
 // DoRaw performs an HTTP request and returns the raw response.
 func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any) (*http.Response, error) {
 	var body io.Reader
+	var bodyBytes []byte
 	if in != nil {
 		data, err := json.Marshal(in)
 		if err != nil {
 			return nil, err
 		}
+		bodyBytes = data
 		body = bytes.NewReader(data)
 	}
 
@@ -660,9 +664,11 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	}
 	req.Header.Set("Accept", accept)
 	if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: DIDKey signature over {"team": team_address, "timestamp": ts}
+		// Certificate auth: DIDKey signature over {body_sha256, team, timestamp}.
+		// body_sha256 binds the request body to the signature without the
+		// server having to consume the body stream for signature verification.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := certAuthSignPayload(c.teamAddress, timestamp)
+		signPayload := certAuthSignPayload(c.teamAddress, timestamp, bodyBytes)
 		sig := ed25519.Sign(c.signingKey, signPayload)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
@@ -682,11 +688,18 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 }
 
 // certAuthSignPayload builds the canonical JSON bytes for certificate auth:
-// {"team":"<team_address>","timestamp":"<ts>"} — sorted keys, no whitespace.
-func certAuthSignPayload(teamAddress, timestamp string) []byte {
-	// "team" < "timestamp" lexicographically, so this order is canonical.
+// {"body_sha256":"<hex>","team":"<team_address>","timestamp":"<ts>"} —
+// sorted keys, no whitespace. body_sha256 is the hex SHA256 of the request
+// body bytes (empty body hashes the empty string).
+func certAuthSignPayload(teamAddress, timestamp string, body []byte) []byte {
+	h := sha256.Sum256(body)
+	bodyHash := hex.EncodeToString(h[:])
+	// Keys in lexicographic order: body_sha256 < team < timestamp.
 	var b strings.Builder
-	b.WriteString(`{"team":`)
+	b.WriteString(`{"body_sha256":`)
+	hashJSON, _ := json.Marshal(bodyHash)
+	b.Write(hashJSON)
+	b.WriteString(`,"team":`)
 	teamJSON, _ := json.Marshal(teamAddress)
 	b.Write(teamJSON)
 	b.WriteString(`,"timestamp":`)
