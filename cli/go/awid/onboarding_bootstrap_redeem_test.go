@@ -75,7 +75,7 @@ func TestBootstrapRedeem(t *testing.T) {
 	if parts[1] != didKey {
 		t.Fatalf("did=%q want %q", parts[1], didKey)
 	}
-	sigPayload := cloudDIDAuthSignPayload(http.MethodPost, onboardingBootstrapRedeemPath, gotTimestamp, gotBodyBytes)
+	sigPayload := cloudDIDKeySignPayload(http.MethodPost, onboardingBootstrapRedeemPath, gotTimestamp, gotBodyBytes)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestBootstrapRedeemWithAPIBaseURLSignsWirePath(t *testing.T) {
 	if len(parts) != 3 {
 		t.Fatalf("auth=%q", gotAuth)
 	}
-	sigPayload := cloudDIDAuthSignPayload(http.MethodPost, gotPath, gotTimestamp, gotBodyBytes)
+	sigPayload := cloudDIDKeySignPayload(http.MethodPost, gotPath, gotTimestamp, gotBodyBytes)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
