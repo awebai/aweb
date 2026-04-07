@@ -694,17 +694,13 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 func certAuthSignPayload(teamAddress, timestamp string, body []byte) []byte {
 	h := sha256.Sum256(body)
 	bodyHash := hex.EncodeToString(h[:])
-	// Keys in lexicographic order: body_sha256 < team < timestamp.
-	var b strings.Builder
-	b.WriteString(`{"body_sha256":`)
-	hashJSON, _ := json.Marshal(bodyHash)
-	b.Write(hashJSON)
-	b.WriteString(`,"team":`)
-	teamJSON, _ := json.Marshal(teamAddress)
-	b.Write(teamJSON)
-	b.WriteString(`,"timestamp":`)
-	tsJSON, _ := json.Marshal(timestamp)
-	b.Write(tsJSON)
-	b.WriteByte('}')
-	return []byte(b.String())
+	payload, err := CanonicalJSONValue(map[string]string{
+		"body_sha256": bodyHash,
+		"team":        teamAddress,
+		"timestamp":   timestamp,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("certAuthSignPayload: %v", err))
+	}
+	return []byte(payload)
 }

@@ -3,7 +3,9 @@ package awid
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +43,25 @@ func TestIntrospectAddsBearerHeader(t *testing.T) {
 	}
 	if resp.ProjectID != wantProjectID {
 		t.Fatalf("project_id=%s", resp.ProjectID)
+	}
+}
+
+func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"ok":true}`)
+	timestamp := "2026-04-07T12:00:00Z"
+	teamAddress := "tést.example/<a&b>"
+
+	got := string(certAuthSignPayload(teamAddress, timestamp, body))
+
+	h := sha256.Sum256(body)
+	want := `{"body_sha256":"` + hex.EncodeToString(h[:]) + `","team":"tést.example/<a&b>","timestamp":"2026-04-07T12:00:00Z"}`
+	if got != want {
+		t.Fatalf("got:  %s\nwant: %s", got, want)
+	}
+	if strings.Contains(got, `\u003c`) || strings.Contains(got, `\u003e`) || strings.Contains(got, `\u0026`) {
+		t.Fatalf("payload still HTML-escaped: %s", got)
 	}
 }
 
