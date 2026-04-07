@@ -127,3 +127,83 @@ func TestRegisterAddressAtRequiresControllerSigningKey(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestDeleteNamespaceAtSignsWithControllerKey(t *testing.T) {
+	t.Parallel()
+
+	controllerPub, controllerPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(controllerPub)
+
+	var gotBody deleteReasonRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/namespaces/acme.com" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method=%s", r.Method)
+		}
+
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		parts := strings.Split(auth, " ")
+		if len(parts) != 3 || parts[0] != "DIDKey" {
+			t.Fatalf("unexpected Authorization header %q", auth)
+		}
+		if parts[1] != controllerDID {
+			t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
+		}
+
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		payload := canonicalRegistryJSON(map[string]string{
+			"domain":    "acme.com",
+			"operation": "delete_namespace",
+			"timestamp": timestamp,
+		})
+		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+		if err != nil {
+			t.Fatalf("decode signature: %v", err)
+		}
+		if !ed25519.Verify(controllerPub, []byte(payload), sig) {
+			t.Fatalf("invalid controller signature for payload %s", payload)
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": true})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	if err := client.DeleteNamespaceAt(
+		context.Background(),
+		server.URL,
+		"acme.com",
+		controllerPriv,
+		"rollback after partial failure",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.Reason != "rollback after partial failure" {
+		t.Fatalf("reason=%q", gotBody.Reason)
+	}
+}
+
+func TestDeleteNamespaceAtRequiresControllerSigningKey(t *testing.T) {
+	t.Parallel()
+
+	client := NewAWIDRegistryClient(http.DefaultClient, nil)
+	err := client.DeleteNamespaceAt(
+		context.Background(),
+		"https://registry.example.com",
+		"acme.com",
+		nil,
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "controller signing key is required") {
+		t.Fatalf("err=%v", err)
+	}
+}

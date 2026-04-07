@@ -148,7 +148,7 @@ async def test_register_certificate_deleted_team_returns_404(client, controller_
     team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "del.cert.com", "gone")
 
     # Delete the team
-    headers = _sign(ns_key, ns_did, domain="del.cert.com", operation="delete_team", name="gone")
+    headers = _sign(ns_key, ns_did, domain="del.cert.com", operation="delete_team", team_name="gone")
     resp = await client.delete("/v1/namespaces/del.cert.com/teams/gone", headers=headers)
     assert resp.status_code == 200
 

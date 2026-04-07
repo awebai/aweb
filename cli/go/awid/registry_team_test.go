@@ -2,6 +2,8 @@ package awid
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +92,98 @@ func TestGetTeam(t *testing.T) {
 	}
 	if team.TeamDIDKey != "did:key:z6MkTeam" {
 		t.Fatalf("team_did_key=%q", team.TeamDIDKey)
+	}
+}
+
+func TestDeleteTeam(t *testing.T) {
+	t.Parallel()
+
+	controllerPub, controllerKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(controllerPub)
+
+	var gotBody deleteReasonRequest
+	var gotAuthHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/namespaces/acme.com/teams/backend" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		gotAuthHeader = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.DeleteTeam(
+		ctx, server.URL, "acme.com", "backend", controllerKey, "cleanup after failed provision",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.Reason != "cleanup after failed provision" {
+		t.Fatalf("reason=%q", gotBody.Reason)
+	}
+	if !strings.HasPrefix(gotAuthHeader, "DIDKey ") {
+		t.Fatalf("auth header=%q", gotAuthHeader)
+	}
+	parts := strings.Split(gotAuthHeader, " ")
+	if len(parts) != 3 {
+		t.Fatalf("auth=%q", gotAuthHeader)
+	}
+	if parts[1] != controllerDID {
+		t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
+	}
+}
+
+func TestDeleteTeamSignsTeamNameInPayload(t *testing.T) {
+	t.Parallel()
+
+	controllerPub, controllerKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(controllerPub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		parts := strings.Split(auth, " ")
+		if len(parts) != 3 || parts[0] != "DIDKey" {
+			t.Fatalf("unexpected Authorization header %q", auth)
+		}
+		if parts[1] != controllerDID {
+			t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
+		}
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		payload := canonicalRegistryJSON(map[string]string{
+			"domain":    "acme.com",
+			"operation": "delete_team",
+			"team_name": "backend",
+			"timestamp": timestamp,
+		})
+		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+		if err != nil {
+			t.Fatalf("decode signature: %v", err)
+		}
+		if !ed25519.Verify(controllerPub, []byte(payload), sig) {
+			t.Fatalf("invalid controller signature for payload %s", payload)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.DeleteTeam(ctx, server.URL, "acme.com", "backend", controllerKey, ""); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -212,5 +306,18 @@ func TestRevokeCertificate(t *testing.T) {
 	}
 	if gotPayload["certificate_id"] != "cert-42" {
 		t.Fatalf("certificate_id=%v", gotPayload["certificate_id"])
+	}
+}
+
+func TestDeleteTeamRequiresControllerSigningKey(t *testing.T) {
+	t.Parallel()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.DeleteTeam(ctx, "https://registry.example.com", "acme.com", "backend", nil, "")
+	if err == nil || !strings.Contains(err.Error(), "controller signing key is required") {
+		t.Fatalf("err=%v", err)
 	}
 }

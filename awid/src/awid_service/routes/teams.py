@@ -135,6 +135,12 @@ class TeamListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class TeamDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=512)
+
+
 class CertificateRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -344,20 +350,21 @@ async def delete_team(
     request: Request,
     domain: str,
     name: str,
+    body: TeamDeleteRequest | None = None,
     db_infra=Depends(get_db),
 ) -> dict:
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
-        request, db, domain=domain, operation="delete_team", name=name,
+        request, db, domain=domain, operation="delete_team", team_name=name,
     )
 
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            UPDATE {{tables.teams}}
-            SET deleted_at = NOW()
+            SELECT team_id
+            FROM {{tables.teams}}
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-            RETURNING team_id
+            FOR UPDATE
             """,
             domain,
             name,
@@ -365,7 +372,34 @@ async def delete_team(
         if row is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-    return {"status": "deleted", "domain": domain, "name": name}
+        active_cert = await tx.fetch_one(
+            """
+            SELECT certificate_id
+            FROM {{tables.team_certificates}}
+            WHERE team_id = $1 AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            row["team_id"],
+        )
+        if active_cert is not None:
+            raise HTTPException(status_code=409, detail="Team has active certificates")
+
+        now = datetime.now(timezone.utc)
+        await tx.execute(
+            "DELETE FROM {{tables.team_certificates}} WHERE team_id = $1",
+            row["team_id"],
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.teams}}
+            SET deleted_at = $2
+            WHERE team_id = $1 AND deleted_at IS NULL
+            """,
+            row["team_id"],
+            now,
+        )
+
+    return {"deleted": True, "team_id": str(row["team_id"]), "domain": domain, "name": name}
 
 
 @router.post(
