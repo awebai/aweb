@@ -2,7 +2,10 @@ package awid
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -306,7 +309,15 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiKey != "" {
+	if c.teamCertHeader != "" && c.signingKey != nil {
+		// Certificate auth: same DIDKey + cert headers as regular requests.
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signPayload := buildCertAuthSignPayload(c.teamAddress, timestamp, nil)
+		sig := ed25519.Sign(c.signingKey, []byte(signPayload))
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 

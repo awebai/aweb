@@ -80,9 +80,10 @@ var (
 	teamAddNamespace string
 	teamAddMember    string
 
-	teamRemoveTeam      string
-	teamRemoveNamespace string
-	teamRemoveMember    string
+	teamRemoveTeam        string
+	teamRemoveNamespace   string
+	teamRemoveMember      string
+	teamRemoveRegistryURL string
 )
 
 // --- commands ---
@@ -157,6 +158,7 @@ func init() {
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveTeam, "team", "", "Team name")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveNamespace, "namespace", "", "Namespace domain")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveMember, "member", "", "Member address (e.g. acme.com/alice)")
+	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamCmd.AddCommand(teamRemoveMemberCmd)
 
 	identityCmd.AddCommand(teamCmd)
@@ -498,11 +500,24 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve registry URL: explicit flag → identity.yaml → default.
+	registryURL := strings.TrimSpace(teamRemoveRegistryURL)
+	if registryURL == "" {
+		if workingDir, wdErr := os.Getwd(); wdErr == nil {
+			if identity, _, idErr := awconfig.LoadWorktreeIdentityFromDir(workingDir); idErr == nil && identity != nil {
+				registryURL = strings.TrimSpace(identity.RegistryURL)
+			}
+		}
+	}
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// List active certificates to find the member's certificate_id
-	certs, err := registry.ListCertificates(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, true)
+	certs, err := registry.ListCertificates(ctx, registryURL, domain, team, true)
 	if err != nil {
 		return fmt.Errorf("list certificates: %w", err)
 	}
@@ -514,7 +529,7 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 
 	// Try to resolve the member's did:key for precise matching
 	var memberDIDKey string
-	address, _, addrErr := registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+	address, _, addrErr := registry.GetNamespaceAddressAt(ctx, registryURL, memberDomain, memberName)
 	if addrErr == nil {
 		memberDIDKey = address.CurrentDIDKey
 	}
@@ -524,7 +539,7 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("in team %s: %w", teamAddress, err)
 	}
 
-	if err := registry.RevokeCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, certID, teamKey); err != nil {
+	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, certID, teamKey); err != nil {
 		return fmt.Errorf("revoke certificate: %w", err)
 	}
 
