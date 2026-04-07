@@ -77,9 +77,9 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	resp, err := client.ClaimHuman(ctx, &awid.ClaimHumanRequest{
-		Username:    username,
-		Email:       email,
-		AgentDIDKey: didKey,
+		Username: username,
+		Email:    email,
+		DIDKey:   didKey,
 	})
 	if err != nil {
 		return mapClaimHumanError(err)

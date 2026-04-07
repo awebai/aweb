@@ -17,9 +17,9 @@ const onboardingClaimHumanPath = "/api/v1/onboarding/claim-human"
 
 // ClaimHumanRequest is sent to POST /api/v1/onboarding/claim-human.
 type ClaimHumanRequest struct {
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	AgentDIDKey string `json:"agent_did_key"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	DIDKey   string `json:"did_key"`
 }
 
 // ClaimHumanResponse is returned by POST /api/v1/onboarding/claim-human.
@@ -39,8 +39,8 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	if strings.TrimSpace(req.Email) == "" {
 		return nil, fmt.Errorf("aweb: email is required for claim-human")
 	}
-	if strings.TrimSpace(req.AgentDIDKey) == "" {
-		return nil, fmt.Errorf("aweb: agent_did_key is required for claim-human")
+	if strings.TrimSpace(req.DIDKey) == "" {
+		return nil, fmt.Errorf("aweb: did_key is required for claim-human")
 	}
 	if c.signingKey == nil {
 		return nil, fmt.Errorf("aweb: claim-human requires a signing key")
@@ -48,8 +48,8 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	if c.did == "" {
 		return nil, fmt.Errorf("aweb: claim-human requires a did:key identity")
 	}
-	if strings.TrimSpace(req.AgentDIDKey) != c.did {
-		return nil, fmt.Errorf("aweb: agent_did_key %q does not match client did:key %q", req.AgentDIDKey, c.did)
+	if strings.TrimSpace(req.DIDKey) != c.did {
+		return nil, fmt.Errorf("aweb: did_key %q does not match client did:key %q", req.DIDKey, c.did)
 	}
 
 	bodyBytes, err := json.Marshal(req)

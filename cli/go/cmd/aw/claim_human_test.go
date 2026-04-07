@@ -74,8 +74,8 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	if gotBody["email"] != "alice@example.com" {
 		t.Fatalf("email=%v", gotBody["email"])
 	}
-	if gotBody["agent_did_key"] != didKey {
-		t.Fatalf("agent_did_key=%v want %v", gotBody["agent_did_key"], didKey)
+	if gotBody["did_key"] != didKey {
+		t.Fatalf("did_key=%v want %v", gotBody["did_key"], didKey)
 	}
 
 	parts := strings.Fields(gotAuth)

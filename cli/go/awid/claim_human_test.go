@@ -56,9 +56,9 @@ func TestClaimHuman(t *testing.T) {
 	}
 
 	resp, err := c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username:    "alice",
-		Email:       "alice@example.com",
-		AgentDIDKey: didKey,
+		Username: "alice",
+		Email:    "alice@example.com",
+		DIDKey:   didKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,8 +88,8 @@ func TestClaimHuman(t *testing.T) {
 	if gotBody["email"] != "alice@example.com" {
 		t.Fatalf("request email=%v", gotBody["email"])
 	}
-	if gotBody["agent_did_key"] != didKey {
-		t.Fatalf("request agent_did_key=%v want %v", gotBody["agent_did_key"], didKey)
+	if gotBody["did_key"] != didKey {
+		t.Fatalf("request did_key=%v want %v", gotBody["did_key"], didKey)
 	}
 
 	// Verify response.
@@ -122,9 +122,9 @@ func TestClaimHumanHTTPError(t *testing.T) {
 	}
 
 	_, err = c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username:    "alice",
-		Email:       "alice@example.com",
-		AgentDIDKey: didKey,
+		Username: "alice",
+		Email:    "alice@example.com",
+		DIDKey:   didKey,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -175,9 +175,9 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 	}
 
 	if _, err := c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username:    "alice",
-		Email:       "alice@example.com",
-		AgentDIDKey: didKey,
+		Username: "alice",
+		Email:    "alice@example.com",
+		DIDKey:   didKey,
 	}); err != nil {
 		t.Fatal(err)
 	}
