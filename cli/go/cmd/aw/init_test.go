@@ -74,17 +74,11 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	if captured.ServerURL != "https://app.aweb.ai" {
 		t.Fatalf("server_url=%q", captured.ServerURL)
 	}
-	if captured.ProjectSlug != sanitizeSlug(filepath.Base(tmp)) {
-		t.Fatalf("project_slug=%q", captured.ProjectSlug)
-	}
 	if captured.Role != "reviewer" {
 		t.Fatalf("role=%q", captured.Role)
 	}
 	if !captured.AskPostCreateSetup {
 		t.Fatal("expected guided onboarding to include post-create setup prompts")
-	}
-	if captured.AuthToken != "" {
-		t.Fatalf("auth_token=%q", captured.AuthToken)
 	}
 	if readyCalls != 1 {
 		t.Fatalf("expected post-wizard ready message once, got %d", readyCalls)

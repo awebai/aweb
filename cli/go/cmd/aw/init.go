@@ -210,16 +210,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if workspaceMissing {
 			if !initIsTTY() {
-				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding, use `aw project create`, or get a team certificate first with `aw id team accept-invite`")
+				return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or get a team certificate first with `aw id team accept-invite`")
 			}
 			result, err := guidedOnboardingWizard(guidedOnboardingRequest{
-				WorkingDir:    wd,
-				PromptIn:      os.Stdin,
-				PromptOut:     os.Stderr,
-				ServerURL:     initServerURL,
-				ServerName:    serverFlag,
-				ProjectSlug:   firstNonEmpty(resolveProjectSlug(), sanitizeSlug(filepath.Base(wd))),
-				NamespaceSlug: resolveExplicitNamespaceSlug(),
+				WorkingDir: wd,
+				PromptIn:   os.Stdin,
+				PromptOut:  os.Stderr,
+				ServerURL:  initServerURL,
+				ServerName: serverFlag,
 				Alias: func() string {
 					if initPermanent {
 						return strings.TrimSpace(initAlias)
@@ -241,7 +239,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		return usageError("this directory already has a workspace; set AWEB_API_KEY to reinitialize or use `aw project create` to start a new project")
+		return usageError("this directory already has a workspace; set AWEB_API_KEY to reinitialize it or use a fresh directory")
 	}
 
 	opts, err := collectInitOptionsForFlow(flowProjectKey)

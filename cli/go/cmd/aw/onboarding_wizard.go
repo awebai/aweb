@@ -9,12 +9,13 @@ import (
 )
 
 var (
-	guidedOnboardingWizard           = executeGuidedOnboardingWizard
-	guidedOnboardingExecuteInitFlow  = executeInit
-	guidedOnboardingPrintInitSummary = printInitSummary
-	guidedOnboardingInjectDocs       = InjectAgentDocs
-	guidedOnboardingSetupHooks       = SetupClaudeHooks
-	guidedOnboardingSetupChannel     = SetupChannelMCP
+	guidedOnboardingWizard            = executeGuidedOnboardingWizard
+	guidedOnboardingConnect           = initCertificateConnect
+	guidedOnboardingExecuteHostedPath = executeHostedPath
+	guidedOnboardingExecuteBYODPath   = executeBYODPath
+	guidedOnboardingInjectDocs        = InjectAgentDocs
+	guidedOnboardingSetupHooks        = SetupClaudeHooks
+	guidedOnboardingSetupChannel      = SetupChannelMCP
 )
 
 type guidedOnboardingRequest struct {
@@ -23,15 +24,12 @@ type guidedOnboardingRequest struct {
 	PromptOut          io.Writer
 	ServerURL          string
 	ServerName         string
-	ProjectSlug        string
-	NamespaceSlug      string
 	Alias              string
 	Name               string
 	Reachability       string
 	HumanName          string
 	AgentType          string
 	Role               string
-	AuthToken          string
 	AskPostCreateSetup bool
 }
 
@@ -39,135 +37,128 @@ type guidedOnboardingResult struct {
 	InitialPrompt string
 }
 
+type guidedOnboardingPath string
+
+const (
+	guidedOnboardingPathHosted guidedOnboardingPath = "Use the aweb.ai managed identity"
+	guidedOnboardingPathBYOD   guidedOnboardingPath = "I have a domain I control (BYOD)"
+)
+
 func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return nil, fmt.Errorf("working directory is required")
 	}
 
-	if strings.TrimSpace(req.AuthToken) != "" {
-		return executeGuidedExistingProjectInit(req)
+	if guidedOnboardingHasReconnectState(req.WorkingDir) {
+		return executeReconnectPath(req)
 	}
-	return executeGuidedProjectCreate(req)
+
+	path, err := promptGuidedOnboardingPath(req.PromptIn, req.PromptOut)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *guidedOnboardingResult
+	switch path {
+	case guidedOnboardingPathHosted:
+		result, err = guidedOnboardingExecuteHostedPath(req)
+	case guidedOnboardingPathBYOD:
+		result, err = guidedOnboardingExecuteBYODPath(req)
+	default:
+		return nil, fmt.Errorf("unsupported onboarding path %q", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if err := runGuidedPostInitSetup(req); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-func executeGuidedExistingProjectInit(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
-	serverURL, err := promptRequiredStringWithIO("Server URL", defaultWizardServerURL(), req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
-	}
-	permanent, err := promptIdentityLifetime(req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
+func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+	serverURL := strings.TrimSpace(req.ServerURL)
+	if serverURL == "" {
+		serverURL = defaultWizardServerURL()
 	}
 
-	opts, err := collectInitOptionsWithInput(flowProjectKey, guidedOnboardingInitInput(req, initCollectionInput{
-		WorkingDir:   req.WorkingDir,
-		Interactive:  true,
-		PromptIn:     req.PromptIn,
-		PromptOut:    req.PromptOut,
-		ServerURL:    serverURL,
-		ServerName:   req.ServerName,
-		Alias:        req.Alias,
-		Name:         req.Name,
-		Reachability: req.Reachability,
-		HumanName:    req.HumanName,
-		AgentType:    req.AgentType,
-		Role:         req.Role,
-		Permanent:    permanent,
-		PromptRole:   true,
-		PromptName:   true,
-		AuthToken:    strings.TrimSpace(req.AuthToken),
-	}))
+	result, err := guidedOnboardingConnect(req.WorkingDir, serverURL, req.Role)
 	if err != nil {
 		return nil, err
 	}
+	printOutput(result, formatConnect)
 
-	result, err := guidedOnboardingExecuteInitFlow(opts)
-	if err != nil {
+	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
 	}
-	guidedOnboardingPrintInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Initialized workspace")
 	return &guidedOnboardingResult{}, nil
 }
 
-func executeGuidedProjectCreate(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
-	serverURL, err := promptRequiredStringWithIO("Server URL", defaultWizardServerURL(), req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
-	}
-	slugDefault := firstNonEmpty(req.ProjectSlug, sanitizeSlug(filepath.Base(req.WorkingDir)))
-	projectSlug, err := promptProjectSlug(padSlug(slugDefault, 3), req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
-	}
-	permanent, err := promptIdentityLifetime(req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
-	}
-
-	opts, err := collectInitOptionsWithInput(flowHeadless, guidedOnboardingInitInput(req, initCollectionInput{
-		WorkingDir:       req.WorkingDir,
-		Interactive:      true,
-		PromptIn:         req.PromptIn,
-		PromptOut:        req.PromptOut,
-		ServerURL:        serverURL,
-		ServerName:       req.ServerName,
-		ProjectSlug:      sanitizeSlug(projectSlug),
-		NamespaceSlug:    req.NamespaceSlug,
-		Alias:            "",
-		Name:             req.Name,
-		Reachability:     req.Reachability,
-		HumanName:        req.HumanName,
-		AgentType:        req.AgentType,
-		Role:             req.Role,
-		Permanent:        permanent,
-		PromptName:       true,
-		DeferAliasPrompt: true,
-		DeferRolePrompt:  true,
-	}))
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := guidedOnboardingExecuteInitFlow(opts)
-	if err != nil {
-		return nil, err
-	}
-	guidedOnboardingPrintInitSummary(result.Response, result.ServerName, result.Role, result.AttachResult, result.SigningKeyPath, req.WorkingDir, "Created project and initialized workspace")
-
-	if req.AskPostCreateSetup {
-		repoRoot := resolveRepoRoot(req.WorkingDir)
-		if docs, err := promptYesNoWithIO("Inject agent docs into this repo?", false, req.PromptIn, req.PromptOut); err == nil && docs {
-			printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
-		} else if err != nil {
-			return nil, err
-		}
-		if channel, err := promptYesNoWithIO(
-			"Set up Claude Code channel for real-time coordination?\n"+
-				"  (Alternative: install the plugin with /plugin install aweb-channel@awebai-marketplace)",
-			false, req.PromptIn, req.PromptOut,
-		); err == nil && channel {
-			printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
-		} else if err != nil {
-			return nil, err
-		} else if !channel {
-			if hooks, err := promptYesNoWithIO("Set up Claude hooks for aw notify? (polling fallback)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
-				printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
-			} else if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else."}, nil
+func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+	return nil, usageError(
+		"guided Hosted onboarding is not available in this build yet; use the aweb.ai managed onboarding flow outside the CLI for now, or rerun after aweb-aafx.3 lands",
+	)
 }
 
-func guidedOnboardingInitInput(req guidedOnboardingRequest, input initCollectionInput) initCollectionInput {
-	input.WorkingDir = req.WorkingDir
-	input.PromptIn = req.PromptIn
-	input.PromptOut = req.PromptOut
-	input.WriteContext = true
-	return input
+func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+	return nil, usageError(
+		"guided BYOD onboarding is not available in this build yet; create or accept your identity first, then rerun `aw init --server <server>` after aweb-aafx.4 lands",
+	)
+}
+
+func guidedOnboardingHasReconnectState(workingDir string) bool {
+	_, err := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml"))
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(workingDir, ".aw", "team-cert.pem"))
+	return err == nil
+}
+
+func promptGuidedOnboardingPath(in io.Reader, out io.Writer) (guidedOnboardingPath, error) {
+	fmt.Fprintln(out, "How should this agent get its identity?")
+	fmt.Fprintln(out, "  Hosted is the fastest path. BYOD uses a domain you already control.")
+	choice, err := promptIndexedChoice(
+		"Choose onboarding path",
+		[]string{string(guidedOnboardingPathHosted), string(guidedOnboardingPathBYOD)},
+		0,
+		in,
+		out,
+	)
+	if err != nil {
+		return "", err
+	}
+	return guidedOnboardingPath(choice), nil
+}
+
+func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
+	if !req.AskPostCreateSetup {
+		return nil
+	}
+
+	repoRoot := resolveRepoRoot(req.WorkingDir)
+	if docs, err := promptYesNoWithIO("Inject agent docs into this repo?", false, req.PromptIn, req.PromptOut); err == nil && docs {
+		printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
+	} else if err != nil {
+		return err
+	}
+	if channel, err := promptYesNoWithIO(
+		"Set up Claude Code channel for real-time coordination?\n"+
+			"  (Alternative: install the plugin with /plugin install aweb-channel@awebai-marketplace)",
+		false, req.PromptIn, req.PromptOut,
+	); err == nil && channel {
+		printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
+	} else if err != nil {
+		return err
+	} else if !channel {
+		if hooks, err := promptYesNoWithIO("Set up Claude hooks for aw notify? (polling fallback)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
+			printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Writer) (bool, error) {
@@ -186,36 +177,6 @@ func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Write
 		return false, nil
 	default:
 		return false, usageError("please answer y or n")
-	}
-}
-
-const minProjectSlugLength = 3
-
-func padSlug(slug string, minLen int) string {
-	for len(slug) < minLen {
-		slug += "x"
-	}
-	return slug
-}
-
-func promptProjectSlug(defaultSlug string, in io.Reader, out io.Writer) (string, error) {
-	reader := bufferedPromptReader(in)
-	for {
-		fmt.Fprintf(out, "Project [%s]: ", defaultSlug)
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			line = defaultSlug
-		}
-		slug := sanitizeSlug(line)
-		if len(slug) < minProjectSlugLength {
-			fmt.Fprintf(out, "Project slug must be at least %d characters.\n", minProjectSlugLength)
-			continue
-		}
-		return slug, nil
 	}
 }
 
