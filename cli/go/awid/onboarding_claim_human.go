@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,28 +99,4 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 		return nil, err
 	}
 	return &out, nil
-}
-
-// cloudDIDAuthSignPayload builds the canonical onboarding verifier envelope.
-// Keys are serialized in lexicographic order with no whitespace:
-// {"body_sha256":"...","method":"POST","path":"/api/v1/...","timestamp":"..."}
-func cloudDIDAuthSignPayload(method, path, timestamp string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	bodyHash := hex.EncodeToString(h[:])
-
-	var b strings.Builder
-	b.WriteString(`{"body_sha256":`)
-	hashJSON, _ := json.Marshal(bodyHash)
-	b.Write(hashJSON)
-	b.WriteString(`,"method":`)
-	methodJSON, _ := json.Marshal(strings.ToUpper(strings.TrimSpace(method)))
-	b.Write(methodJSON)
-	b.WriteString(`,"path":`)
-	pathJSON, _ := json.Marshal(strings.TrimSpace(path))
-	b.Write(pathJSON)
-	b.WriteString(`,"timestamp":`)
-	tsJSON, _ := json.Marshal(timestamp)
-	b.Write(tsJSON)
-	b.WriteByte('}')
-	return []byte(b.String())
 }
