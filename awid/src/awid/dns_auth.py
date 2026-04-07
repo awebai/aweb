@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 
-from aweb.awid.did import validate_did
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.did import validate_did
+from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 
 def parse_didkey_auth(authorization: str | None) -> tuple[str, str]:

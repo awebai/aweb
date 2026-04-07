@@ -8,14 +8,13 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pgdbm import AsyncDatabaseManager
 
-from aweb.awid import sign_message
-from aweb.awid.did import did_from_public_key, generate_keypair
-from aweb.awid.signing import canonical_json_bytes
-from aweb.db_config import build_database_config
-from aweb.deps import get_domain_verifier
-from aweb.dns_verify import DomainAuthority
+from awid.did import did_from_public_key, generate_keypair
+from awid.signing import canonical_json_bytes, sign_message
+from awid.db_config import build_database_config
+from awid.dns_verify import DomainAuthority
 
 from awid_service.db import AwidDatabaseInfra
+from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)

@@ -1,4 +1,4 @@
-"""Structured logging configuration for the coordination core."""
+"""Structured logging configuration shared by awid_service and aweb."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class JSONFormatter(logging.Formatter):
 
 def configure_logging(log_level: str = "INFO", json_format: bool = True) -> None:
     """
-    Configure logging for the coordination core.
+    Configure root logging for awid_service or aweb.
 
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)

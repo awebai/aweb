@@ -4,10 +4,10 @@ import pytest
 from dns.exception import Timeout
 from dns.resolver import NXDOMAIN, NoNameservers
 
-import aweb.dns_verify as dns_verify
-from aweb.awid import did_from_public_key, generate_keypair
+import awid.dns_verify as dns_verify
+from awid.did import did_from_public_key, generate_keypair
 from aweb.config import DEFAULT_AWID_REGISTRY_URL
-from aweb.dns_verify import (
+from awid.dns_verify import (
     DnsVerificationError,
     awid_txt_name,
     awid_txt_value,

@@ -6,7 +6,7 @@ from typing import Any
 
 from pgdbm import AsyncDatabaseManager
 
-from aweb.db_config import build_database_config
+from awid.db_config import build_database_config
 
 from .config import get_settings
 from .db import AwidDatabaseInfra

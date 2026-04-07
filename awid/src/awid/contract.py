@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aweb.awid.did import stable_id_from_did_key
+from awid.did import stable_id_from_did_key
 
 
 IDENTITY_LIFETIMES = ("ephemeral", "persistent")

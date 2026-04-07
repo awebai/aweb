@@ -17,7 +17,7 @@ from aweb.team_auth_deps import get_team_identity
 from ...config import get_settings
 from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
-from ...pagination import encode_cursor, validate_pagination_params
+from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     clear_workspace_presence,
     list_agent_presences,

@@ -9,24 +9,24 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from aweb.db import get_db_infra
-from aweb.ratelimit import rate_limit_dep
-from aweb.awid.did import (
+from awid_service.deps import get_db as get_db_infra
+from awid.ratelimit import rate_limit_dep
+from awid.did import (
     public_key_from_did,
     stable_id_from_did_key,
     stable_id_from_public_key,
     validate_stable_id,
 )
-from aweb.awid.log import (
+from awid.log import (
     log_entry_payload as awid_log_entry_payload,
     require_canonical_server_origin,
     sha256_hex as awid_sha256_hex,
     state_hash as awid_state_hash,
 )
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
-from aweb.pagination import encode_cursor, validate_pagination_params
+from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.routes.dns_addresses import AddressListResponse, AddressResponse
-from aweb.routes.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
+from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 
 router = APIRouter(prefix="/v1/did", tags=["did"])
 

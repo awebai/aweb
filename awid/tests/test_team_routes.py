@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aweb.awid.did import did_from_public_key, generate_keypair
+from awid.did import did_from_public_key, generate_keypair
 
 from conftest import build_signed_headers as _sign
 

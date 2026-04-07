@@ -18,8 +18,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aweb.routes.dns_auth import parse_didkey_auth
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.dns_auth import parse_didkey_auth
+from awid.signing import canonical_json_bytes, verify_did_key_signature
 from aweb.team_auth import parse_and_verify_certificate
 
 logger = logging.getLogger(__name__)

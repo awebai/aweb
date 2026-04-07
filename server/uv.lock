@@ -87,6 +87,7 @@ name = "aweb"
 version = "1.6.2"
 source = { editable = "." }
 dependencies = [
+    { name = "awid-service" },
     { name = "base58" },
     { name = "cryptography" },
     { name = "dnspython" },
@@ -112,6 +113,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "awid-service", directory = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
     { name = "dnspython", specifier = ">=2.8.0" },
@@ -124,6 +126,47 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pynacl", specifier = ">=1.6.2" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "redis", specifier = ">=6.4.0" },
+    { name = "typer", specifier = ">=0.16.1" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+]
+
+[[package]]
+name = "awid-service"
+version = "0.1.2"
+source = { directory = "../awid" }
+dependencies = [
+    { name = "base58" },
+    { name = "dnspython" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pgdbm" },
+    { name = "publicsuffix2" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pynacl" },
+    { name = "redis" },
+    { name = "typer" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "base58", specifier = ">=2.1.1" },
+    { name = "dnspython", specifier = ">=2.8.0" },
+    { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pgdbm", specifier = ">=0.4.1" },
+    { name = "publicsuffix2", specifier = ">=2.20191221" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pydantic-settings", specifier = ">=2.10.1" },
+    { name = "pynacl", specifier = ">=1.6.2" },
     { name = "redis", specifier = ">=6.4.0" },
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },

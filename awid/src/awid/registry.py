@@ -15,9 +15,9 @@ from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from aweb.awid.did import did_from_public_key, stable_id_from_did_key
-from aweb.awid.log import canonical_server_origin, log_entry_payload, state_hash
-from aweb.awid.signing import canonical_json_bytes, sign_message
+from awid.did import did_from_public_key, stable_id_from_did_key
+from awid.log import canonical_server_origin, log_entry_payload, state_hash
+from awid.signing import canonical_json_bytes, sign_message
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
@@ -136,7 +136,7 @@ class RegistryClient:
         if self.transport is not None:
             return canonical_server_origin(self.registry_url)
         default_registry_url = canonical_server_origin(self.registry_url)
-        from aweb.dns_verify import DnsVerificationError, discover_registry_override
+        from awid.dns_verify import DnsVerificationError, discover_registry_override
 
         try:
             registry_override = await discover_registry_override(domain)

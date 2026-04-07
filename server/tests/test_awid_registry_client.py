@@ -7,20 +7,21 @@ import httpx
 import pytest
 from redis.exceptions import RedisError
 
-import aweb.dns_verify as dns_verify_module
-from aweb.awid import (
+import awid.dns_verify as dns_verify_module
+from awid.registry import (
     AlreadyRegisteredError,
     CachedRegistryClient,
     RegistryError,
     RegistryClient,
+)
+from awid.did import (
     did_from_public_key,
     generate_keypair,
     stable_id_from_did_key,
-    verify_did_key_signature,
 )
-import aweb.awid.registry as registry_module
-from aweb.awid.log import log_entry_payload
-from aweb.awid.signing import canonical_json_bytes
+from awid.signing import canonical_json_bytes, verify_did_key_signature
+import awid.registry as registry_module
+from awid.log import log_entry_payload
 
 
 def _authorization_parts(header: str) -> tuple[str, str]:
@@ -362,7 +363,7 @@ async def test_registry_url_for_domain_falls_back_to_configured_registry_when_dn
     monkeypatch,
 ):
     async def _failing_override_lookup(_domain: str):
-        from aweb.dns_verify import DnsVerificationError
+        from awid.dns_verify import DnsVerificationError
 
         raise DnsVerificationError("dns unavailable")
 

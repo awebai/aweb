@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb.awid.did import did_from_public_key, generate_keypair
+from awid.did import did_from_public_key, generate_keypair
 
 
 @pytest.mark.asyncio

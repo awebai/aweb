@@ -7,7 +7,7 @@ from typing import Any, Optional
 from pgdbm import AsyncDatabaseManager
 from pgdbm.migrations import AsyncMigrationManager
 
-from aweb.db_config import build_database_config
+from awid.db_config import build_database_config
 
 from .config import get_settings
 

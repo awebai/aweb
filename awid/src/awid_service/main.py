@@ -10,8 +10,8 @@ from fastapi import FastAPI, Request
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 
-from aweb.logging import configure_logging
-from aweb.ratelimit import MemoryFixedWindowRateLimiter, RedisFixedWindowRateLimiter
+from awid.log_config import configure_logging
+from awid.ratelimit import MemoryFixedWindowRateLimiter, RedisFixedWindowRateLimiter
 from .config import get_settings
 from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router

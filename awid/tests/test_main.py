@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from aweb.awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
-from aweb.awid.signing import canonical_json_bytes
-from aweb.awid import sign_message
+from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.signing import canonical_json_bytes
+from awid.signing import sign_message
 
 from awid_service.main import create_app
 

@@ -18,9 +18,15 @@ import dns.asyncresolver
 import dns.exception
 import dns.resolver
 
-from aweb.awid.did import validate_did
-from aweb.awid.log import canonical_server_origin
-from aweb.config import DEFAULT_AWID_REGISTRY_URL
+from awid.did import validate_did
+from awid.log import canonical_server_origin
+
+DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai"
+
+
+from typing import Awaitable, Callable
+
+DomainVerifier = Callable[[str], Awaitable["DomainAuthority"]]
 
 
 @dataclass(frozen=True)

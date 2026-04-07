@@ -8,7 +8,7 @@ import pytest
 
 from nacl.signing import SigningKey
 
-from aweb.awid.did import did_from_public_key
+from awid.did import did_from_public_key
 
 
 # ---------------------------------------------------------------------------

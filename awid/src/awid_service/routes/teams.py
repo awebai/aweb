@@ -12,11 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-from aweb.deps import get_db
-from aweb.pagination import encode_cursor, validate_pagination_params
-from aweb.ratelimit import rate_limit_dep
-from aweb.routes.dns_auth import validate_did_key as _validate_did_key
-from aweb.routes.dns_auth import verify_signed_json_request
+from awid_service.deps import get_db
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import rate_limit_dep
+from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
 
