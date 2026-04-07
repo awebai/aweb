@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,20 @@ type certShowOutput struct {
 	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
 	CertificateID string `json:"certificate_id"`
+}
+
+type localTeamRegistration struct {
+	TeamAddress string
+	TeamDIDKey  string
+	TeamKey     ed25519.PrivateKey
+	TeamKeyPath string
+}
+
+type localTeamBootstrapResult struct {
+	TeamAddress string
+	TeamDIDKey  string
+	TeamKeyPath string
+	Certificate *awid.TeamCertificate
 }
 
 // --- flags ---
@@ -179,25 +194,6 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 		return usageError("--namespace is required")
 	}
 
-	// Reuse existing team key or generate a fresh one
-	var teamPriv ed25519.PrivateKey
-	exists, err := awconfig.TeamKeyExists(domain, name)
-	if err != nil {
-		return err
-	}
-	if exists {
-		teamPriv, err = awconfig.LoadTeamKey(domain, name)
-		if err != nil {
-			return err
-		}
-	} else {
-		_, teamPriv, err = awid.GenerateKeypair()
-		if err != nil {
-			return err
-		}
-	}
-	teamDIDKey := awid.ComputeDIDKey(teamPriv.Public().(ed25519.PublicKey))
-
 	// Load namespace controller key for auth
 	controllerKey, err := awconfig.LoadControllerKey(domain)
 	if err != nil {
@@ -217,24 +213,23 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = registry.CreateTeam(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, name, strings.TrimSpace(teamCreateDisplayName), teamDIDKey, controllerKey)
+	registration, err := ensureLocalTeamRegistered(
+		ctx,
+		registry,
+		strings.TrimSpace(registry.DefaultRegistryURL),
+		domain,
+		name,
+		strings.TrimSpace(teamCreateDisplayName),
+		controllerKey,
+	)
 	if err != nil {
-		return fmt.Errorf("create team at registry: %w", err)
+		return err
 	}
-
-	// Save the key only after registry confirms success
-	if !exists {
-		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
-			return err
-		}
-	}
-
-	teamKeyPath, _ := awconfig.TeamKeyPath(domain, name)
 	printOutput(teamCreateOutput{
 		Status:      "created",
-		TeamAddress: domain + "/" + name,
-		TeamDIDKey:  teamDIDKey,
-		TeamKeyPath: teamKeyPath,
+		TeamAddress: registration.TeamAddress,
+		TeamDIDKey:  registration.TeamDIDKey,
+		TeamKeyPath: registration.TeamKeyPath,
 		RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL),
 	}, formatTeamCreate)
 	return nil
@@ -577,6 +572,121 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 }
 
 // --- helpers ---
+
+func ensureLocalTeamRegistered(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, name, displayName string,
+	controllerKey ed25519.PrivateKey,
+) (*localTeamRegistration, error) {
+	domain = awconfig.NormalizeDomain(domain)
+	name = strings.ToLower(strings.TrimSpace(name))
+	registryURL = strings.TrimSpace(registryURL)
+	if registry == nil {
+		return nil, fmt.Errorf("registry client is required")
+	}
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("team name is required")
+	}
+	if controllerKey == nil {
+		return nil, fmt.Errorf("controller signing key is required")
+	}
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+
+	var teamPriv ed25519.PrivateKey
+	exists, err := awconfig.TeamKeyExists(domain, name)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		teamPriv, err = awconfig.LoadTeamKey(domain, name)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		_, teamPriv, err = awid.GenerateKeypair()
+		if err != nil {
+			return nil, err
+		}
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPriv.Public().(ed25519.PublicKey))
+
+	_, err = registry.CreateTeam(ctx, registryURL, domain, name, strings.TrimSpace(displayName), teamDIDKey, controllerKey)
+	if err != nil {
+		if code, ok := registryStatusCode(err); !ok || code != http.StatusConflict {
+			return nil, fmt.Errorf("create team at registry: %w", err)
+		}
+		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name)
+		if getErr != nil {
+			return nil, fmt.Errorf("create team at registry: %w", err)
+		}
+		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
+			return nil, fmt.Errorf("team %s/%s is already pinned to %s", domain, name, existingTeam.TeamDIDKey)
+		}
+	}
+
+	if !exists {
+		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
+			return nil, err
+		}
+	}
+	teamKeyPath, err := awconfig.TeamKeyPath(domain, name)
+	if err != nil {
+		return nil, err
+	}
+	return &localTeamRegistration{
+		TeamAddress: domain + "/" + name,
+		TeamDIDKey:  teamDIDKey,
+		TeamKey:     teamPriv,
+		TeamKeyPath: teamKeyPath,
+	}, nil
+}
+
+func bootstrapFirstLocalTeamMember(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, teamName, displayName string,
+	controllerKey, memberKey ed25519.PrivateKey,
+	memberDIDAW, memberAddress, alias string,
+) (*localTeamBootstrapResult, error) {
+	if memberKey == nil {
+		return nil, fmt.Errorf("member signing key is required")
+	}
+	resolvedRegistryURL := strings.TrimSpace(registryURL)
+	if resolvedRegistryURL == "" && registry != nil {
+		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
+	if err != nil {
+		return nil, err
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
+	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
+		Team:          registration.TeamAddress,
+		MemberDIDKey:  memberDIDKey,
+		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
+		MemberAddress: strings.TrimSpace(memberAddress),
+		Alias:         strings.TrimSpace(alias),
+		Lifetime:      awid.LifetimePersistent,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		return nil, fmt.Errorf("register certificate at registry: %w", err)
+	}
+	return &localTeamBootstrapResult{
+		TeamAddress: registration.TeamAddress,
+		TeamDIDKey:  registration.TeamDIDKey,
+		TeamKeyPath: registration.TeamKeyPath,
+		Certificate: cert,
+	}, nil
+}
 
 func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
 	// Try to load existing identity

@@ -42,17 +42,29 @@ type connectResponse struct {
 
 // connectRequest is the body sent to POST /v1/connect.
 type connectRequest struct {
-	Hostname       string `json:"hostname"`
-	WorkspacePath  string `json:"workspace_path"`
-	RepoOrigin     string `json:"repo_origin,omitempty"`
-	Role           string `json:"role,omitempty"`
-	HumanName      string `json:"human_name,omitempty"`
-	AgentType      string `json:"agent_type,omitempty"`
+	Hostname      string `json:"hostname"`
+	WorkspacePath string `json:"workspace_path"`
+	RepoOrigin    string `json:"repo_origin,omitempty"`
+	Role          string `json:"role,omitempty"`
+	HumanName     string `json:"human_name,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+}
+
+type certificateConnectOptions struct {
+	Role      string
+	HumanName string
+	AgentType string
 }
 
 // initCertificateConnect implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
 func initCertificateConnect(workingDir, serverURL, role string) (connectOutput, error) {
+	return initCertificateConnectWithOptions(workingDir, serverURL, certificateConnectOptions{
+		Role: strings.TrimSpace(role),
+	})
+}
+
+func initCertificateConnectWithOptions(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
 	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
@@ -76,9 +88,9 @@ func initCertificateConnect(workingDir, serverURL, role string) (connectOutput, 
 		Hostname:      hostname,
 		WorkspacePath: workingDir,
 		RepoOrigin:    repoOrigin,
-		Role:          strings.TrimSpace(role),
-		HumanName:     resolveHumanNameValue(""),
-		AgentType:     resolveAgentTypeValue(""),
+		Role:          strings.TrimSpace(opts.Role),
+		HumanName:     resolveHumanNameValue(strings.TrimSpace(opts.HumanName)),
+		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -100,7 +112,7 @@ func initCertificateConnect(workingDir, serverURL, role string) (connectOutput, 
 		CanonicalOrigin: canonicalizeGitOrigin(repoOrigin),
 		HumanName:       reqBody.HumanName,
 		AgentType:       reqBody.AgentType,
-		RoleName:        strings.TrimSpace(role),
+		RoleName:        strings.TrimSpace(opts.Role),
 		Hostname:        hostname,
 		WorkspacePath:   workingDir,
 		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),

@@ -143,6 +143,94 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	}
 }
 
+func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *testing.T) {
+	var gotCreatePayload map[string]any
+	var gotCertPayload map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreatePayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "team-uuid-1",
+				"domain":       "acme.com",
+				"name":         "default",
+				"team_did_key": gotCreatePayload["team_did_key"],
+				"created_at":   "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/default/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&gotCertPayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	t.Setenv("HOME", t.TempDir())
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := bootstrapFirstLocalTeamMember(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, awid.ComputeStableID(memberPub), "acme.com/alice", "alice")
+	if err != nil {
+		t.Fatalf("bootstrapFirstLocalTeamMember: %v", err)
+	}
+	if result.TeamAddress != "acme.com/default" {
+		t.Fatalf("team_address=%q", result.TeamAddress)
+	}
+	if result.Certificate == nil {
+		t.Fatal("expected certificate")
+	}
+	if result.Certificate.MemberDIDKey != awid.ComputeDIDKey(memberPub) {
+		t.Fatalf("member_did_key=%q", result.Certificate.MemberDIDKey)
+	}
+	if result.Certificate.MemberAddress != "acme.com/alice" {
+		t.Fatalf("member_address=%q", result.Certificate.MemberAddress)
+	}
+	if result.Certificate.Alias != "alice" {
+		t.Fatalf("alias=%q", result.Certificate.Alias)
+	}
+	if gotCreatePayload["name"] != "default" {
+		t.Fatalf("create payload name=%v", gotCreatePayload["name"])
+	}
+	if gotCertPayload["member_address"] != "acme.com/alice" {
+		t.Fatalf("cert payload member_address=%v", gotCertPayload["member_address"])
+	}
+	if gotCertPayload["alias"] != "alice" {
+		t.Fatalf("cert payload alias=%v", gotCertPayload["alias"])
+	}
+	if gotCertPayload["lifetime"] != awid.LifetimePersistent {
+		t.Fatalf("cert payload lifetime=%v", gotCertPayload["lifetime"])
+	}
+
+	teamKeyPath, err := awconfig.TeamKeyPath("acme.com", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(teamKeyPath); err != nil {
+		t.Fatalf("team key missing: %v", err)
+	}
+}
+
 func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	t.Parallel()
 
