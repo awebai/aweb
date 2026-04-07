@@ -191,6 +191,7 @@ async def heartbeat(
         redis,
         agent_id=identity.agent_id,
         alias=identity.alias,
+        team_address=identity.team_address,
         ttl_seconds=ttl_seconds,
     )
 

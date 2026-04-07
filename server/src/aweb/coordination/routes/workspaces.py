@@ -195,7 +195,7 @@ async def heartbeat(
             workspace_id=payload.workspace_id,
             alias=payload.alias,
             human_name=payload.human_name or "",
-            project_id=team_address,
+            team_address=team_address,
             repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
             model=None,
@@ -1124,7 +1124,7 @@ async def list_online_workspaces(
         if not workspace_id or not alias:
             continue
 
-        if presence.get("project_id") != team_address:
+        if presence.get("team_address") != team_address:
             continue
 
         if human_name and presence.get("human_name") != human_name:

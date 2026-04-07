@@ -77,7 +77,7 @@ async def heartbeat(db_infra, redis) -> str:
         redis,
         agent_id=auth.agent_id,
         alias=row["alias"],
-        project_id=auth.team_address,
+        team_address=auth.team_address,
         ttl_seconds=ttl,
     )
 

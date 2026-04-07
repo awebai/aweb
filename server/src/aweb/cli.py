@@ -35,18 +35,10 @@ def _resolve_workspace_id(override: str | None) -> str:
         raise typer.Exit(1)
     return workspace_id
 
-
-def _resolve_api_key(override: str | None) -> str | None:
-    if override:
-        return override
-    return os.getenv("AWEB_API_KEY")
-
-
 def _handle_api_call(
     method: str,
     url: str,
     allow_statuses: set[int] | None = None,
-    api_key: str | None = None,
     **kwargs,
 ) -> httpx.Response:
     """
@@ -57,14 +49,9 @@ def _handle_api_call(
         method: HTTP method (GET, POST, DELETE)
         url: Request URL
         allow_statuses: Set of status codes to allow through (e.g., {404, 409})
-        api_key: API key to include as Authorization: Bearer header
         **kwargs: Additional arguments passed to httpx
     """
-    # Build headers with Authorization if provided (or from AWEB_API_KEY env var).
     headers = kwargs.pop("headers", {})
-    api_key = api_key or os.getenv("AWEB_API_KEY")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         if method == "GET":
@@ -82,7 +69,7 @@ def _handle_api_call(
 
         # Handle common HTTP errors with friendly messages
         if resp.status_code == 401:
-            typer.echo("Error: Unauthorized - API key required", err=True)
+            typer.echo("Error: Unauthorized", err=True)
             raise typer.Exit(1)
         elif resp.status_code == 403:
             typer.echo("Error: Forbidden - insufficient permissions", err=True)
