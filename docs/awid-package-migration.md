@@ -104,6 +104,81 @@ from `awid`.
 `server/pyproject.toml` declares `awid-service` as a dependency and (in the
 monorepo) sources it from `../awid` via `[tool.uv.sources]`.
 
+## Behavior and signature changes
+
+No moved function changed its signature, return type, exceptions, or runtime
+behavior. **Every move was a relocation only.** The differences a downstream
+consumer will see are entirely about *where* to import from.
+
+That said, four things are not pure renames and need attention:
+
+### 1. `awid` package root no longer re-exports submodule symbols (BREAKING)
+
+The old `aweb.awid/__init__.py` re-exported 22 symbols at the package root,
+so callers could write:
+
+```python
+from aweb.awid import canonical_json_bytes, RegistryClient, generate_keypair
+```
+
+The new `awid/__init__.py` is intentionally empty (docstring only). The
+following will **not** work:
+
+```python
+from awid import canonical_json_bytes  # ImportError
+```
+
+You must import from the specific submodule:
+
+```python
+from awid.signing import canonical_json_bytes
+from awid.registry import RegistryClient
+from awid.did import generate_keypair
+```
+
+The "Symbol cheat sheet" above tells you which submodule each name lives in.
+
+### 2. `DEFAULT_AWID_REGISTRY_URL` moved out of `aweb.config`
+
+Was: `from aweb.config import DEFAULT_AWID_REGISTRY_URL`
+Is:  `from awid.dns_verify import DEFAULT_AWID_REGISTRY_URL`
+
+`aweb.config` still re-exports the same name from `awid.dns_verify`, so
+existing `from aweb.config import DEFAULT_AWID_REGISTRY_URL` continues to
+work — but new code should import from `awid.dns_verify` directly so the
+constant is sourced from one place.
+
+### 3. New `DomainVerifier` type alias in `awid.dns_verify`
+
+```python
+from typing import Awaitable, Callable
+
+DomainVerifier = Callable[[str], Awaitable["DomainAuthority"]]
+```
+
+This is the canonical type for any function that takes a domain name and
+returns a `DomainAuthority`. Use it in test fakes and dependency-injection
+overrides instead of redeclaring the signature.
+
+### 4. New `awid_service.deps` module (FastAPI dependencies)
+
+`awid_service` now exposes three dependencies in `awid_service.deps`:
+
+- `get_db(request) -> Any` — returns `request.app.state.db`
+- `get_redis(request) -> Any` — returns `request.app.state.redis`
+- `get_domain_verifier() -> DomainVerifier` — returns the real `verify_domain`
+
+Tests override the verifier the FastAPI way:
+
+```python
+from awid_service.deps import get_domain_verifier
+app.dependency_overrides[get_domain_verifier] = lambda: my_fake_verifier
+```
+
+Routes that previously imported `verify_domain` directly from
+`awid.dns_verify` should now `Depends(get_domain_verifier)` so they can be
+faked in tests.
+
 ## Migration recipe for downstream code
 
 For each affected import:
@@ -111,24 +186,28 @@ For each affected import:
 1. Replace the module prefix per the table above
 2. If you imported from `aweb.logging`, switch to `awid.log_config`
 3. If you imported from `aweb.routes.dns_auth`, switch to `awid.dns_auth`
-4. Symbols whose names did not change keep the same name on the new module
+4. If you imported from `aweb.awid` (the package root, not a submodule),
+   switch to the specific submodule — see Behavior change #1 above
+5. Symbols whose names did not change keep the same name on the new module
 
 Example:
 
 ```python
 # before
-from aweb.awid.signing import canonical_json_bytes, sign_message
+from aweb.awid import canonical_json_bytes, RegistryClient  # package root
+from aweb.awid.signing import sign_message
 from aweb.awid.did import did_from_public_key, generate_keypair
-from aweb.awid.registry import RegistryClient, AlreadyRegisteredError
+from aweb.awid.registry import AlreadyRegisteredError
 from aweb.dns_verify import DomainAuthority, verify_domain
 from aweb.logging import configure_logging
 from aweb.routes.dns_auth import parse_didkey_auth, require_timestamp
+from aweb.config import DEFAULT_AWID_REGISTRY_URL
 
 # after
 from awid.signing import canonical_json_bytes, sign_message
-from awid.did import did_from_public_key, generate_keypair
 from awid.registry import RegistryClient, AlreadyRegisteredError
-from awid.dns_verify import DomainAuthority, verify_domain
+from awid.did import did_from_public_key, generate_keypair
+from awid.dns_verify import DomainAuthority, verify_domain, DEFAULT_AWID_REGISTRY_URL
 from awid.log_config import configure_logging
 from awid.dns_auth import parse_didkey_auth, require_timestamp
 ```
