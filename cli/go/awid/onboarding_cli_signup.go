@@ -130,25 +130,45 @@ func CliSignup(
 // no whitespace. body is the exact raw HTTP request body bytes that will be
 // sent over the wire — empty body hashes the empty string.
 //
+// String fields are encoded with HTML escaping disabled so the bytes match
+// Python's canonical_json_bytes (json.dumps(..., ensure_ascii=False)) on the
+// cloud verifier side. Today's inputs (POST, hex, slash-paths, RFC3339) never
+// contain <, >, or &, but encoding the same way preempts a silent
+// cross-language signature mismatch if a future field can carry those chars.
+//
 // Wire contract reference: cloud SOT lines 711-719.
 func cloudSignPayload(method, path, timestamp string, body []byte) []byte {
 	h := sha256.Sum256(body)
 	bodyHash := hex.EncodeToString(h[:])
 	var b strings.Builder
 	b.WriteString(`{"body_sha256":`)
-	bhJSON, _ := json.Marshal(bodyHash)
-	b.Write(bhJSON)
+	encodeJSONString(&b, bodyHash)
 	b.WriteString(`,"method":`)
-	mJSON, _ := json.Marshal(method)
-	b.Write(mJSON)
+	encodeJSONString(&b, method)
 	b.WriteString(`,"path":`)
-	pJSON, _ := json.Marshal(path)
-	b.Write(pJSON)
+	encodeJSONString(&b, path)
 	b.WriteString(`,"timestamp":`)
-	tsJSON, _ := json.Marshal(timestamp)
-	b.Write(tsJSON)
+	encodeJSONString(&b, timestamp)
 	b.WriteByte('}')
 	return []byte(b.String())
+}
+
+// encodeJSONString writes s as a JSON string literal into b, with HTML
+// escaping disabled (matching Python json.dumps(..., ensure_ascii=False)).
+// Used by cloudSignPayload so signed envelope bytes are byte-identical
+// across the Go CLI and the Python cloud verifier even if a field value
+// contains <, >, or &.
+func encodeJSONString(b *strings.Builder, s string) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	// Encode appends a trailing newline; trim it.
+	_ = enc.Encode(s)
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	b.Write(out)
 }
 
 // cloudDIDKeyHeaders builds the DIDKey auth headers for a cloud endpoint call.

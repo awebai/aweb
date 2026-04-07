@@ -46,6 +46,29 @@ func TestCloudSignPayload_EmptyBodyHashesEmptyString(t *testing.T) {
 	}
 }
 
+// Pins encodeJSONString's contract: <, >, and & must NOT be escaped to
+// \u003c, \u003e, \u0026. This is what Python's canonical_json_bytes does
+// (ensure_ascii=False), and we need byte-identical envelope bytes across
+// the Go CLI and the Python cloud verifier.
+func TestCloudSignPayload_DoesNotHTMLEscape(t *testing.T) {
+	// Stuff the path with the three offenders. Real paths never carry these,
+	// but if someone ever signs a query string or a free-form field, the
+	// canonical bytes must match Python's.
+	payload := cloudSignPayload(
+		"POST",
+		"/api/v1/onboarding/<a&b>",
+		"2026-04-07T12:00:00Z",
+		nil,
+	)
+	s := string(payload)
+	if strings.Contains(s, `\u003c`) || strings.Contains(s, `\u003e`) || strings.Contains(s, `\u0026`) {
+		t.Fatalf("HTML escape leaked into canonical payload: %s", s)
+	}
+	if !strings.Contains(s, `"path":"/api/v1/onboarding/<a&b>"`) {
+		t.Fatalf("path field not byte-stable: %s", s)
+	}
+}
+
 // CheckUsername hits a real httptest server and parses the response.
 func TestCheckUsername_Available(t *testing.T) {
 	var receivedBody []byte
