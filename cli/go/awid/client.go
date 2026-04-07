@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,7 +102,7 @@ type Client struct {
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
-	teamAddress         string             // team address from the certificate (e.g. "acme.com/backend")
+	teamAddress         string             // team address from certificate, used in auth signature
 	address             string             // namespace/alias, used in signed envelopes
 	projectSlug         string             // current local project slug, used for project~alias addressing
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
@@ -643,11 +642,13 @@ func (c *Client) Do(ctx context.Context, method, path string, in any, out any) e
 // DoRaw performs an HTTP request and returns the raw response.
 func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any) (*http.Response, error) {
 	var body io.Reader
+	var bodyBytes []byte
 	if in != nil {
 		data, err := json.Marshal(in)
 		if err != nil {
 			return nil, err
 		}
+		bodyBytes = data
 		body = bytes.NewReader(data)
 	}
 
@@ -664,13 +665,11 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	req.Header.Set("Accept", accept)
 	if c.teamCertHeader != "" && c.signingKey != nil {
 		// Certificate auth: DIDKey signature over {body_sha256, team, timestamp}.
+		// body_sha256 binds the request body to the signature without the
+		// server having to consume the body stream for signature verification.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		var bodyBytes []byte
-		if in != nil {
-			bodyBytes, _ = json.Marshal(in)
-		}
-		signPayload := buildCertAuthSignPayload(c.teamAddress, timestamp, bodyBytes)
-		sig := ed25519.Sign(c.signingKey, []byte(signPayload))
+		signPayload := certAuthSignPayload(c.teamAddress, timestamp, bodyBytes)
+		sig := ed25519.Sign(c.signingKey, signPayload)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
@@ -688,45 +687,24 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	return resp, nil
 }
 
-// buildCertAuthSignPayload builds the canonical JSON payload for DIDKey
-// certificate auth: the request body merged with a timestamp field.
-// For requests with no body, signs {"timestamp":"..."}.
-func buildCertAuthSignPayload(teamAddress, timestamp string, body []byte) string {
-	return CertAuthSignPayload(teamAddress, timestamp, body)
-}
-
-// CertAuthSignPayload produces the canonical JSON for cert auth request signing.
-// Includes a SHA256 hash of the request body for integrity without ASGI stream conflicts.
-func CertAuthSignPayload(teamAddress, timestamp string, body []byte) string {
+// certAuthSignPayload builds the canonical JSON bytes for certificate auth:
+// {"body_sha256":"<hex>","team":"<team_address>","timestamp":"<ts>"} —
+// sorted keys, no whitespace. body_sha256 is the hex SHA256 of the request
+// body bytes (empty body hashes the empty string).
+func certAuthSignPayload(teamAddress, timestamp string, body []byte) []byte {
 	h := sha256.Sum256(body)
-	fields := map[string]any{
-		"body_sha256": hex.EncodeToString(h[:]),
-		"team":        teamAddress,
-		"timestamp":   timestamp,
-	}
-	sorted, _ := canonicalJSONBytes(fields)
-	return string(sorted)
-}
-
-// canonicalJSONBytes produces canonical JSON: sorted keys, no extra whitespace.
-func canonicalJSONBytes(v map[string]any) ([]byte, error) {
-	keys := make([]string, 0, len(v))
-	for k := range v {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	for i, k := range keys {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		keyBytes, _ := json.Marshal(k)
-		buf.Write(keyBytes)
-		buf.WriteByte(':')
-		valBytes, _ := json.Marshal(v[k])
-		buf.Write(valBytes)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
+	bodyHash := hex.EncodeToString(h[:])
+	// Keys in lexicographic order: body_sha256 < team < timestamp.
+	var b strings.Builder
+	b.WriteString(`{"body_sha256":`)
+	hashJSON, _ := json.Marshal(bodyHash)
+	b.Write(hashJSON)
+	b.WriteString(`,"team":`)
+	teamJSON, _ := json.Marshal(teamAddress)
+	b.Write(teamJSON)
+	b.WriteString(`,"timestamp":`)
+	tsJSON, _ := json.Marshal(timestamp)
+	b.Write(tsJSON)
+	b.WriteByte('}')
+	return []byte(b.String())
 }
