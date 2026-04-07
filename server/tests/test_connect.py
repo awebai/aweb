@@ -156,6 +156,82 @@ class TestConnect:
         assert team["team_name"] == "frontend"
 
     @pytest.mark.asyncio
+    async def test_persistent_cert_populates_did_aw_and_address(self, aweb_cloud_db):
+        from aweb.routes.connect import connect_agent
+
+        db = aweb_cloud_db.aweb_db
+
+        _, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+
+        cert_info = {
+            "team_address": "acme.com/backend",
+            "alias": "alice",
+            "did_key": agent_did_key,
+            "lifetime": "persistent",
+            "certificate_id": "cert-persistent-001",
+            "member_did_aw": "did:aw:z6Mkstable",
+            "member_address": "acme.com/alice",
+        }
+
+        result = await connect_agent(
+            db=db,
+            cert_info=cert_info,
+            team_did_key=team_did_key,
+            hostname="Mac.local",
+            workspace_path="/Users/alice/project",
+            repo_origin="",
+            role="developer",
+            human_name="Alice",
+            agent_type="agent",
+        )
+
+        agent = await db.fetch_one(
+            "SELECT did_aw, address FROM {{tables.agents}} WHERE agent_id = $1",
+            uuid.UUID(result["agent_id"]),
+        )
+        assert agent["did_aw"] == "did:aw:z6Mkstable"
+        assert agent["address"] == "acme.com/alice"
+
+    @pytest.mark.asyncio
+    async def test_ephemeral_cert_leaves_did_aw_and_address_null(self, aweb_cloud_db):
+        from aweb.routes.connect import connect_agent
+
+        db = aweb_cloud_db.aweb_db
+
+        _, _, team_did_key = _make_keypair()
+        _, _, agent_did_key = _make_keypair()
+
+        cert_info = {
+            "team_address": "acme.com/backend",
+            "alias": "alice",
+            "did_key": agent_did_key,
+            "lifetime": "ephemeral",
+            "certificate_id": "cert-ephemeral-001",
+            "member_did_aw": "",
+            "member_address": "",
+        }
+
+        result = await connect_agent(
+            db=db,
+            cert_info=cert_info,
+            team_did_key=team_did_key,
+            hostname="",
+            workspace_path="",
+            repo_origin="",
+            role="",
+            human_name="",
+            agent_type="agent",
+        )
+
+        agent = await db.fetch_one(
+            "SELECT did_aw, address FROM {{tables.agents}} WHERE agent_id = $1",
+            uuid.UUID(result["agent_id"]),
+        )
+        assert agent["did_aw"] is None
+        assert agent["address"] is None
+
+    @pytest.mark.asyncio
     async def test_workspace_created_with_repo(self, aweb_cloud_db):
         from aweb.routes.connect import connect_agent
 

@@ -79,24 +79,34 @@ async def _ensure_agent(
     db: AsyncDatabaseManager,
     team_address: str,
     did_key: str,
+    did_aw: str,
+    address: str,
     alias: str,
     lifetime: str,
     human_name: str,
     agent_type: str,
     role: str,
 ) -> str:
-    """Find or create the agent row. Returns agent_id as string."""
+    """Find or create the agent row. Returns agent_id as string.
+
+    did_aw and address come from the certificate's member_did_aw /
+    member_address fields. Empty strings are stored as NULL (ephemeral
+    certificates do not carry these fields).
+    """
     agent_id = uuid.uuid4()
     await db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, human_name, agent_type, role)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (agent_id, team_address, did_key, did_aw, address,
+             alias, lifetime, human_name, agent_type, role)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (team_address, did_key) DO NOTHING
         """,
         agent_id,
         team_address,
         did_key,
+        did_aw or None,
+        address or None,
         alias,
         lifetime,
         human_name,
@@ -277,6 +287,8 @@ async def connect_agent(
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
     lifetime = cert_info["lifetime"]
+    did_aw = cert_info.get("member_did_aw", "")
+    address = cert_info.get("member_address", "")
 
     await _ensure_team(db, team_address, team_did_key)
 
@@ -284,6 +296,8 @@ async def connect_agent(
         db,
         team_address=team_address,
         did_key=did_key,
+        did_aw=did_aw,
+        address=address,
         alias=alias,
         lifetime=lifetime,
         human_name=human_name,
