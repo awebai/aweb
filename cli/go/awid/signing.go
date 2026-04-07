@@ -1,6 +1,7 @@
 package awid
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -87,13 +88,35 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 }
 
 // CanonicalJSONValue builds canonical JSON for an arbitrary JSON-compatible
-// value. It is used for generic DIDKey-authenticated payload signing.
+// value. It is used for generic DIDKey-authenticated payload signing on
+// the aw id sign / aw id request code path.
+//
+// HTML escaping is explicitly disabled via json.Encoder.SetEscapeHTML(false)
+// so the output bytes match Python's canonical_json_bytes on the awid /
+// aweb-cloud verifier sides, which call json.dumps(..., ensure_ascii=False,
+// separators=(",", ":")). Go's default json.Marshal would escape <, >, and
+// & to \u003c, \u003e, \u0026; any signed payload containing those chars
+// (common in free-form user notes and URLs) would silently fail signature
+// verification across languages. Go's encoder does NOT escape non-ASCII
+// by default, so it already matches Python's ensure_ascii=False for
+// unicode — tested by TestCanonicalJSONValuePreservesUnicode.
+//
+// This matches the shared cloudDIDKeySignPayload helper used by the
+// onboarding signing family (cli-signup, claim-human, bootstrap-redeem).
 func CanonicalJSONValue(v any) (string, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	return string(data), nil
+	// json.Encoder.Encode always appends a trailing newline; strip it so
+	// the returned string is a single canonical JSON value.
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return string(out), nil
 }
 
 // SignArbitraryPayload signs a JSON object after injecting the required
