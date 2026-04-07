@@ -17,7 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from redis.asyncio import Redis
 
-from aweb.awid import RegistryClient
+from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware

@@ -12,8 +12,8 @@ import pytest
 
 from nacl.signing import SigningKey
 
-from aweb.awid.did import did_from_public_key
-from aweb.awid.signing import canonical_json_bytes, sign_message
+from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
 
 
 # ---------------------------------------------------------------------------

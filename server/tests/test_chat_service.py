@@ -7,7 +7,7 @@ import pytest
 from nacl.signing import SigningKey
 from uuid import UUID
 
-from aweb.awid.did import did_from_public_key
+from awid.did import did_from_public_key
 from aweb.messaging.chat import (
     ensure_session,
     get_agent_by_alias,

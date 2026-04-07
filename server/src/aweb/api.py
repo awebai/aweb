@@ -9,13 +9,13 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from .awid import CachedRegistryClient, RegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient
 from .config import get_settings
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
-from .logging import configure_logging
+from awid.log_config import configure_logging
 from .mutation_hooks import create_mutation_handler
-from .ratelimit import build_rate_limiter
+from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware

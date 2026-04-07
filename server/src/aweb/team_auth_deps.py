@@ -17,8 +17,8 @@ from fastapi import Depends, HTTPException, Request
 from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
-from aweb.awid.signing import canonical_json_bytes, verify_did_key_signature
-from aweb.routes.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
+from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
 from aweb.team_auth import parse_and_verify_certificate
 
 logger = logging.getLogger(__name__)

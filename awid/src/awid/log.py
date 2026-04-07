@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from urllib.parse import urlparse
 
-from aweb.awid.signing import canonical_json_bytes
+from awid.signing import canonical_json_bytes
 
 
 def sha256_hex(data: bytes) -> str:

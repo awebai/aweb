@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
 from ...db import DatabaseInfra, get_db_infra
-from ...pagination import encode_cursor, validate_pagination_params
+from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import clear_workspace_presence
 from ...redis_client import get_redis
 from aweb.team_auth_deps import get_team_identity

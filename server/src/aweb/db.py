@@ -9,7 +9,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.migrations import AsyncMigrationManager
 
 from .config import get_settings
-from .db_config import build_database_config
+from awid.db_config import build_database_config
 
 class DatabaseInfra:
     """

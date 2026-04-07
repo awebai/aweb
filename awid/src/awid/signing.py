@@ -9,7 +9,7 @@ import json
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
-from aweb.awid.did import public_key_from_did
+from awid.did import public_key_from_did
 
 SIGNED_FIELDS = frozenset(
     {

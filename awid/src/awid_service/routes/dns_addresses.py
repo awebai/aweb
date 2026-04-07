@@ -17,13 +17,14 @@ def normalize_address_reachability(value: str | None, *, default: str = "private
     if normalized not in _ADDRESS_REACHABILITY_VALUES:
         raise ValueError(f"address_reachability must be one of {sorted(_ADDRESS_REACHABILITY_VALUES)}")
     return normalized
-from aweb.awid.did import validate_stable_id
-from aweb.deps import DomainVerifier, get_db, get_domain_verifier
-from aweb.dns_verify import DnsVerificationError
-from aweb.pagination import encode_cursor, validate_pagination_params
-from aweb.ratelimit import rate_limit_dep
-from aweb.routes.dns_auth import validate_did_key as _validate_dns_did_key
-from aweb.routes.dns_auth import verify_signed_json_request
+from awid.did import validate_stable_id
+from awid.dns_verify import DomainVerifier
+from awid_service.deps import get_db, get_domain_verifier
+from awid.dns_verify import DnsVerificationError
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import rate_limit_dep
+from awid.dns_auth import validate_did_key as _validate_dns_did_key
+from awid.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 

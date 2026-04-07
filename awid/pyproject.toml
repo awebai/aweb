@@ -1,7 +1,7 @@
 [project]
 name = "awid-service"
 version = "0.1.2"
-description = "Thin awid.ai registry service wrapper around the aweb protocol package"
+description = "awid.ai identity registry service and shared awid primitives package"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -9,7 +9,16 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "aweb>=1.2.3",
+    "base58>=2.1.1",
+    "dnspython>=2.8.0",
+    "fastapi>=0.116.1",
+    "httpx>=0.28.1",
+    "pgdbm>=0.4.1",
+    "publicsuffix2>=2.20191221",
+    "pynacl>=1.6.2",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "redis>=6.4.0",
     "typer>=0.16.1",
     "uvicorn[standard]>=0.35.0",
 ]
@@ -27,7 +36,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/awid_service"]
+packages = ["src/awid", "src/awid_service"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -44,6 +53,3 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-
-[tool.uv.sources]
-aweb = { path = "../server" }

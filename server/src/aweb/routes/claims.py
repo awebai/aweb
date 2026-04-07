@@ -11,7 +11,7 @@ from uuid import UUID
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
-from ..pagination import encode_cursor, validate_pagination_params
+from awid.pagination import encode_cursor, validate_pagination_params
 
 router = APIRouter(prefix="/v1", tags=["claims"])
 

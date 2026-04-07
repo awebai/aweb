@@ -6,7 +6,7 @@ import pytest
 
 from nacl.signing import SigningKey
 
-from aweb.awid.did import did_from_public_key
+from awid.did import did_from_public_key
 from aweb.messaging.messages import (
     deliver_message,
     get_agent_by_alias,

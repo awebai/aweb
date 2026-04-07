@@ -16,8 +16,8 @@ from typing import Any, Callable, Optional
 
 import jwt as pyjwt
 
-from aweb.awid.did import public_key_from_did
-from aweb.awid.signing import canonical_json_bytes, verify_signature_with_public_key, VerifyResult
+from awid.did import public_key_from_did
+from awid.signing import canonical_json_bytes, verify_signature_with_public_key, VerifyResult
 
 logger = logging.getLogger(__name__)
 

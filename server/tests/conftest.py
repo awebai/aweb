@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb.db_config import build_database_config
+from awid.db_config import build_database_config
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 

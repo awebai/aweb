@@ -4,10 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from aweb.awid.did import stable_id_from_did_key
-from aweb.awid.log import log_entry_payload
-from aweb.awid.signing import canonical_json_bytes, canonical_payload, sign_message
-from aweb.dns_verify import awid_txt_name, awid_txt_value
+from awid.did import stable_id_from_did_key
+from awid.log import log_entry_payload
+from awid.signing import canonical_json_bytes, canonical_payload, sign_message
+from awid.dns_verify import awid_txt_name, awid_txt_value
 
 
 _SERVER_ROOT = Path(__file__).resolve().parents[1]

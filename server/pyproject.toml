@@ -19,6 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
+    "awid-service",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -35,6 +36,9 @@ dependencies = [
     "typer>=0.16.1",
     "uvicorn[standard]>=0.35.0",
 ]
+
+[tool.uv.sources]
+awid-service = { path = "../awid" }
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb"

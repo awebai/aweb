@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai"
+from awid.dns_verify import DEFAULT_AWID_REGISTRY_URL
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:

@@ -10,12 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aweb.deps import DomainVerifier, get_db, get_domain_verifier
-from aweb.dns_verify import DnsVerificationError
-from aweb.pagination import encode_cursor, validate_pagination_params
-from aweb.ratelimit import rate_limit_dep
-from aweb.routes.dns_auth import validate_did_key as _validate_did_key
-from aweb.routes.dns_auth import verify_signed_json_request
+from awid.dns_verify import DomainVerifier
+from awid_service.deps import get_db, get_domain_verifier
+from awid.dns_verify import DnsVerificationError
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import rate_limit_dep
+from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces", tags=["namespaces"])
 

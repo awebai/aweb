@@ -4,7 +4,7 @@ from typing import Any, Callable, Awaitable
 
 from fastapi import Request
 
-from aweb.dns_verify import DomainAuthority, verify_domain as _real_verify_domain
+from awid.dns_verify import DomainAuthority, verify_domain as _real_verify_domain
 
 DomainVerifier = Callable[[str], Awaitable[DomainAuthority]]
 
