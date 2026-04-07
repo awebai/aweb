@@ -527,7 +527,51 @@ routes, 401 if not connected).
 
 ## Agent lifecycle
 
-### Permanent agent
+### `aw init` — the two main cases
+
+`aw init` has two main cases depending on whether the current
+directory already has a `.aw/` with an identity.
+
+**Case A — directory already has `.aw/identity.yaml` and `.aw/team-cert.pem`:**
+The CLI just connects. Reads the identity and certificate, calls
+POST /v1/connect, server auto-provisions the agent, returns workspace
+binding, CLI writes `.aw/workspace.yaml`. No prompts.
+
+**Case B — directory has no identity yet:**
+The CLI runs the wizard to create the identity, then connects.
+
+The wizard offers two paths:
+
+PATH 1 — BYOD (you have a domain):
+- Wizard asks "Do you have a domain you control?"
+- User says yes, provides domain
+- CLI generates a controller keypair locally
+- CLI prints the DNS TXT record the user must add: `_awid.<domain> TXT "awid=v1; controller=<did:key>"`
+- User adds the DNS record
+- CLI verifies the record, registers the namespace at awid, creates a default team, signs a certificate
+- Proceeds to connect
+
+PATH 2 — Hosted (use the aweb.ai managed namespace):
+- Wizard asks "Use a managed identity at aweb.ai?"
+- User picks a username
+- CLI calls aweb-cloud `POST /api/v1/onboarding/check-username` to validate format and availability
+- If taken or invalid, wizard prompts again until a free username is provided
+- CLI calls aweb-cloud `POST /api/v1/onboarding/cli-signup` with the username and the agent's public key
+- aweb-cloud creates a free aweb.ai account (no email or password yet — just the username), registers `<username>.aweb.ai` as a namespace at awid using the parent controller key, creates a default team, signs and registers a certificate
+- CLI saves the certificate
+- Proceeds to connect
+
+After either path, the connect step is the same:
+- CLI calls server `POST /v1/connect` with the team certificate
+- Server auto-provisions team + agent rows
+- CLI writes `.aw/workspace.yaml`
+
+The hosted path requires the server to be aweb-cloud (i.e., it has the
+parent controller key for `*.aweb.ai`). For self-hosted aweb in Docker,
+only the BYOD path is available because vanilla aweb has no parent
+controller key.
+
+### Permanent agent (joining an existing team via invite)
 
 ```
 1. aw id create --name alice --domain acme.com
@@ -607,7 +651,6 @@ managed by aweb-cloud (custodial agents).
 | `aw spawn accept-invite` | Team invites at awid |
 | `aw spawn list-invites` | Team invites at awid |
 | `aw spawn revoke-invite` | Team invites at awid |
-| `aw claim-human` | Dashboard reads from awid |
 | `aw namespace add/verify/list/delete` | Namespaces at awid |
 | `aw identity rotate-key` | `aw id rotate-key` (already exists) |
 | `aw identity delete` | Team membership removal at awid |
@@ -626,6 +669,7 @@ managed by aweb-cloud (custodial agents).
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
+| `aw claim-human --email <email>` | Attach an email to the existing aweb.ai account created at `aw init`. Triggers email verification. After verification the human can log into the dashboard. |
 
 ### Changed
 
