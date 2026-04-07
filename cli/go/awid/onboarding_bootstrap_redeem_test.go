@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestClaimHuman(t *testing.T) {
+func TestBootstrapRedeem(t *testing.T) {
 	t.Parallel()
 
 	var gotBodyBytes []byte
@@ -21,7 +21,7 @@ func TestClaimHuman(t *testing.T) {
 	var gotTimestamp string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != onboardingClaimHumanPath {
+		if r.URL.Path != onboardingBootstrapRedeemPath {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
@@ -38,8 +38,12 @@ func TestClaimHuman(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "verification_sent",
-			"email":  "alice@example.com",
+			"certificate":    "Y2VydA==",
+			"team_address":   "juanre.aweb.ai/default",
+			"lifetime":       "persistent",
+			"alias":          "laptop-agent",
+			"did_aw":         "did:aw:test123",
+			"member_address": "juanre.aweb.ai/laptop-agent",
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -55,10 +59,10 @@ func TestClaimHuman(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username: "alice",
-		Email:    "alice@example.com",
-		DIDKey:   didKey,
+	resp, err := c.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{
+		Token:  "bootstrap-token",
+		DIDKey: didKey,
+		DIDAW:  "did:aw:test123",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,42 +75,39 @@ func TestClaimHuman(t *testing.T) {
 	if parts[1] != didKey {
 		t.Fatalf("did=%q want %q", parts[1], didKey)
 	}
-
-	sigPayload := cloudDIDKeySignPayload(http.MethodPost, onboardingClaimHumanPath, gotTimestamp, gotBodyBytes)
+	sigPayload := cloudDIDKeySignPayload(http.MethodPost, onboardingBootstrapRedeemPath, gotTimestamp, gotBodyBytes)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ed25519.Verify(pub, sigPayload, sig) {
-		t.Fatal("claim-human signature did not verify")
+		t.Fatal("bootstrap-redeem signature did not verify")
 	}
 
-	// Verify request body.
-	if gotBody["username"] != "alice" {
-		t.Fatalf("request username=%v", gotBody["username"])
-	}
-	if gotBody["email"] != "alice@example.com" {
-		t.Fatalf("request email=%v", gotBody["email"])
+	if gotBody["token"] != "bootstrap-token" {
+		t.Fatalf("token=%v", gotBody["token"])
 	}
 	if gotBody["did_key"] != didKey {
-		t.Fatalf("request did_key=%v want %v", gotBody["did_key"], didKey)
+		t.Fatalf("did_key=%v", gotBody["did_key"])
+	}
+	if gotBody["did_aw"] != "did:aw:test123" {
+		t.Fatalf("did_aw=%v", gotBody["did_aw"])
 	}
 
-	// Verify response.
-	if resp.Status != "verification_sent" {
-		t.Fatalf("status=%q", resp.Status)
+	if resp.TeamAddress != "juanre.aweb.ai/default" {
+		t.Fatalf("team_address=%q", resp.TeamAddress)
 	}
-	if resp.Email != "alice@example.com" {
-		t.Fatalf("email=%q", resp.Email)
+	if resp.DIDAW != "did:aw:test123" {
+		t.Fatalf("did_aw=%q", resp.DIDAW)
 	}
 }
 
-func TestClaimHumanHTTPError(t *testing.T) {
+func TestBootstrapRedeemHTTPError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		_, _ = io.WriteString(w, `{"detail":"email already belongs to another account"}`)
+		_, _ = io.WriteString(w, `{"detail":"token already used"}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -121,10 +122,9 @@ func TestClaimHumanHTTPError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username: "alice",
-		Email:    "alice@example.com",
-		DIDKey:   didKey,
+	_, err = c.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{
+		Token:  "bootstrap-token",
+		DIDKey: didKey,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -133,13 +133,9 @@ func TestClaimHumanHTTPError(t *testing.T) {
 	if !ok || code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (ok=%v)", code, ok)
 	}
-	body, ok := HTTPErrorBody(err)
-	if !ok || !strings.Contains(body, "email already belongs") {
-		t.Fatalf("body=%q ok=%v", body, ok)
-	}
 }
 
-func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
+func TestBootstrapRedeemWithAPIBaseURLSignsWirePath(t *testing.T) {
 	t.Parallel()
 
 	var gotPath string
@@ -157,8 +153,10 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "verification_sent",
-			"email":  "alice@example.com",
+			"certificate":  "Y2VydA==",
+			"team_address": "juanre.aweb.ai/default",
+			"lifetime":     "ephemeral",
+			"alias":        "ci-runner-01",
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -174,16 +172,15 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.ClaimHuman(context.Background(), &ClaimHumanRequest{
-		Username: "alice",
-		Email:    "alice@example.com",
-		DIDKey:   didKey,
+	if _, err := c.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{
+		Token:  "bootstrap-token",
+		DIDKey: didKey,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if gotPath != onboardingClaimHumanPath {
-		t.Fatalf("wire path=%q want %q", gotPath, onboardingClaimHumanPath)
+	if gotPath != onboardingBootstrapRedeemPath {
+		t.Fatalf("wire path=%q want %q", gotPath, onboardingBootstrapRedeemPath)
 	}
 	parts := strings.Fields(gotAuth)
 	if len(parts) != 3 {
@@ -195,6 +192,6 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !ed25519.Verify(pub, sigPayload, sig) {
-		t.Fatal("claim-human /api wire-path signature did not verify")
+		t.Fatal("bootstrap-redeem /api wire-path signature did not verify")
 	}
 }
