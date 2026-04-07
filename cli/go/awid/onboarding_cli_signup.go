@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -121,66 +119,21 @@ func CliSignup(
 	return &out, nil
 }
 
-// cloudSignPayload builds the canonical JSON bytes for a cloud DIDKey auth
-// envelope:
-//
-//	{"body_sha256":"<hex>","method":"<METHOD>","path":"<PATH>","timestamp":"<ISO8601>"}
-//
-// Keys are in lexicographic order (body_sha256 < method < path < timestamp),
-// no whitespace. body is the exact raw HTTP request body bytes that will be
-// sent over the wire — empty body hashes the empty string.
-//
-// String fields are encoded with HTML escaping disabled so the bytes match
-// Python's canonical_json_bytes (json.dumps(..., ensure_ascii=False)) on the
-// cloud verifier side. Today's inputs (POST, hex, slash-paths, RFC3339) never
-// contain <, >, or &, but encoding the same way preempts a silent
-// cross-language signature mismatch if a future field can carry those chars.
-//
-// Wire contract reference: cloud SOT lines 711-719.
-func cloudSignPayload(method, path, timestamp string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	bodyHash := hex.EncodeToString(h[:])
-	var b strings.Builder
-	b.WriteString(`{"body_sha256":`)
-	encodeJSONString(&b, bodyHash)
-	b.WriteString(`,"method":`)
-	encodeJSONString(&b, method)
-	b.WriteString(`,"path":`)
-	encodeJSONString(&b, path)
-	b.WriteString(`,"timestamp":`)
-	encodeJSONString(&b, timestamp)
-	b.WriteByte('}')
-	return []byte(b.String())
-}
-
-// encodeJSONString writes s as a JSON string literal into b, with HTML
-// escaping disabled (matching Python json.dumps(..., ensure_ascii=False)).
-// Used by cloudSignPayload so signed envelope bytes are byte-identical
-// across the Go CLI and the Python cloud verifier even if a field value
-// contains <, >, or &.
-func encodeJSONString(b *strings.Builder, s string) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	// Encode appends a trailing newline; trim it.
-	_ = enc.Encode(s)
-	out := buf.Bytes()
-	if n := len(out); n > 0 && out[n-1] == '\n' {
-		out = out[:n-1]
-	}
-	b.Write(out)
-}
-
 // cloudDIDKeyHeaders builds the DIDKey auth headers for a cloud endpoint call.
 // The caller provides the exact body bytes that will be transmitted; this
 // function does not re-marshal anything.
+//
+// The signed envelope is built by the shared cloudDIDKeySignPayload helper
+// (cli/go/awid/cloud_didkey_signing.go), which is also used by claim-human
+// and bootstrap-redeem so all three onboarding endpoints produce
+// byte-identical canonical payloads.
 func cloudDIDKeyHeaders(
 	method, path string,
 	body []byte,
 	signingKey ed25519.PrivateKey,
 ) map[string]string {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	payload := cloudSignPayload(method, path, timestamp, body)
+	payload := cloudDIDKeySignPayload(method, path, timestamp, body)
 	sig := ed25519.Sign(signingKey, payload)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return map[string]string{
