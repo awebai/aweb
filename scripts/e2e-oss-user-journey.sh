@@ -54,9 +54,13 @@ E2E_HOME="$(make_temp_dir aw-e2e-home)"
 E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
-mkdir -p "$ALICE_DIR" "$BOB_DIR"
+RECONNECT_DIR="$E2E_CWD/reconnect-alice"
+WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
+RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
+WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
 pass=0
 fail=0
@@ -112,6 +116,42 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local label="$1" haystack="$2" needle="$3"
+  if echo "$haystack" | grep -q "$needle"; then
+    echo "  FAIL: $label (did not expect '$needle', got: ${haystack:0:120})"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  fi
+}
+
+assert_file_exists() {
+  local label="$1" path="$2"
+  if [[ -f "$path" ]]; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label (missing $path)"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_file_mode() {
+  local label="$1" path="$2" expected="$3" actual
+  actual="$(python3 - "$path" <<'PY'
+import os, stat, sys
+path = sys.argv[1]
+try:
+    print(f"{stat.S_IMODE(os.stat(path).st_mode):03o}")
+except FileNotFoundError:
+    print("")
+PY
+)"
+  assert_eq "$label" "$expected" "$actual"
+}
+
 assert_status() {
   local label="$1" expected="$2" actual="$3"
   if [[ "$expected" == "$actual" ]]; then
@@ -131,7 +171,40 @@ run_aw_in() {
   shift
   HOME="$E2E_HOME" \
   AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_REGISTRY_URL="$AWID_URL" \
+  AWID_SKIP_DNS_VERIFY=1 \
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
+}
+
+run_aw_tty_in() {
+  local workdir="$1" input="$2"
+  shift 2
+  HOME="$E2E_HOME" \
+  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_REGISTRY_URL="$AWID_URL" \
+  AWID_SKIP_DNS_VERIFY=1 \
+  python3 - "$workdir" "$input" "$CLI_DIR/aw" "$@" <<'PY'
+import os
+import pty
+import sys
+
+workdir = sys.argv[1]
+input_data = sys.argv[2].encode()
+argv = sys.argv[3:]
+sent = [False]
+os.chdir(workdir)
+
+def stdin_read(_fd):
+    if sent[0]:
+        return b""
+    sent[0] = True
+    return input_data
+
+status = pty.spawn(argv, stdin_read=stdin_read)
+if hasattr(os, "waitstatus_to_exitcode"):
+    sys.exit(os.waitstatus_to_exitcode(status))
+sys.exit(status)
+PY
 }
 
 jq_field() {
@@ -150,6 +223,26 @@ if start >= 0:
 else:
     print('')
 "
+}
+
+yaml_field() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+
+path, key = sys.argv[1], sys.argv[2]
+prefix = key + ":"
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith(prefix):
+                value = line.split(":", 1)[1].strip()
+                if len(value) >= 2 and value[0] == value[-1] == '"':
+                    value = value[1:-1]
+                print(value)
+                break
+except FileNotFoundError:
+    pass
+PY
 }
 
 # ---------------------------------------------------------------------------
@@ -543,5 +636,103 @@ else
   echo "  Output: ${bob_mail_out:0:120}"
 fi
 echo ""
+
+phase_aw_init_reconnect() {
+  echo "=== Phase 21: aw init reconnect (Case A) ==="
+
+  rm -rf "$RECONNECT_DIR"
+  mkdir -p "$RECONNECT_DIR/.aw"
+  cp "$ALICE_DIR/.aw/identity.yaml" "$RECONNECT_DIR/.aw/identity.yaml"
+  cp "$ALICE_DIR/.aw/signing.key" "$RECONNECT_DIR/.aw/signing.key"
+  cp "$ALICE_DIR/.aw/team-cert.pem" "$RECONNECT_DIR/.aw/team-cert.pem"
+  RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
+
+  reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --server "$AWEB_URL" </dev/null 2>&1)"
+  reconnect_exit=$?
+  assert_eq "reconnect init exit" "0" "$reconnect_exit"
+  assert_not_contains "reconnect skipped onboarding path prompt" "$reconnect_out" "How should this agent get its identity?"
+  assert_not_contains "reconnect skipped post-init prompts" "$reconnect_out" "Inject agent docs into this repo?"
+  assert_file_exists "reconnect workspace.yaml written" "$RECONNECT_DIR/.aw/workspace.yaml"
+
+  reconnect_team="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" team_address)"
+  reconnect_alias="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" alias)"
+  reconnect_role="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" role_name)"
+  assert_eq "reconnect workspace team" "test.local/devteam" "$reconnect_team"
+  assert_eq "reconnect workspace alias" "alice" "$reconnect_alias"
+  assert_eq "reconnect workspace role empty" "" "$reconnect_role"
+
+  reconnect_mail_out="$(run_aw_in "$RECONNECT_DIR" mail send --to alice --subject "Reconnect e2e" --body "Reconnect path works" 2>&1)"
+  reconnect_mail_exit=$?
+  assert_eq "reconnect mail send exit" "0" "$reconnect_mail_exit"
+  echo ""
+}
+
+phase_aw_init_byod_wizard() {
+  echo "=== Phase 22: aw init BYOD wizard (Case B Path 1) ==="
+
+  rm -rf "$WIZARD_BYOD_DIR"
+  mkdir -p "$WIZARD_BYOD_DIR"
+  WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
+
+  local wizard_domain="wizard-byod.test.local"
+  local wizard_name="wizard-alice"
+  local wizard_team="$wizard_domain/default"
+  local wizard_input
+  wizard_input=$'2\n'"$wizard_name"$'\n'"$wizard_domain"$'\nn\nn\nn\n'
+
+  wizard_out="$(run_aw_tty_in "$WIZARD_BYOD_DIR" "$wizard_input" init --server "$AWEB_URL" 2>&1)"
+  wizard_exit=$?
+  assert_eq "wizard init exit" "0" "$wizard_exit"
+  assert_file_exists "wizard identity.yaml written" "$WIZARD_BYOD_DIR/.aw/identity.yaml"
+  assert_file_exists "wizard team-cert.pem written" "$WIZARD_BYOD_DIR/.aw/team-cert.pem"
+  assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
+  assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
+  assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
+
+  wizard_did_key="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" did)"
+  wizard_did_aw="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" stable_id)"
+  wizard_address="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" address)"
+  wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" team_address)"
+  wizard_workspace_alias="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" alias)"
+  assert_not_empty "wizard identity did" "$wizard_did_key"
+  assert_not_empty "wizard identity stable_id" "$wizard_did_aw"
+  assert_eq "wizard identity address" "$wizard_domain/$wizard_name" "$wizard_address"
+  assert_eq "wizard workspace team" "$wizard_team" "$wizard_workspace_team"
+  assert_eq "wizard workspace alias" "$wizard_name" "$wizard_workspace_alias"
+
+  wizard_cert_out="$(run_aw_in "$WIZARD_BYOD_DIR" id cert show --json 2>/dev/null)"
+  wizard_cert_team="$(echo "$wizard_cert_out" | jq_field team_address)"
+  wizard_cert_alias="$(echo "$wizard_cert_out" | jq_field alias)"
+  assert_eq "wizard cert team" "$wizard_team" "$wizard_cert_team"
+  assert_eq "wizard cert alias" "$wizard_name" "$wizard_cert_alias"
+
+  wizard_namespace="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain" 2>/dev/null || echo '{}')"
+  wizard_namespace_domain="$(echo "$wizard_namespace" | jq_field domain)"
+  assert_eq "wizard namespace registered" "$wizard_domain" "$wizard_namespace_domain"
+
+  wizard_team_get="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain/teams/default" 2>/dev/null || echo '{}')"
+  wizard_team_name="$(echo "$wizard_team_get" | jq_field name)"
+  assert_eq "wizard team registered" "default" "$wizard_team_name"
+
+  wizard_did_key_get="$(curl -sf "$AWID_URL/v1/did/$wizard_did_aw/key" 2>/dev/null || echo '{}')"
+  wizard_did_current="$(echo "$wizard_did_key_get" | jq_field current_did_key)"
+  wizard_did_addresses="$(curl -sf "$AWID_URL/v1/did/$wizard_did_aw/addresses" 2>/dev/null || echo '{"addresses":[]}')"
+  wizard_did_address="$(echo "$wizard_did_addresses" | python3 -c "import sys,json; addrs=json.load(sys.stdin).get('addresses',[]); print((addrs[0].get('domain','') + '/' + addrs[0].get('name','')) if addrs else '')" 2>/dev/null || echo '')"
+  assert_eq "wizard did current key" "$wizard_did_key" "$wizard_did_current"
+  assert_eq "wizard did address" "$wizard_domain/$wizard_name" "$wizard_did_address"
+
+  wizard_certs="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+  wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
+  assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
+
+  wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$wizard_name" --subject "Wizard e2e" --body "Wizard path works" 2>&1)"
+  wizard_mail_exit=$?
+  assert_eq "wizard mail send exit" "0" "$wizard_mail_exit"
+  assert_contains "wizard prompt showed BYOD copy" "$wizard_out" "I have a domain I control (BYOD)"
+  echo ""
+}
+
+phase_aw_init_reconnect
+phase_aw_init_byod_wizard
 
 echo "=== Done ==="

@@ -1116,3 +1116,15 @@ func TestPromptIdentityLifetimePermanent(t *testing.T) {
 		t.Fatal("expected permanent, got ephemeral")
 	}
 }
+
+func TestGuidedOnboardingSkipDNSVerifyFromEnv(t *testing.T) {
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "true")
+	if !guidedOnboardingSkipDNSVerify() {
+		t.Fatal("expected AWID_SKIP_DNS_VERIFY=true to enable skip")
+	}
+
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "0")
+	if guidedOnboardingSkipDNSVerify() {
+		t.Fatal("expected AWID_SKIP_DNS_VERIFY=0 to disable skip")
+	}
+}

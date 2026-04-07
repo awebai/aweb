@@ -303,6 +303,15 @@ func resolveGuidedOnboardingServerURL(raw string) (string, error) {
 	return cloudRootBaseURL(serverURL)
 }
 
+func guidedOnboardingSkipDNSVerify() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AWID_SKIP_DNS_VERIFY"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func resolveGuidedBYODName(req guidedOnboardingRequest) (string, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -317,11 +326,12 @@ func resolveGuidedBYODName(req guidedOnboardingRequest) (string, error) {
 
 func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
 	opts := idCreateOptions{
-		Name:      name,
-		Domain:    domain,
-		PromptIn:  req.PromptIn,
-		PromptOut: req.PromptOut,
-		Now:       time.Now,
+		Name:          name,
+		Domain:        domain,
+		PromptIn:      req.PromptIn,
+		PromptOut:     req.PromptOut,
+		SkipDNSVerify: guidedOnboardingSkipDNSVerify(),
+		Now:           time.Now,
 	}
 	prepared, err := prepareIDCreatePlan(req.WorkingDir, opts)
 	if err != nil {
