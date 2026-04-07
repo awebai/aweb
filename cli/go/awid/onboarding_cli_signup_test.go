@@ -85,6 +85,27 @@ func TestCheckUsername_Taken(t *testing.T) {
 	}
 }
 
+func TestCheckUsername_APIBasePath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"available":true}`))
+	}))
+	defer srv.Close()
+
+	resp, err := CheckUsername(context.Background(), srv.URL+"/api", "juanre")
+	if err != nil {
+		t.Fatalf("CheckUsername: %v", err)
+	}
+	if !resp.Available {
+		t.Fatalf("want available=true, got %+v", resp)
+	}
+	if gotPath != "/api/v1/onboarding/check-username" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
 func TestCheckUsername_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "oops", http.StatusInternalServerError)
@@ -216,6 +237,67 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 	}
 }
 
+func TestCliSignup_APIBasePath(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotPath string
+	var gotTimestamp string
+	var gotBodyBytes []byte
+	var gotSignature string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotTimestamp = r.Header.Get("X-AWEB-Timestamp")
+		auth := strings.Fields(r.Header.Get("Authorization"))
+		if len(auth) != 3 {
+			t.Fatalf("Authorization=%q", r.Header.Get("Authorization"))
+		}
+		gotSignature = auth[2]
+		var err error
+		gotBodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"user_id":"u1",
+			"username":"juanre",
+			"org_id":"o1",
+			"namespace_domain":"juanre.aweb.ai",
+			"team_address":"juanre.aweb.ai/default",
+			"certificate":"eyJ2ZXJzaW9uIjoxfQ==",
+			"did_aw":"did:aw:test",
+			"member_address":"juanre.aweb.ai/laptop",
+			"alias":"laptop"
+		}`))
+	}))
+	defer srv.Close()
+
+	req := &CliSignupRequest{
+		Username: "juanre",
+		DIDKey:   did,
+		DIDAW:    "did:aw:test",
+		Alias:    "laptop",
+	}
+	if _, err := CliSignup(context.Background(), srv.URL+"/api", req, priv); err != nil {
+		t.Fatalf("CliSignup: %v", err)
+	}
+	if gotPath != "/api/v1/onboarding/cli-signup" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	sigBytes, err := base64.RawStdEncoding.DecodeString(gotSignature)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	want := cloudDIDKeySignPayload("POST", "/api/v1/onboarding/cli-signup", gotTimestamp, gotBodyBytes)
+	if !ed25519.Verify(pub, want, sigBytes) {
+		t.Fatal("signature did not verify for /api base path")
+	}
+}
+
 func TestCliSignup_BodyDIDKeyMustMatchSigningKey(t *testing.T) {
 	// Caller passes a req.DIDKey that doesn't match signingKey.
 	// Helper must refuse before hitting the network.
@@ -298,4 +380,3 @@ func stringify(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
-

@@ -177,17 +177,26 @@ func TestGuidedOnboardingCanSelectBYODPath(t *testing.T) {
 	}
 }
 
-func TestGuidedOnboardingHostedStubReturnsUsageErrorInsteadOfPanicking(t *testing.T) {
+func TestExecuteHostedPathRejectsServersWithoutManagedOnboarding(t *testing.T) {
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username" {
+			http.NotFound(w, r)
+			return
+		}
+		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+
 	var out bytes.Buffer
-	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
+	_, err := executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader("\n"),
+		PromptIn:   strings.NewReader(""),
 		PromptOut:  &out,
+		ServerURL:  server.URL,
 	})
 	if err == nil {
 		t.Fatal("expected hosted path to return an error")
 	}
-	if !strings.Contains(err.Error(), "guided Hosted onboarding is not available in this build yet") {
+	if !strings.Contains(err.Error(), "choose BYOD") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -349,6 +358,413 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	}
 	if savedCert.MemberAddress != "acme.com/alice" {
 		t.Fatalf("member_address=%q", savedCert.MemberAddress)
+	}
+}
+
+func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var didRequests []map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didRequests = append(didRequests, body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			var current map[string]any
+			for _, req := range didRequests {
+				if req["did_aw"] == stableID {
+					current = req
+					break
+				}
+			}
+			if current == nil {
+				t.Fatalf("missing did registration for %s", stableID)
+			}
+			handle := strings.TrimSpace(current["handle"].(string))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": current["did_key"],
+				"server":          "",
+				"address":         current["address"],
+				"handle":          &handle,
+				"created_at":      "2026-04-07T00:00:00Z",
+				"updated_at":      "2026-04-07T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
+
+	var checkBodies []map[string]any
+	var signupBody map[string]any
+	var claimBody map[string]any
+	var connectBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			checkBodies = append(checkBodies, body)
+			username := strings.TrimSpace(body["username"].(string))
+			w.Header().Set("Content-Type", "application/json")
+			if username == "Invalid_Probe" {
+				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"available":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(signupBody["username"].(string))
+			alias := strings.TrimSpace(signupBody["alias"].(string))
+			didKey := strings.TrimSpace(signupBody["did_key"].(string))
+			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          username + ".aweb.ai/default",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         username,
+				"org_id":           "org-1",
+				"namespace_domain": username + ".aweb.ai",
+				"team_address":     username + ".aweb.ai/default",
+				"certificate":      encodedCert,
+				"did_aw":           didAW,
+				"member_address":   memberAddress,
+				"alias":            alias,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+			if err := json.NewDecoder(r.Body).Decode(&claimBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "verification_sent",
+				"email":  claimBody["email"],
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": "jack.aweb.ai/default",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
+		PromptOut:  &out,
+		ServerURL:  server.URL + "/api",
+		Role:       "developer",
+		HumanName:  "Operator Jane",
+		AgentType:  "codex",
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	if len(checkBodies) != 2 {
+		t.Fatalf("check username calls=%d", len(checkBodies))
+	}
+	if checkBodies[1]["username"] != "jack" {
+		t.Fatalf("username=%v", checkBodies[1]["username"])
+	}
+	if len(didRequests) != 1 {
+		t.Fatalf("did registrations=%d", len(didRequests))
+	}
+	if didRequests[0]["address"] != "jack.aweb.ai/laptop" {
+		t.Fatalf("did address=%v", didRequests[0]["address"])
+	}
+	if signupBody["username"] != "jack" {
+		t.Fatalf("signup username=%v", signupBody["username"])
+	}
+	if signupBody["alias"] != "laptop" {
+		t.Fatalf("signup alias=%v", signupBody["alias"])
+	}
+	if claimBody["username"] != "jack" {
+		t.Fatalf("claim username=%v", claimBody["username"])
+	}
+	if claimBody["email"] != "jack@example.com" {
+		t.Fatalf("claim email=%v", claimBody["email"])
+	}
+	if claimBody["did_key"] != signupBody["did_key"] {
+		t.Fatalf("claim did_key=%v signup did_key=%v", claimBody["did_key"], signupBody["did_key"])
+	}
+	if connectBody["role"] != "developer" {
+		t.Fatalf("connect role=%v", connectBody["role"])
+	}
+	if connectBody["human_name"] != "Operator Jane" {
+		t.Fatalf("connect human_name=%v", connectBody["human_name"])
+	}
+	if connectBody["agent_type"] != "codex" {
+		t.Fatalf("connect agent_type=%v", connectBody["agent_type"])
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.Address != "jack.aweb.ai/laptop" {
+		t.Fatalf("identity address=%q", identity.Address)
+	}
+	if identity.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%q", identity.RegistryURL)
+	}
+	if identity.StableID != signupBody["did_aw"] {
+		t.Fatalf("stable_id=%q", identity.StableID)
+	}
+
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
+	}
+	if workspace.TeamAddress != "jack.aweb.ai/default" {
+		t.Fatalf("team_address=%q", workspace.TeamAddress)
+	}
+	if workspace.ServerURL != server.URL {
+		t.Fatalf("server_url=%q", workspace.ServerURL)
+	}
+	if workspace.Alias != "laptop" {
+		t.Fatalf("alias=%q", workspace.Alias)
+	}
+	if workspace.HumanName != "Operator Jane" {
+		t.Fatalf("human_name=%q", workspace.HumanName)
+	}
+	if workspace.AgentType != "codex" {
+		t.Fatalf("agent_type=%q", workspace.AgentType)
+	}
+
+	loadedKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatalf("LoadSigningKey: %v", err)
+	}
+	if got := awid.ComputeDIDKey(loadedKey.Public().(ed25519.PublicKey)); got != identity.DID {
+		t.Fatalf("saved signing key did=%q want %q", got, identity.DID)
+	}
+
+	cert, err := awid.LoadTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"))
+	if err != nil {
+		t.Fatalf("LoadTeamCertificate: %v", err)
+	}
+	if cert.Team != "jack.aweb.ai/default" {
+		t.Fatalf("cert team=%q", cert.Team)
+	}
+	if cert.MemberAddress != "jack.aweb.ai/laptop" {
+		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Your identity is in .aw/signing.key.") {
+		t.Fatalf("missing claim-human warning in output: %q", output)
+	}
+	if !strings.Contains(output, "Verification email sent to jack@example.com.") {
+		t.Fatalf("missing claim-human success in output: %q", output)
+	}
+}
+
+func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var didRequests []map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didRequests = append(didRequests, body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			var current map[string]any
+			for _, req := range didRequests {
+				if req["did_aw"] == stableID {
+					current = req
+					break
+				}
+			}
+			if current == nil {
+				t.Fatalf("missing did registration for %s", stableID)
+			}
+			handle := strings.TrimSpace(current["handle"].(string))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": current["did_key"],
+				"server":          "",
+				"address":         current["address"],
+				"handle":          &handle,
+				"created_at":      "2026-04-07T00:00:00Z",
+				"updated_at":      "2026-04-07T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
+
+	var signupBodies []map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(body["username"].(string))
+			w.Header().Set("Content-Type", "application/json")
+			if username == "Invalid_Probe" {
+				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"available":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			signupBodies = append(signupBodies, body)
+			username := strings.TrimSpace(body["username"].(string))
+			if len(signupBodies) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"detail":"username taken"}`))
+				return
+			}
+			alias := strings.TrimSpace(body["alias"].(string))
+			didKey := strings.TrimSpace(body["did_key"].(string))
+			didAW := strings.TrimSpace(body["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          username + ".aweb.ai/default",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         username,
+				"org_id":           "org-1",
+				"namespace_domain": username + ".aweb.ai",
+				"team_address":     username + ".aweb.ai/default",
+				"certificate":      encodedCert,
+				"did_aw":           didAW,
+				"member_address":   memberAddress,
+				"alias":            alias,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": "jack-2.aweb.ai/default",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
+		PromptOut:  &out,
+		ServerURL:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	if len(signupBodies) != 2 {
+		t.Fatalf("signup calls=%d", len(signupBodies))
+	}
+	if len(didRequests) != 2 {
+		t.Fatalf("did registrations=%d", len(didRequests))
+	}
+	if signupBodies[0]["username"] != "jack" || signupBodies[1]["username"] != "jack-2" {
+		t.Fatalf("signup usernames=%v", signupBodies)
+	}
+	if signupBodies[0]["did_aw"] == signupBodies[1]["did_aw"] {
+		t.Fatalf("expected fresh did_aw on retry, got %v", signupBodies[0]["did_aw"])
+	}
+	if didRequests[0]["did_aw"] == didRequests[1]["did_aw"] {
+		t.Fatalf("expected fresh did registration on retry")
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.Address != "jack-2.aweb.ai/laptop" {
+		t.Fatalf("identity address=%q", identity.Address)
+	}
+	if identity.StableID != strings.TrimSpace(signupBodies[1]["did_aw"].(string)) {
+		t.Fatalf("stable_id=%q want %v", identity.StableID, signupBodies[1]["did_aw"])
+	}
+	if !strings.Contains(out.String(), "Your identity is in .aw/signing.key.") {
+		t.Fatalf("expected warning, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "Run aw claim-human now?") {
+		t.Fatalf("expected claim-human prompt, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
+		t.Fatalf("expected retry message, got %q", out.String())
 	}
 }
 

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -37,40 +39,77 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		return usageError("missing required flag: --email")
 	}
 
-	identity, err := resolveIdentity()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
-		}
-		return err
-	}
-
-	username, err := usernameFromMemberAddress(identity.Address)
-	if err != nil {
-		return err
-	}
-
-	didKey := strings.TrimSpace(identity.DID)
-	if didKey == "" {
-		return fmt.Errorf("current identity is missing did in %s", identity.IdentityPath)
-	}
-
-	signingKeyPath := strings.TrimSpace(identity.SigningKeyPath)
-	if signingKeyPath == "" {
-		return usageError("current identity has no local signing key")
-	}
-	signingKey, err := awid.LoadSigningKey(signingKeyPath)
-	if err != nil {
-		return fmt.Errorf("failed to load signing key: %w", err)
-	}
-
 	baseURL, err := onboardingBaseURL(claimHumanMockURL)
 	if err != nil {
 		return err
 	}
-	client, err := awid.NewWithIdentity(baseURL, "", signingKey, didKey)
+
+	workingDir, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("invalid identity configuration: %w", err)
+		return err
+	}
+
+	resp, username, err := claimHumanWithOptions(claimHumanOptions{
+		WorkingDir: workingDir,
+		BaseURL:    baseURL,
+		Email:      email,
+	})
+	if err != nil {
+		return err
+	}
+
+	if jsonFlag {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+			"status":   resp.Status,
+			"email":    resp.Email,
+			"username": username,
+		})
+	}
+
+	return printClaimHumanSuccess(cmd.OutOrStdout(), email, resp)
+}
+
+type claimHumanOptions struct {
+	WorkingDir string
+	BaseURL    string
+	Email      string
+}
+
+func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, string, error) {
+	email := strings.TrimSpace(opts.Email)
+	if email == "" {
+		return nil, "", usageError("missing required flag: --email")
+	}
+
+	identity, err := awconfig.ResolveIdentity(opts.WorkingDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
+		}
+		return nil, "", err
+	}
+
+	username, err := usernameFromMemberAddress(identity.Address)
+	if err != nil {
+		return nil, "", err
+	}
+
+	didKey := strings.TrimSpace(identity.DID)
+	if didKey == "" {
+		return nil, "", fmt.Errorf("current identity is missing did in %s", identity.IdentityPath)
+	}
+
+	signingKeyPath := strings.TrimSpace(identity.SigningKeyPath)
+	if signingKeyPath == "" {
+		return nil, "", usageError("current identity has no local signing key")
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to load signing key: %w", err)
+	}
+	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), "", signingKey, didKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid identity configuration: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -82,22 +121,17 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		DIDKey:   didKey,
 	})
 	if err != nil {
-		return mapClaimHumanError(err)
+		return nil, "", mapClaimHumanError(err)
 	}
+	return resp, username, nil
+}
 
-	if jsonFlag {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-			"status":   resp.Status,
-			"email":    resp.Email,
-			"username": username,
-		})
+func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.ClaimHumanResponse) error {
+	finalEmail := strings.TrimSpace(requestedEmail)
+	if resp != nil && strings.TrimSpace(resp.Email) != "" {
+		finalEmail = strings.TrimSpace(resp.Email)
 	}
-
-	finalEmail := strings.TrimSpace(resp.Email)
-	if finalEmail == "" {
-		finalEmail = email
-	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Verification email sent to %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
+	_, err := fmt.Fprintf(out, "Verification email sent to %s. Click the link in the email to activate your dashboard login.\n", finalEmail)
 	return err
 }
 

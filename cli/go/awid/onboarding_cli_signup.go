@@ -163,7 +163,11 @@ func postJSONWithHeaders(
 	headers map[string]string,
 	out any,
 ) error {
-	u := strings.TrimRight(baseURL, "/") + path
+	requestPath := path
+	if strings.HasSuffix(strings.TrimRight(baseURL, "/"), "/api") && strings.HasPrefix(requestPath, "/api/") {
+		requestPath = strings.TrimPrefix(requestPath, "/api")
+	}
+	u := strings.TrimRight(baseURL, "/") + requestPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
