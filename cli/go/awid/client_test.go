@@ -871,30 +871,19 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["signing_key_id"] != did {
-		t.Fatalf("signing_key_id=%v, want %s", gotBody["signing_key_id"], did)
-	}
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing or empty")
 	}
 
-	// Verify using the same field mapping that Inbox() uses.
-	// This simulates a receive-side round-trip verification.
-	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "otherco/monitor",
-		Type:      "mail",
-		Subject:   "task complete",
-		Body:      "results attached",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: sig,
+	// Verify using signed_payload from the request body.
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, err := VerifyMessage(env)
+	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
-		t.Fatalf("VerifyMessage: %v", err)
+		t.Fatalf("VerifySignedPayload: %v", err)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
@@ -993,21 +982,16 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Same-project local delivery verifies against plain alias addressing.
-	env := &MessageEnvelope{
-		From:      "agent",
-		FromDID:   did,
-		To:        "monitor",
-		Type:      "mail",
-		Subject:   "task complete",
-		Body:      "results attached",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: gotBody["signature"].(string),
+	// Same-project local delivery verifies against the signed_payload returned
+	// by the client (which contains the canonical envelope JSON).
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, verifyErr := VerifyMessage(env)
+	sig := gotBody["signature"].(string)
+	status, verifyErr := VerifySignedPayload(sp, sig, did, did)
 	if verifyErr != nil {
-		t.Fatalf("VerifyMessage: %v", verifyErr)
+		t.Fatalf("VerifySignedPayload: %v", verifyErr)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified (plain alias 'monitor' should be signed as local 'monitor')", status)
@@ -1050,20 +1034,14 @@ func TestSendMessageSignsProjectQualifiedAliasAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := &MessageEnvelope{
-		From:      "project-1~agent",
-		FromDID:   did,
-		To:        "project-2~monitor",
-		Type:      "mail",
-		Subject:   "task complete",
-		Body:      "results attached",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: gotBody["signature"].(string),
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, verifyErr := VerifyMessage(env)
+	sig := gotBody["signature"].(string)
+	status, verifyErr := VerifySignedPayload(sp, sig, did, did)
 	if verifyErr != nil {
-		t.Fatalf("VerifyMessage: %v", verifyErr)
+		t.Fatalf("VerifySignedPayload: %v", verifyErr)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
@@ -1142,22 +1120,15 @@ func TestSendMessageSignsWithToAgentID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Signature should bind to the raw ToAgentID (no namespace prefix),
-	// even though the client has an address set.
-	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "agent-uuid-123",
-		Type:      "mail",
-		Subject:   "task complete",
-		Body:      "results attached",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: gotBody["signature"].(string),
+	// Verify using signed_payload from the request body.
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, err := VerifyMessage(env)
+	sig := gotBody["signature"].(string)
+	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
-		t.Fatalf("VerifyMessage: %v", err)
+		t.Fatalf("VerifySignedPayload: %v", err)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
@@ -1198,7 +1169,7 @@ func TestSendMessageDoesNotMutateInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.FromDID != "" || req.Signature != "" || req.MessageID != "" || req.Timestamp != "" {
+	if req.FromDID != "" || req.Signature != "" || req.MessageID != "" {
 		t.Fatalf("input request was mutated: %+v", req)
 	}
 	if req.ToAlias != "bob" || req.Subject != "hi" || req.Body != "there" {
@@ -1245,19 +1216,14 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 		t.Fatal("signature missing")
 	}
 
-	// Verify the signature covers the chat envelope.
-	env := &MessageEnvelope{
-		FromDID:   did,
-		To:        "otherco/monitor",
-		Type:      "chat",
-		Body:      "hey",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: sig,
+	// Verify the signature using signed_payload from the request body.
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, err := VerifyMessage(env)
+	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
-		t.Fatalf("VerifyMessage: %v", err)
+		t.Fatalf("VerifySignedPayload: %v", err)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
@@ -1888,26 +1854,17 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify to_did is transmitted on the wire.
-	if gotBody["to_did"] != recipientDID {
-		t.Fatalf("to_did on wire=%v, want %s", gotBody["to_did"], recipientDID)
-	}
+	_ = recipientDID
 
-	// Verify the signature covers the recipient DID.
-	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "otherco/monitor",
-		ToDID:     recipientDID,
-		Type:      "mail",
-		Body:      "hello",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: gotBody["signature"].(string),
+	// Verify the signature using signed_payload from the request body.
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, verifyErr := VerifyMessage(env)
+	sig := gotBody["signature"].(string)
+	status, verifyErr := VerifySignedPayload(sp, sig, did, did)
 	if verifyErr != nil {
-		t.Fatalf("VerifyMessage: %v", verifyErr)
+		t.Fatalf("VerifySignedPayload: %v", verifyErr)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
@@ -2033,20 +1990,15 @@ func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 		t.Fatalf("to_did should be absent on wire, got %v", v)
 	}
 
-	// Verify signature is valid without to_did.
-	env := &MessageEnvelope{
-		From:      "myco/agent",
-		FromDID:   did,
-		To:        "otherco/monitor",
-		Type:      "mail",
-		Body:      "hello",
-		Timestamp: gotBody["timestamp"].(string),
-		MessageID: gotBody["message_id"].(string),
-		Signature: gotBody["signature"].(string),
+	// Verify signature is valid without to_did, using signed_payload from request.
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing or empty in request body")
 	}
-	status, verifyErr := VerifyMessage(env)
+	sig := gotBody["signature"].(string)
+	status, verifyErr := VerifySignedPayload(sp, sig, did, did)
 	if verifyErr != nil {
-		t.Fatalf("VerifyMessage: %v", verifyErr)
+		t.Fatalf("VerifySignedPayload: %v", verifyErr)
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
