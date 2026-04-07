@@ -524,7 +524,7 @@ func TestRunNonInteractiveMissingContextPrintsOnboardingHint(t *testing.T) {
 	}
 }
 
-func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
+func TestRunInteractiveOnboardsBeforeRunning(t *testing.T) {
 	initRunCommandVars()
 
 	oldLoad := runLoadUserConfig
@@ -536,10 +536,7 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldWorkspaceState := runWorkspaceStateForDir
-	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
-	oldPrintInitSummary := guidedOnboardingPrintInitSummary
+	oldWizard := guidedOnboardingWizard
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -550,15 +547,9 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runWorkspaceStateForDir = oldWorkspaceState
-		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
-		guidedOnboardingPrintInitSummary = oldPrintInitSummary
+		guidedOnboardingWizard = oldWizard
 		initRunCommandVars()
 	})
-
-	t.Setenv("AWEB_API_KEY", "aw_sk_project")
-	t.Setenv("AWEB_URL", "https://app.aweb.ai")
 
 	runLoadUserConfig = func(dir string) (awrun.UserConfig, error) { return awrun.UserConfig{}, nil }
 	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
@@ -584,153 +575,13 @@ func TestRunInteractiveOnboardsWithProjectKeyBeforeRunning(t *testing.T) {
 		return nil
 	}
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
-	initResolveBaseURLForCollection = func(baseURL, serverName string) (string, string, error) {
-		return "https://app.aweb.ai/api", "app.aweb.ai", nil
-	}
-	initFetchSuggestionForCollection = func(baseURL, nsSlug, authToken string) *awid.SuggestAliasPrefixResponse {
-		return &awid.SuggestAliasPrefixResponse{NamePrefix: "alice", Roles: []string{"developer", "reviewer"}}
-	}
 
-	var capturedOpts initOptions
-	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
-		capturedOpts = opts
-		return &initResult{
-			Response:   &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Name: "Alice Example", NamespaceSlug: "team", ProjectSlug: "team", Lifetime: awid.LifetimePersistent},
-			ServerName: "app.aweb.ai",
+	var capturedReq guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		capturedReq = req
+		return &guidedOnboardingResult{
+			InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else.",
 		}, nil
-	}
-	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
-	}
-
-	cmd := &cobraCommandClone{Command: *runCmd}
-	cmd.ResetFlagsForTest()
-	cmd.Command.SetContext(context.Background())
-	var stdout, stderr bytes.Buffer
-	setRunCommandIO(&cmd.Command, strings.NewReader("\n\n2\n1\nAlice Example\n"), &stdout, &stderr)
-
-	if err := runRun(&cmd.Command, []string{"claude"}); err != nil {
-		t.Fatalf("runRun returned error: %v", err)
-	}
-	if capturedOpts.Flow != flowProjectKey {
-		t.Fatalf("expected project-key onboarding flow, got %+v", capturedOpts)
-	}
-	if capturedOpts.IdentityName != "Alice Example" || capturedOpts.IdentityAlias != "" {
-		t.Fatalf("expected permanent identity onboarding, got %+v", capturedOpts)
-	}
-	if capturedOpts.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("expected persistent lifetime, got %+v", capturedOpts)
-	}
-	if capturedOpts.WorkspaceRole != "developer" {
-		t.Fatalf("expected prompted role to be used, got %+v", capturedOpts)
-	}
-	if !capturedOpts.WriteContext {
-		t.Fatalf("expected guided onboarding to keep local workspace context, got %+v", capturedOpts)
-	}
-	if resolveCalls != 1 {
-		t.Fatalf("expected client resolution after onboarding, got %d calls", resolveCalls)
-	}
-}
-
-func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
-	initRunCommandVars()
-
-	oldLoad := runLoadUserConfig
-	oldResolveSettings := runResolveSettings
-	oldResolveClient := runResolveClientForDir
-	oldNewScreen := runNewScreenController
-	oldNewProvider := runNewProvider
-	oldNewLoop := runNewLoop
-	oldExecuteLoop := runExecuteLoop
-	oldNewEventBus := runNewEventBus
-	oldWorkspaceState := runWorkspaceStateForDir
-	oldResolveBaseURLForCollection := initResolveBaseURLForCollection
-	oldFetchSuggestionForCollection := initFetchSuggestionForCollection
-	oldExecuteInitFlow := guidedOnboardingExecuteInitFlow
-	oldInjectDocs := guidedOnboardingInjectDocs
-	oldSetupHooks := guidedOnboardingSetupHooks
-	oldSetupChannel := guidedOnboardingSetupChannel
-	oldPrintInitSummary := guidedOnboardingPrintInitSummary
-	t.Cleanup(func() {
-		runLoadUserConfig = oldLoad
-		runResolveSettings = oldResolveSettings
-		runResolveClientForDir = oldResolveClient
-		runNewScreenController = oldNewScreen
-		runNewProvider = oldNewProvider
-		runNewLoop = oldNewLoop
-		runExecuteLoop = oldExecuteLoop
-		runNewEventBus = oldNewEventBus
-		runWorkspaceStateForDir = oldWorkspaceState
-		initResolveBaseURLForCollection = oldResolveBaseURLForCollection
-		initFetchSuggestionForCollection = oldFetchSuggestionForCollection
-		guidedOnboardingExecuteInitFlow = oldExecuteInitFlow
-		guidedOnboardingInjectDocs = oldInjectDocs
-		guidedOnboardingSetupHooks = oldSetupHooks
-		guidedOnboardingSetupChannel = oldSetupChannel
-		guidedOnboardingPrintInitSummary = oldPrintInitSummary
-		initRunCommandVars()
-	})
-
-	t.Setenv("AWEB_API_KEY", "")
-	t.Setenv("AWEB_URL", "https://app.aweb.ai")
-
-	runLoadUserConfig = func(dir string) (awrun.UserConfig, error) { return awrun.UserConfig{}, nil }
-	runResolveSettings = func(cfg awrun.UserConfig, overrides awrun.SettingOverrides) (awrun.Settings, error) {
-		return awrun.Settings{BasePrompt: "mission"}, nil
-	}
-	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) { return runWorkspaceStateMissing, nil }
-
-	var resolveCalls int
-	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
-		resolveCalls++
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
-	}
-	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
-		return &awrun.ScreenController{}
-	}
-	runNewProvider = func(name string) (awrun.Provider, error) {
-		return awrun.ClaudeProvider{}, nil
-	}
-	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
-		return awrun.NewLoop(provider, out)
-	}
-	runExecuteLoop = func(loop *awrun.Loop, ctx context.Context, opts awrun.LoopOptions) error {
-		return nil
-	}
-	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
-	initResolveBaseURLForCollection = func(baseURL, serverName string) (string, string, error) {
-		return "https://app.aweb.ai/api", "app.aweb.ai", nil
-	}
-	initFetchSuggestionForCollection = func(baseURL, nsSlug, authToken string) *awid.SuggestAliasPrefixResponse {
-		return &awid.SuggestAliasPrefixResponse{NamePrefix: "alice", Roles: []string{"developer", "reviewer"}}
-	}
-
-	var capturedOpts initOptions
-	guidedOnboardingExecuteInitFlow = func(opts initOptions) (*initResult, error) {
-		capturedOpts = opts
-		return &initResult{
-			Response:   &awid.BootstrapIdentityResponse{APIKey: "aw_sk_new", Alias: "alice", NamespaceSlug: "team", ProjectSlug: "demo-repo", Lifetime: awid.LifetimeEphemeral},
-			ServerName: "app.aweb.ai",
-		}, nil
-	}
-	guidedOnboardingPrintInitSummary = func(resp *awid.BootstrapIdentityResponse, serverName, role string, attachResult *contextAttachResult, signingKeyPath, workingDir, headline string) {
-	}
-
-	var injectedRepo string
-	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
-		injectedRepo = repoRoot
-		return &injectDocsResult{}
-	}
-	var hooksRepo string
-	var hooksAsk bool
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
-		hooksRepo = repoRoot
-		hooksAsk = askConfirmation
-		return &claudeHooksResult{}
-	}
-	var channelRepo string
-	guidedOnboardingSetupChannel = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
-		channelRepo = repoRoot
-		return &claudeHooksResult{}
 	}
 
 	cmd := &cobraCommandClone{Command: *runCmd}
@@ -739,7 +590,7 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	tmp := t.TempDir()
 	runWorkingDir = tmp
 	var stdout, stderr bytes.Buffer
-	setRunCommandIO(&cmd.Command, strings.NewReader("\n\n\n1\ny\ny\n"), &stdout, &stderr)
+	setRunCommandIO(&cmd.Command, strings.NewReader("\n"), &stdout, &stderr)
 
 	var capturedLoopOpts awrun.LoopOptions
 	runExecuteLoop = func(loop *awrun.Loop, ctx context.Context, opts awrun.LoopOptions) error {
@@ -750,35 +601,14 @@ func TestRunInteractiveCreatesProjectBeforeRunning(t *testing.T) {
 	if err := runRun(&cmd.Command, []string{"codex"}); err != nil {
 		t.Fatalf("runRun returned error: %v", err)
 	}
-	if capturedOpts.Flow != flowHeadless {
-		t.Fatalf("expected headless create-project flow, got %+v", capturedOpts)
+	if capturedReq.WorkingDir != tmp {
+		t.Fatalf("working_dir=%q", capturedReq.WorkingDir)
 	}
-	if capturedOpts.ProjectSlug != sanitizeSlug(filepath.Base(tmp)) {
-		t.Fatalf("expected project slug to follow working dir, got %+v", capturedOpts)
-	}
-	if capturedOpts.IdentityAlias != "" {
-		t.Fatalf("expected create-project flow to let the server allocate the alias, got %+v", capturedOpts)
-	}
-	if capturedOpts.WorkspaceRole != "" {
-		t.Fatalf("expected role selection to be deferred until after bootstrap, got %+v", capturedOpts)
-	}
-	if !capturedOpts.PromptRoleAfterBootstrap {
-		t.Fatalf("expected post-bootstrap role prompt to be enabled, got %+v", capturedOpts)
-	}
-	if !capturedOpts.WriteContext {
-		t.Fatalf("expected guided onboarding to keep local workspace context, got %+v", capturedOpts)
+	if !capturedReq.AskPostCreateSetup {
+		t.Fatal("expected guided onboarding to keep post-init setup prompts enabled")
 	}
 	if strings.TrimSpace(capturedLoopOpts.InitialPrompt) != "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else." {
 		t.Fatalf("expected onboarding guide prompt, got %q", capturedLoopOpts.InitialPrompt)
-	}
-	if injectedRepo != tmp || channelRepo != tmp {
-		t.Fatalf("expected docs/channel on repo root, got docs=%q channel=%q", injectedRepo, channelRepo)
-	}
-	if hooksRepo != "" {
-		t.Fatalf("expected hooks skipped when channel is chosen, got hooks=%q", hooksRepo)
-	}
-	if hooksAsk {
-		t.Fatalf("expected wizard to handle hooks confirmation before setup call")
 	}
 	if resolveCalls != 1 {
 		t.Fatalf("expected client resolution after onboarding, got %d calls", resolveCalls)
