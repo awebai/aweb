@@ -504,7 +504,7 @@ async def delete_address(
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT address_id, did_aw
+            SELECT address_id
             FROM {{tables.public_addresses}}
             WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
