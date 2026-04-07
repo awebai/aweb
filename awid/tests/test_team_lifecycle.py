@@ -185,7 +185,7 @@ async def test_full_team_lifecycle(client, controller_identity):
     # ---------------------------------------------------------------
     # 9. Rotate team key
     # ---------------------------------------------------------------
-    _, new_team_pub = generate_keypair()
+    new_team_key, new_team_pub = generate_keypair()
     new_team_did = did_from_public_key(new_team_pub)
 
     headers = _sign(
@@ -217,9 +217,21 @@ async def test_full_team_lifecycle(client, controller_identity):
     assert resp.json()["team_did_key"] == new_team_did
 
     # ---------------------------------------------------------------
-    # 11. Delete team
+    # 11. Revoke the remaining active certificate, then delete team
     # ---------------------------------------------------------------
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_team", name="platform")
+    headers = _sign(
+        new_team_key, new_team_did, domain=domain,
+        operation="revoke_certificate", team_name="platform",
+        certificate_id=alice_cert_id,
+    )
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/teams/platform/certificates/revoke",
+        json={"certificate_id": alice_cert_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_team", team_name="platform")
     resp = await client.delete(f"/v1/namespaces/{domain}/teams/platform", headers=headers)
     assert resp.status_code == 200
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair
+from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
 
@@ -17,6 +18,13 @@ async def _register_namespace(client, signing_key, controller_did, domain):
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def _bad_signature_headers(signing_key, header_did, *, domain, operation, **extra):
+    headers = _sign(signing_key, header_did, domain=domain, operation=operation, **extra)
+    payload = {"domain": domain, "operation": operation, **extra, "timestamp": headers["X-AWEB-Timestamp"]}
+    headers["Authorization"] = f"DIDKey {header_did} {sign_message(signing_key, canonical_json_bytes(payload))}"
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +199,7 @@ async def test_get_team_not_found(client, controller_identity):
 
 
 # ---------------------------------------------------------------------------
-# DELETE /v1/namespaces/{domain}/teams/{name} — soft-delete team
+# DELETE /v1/namespaces/{domain}/teams/{name}
 # ---------------------------------------------------------------------------
 
 
@@ -208,7 +216,7 @@ async def test_delete_team(client, controller_identity):
         headers=headers,
     )
 
-    headers = _sign(signing_key, controller_did, domain="del.com", operation="delete_team", name="old")
+    headers = _sign(signing_key, controller_did, domain="del.com", operation="delete_team", team_name="old")
     resp = await client.delete("/v1/namespaces/del.com/teams/old", headers=headers)
     assert resp.status_code == 200
 
@@ -232,7 +240,7 @@ async def test_delete_team_wrong_key_returns_403(client, controller_identity):
 
     wrong_key, wrong_pub = generate_keypair()
     wrong_did = did_from_public_key(wrong_pub)
-    headers = _sign(wrong_key, wrong_did, domain="delfail.com", operation="delete_team", name="x")
+    headers = _sign(wrong_key, wrong_did, domain="delfail.com", operation="delete_team", team_name="x")
     resp = await client.delete("/v1/namespaces/delfail.com/teams/x", headers=headers)
     assert resp.status_code == 403
 
@@ -251,9 +259,87 @@ async def test_delete_team_not_found(client, controller_identity):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "delnf.com")
 
-    headers = _sign(signing_key, controller_did, domain="delnf.com", operation="delete_team", name="nope")
+    headers = _sign(signing_key, controller_did, domain="delnf.com", operation="delete_team", team_name="nope")
     resp = await client.delete("/v1/namespaces/delnf.com/teams/nope", headers=headers)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_team_with_active_certificates_returns_409(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "delactive.com")
+
+    team_key, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="delactive.com", operation="create_team", name="ops")
+    resp = await client.post(
+        "/v1/namespaces/delactive.com/teams",
+        json={"name": "ops", "team_did_key": team_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    _, member_pub = generate_keypair()
+    headers = _sign(
+        team_key, team_did_key,
+        domain="delactive.com", operation="register_certificate",
+        team_name="ops", certificate_id="cert-active-1",
+    )
+    resp = await client.post(
+        "/v1/namespaces/delactive.com/teams/ops/certificates",
+        json={
+            "certificate_id": "cert-active-1",
+            "member_did_key": did_from_public_key(member_pub),
+            "alias": "bot",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    headers = _sign(signing_key, controller_did, domain="delactive.com", operation="delete_team", team_name="ops")
+    resp = await client.delete("/v1/namespaces/delactive.com/teams/ops", headers=headers)
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_delete_team_bad_signature_returns_401(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    wrong_key, _ = generate_keypair()
+    await _register_namespace(client, signing_key, controller_did, "delbadsig.com")
+
+    _, pub = generate_keypair()
+    headers = _sign(signing_key, controller_did, domain="delbadsig.com", operation="create_team", name="ops")
+    resp = await client.post(
+        "/v1/namespaces/delbadsig.com/teams",
+        json={"name": "ops", "team_did_key": did_from_public_key(pub)},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    headers = _bad_signature_headers(
+        wrong_key, controller_did, domain="delbadsig.com", operation="delete_team", team_name="ops",
+    )
+    resp = await client.delete("/v1/namespaces/delbadsig.com/teams/ops", headers=headers)
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_team_wrong_operation_returns_401(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "delwrongop.com")
+
+    _, pub = generate_keypair()
+    headers = _sign(signing_key, controller_did, domain="delwrongop.com", operation="create_team", name="ops")
+    resp = await client.post(
+        "/v1/namespaces/delwrongop.com/teams",
+        json={"name": "ops", "team_did_key": did_from_public_key(pub)},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    headers = _sign(signing_key, controller_did, domain="delwrongop.com", operation="delete", team_name="ops")
+    resp = await client.delete("/v1/namespaces/delwrongop.com/teams/ops", headers=headers)
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

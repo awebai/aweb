@@ -159,6 +159,12 @@ class NamespaceListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class NamespaceDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=512)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -430,14 +436,15 @@ async def list_namespaces(
 async def delete_namespace(
     request: Request,
     domain: str,
+    body: NamespaceDeleteRequest | None = None,
     db_infra=Depends(get_db),
 ) -> dict:
-    """Soft-delete a namespace. Must be signed by the controller key."""
+    """Delete a namespace after verifying it has no active certificates."""
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
 
     # Verify the caller's signature first (fail fast on bad auth)
-    caller_did = _verify_controller_signature(request, domain=domain, operation="delete")
+    caller_did = _verify_controller_signature(request, domain=domain, operation="delete_namespace")
 
     # Transactional: lock the row, verify ownership, then delete
     async with db.transaction() as tx:
@@ -459,12 +466,60 @@ async def delete_namespace(
                 detail="Only the namespace controller can delete",
             )
 
+        active_cert = await tx.fetch_one(
+            """
+            SELECT tc.certificate_id
+            FROM {{tables.teams}} t
+            JOIN {{tables.team_certificates}} tc ON tc.team_id = t.team_id
+            WHERE t.domain = $1
+              AND t.deleted_at IS NULL
+              AND tc.revoked_at IS NULL
+            LIMIT 1
+            """,
+            domain,
+        )
+        if active_cert is not None:
+            raise HTTPException(status_code=409, detail="Namespace has active certificates")
+
+        now = datetime.now(timezone.utc)
         await tx.execute(
-            "UPDATE {{tables.dns_namespaces}} SET deleted_at = NOW() WHERE namespace_id = $1",
+            """
+            DELETE FROM {{tables.team_certificates}} tc
+            USING {{tables.teams}} t
+            WHERE tc.team_id = t.team_id
+              AND t.domain = $1
+            """,
+            domain,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.teams}}
+            SET deleted_at = $2
+            WHERE domain = $1 AND deleted_at IS NULL
+            """,
+            domain,
+            now,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.public_addresses}}
+            SET deleted_at = $2
+            WHERE namespace_id = $1 AND deleted_at IS NULL
+            """,
             row["namespace_id"],
+            now,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.dns_namespaces}}
+            SET deleted_at = $2
+            WHERE namespace_id = $1 AND deleted_at IS NULL
+            """,
+            row["namespace_id"],
+            now,
         )
 
-    return {"status": "deleted", "domain": domain}
+    return {"deleted": True, "namespace_id": str(row["namespace_id"]), "domain": domain}
 
 
 # ---------------------------------------------------------------------------

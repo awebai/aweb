@@ -23,6 +23,10 @@ type addressRegisterRequest struct {
 	Reachability  string `json:"reachability"`
 }
 
+type deleteReasonRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name string) (*RegistryAddress, string, error) {
 	registryURL, err := c.DiscoverRegistry(ctx, domain)
 	if err != nil {
@@ -89,6 +93,50 @@ func (c *RegistryClient) RegisterNamespaceAt(
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *RegistryClient) DeleteNamespace(
+	ctx context.Context,
+	domain string,
+	controllerSigningKey ed25519.PrivateKey,
+	reason string,
+) (string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return "", err
+	}
+	return registryURL, c.DeleteNamespaceAt(ctx, registryURL, domain, controllerSigningKey, reason)
+}
+
+func (c *RegistryClient) DeleteNamespaceAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	controllerSigningKey ed25519.PrivateKey,
+	reason string,
+) error {
+	domain = canonicalizeDomain(domain)
+	if domain == "" {
+		return fmt.Errorf("domain is required")
+	}
+	if controllerSigningKey == nil {
+		return fmt.Errorf("controller signing key is required")
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(domain)
+	var body any
+	if strings.TrimSpace(reason) != "" {
+		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
+	}
+	return c.requestJSON(
+		ctx,
+		http.MethodDelete,
+		registryURL,
+		path,
+		signedNamespaceHeaders(domain, "delete_namespace", controllerSigningKey, nil),
+		body,
+		nil,
+	)
 }
 
 func (c *RegistryClient) RegisterAddress(
@@ -161,6 +209,56 @@ func (c *RegistryClient) RegisterAddressAt(
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *RegistryClient) DeleteAddress(
+	ctx context.Context,
+	domain string,
+	name string,
+	controllerSigningKey ed25519.PrivateKey,
+	reason string,
+) (string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return "", err
+	}
+	return registryURL, c.DeleteAddressAt(ctx, registryURL, domain, name, controllerSigningKey, reason)
+}
+
+func (c *RegistryClient) DeleteAddressAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	controllerSigningKey ed25519.PrivateKey,
+	reason string,
+) error {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	if domain == "" {
+		return fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if controllerSigningKey == nil {
+		return fmt.Errorf("controller signing key is required")
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses/" + urlPathEscape(name)
+	var body any
+	if strings.TrimSpace(reason) != "" {
+		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
+	}
+	return c.requestJSON(
+		ctx,
+		http.MethodDelete,
+		registryURL,
+		path,
+		signedAddressHeaders(domain, name, "delete_address", controllerSigningKey),
+		body,
+		nil,
+	)
 }
 
 func requireSigningKeyMatchesDID(signingKey ed25519.PrivateKey, expectedDID string) error {

@@ -115,6 +115,46 @@ func (c *RegistryClient) GetTeam(
 	return &out, nil
 }
 
+// DeleteTeam removes a team after the caller has already revoked any active
+// certificates. Auth: namespace controller DIDKey signature.
+func (c *RegistryClient) DeleteTeam(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	controllerKey ed25519.PrivateKey,
+	reason string,
+) error {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	if domain == "" {
+		return fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return fmt.Errorf("team name is required")
+	}
+	if controllerKey == nil {
+		return fmt.Errorf("controller signing key is required")
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name)
+	var body any
+	if strings.TrimSpace(reason) != "" {
+		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
+	}
+	return c.requestJSON(
+		ctx,
+		http.MethodDelete,
+		registryURL,
+		path,
+		signedNamespaceHeaders(domain, "delete_team", controllerKey, map[string]string{
+			"team_name": name,
+		}),
+		body,
+		nil,
+	)
+}
+
 // RegisterCertificate registers a team membership certificate at awid.
 // Auth: team controller DIDKey signature (using the team private key).
 func (c *RegistryClient) RegisterCertificate(
