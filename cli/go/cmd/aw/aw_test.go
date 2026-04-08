@@ -584,7 +584,7 @@ func TestAwInitWritesConfig(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--server-url", server.URL, "--print-exports=false", "--write-context=false", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--cloud-url", server.URL, "--print-exports=false", "--write-context=false", "--json")
 	run.Stdin = strings.NewReader("")
 	run.Env = append(testCommandEnv(tmp),
 		"AWEB_API_KEY=aw_sk_project_test",
@@ -1114,7 +1114,7 @@ func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--alias", "coordinator",
 		"--write-context=false",
 	)
@@ -1199,7 +1199,7 @@ func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--alias", "coordinator",
 	)
 	run.Env = append(testCommandEnv(tmp),
@@ -1260,7 +1260,7 @@ func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--alias", "bob",
 		"--json",
 	)
@@ -1338,7 +1338,7 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--alias", "alice",
 		"--role", "developer",
 		"--json",
@@ -1450,7 +1450,7 @@ func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--permanent",
 		"--name", "Alice",
 		"--json",
@@ -1631,7 +1631,7 @@ func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--permanent",
 		"--json",
 		"--write-context=false",
@@ -1771,7 +1771,7 @@ func TestAwInitProjectKeyPermanentFailsWhenBootstrapReturnsDifferentDID(t *testi
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--permanent",
 		"--json",
 		"--write-context=false",
@@ -1902,7 +1902,7 @@ func TestAwInitProjectKeyPermanentFallsBackToRegisterWhenUpdateServerIsMissing(t
 	}
 
 	run := exec.CommandContext(ctx, bin, "init",
-		"--server-url", server.URL,
+		"--cloud-url", server.URL,
 		"--permanent",
 		"--json",
 		"--write-context=false",

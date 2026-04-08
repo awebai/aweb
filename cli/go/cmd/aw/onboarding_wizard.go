@@ -38,7 +38,7 @@ type guidedOnboardingRequest struct {
 	WorkingDir         string
 	PromptIn           io.Reader
 	PromptOut          io.Writer
-	ServerURL          string
+	CloudURL           string
 	ServerName         string
 	Alias              string
 	Name               string
@@ -122,7 +122,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
-	serviceURLs, err := discoverOnboardingServiceURLs(req.ServerURL)
+	serviceURLs, err := discoverOnboardingServiceURLs(req.CloudURL)
 	if err != nil {
 		fmt.Fprintln(req.PromptOut, "Managed onboarding is not available here. Switching to BYOD.")
 		return executeBYODPath(req)
@@ -198,7 +198,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
-	serverURL, err := resolveGuidedOnboardingServerURL(req.ServerURL)
+	serverURL, err := resolveGuidedOnboardingServerURL(req.CloudURL)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +618,7 @@ func persistGuidedHostedIdentity(
 	})
 }
 
-func promptHostedClaimHuman(req guidedOnboardingRequest, serverURL string) error {
+func promptHostedClaimHuman(req guidedOnboardingRequest, cloudURL string) error {
 	fmt.Fprintln(req.PromptOut, "Your identity is in .aw/signing.key.")
 	fmt.Fprintln(req.PromptOut, "If you lose this file before running 'aw claim-human --email you@example.com', this account cannot be recovered. We recommend claiming now.")
 
@@ -636,7 +636,7 @@ func promptHostedClaimHuman(req guidedOnboardingRequest, serverURL string) error
 	}
 	resp, _, err := guidedOnboardingClaimHuman(claimHumanOptions{
 		WorkingDir: req.WorkingDir,
-		BaseURL:    serverURL,
+		BaseURL:    cloudURL,
 		Email:      email,
 	})
 	if err != nil {
@@ -646,8 +646,8 @@ func promptHostedClaimHuman(req guidedOnboardingRequest, serverURL string) error
 }
 
 func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingServiceURLs, error) {
-	if strings.TrimSpace(req.ServerURL) != "" {
-		return resolveOnboardingServiceURLs(req.ServerURL)
+	if strings.TrimSpace(req.CloudURL) != "" {
+		return resolveOnboardingServiceURLs(req.CloudURL)
 	}
 
 	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(req.WorkingDir)
@@ -675,7 +675,7 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 		return onboardingServiceURLs{}, err
 	}
 
-	awebURL, err := resolveGuidedOnboardingServerURL(req.ServerURL)
+	awebURL, err := resolveGuidedOnboardingServerURL(req.CloudURL)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}

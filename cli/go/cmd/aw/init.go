@@ -35,21 +35,24 @@ existing-project bootstrap primitive.`,
 }
 
 var (
-	initServerURL     string
-	initProjectSlug   string
-	initNamespaceSlug string
-	initAlias         string
-	initName          string
-	initReachability  string
-	initInjectDocs    bool
-	initSetupHooks    bool
-	initSetupChannel  bool
-	initHumanName     string
-	initAgentType     string
-	initWriteContext  bool
-	initPrintExports  bool
-	initRole          string
-	initPermanent     bool
+	initCloudURL       string
+	initHosted         bool
+	initHostedUsername string
+	initHostedAWIDURL  string
+	initProjectSlug    string
+	initNamespaceSlug  string
+	initAlias          string
+	initName           string
+	initReachability   string
+	initInjectDocs     bool
+	initSetupHooks     bool
+	initSetupChannel   bool
+	initHumanName      string
+	initAgentType      string
+	initWriteContext   bool
+	initPrintExports   bool
+	initRole           string
+	initPermanent      bool
 )
 
 var (
@@ -103,7 +106,7 @@ type initCollectionInput struct {
 	JSONOutput       bool
 	PromptIn         io.Reader
 	PromptOut        io.Writer
-	ServerURL        string
+	CloudURL         string
 	ServerName       string
 	ProjectSlug      string
 	NamespaceSlug    string
@@ -135,8 +138,10 @@ type initResult struct {
 }
 
 func init() {
-	initCmd.Flags().StringVar(&initServerURL, "server-url", "", "Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).")
-	initCmd.Flags().StringVar(&initServerURL, "server", "", "Base URL for the aweb server (alias for --server-url)")
+	initCmd.Flags().StringVar(&initCloudURL, "cloud-url", "", "Base URL for aweb-cloud. The CLI discovers the aweb and awid URLs from this via GET /api/v1/discovery.")
+	initCmd.Flags().BoolVar(&initHosted, "hosted", false, "Create a hosted aweb.ai identity in this directory")
+	initCmd.Flags().StringVar(&initHostedUsername, "username", "", "Hosted username to create with --hosted")
+	initCmd.Flags().StringVar(&initHostedAWIDURL, "awid-url", "", "Override the awid registry URL for hosted init automation")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Permanent address reachability (private|org-visible|contacts-only|public)")
@@ -182,24 +187,36 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Certificate-based init: when a team certificate exists and --server is provided.
+	// Certificate-based init: when a team certificate exists and a cloud URL is provided.
 	{
 		wd, _ := os.Getwd()
 		if hasCertificateForInit(wd) {
-			serverURL := strings.TrimSpace(initServerURL)
-			if serverURL == "" {
-				serverURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+			cloudURL := strings.TrimSpace(initCloudURL)
+			if cloudURL == "" {
+				cloudURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
 			}
-			if serverURL == "" {
-				return usageError("--server is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
+			if cloudURL == "" {
+				return usageError("--cloud-url or AWEB_URL is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
 			}
-			result, err := initCertificateConnect(wd, serverURL, resolveRequestedRole(strings.TrimSpace(initRole)))
+			serviceURLs, err := resolveOnboardingServiceURLs(cloudURL)
+			if err != nil {
+				return err
+			}
+			result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
+				Role:     resolveRequestedRole(strings.TrimSpace(initRole)),
+				CloudURL: serviceURLs.CloudURL,
+				AwidURL:  serviceURLs.AwidURL,
+			})
 			if err != nil {
 				return err
 			}
 			printOutput(result, formatConnect)
 			return nil
 		}
+	}
+
+	if hostedInitRequested() {
+		return runHostedInit(cmd)
 	}
 
 	if strings.TrimSpace(os.Getenv("AWEB_API_KEY")) == "" {
@@ -216,7 +233,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				WorkingDir: wd,
 				PromptIn:   os.Stdin,
 				PromptOut:  os.Stderr,
-				ServerURL:  initServerURL,
+				CloudURL:   initCloudURL,
 				ServerName: serverFlag,
 				Alias: func() string {
 					if initPermanent {
@@ -260,10 +277,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func hostedInitRequested() bool {
+	return initHosted || strings.TrimSpace(initHostedUsername) != "" || strings.TrimSpace(initHostedAWIDURL) != ""
+}
+
 // initNeedsFullInit returns true if the user passed flags that require the
 // full init flow, or if no local workspace binding exists yet (first-time init).
 func initNeedsFullInit() bool {
-	if initServerURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPermanent {
+	if initCloudURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPermanent {
 		return true
 	}
 	if strings.TrimSpace(os.Getenv("AWEB_API_KEY")) != "" {
@@ -308,7 +329,7 @@ func collectInitOptionsForFlow(flow initFlow) (initOptions, error) {
 		JSONOutput:    jsonFlag,
 		PromptIn:      os.Stdin,
 		PromptOut:     os.Stderr,
-		ServerURL:     initServerURL,
+		CloudURL:      initCloudURL,
 		ServerName:    serverFlag,
 		ProjectSlug:   resolveProjectSlug(),
 		NamespaceSlug: resolveExplicitNamespaceSlug(),
@@ -525,7 +546,7 @@ func collectInitOptionsWithInput(flow initFlow, input initCollectionInput) (init
 		return initOptions{}, fmt.Errorf("working directory is required")
 	}
 
-	baseURL, serverName, err := initResolveBaseURLForCollection(input.ServerURL, input.ServerName)
+	baseURL, serverName, err := initResolveBaseURLForCollection(input.CloudURL, input.ServerName)
 	if err != nil {
 		return initOptions{}, err
 	}
@@ -903,7 +924,7 @@ func executeInit(opts initOptions) (*initResult, error) {
 	}
 	if err := persistWorkspaceBinding(workspaceBindingInput{
 		WorkingDir:     opts.WorkingDir,
-		ServerURL:      attachURL,
+		AwebURL:        attachURL,
 		APIKey:         strings.TrimSpace(resp.APIKey),
 		ProjectID:      strings.TrimSpace(resp.ProjectID),
 		ProjectSlug:    strings.TrimSpace(resp.ProjectSlug),

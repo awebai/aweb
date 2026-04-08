@@ -29,7 +29,7 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	t.Setenv("AWEB_API_KEY", "")
-	initServerURL = "https://app.aweb.ai"
+	initCloudURL = "https://app.aweb.ai"
 	initRole = "reviewer"
 	initPermanent = false
 	initInjectDocs = false
@@ -71,8 +71,8 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	if gotDir != wantDir {
 		t.Fatalf("working_dir=%q want %q", captured.WorkingDir, tmp)
 	}
-	if captured.ServerURL != "https://app.aweb.ai" {
-		t.Fatalf("server_url=%q", captured.ServerURL)
+	if captured.CloudURL != "https://app.aweb.ai" {
+		t.Fatalf("cloud_url=%q", captured.CloudURL)
 	}
 	if captured.Role != "reviewer" {
 		t.Fatalf("role=%q", captured.Role)

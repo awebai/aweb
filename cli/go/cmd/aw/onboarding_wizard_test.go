@@ -77,7 +77,7 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("2\n"),
 		PromptOut:  &bytes.Buffer{},
-		ServerURL:  "https://app.aweb.ai",
+		CloudURL:   "https://app.aweb.ai",
 		Role:       "reviewer",
 	})
 	if err != nil {
@@ -228,7 +228,7 @@ func TestExecuteHostedPathRejectsServersWithoutManagedOnboarding(t *testing.T) {
 		WorkingDir: t.TempDir(),
 		PromptIn:   strings.NewReader("Alice\nacme.com\n"),
 		PromptOut:  &out,
-		ServerURL:  server.URL,
+		CloudURL:   server.URL,
 	})
 	if err == nil {
 		t.Fatal("expected hosted path to return an error")
@@ -335,7 +335,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
-		ServerURL:  "https://app.example",
+		CloudURL:   "https://app.example",
 		Role:       "developer",
 	})
 	if err != nil {
@@ -549,7 +549,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
 		PromptOut:  &out,
-		ServerURL:  cloudServer.URL + "/api",
+		CloudURL:   cloudServer.URL + "/api",
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
@@ -799,7 +799,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
 		PromptOut:  &out,
-		ServerURL:  server.URL,
+		CloudURL:   server.URL,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -967,7 +967,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &out,
-		ServerURL:  connectServer.URL,
+		CloudURL:   connectServer.URL,
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
@@ -1088,7 +1088,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "y\nn\nn\n"},
 		PromptOut:          &bytes.Buffer{},
-		ServerURL:          "https://app.example",
+		CloudURL:           "https://app.example",
 		AskPostCreateSetup: true,
 	})
 	if err != nil {

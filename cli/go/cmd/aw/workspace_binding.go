@@ -15,7 +15,6 @@ type workspaceBindingInput struct {
 	AwebURL        string
 	CloudURL       string
 	AwidURL        string
-	ServerURL      string
 	APIKey         string
 	ProjectID      string
 	ProjectSlug    string
@@ -54,9 +53,6 @@ func persistWorkspaceBinding(input workspaceBindingInput) error {
 	}
 	if v := strings.TrimSpace(input.AwidURL); v != "" {
 		state.AwidURL = v
-	}
-	if v := strings.TrimSpace(input.ServerURL); v != "" {
-		state.AwebURL = v
 	}
 	if v := strings.TrimSpace(input.APIKey); v != "" {
 		state.APIKey = v
