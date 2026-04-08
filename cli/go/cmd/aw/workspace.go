@@ -22,13 +22,6 @@ var workspaceCmd = &cobra.Command{
 	Short: "Manage repo-local coordination workspaces",
 }
 
-var workspaceInitCmd = &cobra.Command{
-	Use:    "init",
-	Short:  "Register the current git worktree for coordination",
-	Hidden: true,
-	RunE:   runWorkspaceInit,
-}
-
 var workspaceStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show coordination status for the current workspace/identity and team",
@@ -43,25 +36,9 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 }
 
 var (
-	workspaceInitRole       string
-	workspaceInitRepoOrigin string
-	workspaceStatusLimit    int
-	workspaceAddAlias       string
+	workspaceStatusLimit int
+	workspaceAddAlias    string
 )
-
-type workspaceInitOutput struct {
-	WorkspaceID     string `json:"workspace_id"`
-	ProjectID       string `json:"project_id"`
-	ProjectSlug     string `json:"project_slug"`
-	RepoID          string `json:"repo_id"`
-	CanonicalOrigin string `json:"canonical_origin"`
-	Alias           string `json:"alias"`
-	HumanName       string `json:"human_name"`
-	Role            string `json:"role,omitempty"`
-	Hostname        string `json:"hostname,omitempty"`
-	WorkspacePath   string `json:"workspace_path,omitempty"`
-	Created         bool   `json:"created"`
-}
 
 type workspaceStatusOutput struct {
 	Workspace          aweb.WorkspaceInfo                `json:"workspace"`
@@ -81,40 +58,12 @@ type workspaceAddWorktreeOutput struct {
 }
 
 func init() {
-	workspaceInitCmd.Flags().StringVar(&workspaceInitRole, "role", "", "Coordination role for this workspace")
-	workspaceInitCmd.Flags().StringVar(&workspaceInitRepoOrigin, "repo-origin", "", "Override git remote origin URL")
-
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
 
-	workspaceCmd.AddCommand(workspaceInitCmd)
 	workspaceCmd.AddCommand(workspaceStatusCmd)
 	workspaceCmd.AddCommand(workspaceAddWorktreeCmd)
 	rootCmd.AddCommand(workspaceCmd)
-}
-
-func runWorkspaceInit(cmd *cobra.Command, args []string) error {
-	loadDotenvBestEffort()
-
-	root, err := currentGitWorktreeRoot()
-	if err != nil {
-		return usageError("workspace init requires a git worktree")
-	}
-
-	client, sel, err := resolveClientSelectionForDir(root)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(sel.IdentityID) == "" || strings.TrimSpace(sel.IdentityHandle) == "" {
-		return usageError("selected account has no identity; run 'aw init' first")
-	}
-
-	out, err := registerWorkspaceForRoot(root, client, strings.TrimSpace(workspaceInitRole), strings.TrimSpace(workspaceInitRepoOrigin))
-	if err != nil {
-		return err
-	}
-	printOutput(*out, formatWorkspaceInit)
-	return nil
 }
 
 func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
@@ -404,191 +353,6 @@ func currentGitWorktreeRootFromDir(workingDir string) (string, error) {
 	return root, nil
 }
 
-type contextAttachResult struct {
-	Workspace   *workspaceInitOutput
-	ContextKind string
-}
-
-func autoAttachContext(workingDir string, client *aweb.Client, roleOverride string) (*contextAttachResult, error) {
-	root, err := currentGitWorktreeRootFromDir(workingDir)
-	if err != nil {
-		return registerLocalAttachmentForDir(workingDir, client)
-	}
-
-	origin, err := resolveWorkspaceRepoOrigin(root, "")
-	if err != nil {
-		return registerLocalAttachmentForDir(workingDir, client)
-	}
-
-	out, err := registerWorkspaceForRoot(root, client, strings.TrimSpace(roleOverride), origin)
-	if err != nil {
-		return nil, err
-	}
-	return &contextAttachResult{
-		Workspace:   out,
-		ContextKind: "repo_worktree",
-	}, nil
-}
-
-func registerWorkspaceForRoot(root string, client *aweb.Client, roleOverride string, repoOrigin string) (*workspaceInitOutput, error) {
-	origin, err := resolveWorkspaceRepoOrigin(root, repoOrigin)
-	if err != nil {
-		return nil, err
-	}
-	hostname, _ := os.Hostname()
-
-	statePath := filepath.Join(root, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	existingState, err := awconfig.LoadWorktreeWorkspaceFrom(statePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read %s: %w", statePath, err)
-	}
-
-	role := strings.TrimSpace(roleOverride)
-	if role == "" && existingState != nil {
-		role = strings.TrimSpace(existingState.Role)
-	}
-	// Only resolve from project roles if we don't already have a role.
-	// Callers that pre-validate the role (init, role-name set) pass it here
-	// already validated.
-	if role == "" {
-		role, err = resolveRole(client, "", isTTY(), os.Stdin, os.Stderr)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	resp, err := client.WorkspaceRegister(ctx, &aweb.WorkspaceRegisterRequest{
-		RepoOrigin:    origin,
-		Role:          role,
-		Hostname:      hostname,
-		WorkspacePath: root,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	state := &awconfig.WorktreeWorkspace{
-		WorkspaceID:     resp.WorkspaceID,
-		ProjectID:       resp.ProjectID,
-		ProjectSlug:     resp.ProjectSlug,
-		RepoID:          resp.RepoID,
-		CanonicalOrigin: resp.CanonicalOrigin,
-		Alias:           resp.Alias,
-		HumanName:       resp.HumanName,
-		Role:            role,
-		Hostname:        hostname,
-		WorkspacePath:   root,
-		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
-	}
-	if existingState != nil {
-		state = existingState
-		state.WorkspaceID = resp.WorkspaceID
-		state.ProjectID = resp.ProjectID
-		state.ProjectSlug = resp.ProjectSlug
-		state.RepoID = resp.RepoID
-		state.CanonicalOrigin = resp.CanonicalOrigin
-		state.Alias = resp.Alias
-		if strings.TrimSpace(resp.HumanName) != "" {
-			state.HumanName = resp.HumanName
-		}
-		state.RoleName = role
-		state.Role = role
-		state.Hostname = hostname
-		state.WorkspacePath = root
-		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(statePath, state); err != nil {
-		return nil, fmt.Errorf("write %s: %w", statePath, err)
-	}
-
-	return &workspaceInitOutput{
-		WorkspaceID:     resp.WorkspaceID,
-		ProjectID:       resp.ProjectID,
-		ProjectSlug:     resp.ProjectSlug,
-		RepoID:          resp.RepoID,
-		CanonicalOrigin: resp.CanonicalOrigin,
-		Alias:           resp.Alias,
-		HumanName:       resp.HumanName,
-		Role:            role,
-		Hostname:        hostname,
-		WorkspacePath:   root,
-		Created:         resp.Created,
-	}, nil
-}
-
-func registerLocalAttachmentForDir(workingDir string, client *aweb.Client) (*contextAttachResult, error) {
-	hostname, _ := os.Hostname()
-	workspacePath := filepath.Clean(workingDir)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	resp, err := client.WorkspaceAttach(ctx, &aweb.WorkspaceAttachRequest{
-		AttachmentType: "local_dir",
-		Hostname:       hostname,
-		WorkspacePath:  workspacePath,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	statePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	state, stateErr := awconfig.LoadWorktreeWorkspaceFrom(statePath)
-	switch {
-	case stateErr == nil:
-		state.WorkspaceID = strings.TrimSpace(resp.WorkspaceID)
-		if v := strings.TrimSpace(resp.ProjectID); v != "" {
-			state.ProjectID = v
-		}
-		if v := strings.TrimSpace(resp.ProjectSlug); v != "" {
-			state.ProjectSlug = v
-			if strings.TrimSpace(state.NamespaceSlug) == "" {
-				state.NamespaceSlug = v
-			}
-		}
-		if v := strings.TrimSpace(resp.Alias); v != "" {
-			state.Alias = v
-			if strings.TrimSpace(state.IdentityHandle) == "" {
-				state.IdentityHandle = v
-			}
-		}
-		if v := strings.TrimSpace(resp.HumanName); v != "" {
-			state.HumanName = v
-		}
-		state.RepoID = ""
-		state.CanonicalOrigin = ""
-		state.Hostname = hostname
-		state.WorkspacePath = workspacePath
-		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		if err := awconfig.SaveWorktreeWorkspaceTo(statePath, state); err != nil {
-			return nil, fmt.Errorf("write %s: %w", statePath, err)
-		}
-	case os.IsNotExist(stateErr):
-		// Commands that own identity/project binding persistence will write
-		// workspace.yaml after attach. Do not create a coordination-only file
-		// here for plain local directories.
-	case stateErr != nil:
-		return nil, fmt.Errorf("read %s: %w", statePath, stateErr)
-	}
-
-	return &contextAttachResult{
-		ContextKind: "local_dir",
-		Workspace: &workspaceInitOutput{
-			WorkspaceID:   resp.WorkspaceID,
-			ProjectID:     resp.ProjectID,
-			ProjectSlug:   resp.ProjectSlug,
-			Alias:         resp.Alias,
-			HumanName:     resp.HumanName,
-			Hostname:      hostname,
-			WorkspacePath: workspacePath,
-			Created:       resp.Created,
-		},
-	}, nil
-}
-
 func resolveWorkspaceRepoOrigin(root, explicit string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return strings.TrimSpace(explicit), nil
@@ -664,26 +428,6 @@ func stringPtr(v string) *string {
 		return nil
 	}
 	return &v
-}
-
-func formatWorkspaceInit(v any) string {
-	out := v.(workspaceInitOutput)
-	var sb strings.Builder
-	action := "Updated"
-	if out.Created {
-		action = "Registered"
-	}
-	sb.WriteString(fmt.Sprintf("%s workspace %s\n", action, out.Alias))
-	sb.WriteString(fmt.Sprintf("Workspace ID: %s\n", out.WorkspaceID))
-	sb.WriteString(fmt.Sprintf("Project:      %s\n", out.ProjectSlug))
-	sb.WriteString(fmt.Sprintf("Repo:         %s\n", out.CanonicalOrigin))
-	if out.Role != "" {
-		sb.WriteString(fmt.Sprintf("Role:         %s\n", out.Role))
-	}
-	if out.WorkspacePath != "" {
-		sb.WriteString(fmt.Sprintf("Path:         %s\n", abbreviateUserHome(out.WorkspacePath)))
-	}
-	return sb.String()
 }
 
 func formatWorkspaceAddWorktree(v any) string {

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +47,28 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	}
 
 	wd, _ := os.Getwd()
-	_, err = autoAttachContext(wd, client, roleName)
+	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(wd)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return usageError("current worktree is missing .aw/workspace.yaml; run `aw init` first")
+		}
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.PatchCurrentWorkspace(ctx, &aweb.PatchCurrentWorkspaceRequest{
+		Role: roleName,
+	})
 	if err != nil {
 		return fmt.Errorf("setting role name: %w", err)
+	}
+	workspace.RoleName = strings.TrimSpace(resp.Role)
+	workspace.Role = strings.TrimSpace(resp.Role)
+	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		return fmt.Errorf("write %s: %w", workspacePath, err)
 	}
 	fmt.Printf("Role name set to %s\n", roleName)
 	return nil
