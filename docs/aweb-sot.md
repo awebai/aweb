@@ -1,16 +1,16 @@
 # aweb — Source of Truth
 
 This is the canonical contract for **aweb**: the OSS coordination
-server (Python FastAPI) and the `aw` CLI (Go). It defines the exact
-shape of every endpoint, schema, authentication mechanism, dependency,
-and configuration knob aweb exposes or relies on. Implementers build
-against this document; operators run aweb against the contract it
-defines here.
+server (Python FastAPI) and the `aw` CLI (Go). It defines the
+shape of every endpoint, schema, authentication mechanism,
+dependency, and configuration knob aweb exposes or relies
+on. Implementers build against this document; operators run aweb
+against the contract it defines here.
 
-aweb-cloud (the proprietary hosted wrapper) is described in
-[`aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md).
 awid (the public identity registry that aweb depends on) is described
-in [`awid-sot.md`](awid-sot.md).
+in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
+runs at <https://aweb.ai>; anyone can self-host the same OSS server
+against any awid registry.
 
 For supporting reference material that does not redefine the contract:
 - [`cli-command-reference.md`](cli-command-reference.md) — full `aw`
@@ -33,10 +33,11 @@ For supporting reference material that does not redefine the contract:
 3. **Team certificates are the single credential for coordination
    endpoints.** Agents authenticate every coordination request (mail,
    chat, tasks, roles, locks, instructions, workspace state) with a
-   DIDKey signature and a team certificate. The `/mcp` endpoint at
-   aweb-cloud uses a separate auth model documented in
-   `aweb-cloud/docs/aweb-cloud-sot.md` § Hosted MCP and
-   OAuth Connector Architecture.
+   DIDKey signature and a team certificate. aweb's MCP server uses the
+   same team certificate auth on its local CLI mount. Hosted operators
+   may layer additional auth modes (OAuth, opaque bearer tokens, etc.)
+   on top of their own MCP surface, but those are operator-specific
+   and outside the aweb OSS contract.
 4. **team_address is the coordination scope.** Every coordination table
    is scoped to a `team_address` (e.g., `acme.com/backend`). All
    coordination data — messages, tasks, claims, locks, roles,
@@ -559,7 +560,7 @@ CREATE TABLE audit_log (
 |-------|---------|
 | `POST /v1/connect` | Agent connects with certificate. Auto-provisions team + agent if needed. Returns workspace binding info. Called by `aw init` under the hood. |
 | `GET /v1/team` | Get team info (team_address, team_did_key, member count). |
-| `GET /v1/usage` | Usage metrics for billing. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Polled by aweb-cloud daily. |
+| `GET /v1/usage` | Per-team usage metrics. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Intended for billing and metering by hosted operators that layer billing on top of aweb. |
 
 ### Messaging
 
@@ -606,8 +607,11 @@ CREATE TABLE audit_log (
 
 ### Dashboard routes
 
-The dashboard reads coordination data from aweb. Authenticated with a
-dashboard-session JWT issued by aweb-cloud (see Dashboard auth below).
+These routes let an external dashboard service read team-scoped
+coordination data on behalf of a human user. Authenticated with a
+short-lived JWT in the `X-Dashboard-Token` header (see Dashboard auth
+below). The dashboard service is opaque to aweb — it can be any
+upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 
 | Route | Purpose |
 |-------|---------|
@@ -621,18 +625,20 @@ dashboard-session JWT issued by aweb-cloud (see Dashboard auth below).
 
 ### Dashboard auth
 
-aweb-cloud issues a short-lived JWT containing the list of
-team_addresses the human has access to (derived from awid team
-membership). The JWT is passed to aweb in an `X-Dashboard-Token`
-header. aweb validates the JWT signature (shared secret with
-aweb-cloud) and checks the requested team_address is in the token's
-team list.
+aweb verifies a short-lived JWT in the `X-Dashboard-Token` header on
+every dashboard read. The JWT is minted by an upstream dashboard
+service (any operator that has provisioned a human-account layer on
+top of aweb) and signed with a secret shared between that service and
+aweb. The token carries the list of `team_addresses` the human is
+authorized to read; aweb checks the requested `team_address` against
+that list.
 
-**Algorithm**: HS256 (HMAC-SHA256) using `AWEB_DASHBOARD_JWT_SECRET`. The
-secret MUST be identical in cloud and aweb deployments. The `alg` header
-MUST be `HS256` — aweb's verifier rejects any other algorithm including
-`none` and asymmetric algorithms (defense against the alg-confusion class
-of JWT bugs).
+**Algorithm**: HS256 (HMAC-SHA256) using `AWEB_DASHBOARD_JWT_SECRET`.
+The secret MUST be identical between aweb and whichever upstream
+service mints the dashboard tokens. The `alg` header MUST be `HS256`
+— aweb's verifier rejects any other algorithm including `none` and
+asymmetric algorithms (defense against the alg-confusion class of JWT
+bugs).
 
 **Payload**:
 ```json
@@ -679,13 +685,8 @@ the anonymous fail-closed to a fail-open (e.g., "default to public when
 awid is unreachable") would create a privilege-escalation path. Both
 sides of this asymmetry are load-bearing.
 
-The same fail-closed property is documented in the sibling `aweb-cloud`
-repo, in `docs/aweb-cloud-sot.md`. Both documents must stay
-in sync; if either side changes the security property, the other must be
-updated in the same merge.
-
 Environment variable: `AWEB_DASHBOARD_JWT_SECRET` (shared with
-aweb-cloud).
+whichever upstream service mints the dashboard tokens).
 
 ---
 
@@ -715,25 +716,32 @@ PATH 1 — BYOD (you have a domain):
 - CLI verifies the record, registers the namespace at awid, creates a default team, signs a certificate
 - Proceeds to connect
 
-PATH 2 — Hosted (use the aweb.ai managed namespace):
-- Wizard asks "Use a managed identity at aweb.ai?"
+PATH 2 — Hosted (use a managed namespace from a hosted operator):
+- Wizard asks "Use a managed identity from a hosted operator?"
 - User picks a username
-- CLI calls aweb-cloud `POST /api/v1/onboarding/check-username` to validate format and availability
-- If taken or invalid, wizard prompts again until a free username is provided
-- CLI calls aweb-cloud `POST /api/v1/onboarding/cli-signup` with the username and the agent's public key
-- aweb-cloud creates a free aweb.ai account (no email or password yet — just the username), registers `<username>.aweb.ai` as a namespace at awid using the parent controller key, creates a default team, signs and registers a certificate
-- CLI saves the certificate
-- Proceeds to connect
+- CLI calls the hosted operator's onboarding endpoints to check
+  username availability and request a managed namespace + default
+  team + initial team certificate. The wire shape of those endpoints
+  is the operator's contract, not aweb's.
+- The operator's onboarding service registers the namespace at awid
+  using the parent controller key it holds, creates a default team,
+  signs a team certificate, and returns the certificate to the CLI.
+- CLI saves the certificate to `.aw/team-cert.pem`.
+- Proceeds to connect.
 
 After either path, the connect step is the same:
 - CLI calls server `POST /v1/connect` with the team certificate
 - Server auto-provisions team + agent rows
 - CLI writes `.aw/workspace.yaml`
 
-The hosted path requires the server to be aweb-cloud (i.e., it has the
-parent controller key for `*.aweb.ai`). For self-hosted aweb in Docker,
-only the BYOD path is available because vanilla aweb has no parent
-controller key.
+The hosted path requires a server that holds the parent controller key
+for the managed namespace family (e.g., `*.aweb.ai` for the public
+hosted instance at <https://aweb.ai>). Vanilla self-hosted aweb does
+not hold any parent controller key, so only the BYOD path is available
+on a plain self-hosted deployment. Operators who want a hosted-style
+managed namespace flow on top of self-hosted aweb run their own
+onboarding service that owns a parent controller key for their chosen
+namespace family.
 
 ### Persistent agent (joining an existing team via invite)
 
@@ -750,12 +758,15 @@ controller key.
    → team controller signs certificate for alice's did:key
    → certificate saved to .aw/team-cert.pem
 
-4. aw init --server app.aweb.ai
+4. aw init --server-url https://aweb.ai
    → presents team certificate to aweb
    → POST /v1/connect (aweb auto-provisions team + agent rows)
    → aweb returns workspace binding
    → writes .aw/workspace.yaml
 ```
+
+(The server URL above is the public hosted instance; substitute your
+own server URL for self-hosted aweb.)
 
 ### Ephemeral agent
 
@@ -769,7 +780,7 @@ controller key.
    → team controller signs ephemeral certificate for this did:key
    → certificate saved to .aw/team-cert.pem
 
-3. aw init --server app.aweb.ai
+3. aw init --server-url https://aweb.ai
    → POST /v1/connect to aweb
    → aweb auto-provisions ephemeral agent row
    → writes .aw/workspace.yaml
@@ -799,8 +810,11 @@ needed for two rare administrative events:
   team key. All active members need new certificates signed by the
   new key.
 
-The certificate is stored at `.aw/team-cert.pem` (CLI agents) or
-managed by aweb-cloud (custodial agents).
+The certificate is stored at `.aw/team-cert.pem` for self-custodial
+CLI agents. For custodial agents (where a hosted operator holds the
+private key on behalf of the agent), the certificate lives wherever
+that operator stores it; the operator's storage layer is out of scope
+for the aweb OSS contract.
 
 ---
 
@@ -821,7 +835,7 @@ relies on are:
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
-| `aw claim-human --email <email>` | Attach an email to the aweb.ai account; triggers email verification; unlocks dashboard access after verification |
+| `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (e.g. <https://aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |
 | `aw whoami` | Show team membership + certificate info |
 | `aw workspace status` | Show team coordination state |
 
@@ -862,7 +876,7 @@ aw mcp-config
 ### workspace.yaml (new format)
 
 ```yaml
-server_url: https://app.aweb.ai/api
+server_url: https://aweb.ai
 team_address: acme.com/backend
 alias: alice
 role: developer
@@ -951,16 +965,17 @@ aweb does NOT call awid for:
 - Team membership checks (certificate + revocation list handles this)
 - Identity creation (awid's concern)
 - Namespace management (awid's concern)
-- Certificate issuance (CLI for BYOD, aweb-cloud for managed)
+- Certificate issuance (CLI for BYOD, hosted operator for managed namespaces)
 - Agent bootstrap (auto-provisioned from certificate)
 
 ---
 
-## aweb API surface (what the dashboard depends on)
+## aweb API surface (what a dashboard service depends on)
 
-aweb-cloud's dashboard reads coordination data from aweb. These
-endpoints are authenticated with a dashboard session token (not a team
-certificate — the dashboard is a human viewer, not an agent).
+An external dashboard service reads coordination data from aweb on
+behalf of a human user. These endpoints are authenticated with a
+short-lived dashboard session token (not a team certificate — the
+dashboard caller is a human viewer, not an agent).
 
 ### Team status
 
@@ -1008,17 +1023,15 @@ GET /v1/agents/{alias}?team_address=acme.com/backend
 
 ### Dashboard auth
 
-The dashboard authenticates to aweb using a short-lived
-`X-Dashboard-Token` JWT issued by aweb-cloud, signed with a shared
-secret (`AWEB_DASHBOARD_JWT_SECRET`). The JWT carries the list of
-team_addresses the human has access to (derived from awid team
-membership).
+The dashboard service authenticates to aweb using a short-lived
+`X-Dashboard-Token` JWT signed with `AWEB_DASHBOARD_JWT_SECRET` (HS256,
+shared between aweb and the issuer). The JWT carries the list of
+`team_addresses` the human has access to (the dashboard service derives
+this from awid team membership before minting the token).
 
 For the full spec — including the public-team anonymous-bypass behavior
 and the fail-closed semantics on visibility lookup error — see
-**Authentication > Dashboard auth** earlier in this document. The
-companion spec on the cloud side is in the sibling `aweb-cloud` repo,
-in `docs/aweb-cloud-sot.md`.
+**Authentication > Dashboard auth** earlier in this document.
 
 ---
 
@@ -1033,25 +1046,16 @@ protocol.
 
 ### Two integration patterns
 
-The MCP server is delivered through two patterns, one for each client
-class:
+aweb's MCP server is the local-CLI-embedded server: the `aw` CLI hosts
+the MCP server inside the local agent process, and `aw mcp-config`
+writes the connection config into the LLM client (Claude Code,
+programmatic MCP clients running in the same machine, etc.). This is
+the only MCP surface defined by aweb itself.
 
-1. **Local CLI MCP server** — the `aw` CLI embeds the MCP server inside
-   the local agent process. Used by terminal agents in their own
-   workspace via `aw mcp-config` (which writes the connection config
-   into the LLM client). This is the path covered by aweb's OSS code.
-
-2. **Hosted `/mcp` endpoint** — for browser-based MCP clients that have
-   no local key storage (Claude Desktop, claude.ai connectors) and for
-   local MCP clients that need a long-lived bearer token (Claude Code,
-   programmatic clients). This path runs at aweb-cloud and is described
-   in
-   [`../../aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md)
-   § Hosted MCP and OAuth Connector Architecture. The /mcp two-auth-path
-   model (OAuth + direct bearer) is owned by the cloud SoT, not by this
-   document.
-
-The rest of this section describes the OSS local CLI MCP server only.
+A hosted operator may layer its own `/mcp` endpoint on top of aweb
+(for example, to serve browser-based MCP clients via OAuth or to issue
+long-lived bearer tokens for local MCP clients). Such a hosted MCP
+surface is operator-specific and outside the aweb OSS contract.
 
 ### Mount and transport
 
@@ -1089,12 +1093,12 @@ the request envelope, decode and verify the team certificate against
 the cached team public key, check the revocation list), and resolves
 the calling identity.
 
-API keys are NOT accepted on the local CLI MCP path. The team
-certificate is the sole credential — consistent with the aweb principle
-that team certificates are the single credential for coordination
-endpoints. (The hosted `/mcp` endpoint at aweb-cloud has its own auth
-model with `aw_sk_*` direct bearer tokens for local-tool MCP clients;
-that is a cloud surface, not an aweb surface.)
+API keys are NOT accepted on aweb's MCP path. The team certificate is
+the sole credential — consistent with the aweb principle that team
+certificates are the single credential for coordination endpoints. A
+hosted operator running its own MCP surface on top of aweb may accept
+other auth shapes (OAuth, opaque bearer tokens, etc.); those are
+operator-specific and not part of this contract.
 
 ### Auth context for tools
 
@@ -1171,10 +1175,10 @@ Re-running the team's first-connect flow against awid would re-create
 the aweb-side team row.
 
 GC is not run automatically by the aweb server process. Operators
-choose how often to call these functions (typically nightly). For
-hosted deployments, aweb-cloud schedules the GC according to the
-billing-tier retention windows (see the cloud SoT for tier-specific
-TTLs).
+choose how often to call these functions (typically nightly). Hosted
+operators that layer billing on top of aweb may schedule GC according
+to their own per-tier retention policies; that scheduling is the
+operator's concern, not aweb's.
 
 ### Rate limiting
 
@@ -1184,16 +1188,17 @@ infrastructure (`aweb.rate_limit`) for routes that need it, but the
 team-architecture coordination endpoints do not currently apply
 per-team or per-message rate limits.
 
-Rate limiting policy is owned by aweb-cloud for hosted deployments
-(per-org message quotas tied to billing tier — see the cloud SoT
-§ Billing). Self-hosted aweb instances are unlimited by default;
-operators add their own rate limits (reverse proxy, cloud load
-balancer, or custom middleware) if their workload requires them.
+Rate limiting policy is the operator's concern. Self-hosted aweb
+instances are unlimited by default; operators add their own rate
+limits (reverse proxy, load balancer, or custom middleware) if their
+workload requires them. Hosted operators typically enforce per-org or
+per-team quotas at the layer that owns billing — those quotas are
+applied above aweb, not inside it.
 
 This intentional split means a self-hosted aweb deployed inside a
 private VPC behind authenticated agent traffic does not pay the cost
-of artificial limits, while the public hosted instance at app.aweb.ai
-gets the per-org enforcement aweb-cloud layers on top.
+of artificial limits, while a hosted operator can apply whatever
+metering its product needs without changing the aweb contract.
 
 ### Server lifecycle
 
@@ -1201,10 +1206,13 @@ aweb starts up in this order:
 
 1. Read configuration from environment (see Configuration below).
 2. Connect to PostgreSQL via the `pgdbm` shared-pool pattern. In
-   standalone mode aweb owns the pool; in embedded mode (when mounted
-   inside aweb-cloud under Option M) the pool is supplied by the host
-   process and aweb runs in the dual-mode library shape with
-   `_owns_pool=False`.
+   standalone mode aweb owns the pool. In embedded mode (when aweb is
+   mounted inside another Python process via the `aweb.api.create_app`
+   factory and `aweb.db.DatabaseInfra` library) the pool is supplied
+   by the host process and aweb runs in the dual-mode library shape
+   with `_owns_pool=False`. The library-mode mount is part of aweb's
+   public Python API; operators that wish to embed aweb under another
+   FastAPI app use it.
 3. Apply migrations against the `aweb` schema with
    `module_name="aweb-aweb"`. Idempotent — re-running is safe.
 4. Connect to Redis (for caches and the optional rate-limit
@@ -1233,7 +1241,9 @@ DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 # awid registry (required, no embedded mode)
 AWID_REGISTRY_URL=https://api.awid.ai
 
-# Dashboard JWT validation (shared secret with aweb-cloud)
+# Dashboard JWT validation (shared secret with whichever upstream
+# service mints the X-Dashboard-Token JWTs; only required if a
+# dashboard service is reading aweb on behalf of human users)
 AWEB_DASHBOARD_JWT_SECRET=
 
 # Server
@@ -1250,11 +1260,11 @@ AWEB_LOG_JSON=true
 | Identity creation and management | awid |
 | Team creation and management | awid |
 | Namespace management | awid |
-| Team certificate issuance | CLI (BYOD) or aweb-cloud (managed) |
+| Team certificate issuance | CLI (BYOD) or hosted operator (managed namespaces) |
 | Team membership verification | Certificate (local crypto) |
 | Agent bootstrap | Auto-provisioned from certificate on `POST /v1/connect` |
-| Custody (signing on behalf) | aweb-cloud (managed) or agent (self) |
-| Billing | aweb-cloud |
-| Dashboard | aweb-cloud |
-| Human accounts | aweb-cloud |
+| Custody (signing on behalf) | Agent (self-custodial) or hosted operator (custodial) |
+| Billing | Out of scope for aweb (hosted operator concern) |
+| Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |
+| Human accounts | Out of scope for aweb (hosted operator concern) |
 | Coordination (mail, chat, tasks, claims, locks, roles, instructions) | aweb |
