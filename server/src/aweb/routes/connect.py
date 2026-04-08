@@ -453,7 +453,7 @@ async def connect_endpoint(
             hostname=payload.hostname,
             workspace_path=payload.workspace_path,
             repo_origin=payload.repo_origin,
-            role=payload.role or cert_info["alias"],
+            role=payload.role,
             human_name=payload.human_name,
             agent_type=payload.agent_type,
         )

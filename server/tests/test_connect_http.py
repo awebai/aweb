@@ -146,6 +146,62 @@ async def test_connect_http_first_time(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
+    """Missing role should not fall back to the certificate alias."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_address="acme.com/backend",
+        alias="alice",
+        lifetime="persistent",
+    )
+    cert_header = _encode_certificate(cert)
+
+    body = {
+        "hostname": "Mac.local",
+        "workspace_path": "/Users/alice/project",
+        "repo_origin": "",
+        "human_name": "Alice",
+        "agent_type": "agent",
+    }
+
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/connect",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert data["alias"] == "alice"
+    assert data["role"] == ""
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT role FROM {{tables.agents}}
+        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        """,
+        "acme.com/backend",
+        agent_did_key,
+    )
+    assert row is not None
+    assert row["role"] == ""
+
+
+@pytest.mark.asyncio
 async def test_connect_http_idempotent(aweb_cloud_db):
     """Reconnecting returns the same agent_id."""
     team_sk, _, team_did_key = _make_keypair()
