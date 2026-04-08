@@ -14,8 +14,6 @@ type Selection struct {
 	ServerName    string
 	BaseURL       string
 	AwebURL       string
-	CloudURL      string
-	AwidURL       string
 
 	DefaultProject string
 	IdentityID     string
@@ -28,6 +26,7 @@ type Selection struct {
 	SigningKey     string
 	Custody        string
 	Lifetime       string
+	RegistryURL    string
 }
 
 type ResolveOptions struct {
@@ -110,13 +109,10 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	signingKey := ""
 	custody := ""
 	lifetime := ""
+	registryURL := ""
 	awebURL := ""
-	cloudURL := ""
-	awidURL := ""
 	if ws != nil {
 		awebURL = strings.TrimSpace(ws.AwebURL)
-		cloudURL = strings.TrimSpace(ws.CloudURL)
-		awidURL = strings.TrimSpace(ws.AwidURL)
 		namespaceSlug = strings.TrimSpace(ws.NamespaceSlug)
 		defaultProject = strings.TrimSpace(ws.ProjectSlug)
 		identityHandle = strings.TrimSpace(ws.IdentityHandle)
@@ -149,6 +145,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		if v := strings.TrimSpace(identity.Lifetime); v != "" {
 			lifetime = v
 		}
+		if v := strings.TrimSpace(identity.RegistryURL); v != "" {
+			registryURL = v
+		}
 		if strings.EqualFold(custody, "self") && strings.TrimSpace(workingDir) != "" {
 			signingKey = WorktreeSigningKeyPath(workingDir)
 		}
@@ -159,8 +158,6 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		ServerName:     serverName,
 		BaseURL:        baseURL,
 		AwebURL:        awebURL,
-		CloudURL:       cloudURL,
-		AwidURL:        awidURL,
 		DefaultProject: defaultProject,
 		IdentityID:     identityID,
 		IdentityHandle: identityHandle,
@@ -171,6 +168,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		SigningKey:     signingKey,
 		Custody:        custody,
 		Lifetime:       lifetime,
+		RegistryURL:    registryURL,
 	}
 }
 
@@ -199,6 +197,7 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 		SigningKey:     signingKey,
 		Custody:        custody,
 		Lifetime:       lifetime,
+		RegistryURL:    strings.TrimSpace(identity.RegistryURL),
 	}
 }
 

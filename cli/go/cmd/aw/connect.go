@@ -31,7 +31,7 @@ func init() {
 	connectCmd.GroupID = groupWorkspace
 	connectCmd.Flags().StringVar(&connectBootstrapToken, "bootstrap-token", "", "One-time bootstrap token from the dashboard")
 	connectCmd.Flags().StringVar(&connectAddress, "address", "", "Persistent public address from the dashboard copy command")
-	connectCmd.Flags().StringVar(&connectMockURL, "mock-url", "", "Override the cloud/aweb base URL for local development")
+	connectCmd.Flags().StringVar(&connectMockURL, "mock-url", "", "Override the bootstrap/aweb base URL for local development")
 	rootCmd.AddCommand(connectCmd)
 }
 
@@ -91,12 +91,12 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		}
 
 		stableID = awid.ComputeStableID(pub)
-		registry, err := newConfiguredRegistryClient(nil, serviceURLs.CloudURL)
+		registry, err := newConfiguredRegistryClient(nil, serviceURLs.OnboardingURL)
 		if err != nil {
 			return connectOutput{}, err
 		}
-		if strings.TrimSpace(serviceURLs.AwidURL) != "" {
-			if err := registry.SetFallbackRegistryURL(serviceURLs.AwidURL); err != nil {
+		if strings.TrimSpace(serviceURLs.RegistryURL) != "" {
+			if err := registry.SetFallbackRegistryURL(serviceURLs.RegistryURL); err != nil {
 				return connectOutput{}, err
 			}
 		}
@@ -107,7 +107,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		redeemReq.DIDAW = stableID
 	}
 
-	client, err := awid.NewWithIdentity(serviceURLs.CloudURL, "", signingKey, didKey)
+	client, err := awid.NewWithIdentity(serviceURLs.OnboardingURL, "", signingKey, didKey)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("invalid bootstrap identity: %w", err)
 	}
@@ -126,15 +126,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		return connectOutput{}, err
 	}
 
-	awidURL := strings.TrimSpace(registryURL)
-	if awidURL == "" {
-		awidURL = strings.TrimSpace(serviceURLs.AwidURL)
-	}
-
-	return initCertificateConnectWithOptions(workingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		CloudURL: serviceURLs.CloudURL,
-		AwidURL:  awidURL,
-	})
+	return initCertificateConnectWithOptions(workingDir, serviceURLs.AwebURL, certificateConnectOptions{})
 }
 
 type addressParts struct {

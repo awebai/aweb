@@ -77,7 +77,7 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("2\n"),
 		PromptOut:  &bytes.Buffer{},
-		CloudURL:   "https://app.aweb.ai",
+		BaseURL:    "https://app.aweb.ai",
 		Role:       "reviewer",
 	})
 	if err != nil {
@@ -228,7 +228,7 @@ func TestExecuteHostedPathRejectsServersWithoutManagedOnboarding(t *testing.T) {
 		WorkingDir: t.TempDir(),
 		PromptIn:   strings.NewReader("Alice\nacme.com\n"),
 		PromptOut:  &out,
-		CloudURL:   server.URL,
+		BaseURL:    server.URL,
 	})
 	if err == nil {
 		t.Fatal("expected hosted path to return an error")
@@ -335,7 +335,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
-		CloudURL:   "https://app.example",
+		BaseURL:    "https://app.example",
 		Role:       "developer",
 	})
 	if err != nil {
@@ -451,7 +451,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	var signupBody map[string]any
 	var claimBody map[string]any
 	var connectBody map[string]any
-	var cloudURL string
+	var onboardingURL string
 	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
@@ -471,15 +471,15 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		}
 	}))
 
-	cloudServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": cloudURL,
-				"aweb_url":  awebServer.URL,
-				"awid_url":  registryServer.URL,
-				"version":   "1.7.0",
-				"features":  []string{"managed_namespaces", "claim_human"},
+				"onboarding_url": onboardingURL,
+				"aweb_url":       awebServer.URL,
+				"registry_url":   registryServer.URL,
+				"version":        "1.7.0",
+				"features":       []string{"managed_namespaces", "claim_human"},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var body map[string]any
@@ -541,7 +541,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	cloudURL = cloudServer.URL
+	onboardingURL = onboardingServer.URL
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -549,7 +549,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
 		PromptOut:  &out,
-		CloudURL:   cloudServer.URL + "/api",
+		BaseURL:    onboardingServer.URL + "/api",
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
@@ -616,17 +616,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if workspace.TeamAddress != "jack.aweb.ai/default" {
 		t.Fatalf("team_address=%q", workspace.TeamAddress)
 	}
-	if workspace.CloudURL != cloudServer.URL {
-		t.Fatalf("cloud_url=%q", workspace.CloudURL)
-	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
-	}
-	if workspace.AwidURL != registryServer.URL {
-		t.Fatalf("awid_url=%q", workspace.AwidURL)
 	}
 	if workspace.Alias != "laptop" {
 		t.Fatalf("alias=%q", workspace.Alias)
@@ -714,15 +708,15 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	var signupBodies []map[string]any
-	var cloudURL string
+	var onboardingURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": cloudURL,
-				"aweb_url":  cloudURL,
-				"awid_url":  registryServer.URL,
-				"version":   "1.7.0",
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   registryServer.URL,
+				"version":        "1.7.0",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var body map[string]any
@@ -791,7 +785,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	cloudURL = server.URL
+	onboardingURL = server.URL
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -799,7 +793,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
 		PromptOut:  &out,
-		CloudURL:   server.URL,
+		BaseURL:    server.URL,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -967,7 +961,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &out,
-		CloudURL:   connectServer.URL,
+		BaseURL:    connectServer.URL,
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
@@ -1088,7 +1082,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "y\nn\nn\n"},
 		PromptOut:          &bytes.Buffer{},
-		CloudURL:           "https://app.example",
+		BaseURL:            "https://app.example",
 		AskPostCreateSetup: true,
 	})
 	if err != nil {

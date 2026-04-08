@@ -13,9 +13,9 @@ func TestDiscoverServices(t *testing.T) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"cloud_url":"https://app.aweb.ai",
+			"onboarding_url":"https://app.aweb.ai",
 			"aweb_url":"https://coord.aweb.ai",
-			"awid_url":"https://api.awid.ai",
+			"registry_url":"https://api.awid.ai",
 			"version":"1.7.0",
 			"features":["managed_namespaces","bootstrap_tokens"]
 		}`))
@@ -29,14 +29,14 @@ func TestDiscoverServices(t *testing.T) {
 	if gotPath != "/api/v1/discovery" {
 		t.Fatalf("path=%q", gotPath)
 	}
-	if resp.CloudURL != "https://app.aweb.ai" {
-		t.Fatalf("cloud_url=%q", resp.CloudURL)
+	if resp.OnboardingURL != "https://app.aweb.ai" {
+		t.Fatalf("onboarding_url=%q", resp.OnboardingURL)
 	}
 	if resp.AwebURL != "https://coord.aweb.ai" {
 		t.Fatalf("aweb_url=%q", resp.AwebURL)
 	}
-	if resp.AwidURL != "https://api.awid.ai" {
-		t.Fatalf("awid_url=%q", resp.AwidURL)
+	if resp.RegistryURL != "https://api.awid.ai" {
+		t.Fatalf("registry_url=%q", resp.RegistryURL)
 	}
 	if resp.Version != "1.7.0" {
 		t.Fatalf("version=%q", resp.Version)

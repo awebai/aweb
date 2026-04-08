@@ -973,10 +973,20 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(repo, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            "did:key:z6MkParent",
+		StableID:       "did:aw:parent",
+		Address:        "source/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed identity.yaml: %v", err)
+	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		AwidURL:        server.URL,
-		CloudURL:       server.URL,
 		TeamAddress:    teamAddress,
 		IdentityID:     "source-1",
 		IdentityHandle: "alice",
@@ -1108,10 +1118,20 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	buildAwBinary(t, ctx, bin)
 
 	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(repo, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            "did:key:z6MkParent",
+		StableID:       "did:aw:parent",
+		Address:        "source/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed identity.yaml: %v", err)
+	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		AwidURL:        server.URL,
-		CloudURL:       server.URL,
 		TeamAddress:    teamAddress,
 		IdentityID:     "source-1",
 		IdentityHandle: "alice",
@@ -1189,8 +1209,6 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		AwidURL:        server.URL,
-		CloudURL:       server.URL,
 		TeamAddress:    "source/backend",
 		IdentityID:     "source-1",
 		IdentityHandle: "alice",

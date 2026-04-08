@@ -8,28 +8,24 @@ import (
 	"strings"
 )
 
-// cloudDIDKeySignPayload builds the canonical JSON bytes for the shared
-// aweb-cloud DIDKey auth envelope used by every onboarding endpoint that
+// onboardingDIDKeySignPayload builds the canonical JSON bytes for the shared
+// onboarding DIDKey auth envelope used by every onboarding endpoint that
 // accepts a DIDKey-signed request (cli-signup, claim-human, bootstrap-redeem):
 //
 //	{"body_sha256":"<hex>","method":"<METHOD>","path":"<PATH>","timestamp":"<ISO8601>"}
 //
 // Keys are in lexicographic order (body_sha256 < method < path < timestamp)
 // with no whitespace. The function is byte-for-byte compatible with Python's
-// canonical_json_bytes(..., ensure_ascii=False) on the cloud verifier side —
+// canonical_json_bytes(..., ensure_ascii=False) on the verifier side —
 // it disables Go's default HTML escaping for <, >, and & so a future signed
 // field carrying those characters does not silently desync the Go and Python
 // envelopes.
 //
 // method is normalized to uppercase and path to a trimmed string, matching
-// the cloud SOT contract ("HTTP method in uppercase", "URL path, no query
+// the onboarding contract ("HTTP method in uppercase", "URL path, no query
 // string at MVP"). body is the exact raw HTTP request body bytes that will
 // be sent over the wire; empty body hashes the empty string.
-//
-// Wire contract reference: aweb-cloud/docs/aweb-cloud-sot.md
-// lines 707-768 ("Cloud DIDKey verifier (shared across cli-signup,
-// claim-human, bootstrap-redeem)").
-func cloudDIDKeySignPayload(method, path, timestamp string, body []byte) []byte {
+func onboardingDIDKeySignPayload(method, path, timestamp string, body []byte) []byte {
 	normalizedMethod := strings.ToUpper(strings.TrimSpace(method))
 	normalizedPath := strings.TrimSpace(path)
 
@@ -51,12 +47,9 @@ func cloudDIDKeySignPayload(method, path, timestamp string, body []byte) []byte 
 
 // encodeJSONString writes s as a JSON string literal into b, with HTML
 // escaping disabled so the output matches Python's json.dumps(...,
-// ensure_ascii=False). Used by cloudDIDKeySignPayload so signed envelope
-// bytes are byte-identical across the Go CLI and the Python cloud verifier
+// ensure_ascii=False). Used by onboardingDIDKeySignPayload so signed envelope
+// bytes are byte-identical across the Go CLI and the Python verifier
 // even if a field value contains <, >, or &.
-//
-// See aweb-cloud-sot.md GOTCHA on body_sha256 caching (lines
-// 760-764) for why cross-language byte stability matters.
 func encodeJSONString(b *strings.Builder, s string) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

@@ -4,7 +4,7 @@ Team certificates are Ed25519-signed JSON documents that prove an agent
 is a member of a specific team. They replace API key auth.
 
 Dashboard tokens are short-lived JWTs containing allowed team_addresses,
-issued by aweb-cloud for human dashboard access.
+issued by the hosted dashboard for human dashboard access.
 """
 
 from __future__ import annotations

@@ -65,8 +65,7 @@ Connect to a team's coordination server. When `.aw/team-cert.pem` exists, uses c
 Flags:
 - `--agent-type string     Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--alias string          Ephemeral identity routing alias (optional; default: server-suggested)`
-- `--awid-url string       Override the awid registry URL for hosted init automation`
-- `--cloud-url string      Base URL for aweb-cloud. The CLI discovers the aweb and awid URLs from this via GET /api/v1/discovery.`
+- `--url string            Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `-h, --help                  help for init`
 - `--hosted                Create a hosted aweb.ai identity in this directory`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`

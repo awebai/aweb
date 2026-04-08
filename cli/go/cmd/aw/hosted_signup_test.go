@@ -40,9 +40,9 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": server.URL,
-				"aweb_url":  server.URL,
-				"awid_url":  server.URL,
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var payload map[string]any
@@ -141,8 +141,7 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		"--hosted",
 		"--username", "juanre",
 		"--alias", "laptop",
-		"--cloud-url", server.URL,
-		"--awid-url", server.URL,
+		"--url", server.URL,
 	)
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp

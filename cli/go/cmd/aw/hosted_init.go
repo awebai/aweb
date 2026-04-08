@@ -28,7 +28,7 @@ type hostedInitOutput struct {
 
 func runHostedInit(cmd *cobra.Command) error {
 	if !initHosted {
-		return usageError("--username and --awid-url require --hosted")
+		return usageError("--username requires --hosted")
 	}
 	username := strings.TrimSpace(initHostedUsername)
 	if username == "" {
@@ -46,7 +46,7 @@ func runHostedInit(cmd *cobra.Command) error {
 		return err
 	}
 
-	serviceURLs, err := resolveOnboardingServiceURLs(initCloudURL)
+	serviceURLs, err := resolveOnboardingServiceURLs(initURL)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func runHostedInit(cmd *cobra.Command) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	checkResp, err := awid.CheckUsername(ctx, serviceURLs.CloudURL, username)
+	checkResp, err := awid.CheckUsername(ctx, serviceURLs.OnboardingURL, username)
 	if err != nil {
 		return err
 	}
@@ -74,21 +74,14 @@ func runHostedInit(cmd *cobra.Command) error {
 	stableID := awid.ComputeStableID(pub)
 	memberAddress := fmt.Sprintf("%s.aweb.ai/%s", username, alias)
 
-	registry, err := newConfiguredRegistryClient(nil, serviceURLs.CloudURL)
+	registry, err := newConfiguredRegistryClient(nil, serviceURLs.OnboardingURL)
 	if err != nil {
 		return err
 	}
-	overrideAWIDURL := strings.TrimSpace(initHostedAWIDURL)
-	registryURL := strings.TrimSpace(serviceURLs.AwidURL)
-	if overrideAWIDURL != "" {
-		registryURL = overrideAWIDURL
-	}
+	registryURL := strings.TrimSpace(serviceURLs.RegistryURL)
 	if registryURL != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			if overrideAWIDURL != "" {
-				return fmt.Errorf("invalid --awid-url: %w", err)
-			}
-			return fmt.Errorf("invalid discovered awid url: %w", err)
+			return fmt.Errorf("invalid discovered registry url: %w", err)
 		}
 	}
 	if _, err := registry.RegisterDID(
@@ -104,7 +97,7 @@ func runHostedInit(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to register hosted did:aw before cli-signup: %w", err)
 	}
 
-	resp, err := awid.CliSignup(ctx, serviceURLs.CloudURL, &awid.CliSignupRequest{
+	resp, err := awid.CliSignup(ctx, serviceURLs.OnboardingURL, &awid.CliSignupRequest{
 		Username: username,
 		DIDKey:   didKey,
 		DIDAW:    stableID,

@@ -5,10 +5,8 @@ that holds DIDs, namespaces, addresses, teams, and certificate issuance
 records. It is the implementation spec for the awid.ai service.
 
 aweb (the coordination server that depends on awid) is described in
-[`aweb-sot.md`](aweb-sot.md). aweb-cloud (the hosted SaaS wrapper that
-manages controller keys and custodial signing on top of awid) is
-described in
-[`aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md).
+[`aweb-sot.md`](aweb-sot.md). Hosted deployment details live with the
+hosted deployment codebase, not in this SOT.
 
 ---
 
@@ -21,7 +19,7 @@ described in
    display name, and public key. awid stores these and the certificate
    issuance log.
 3. **Certificates are signed externally.** The team controller (CLI
-   for BYOD, aweb-cloud for managed namespaces) signs certificates
+   for BYOD, hosted deployment for managed namespaces) signs certificates
    and registers them at awid. awid records the issuance but does not
    perform the signing.
 4. **Revocation is a column update.** Revoking a certificate sets
@@ -59,11 +57,11 @@ Three controller keys exist, each with its own scope:
   registrations under managed domains
 - **Namespace controller key**: signs namespace operations and team
   creation under a specific namespace; held by the namespace owner (BYOD)
-  or by aweb-cloud (managed)
+  or by the hosted deployment (managed)
 - **Team controller key**: signs team-scoped operations including
   certificate issuance, certificate revocation, team visibility toggle,
   and team key rotation; held by the team controller (BYOD) or by
-  aweb-cloud (managed)
+  the hosted deployment (managed)
 
 This is the **awid pattern**, distinct from the aweb pattern
 (`{team_address, timestamp, body_sha256}`) and the cloud pattern
@@ -193,7 +191,7 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "alias": "alice",
                "lifetime": "persistent" }
        The certificate is signed externally by whoever holds the
-       team controller private key (CLI for BYOD, aweb-cloud for
+       team controller private key (CLI for BYOD, hosted deployment for
        managed). awid records the issuance but does not sign.
        Response: { "registered": true, "certificate_id": "uuid" }
 
@@ -276,8 +274,8 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
 - **BYOD teams**: the team controller (human or agent) holds the
   team private key locally. They sign certificates via
   `aw id team add-member` and register them at awid.
-- **Managed teams (*.aweb.ai)**: aweb-cloud holds the team controller
-  private key (encrypted). aweb-cloud signs certificates and registers
+- **Managed teams (*.aweb.ai)**: the hosted deployment holds the team controller
+  private key (encrypted). It signs certificates and registers
   them at awid. awid never sees the private key.
 
 ### Issuance flow
@@ -468,7 +466,7 @@ AWID_LOG_JSON=true
 
 awid has no encryption keys, no custody keys, no signing keys.
 It is a public registry. All private key operations happen at
-the CLI (BYOD) or aweb-cloud (managed namespaces).
+the CLI (BYOD) or the hosted deployment (managed namespaces).
 
 ---
 
@@ -484,9 +482,9 @@ the CLI (BYOD) or aweb-cloud (managed namespaces).
 **Does not:**
 - Hold private keys (no escrow, no custody keys)
 - Sign certificates (signing is external)
-- Sign on behalf of agents (custody is aweb-cloud's concern)
+- Sign on behalf of agents (custody is a hosted deployment concern)
 - Store certificate content (agents hold their own)
 - Track certificate expiry (certificates are long-lived)
 - Coordinate agents (aweb does this)
-- Manage billing (aweb-cloud does this)
-- Manage human accounts (aweb-cloud does this)
+- Manage billing (the hosted deployment does this)
+- Manage human accounts (the hosted deployment does this)

@@ -9,9 +9,9 @@ import (
 )
 
 type onboardingServiceURLs struct {
-	CloudURL string
-	AwebURL  string
-	AwidURL  string
+	OnboardingURL string
+	AwebURL       string
+	RegistryURL   string
 }
 
 func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
@@ -25,24 +25,23 @@ func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 			return onboardingServiceURLs{}, ferr
 		}
 		return onboardingServiceURLs{
-			CloudURL: fallbackURL,
-			AwebURL:  fallbackURL,
+			OnboardingURL: fallbackURL,
+			AwebURL:       fallbackURL,
 		}, nil
 	}
 
 	if sel, err := resolveSelectionForDir(""); err == nil {
 		urls, err := normalizeOnboardingServiceURLs(onboardingServiceURLs{
-			CloudURL: sel.CloudURL,
-			AwebURL:  sel.AwebURL,
-			AwidURL:  sel.AwidURL,
+			AwebURL:     sel.AwebURL,
+			RegistryURL: sel.RegistryURL,
 		})
 		if err == nil && strings.TrimSpace(urls.AwebURL) != "" {
 			return urls, nil
 		}
 		if strings.TrimSpace(sel.BaseURL) != "" {
 			return onboardingServiceURLs{
-				CloudURL: strings.TrimSpace(sel.BaseURL),
-				AwebURL:  strings.TrimSpace(sel.BaseURL),
+				AwebURL:     strings.TrimSpace(sel.BaseURL),
+				RegistryURL: strings.TrimSpace(sel.RegistryURL),
 			}, nil
 		}
 	}
@@ -56,13 +55,13 @@ func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		return onboardingServiceURLs{}, ferr
 	}
 	return onboardingServiceURLs{
-		CloudURL: fallbackURL,
-		AwebURL:  fallbackURL,
+		OnboardingURL: fallbackURL,
+		AwebURL:       fallbackURL,
 	}, nil
 }
 
 func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
-	cloudURL, err := resolveGuidedOnboardingServerURL(raw)
+	baseURL, err := resolveGuidedOnboardingServerURL(raw)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}
@@ -70,31 +69,31 @@ func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := awid.DiscoverServices(ctx, cloudURL)
+	resp, err := awid.DiscoverServices(ctx, baseURL)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}
 	urls, err := normalizeOnboardingServiceURLs(onboardingServiceURLs{
-		CloudURL: resp.CloudURL,
-		AwebURL:  resp.AwebURL,
-		AwidURL:  resp.AwidURL,
+		OnboardingURL: resp.OnboardingURL,
+		AwebURL:       resp.AwebURL,
+		RegistryURL:   resp.RegistryURL,
 	})
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}
-	if urls.CloudURL == "" {
-		urls.CloudURL = cloudURL
+	if urls.OnboardingURL == "" {
+		urls.OnboardingURL = baseURL
 	}
 	if urls.AwebURL == "" {
-		urls.AwebURL = cloudURL
+		urls.AwebURL = baseURL
 	}
 	return urls, nil
 }
 
 func normalizeOnboardingServiceURLs(urls onboardingServiceURLs) (onboardingServiceURLs, error) {
 	var err error
-	if strings.TrimSpace(urls.CloudURL) != "" {
-		urls.CloudURL, err = cleanBaseURL(urls.CloudURL)
+	if strings.TrimSpace(urls.OnboardingURL) != "" {
+		urls.OnboardingURL, err = cleanBaseURL(urls.OnboardingURL)
 		if err != nil {
 			return onboardingServiceURLs{}, err
 		}
@@ -105,17 +104,17 @@ func normalizeOnboardingServiceURLs(urls onboardingServiceURLs) (onboardingServi
 			return onboardingServiceURLs{}, err
 		}
 	}
-	if strings.TrimSpace(urls.AwidURL) != "" {
-		urls.AwidURL, err = cleanBaseURL(urls.AwidURL)
+	if strings.TrimSpace(urls.RegistryURL) != "" {
+		urls.RegistryURL, err = cleanBaseURL(urls.RegistryURL)
 		if err != nil {
 			return onboardingServiceURLs{}, err
 		}
 	}
-	if urls.CloudURL == "" {
-		urls.CloudURL = urls.AwebURL
+	if urls.OnboardingURL == "" {
+		urls.OnboardingURL = urls.AwebURL
 	}
 	if urls.AwebURL == "" {
-		urls.AwebURL = urls.CloudURL
+		urls.AwebURL = urls.OnboardingURL
 	}
 	return urls, nil
 }

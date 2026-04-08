@@ -29,10 +29,9 @@ team-architecture flows:
 }
 
 var (
-	initCloudURL       string
+	initURL            string
 	initHosted         bool
 	initHostedUsername string
-	initHostedAWIDURL  string
 	initAlias          string
 	initName           string
 	initReachability   string
@@ -59,10 +58,9 @@ type initResult struct {
 }
 
 func init() {
-	initCmd.Flags().StringVar(&initCloudURL, "cloud-url", "", "Base URL for aweb-cloud. The CLI discovers the aweb and awid URLs from this via GET /api/v1/discovery.")
+	initCmd.Flags().StringVar(&initURL, "url", "", "Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows")
 	initCmd.Flags().BoolVar(&initHosted, "hosted", false, "Create a hosted aweb.ai identity in this directory")
 	initCmd.Flags().StringVar(&initHostedUsername, "username", "", "Hosted username to create with --hosted")
-	initCmd.Flags().StringVar(&initHostedAWIDURL, "awid-url", "", "Override the awid registry URL for hosted init automation")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (private|org-visible|contacts-only|public)")
@@ -108,25 +106,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Certificate-based init: when a team certificate exists and a cloud URL is provided.
+	// Certificate-based init: when a team certificate exists and a server URL is provided.
 	{
 		wd, _ := os.Getwd()
 		if hasCertificateForInit(wd) {
-			cloudURL := strings.TrimSpace(initCloudURL)
-			if cloudURL == "" {
-				cloudURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+			baseURL := strings.TrimSpace(initURL)
+			if baseURL == "" {
+				baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
 			}
-			if cloudURL == "" {
-				return usageError("--cloud-url or AWEB_URL is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
+			if baseURL == "" {
+				return usageError("--url or AWEB_URL is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
 			}
-			serviceURLs, err := resolveOnboardingServiceURLs(cloudURL)
+			serviceURLs, err := resolveOnboardingServiceURLs(baseURL)
 			if err != nil {
 				return err
 			}
 			result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
-				Role:     resolveRequestedRole(strings.TrimSpace(initRole)),
-				CloudURL: serviceURLs.CloudURL,
-				AwidURL:  serviceURLs.AwidURL,
+				Role: resolveRequestedRole(strings.TrimSpace(initRole)),
 			})
 			if err != nil {
 				return err
@@ -160,7 +156,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			WorkingDir: wd,
 			PromptIn:   os.Stdin,
 			PromptOut:  os.Stderr,
-			CloudURL:   initCloudURL,
+			BaseURL:    initURL,
 			ServerName: serverFlag,
 			Alias: func() string {
 				if initPersistent {
@@ -187,13 +183,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func hostedInitRequested() bool {
-	return initHosted || strings.TrimSpace(initHostedUsername) != "" || strings.TrimSpace(initHostedAWIDURL) != ""
+	return initHosted || strings.TrimSpace(initHostedUsername) != ""
 }
 
 // initNeedsFullInit returns true if the user passed flags that require the
 // full init flow, or if no local workspace binding exists yet (first-time init).
 func initNeedsFullInit() bool {
-	if initCloudURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
+	if initURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
 		return true
 	}
 	wd, _ := os.Getwd()
@@ -377,7 +373,7 @@ func shouldSuggestClaimHuman(result *initResult) bool {
 	return false
 }
 
-func cloudRootBaseURL(baseURL string) (string, error) {
+func normalizeServerBaseURL(baseURL string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
 		return "", err

@@ -1,4 +1,4 @@
-"""Dashboard read endpoints for aweb-cloud.
+"""Dashboard read endpoints for hosted dashboard clients.
 
 Authenticated with X-Dashboard-Token (JWT containing team_addresses).
 All endpoints are read-only.

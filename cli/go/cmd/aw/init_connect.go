@@ -54,8 +54,6 @@ type certificateConnectOptions struct {
 	Role      string
 	HumanName string
 	AgentType string
-	CloudURL  string
-	AwidURL   string
 }
 
 // initCertificateConnect implements the certificate-based init flow.
@@ -105,24 +103,11 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 
 	// Write workspace.yaml
 	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	existingWorkspace, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-	if existingErr != nil && !os.IsNotExist(existingErr) {
+	if _, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); existingErr != nil && !os.IsNotExist(existingErr) {
 		return connectOutput{}, existingErr
-	}
-	cloudURL := strings.TrimSpace(opts.CloudURL)
-	awidURL := strings.TrimSpace(opts.AwidURL)
-	if existingWorkspace != nil {
-		if cloudURL == "" {
-			cloudURL = strings.TrimSpace(existingWorkspace.CloudURL)
-		}
-		if awidURL == "" {
-			awidURL = strings.TrimSpace(existingWorkspace.AwidURL)
-		}
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &awconfig.WorktreeWorkspace{
 		AwebURL:         serverURL,
-		CloudURL:        cloudURL,
-		AwidURL:         awidURL,
 		TeamAddress:     resp.TeamAddress,
 		Alias:           resp.Alias,
 		WorkspaceID:     resp.WorkspaceID,

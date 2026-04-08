@@ -29,7 +29,7 @@ var claimHumanCmd = &cobra.Command{
 func init() {
 	claimHumanCmd.GroupID = groupIdentity
 	claimHumanCmd.Flags().StringVar(&claimHumanEmail, "email", "", "Email address to attach to the current CLI-created account")
-	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the cloud base URL for local development")
+	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the bootstrap base URL for local development")
 	rootCmd.AddCommand(claimHumanCmd)
 }
 
@@ -39,7 +39,7 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		return usageError("missing required flag: --email")
 	}
 
-	baseURL, err := onboardingBaseURL(claimHumanMockURL)
+	baseURL, err := resolveClaimHumanBaseURL(claimHumanMockURL)
 	if err != nil {
 		return err
 	}
@@ -135,12 +135,12 @@ func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.Cla
 	return err
 }
 
-func onboardingBaseURL(mockURL string) (string, error) {
+func resolveClaimHumanBaseURL(mockURL string) (string, error) {
 	urls, err := resolveOnboardingServiceURLs(mockURL)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(urls.CloudURL), nil
+	return strings.TrimSpace(urls.OnboardingURL), nil
 }
 
 func usernameFromMemberAddress(address string) (string, error) {

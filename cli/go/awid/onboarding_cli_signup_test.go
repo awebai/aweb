@@ -194,7 +194,7 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 			return
 		}
 
-		want := cloudDIDKeySignPayload("POST", "/api/v1/onboarding/cli-signup", timestamp, bodyBytes)
+		want := onboardingDIDKeySignPayload("POST", "/api/v1/onboarding/cli-signup", timestamp, bodyBytes)
 		if !ed25519.Verify(pub, want, sigB) {
 			sigErr = errorMsg("signature", "valid", "invalid — body_sha256 likely does not match wire bytes")
 			w.WriteHeader(500)
@@ -292,7 +292,7 @@ func TestCliSignup_APIBasePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)
 	}
-	want := cloudDIDKeySignPayload("POST", "/api/v1/onboarding/cli-signup", gotTimestamp, gotBodyBytes)
+	want := onboardingDIDKeySignPayload("POST", "/api/v1/onboarding/cli-signup", gotTimestamp, gotBodyBytes)
 	if !ed25519.Verify(pub, want, sigBytes) {
 		t.Fatal("signature did not verify for /api base path")
 	}

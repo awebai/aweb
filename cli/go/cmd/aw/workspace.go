@@ -325,7 +325,13 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid team_address in workspace.yaml: %w", err)
 	}
 
-	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, strings.TrimSpace(state.AwidURL), true)
+	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, sourceServerURL, teamDomain)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return err
+	}
+
+	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, true)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return fmt.Errorf("create ephemeral team invite for %s: %w", teamAddress, err)
@@ -352,8 +358,6 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		Role:      role,
 		HumanName: strings.TrimSpace(state.HumanName),
 		AgentType: strings.TrimSpace(state.AgentType),
-		CloudURL:  strings.TrimSpace(state.CloudURL),
-		AwidURL:   strings.TrimSpace(state.AwidURL),
 	})
 	if err != nil {
 		return rollbackAcceptedInvite("connect new worktree", err)
@@ -831,6 +835,28 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 		}
 	}
 	return aliases, nil
+}
+
+func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (string, error) {
+	if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
+		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
+			return registryURL, nil
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("load worktree identity: %w", err)
+	}
+
+	meta, err := awconfig.LoadControllerMeta(teamDomain)
+	if err == nil && meta != nil {
+		return strings.TrimSpace(meta.RegistryURL), nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)
+	}
+	if strings.TrimSpace(awebURL) != "" {
+		return "", usageError("current worktree is missing identity registry_url; run `aw init` again or restore .aw/identity.yaml")
+	}
+	return "", usageError("current worktree is missing registry configuration for %s", teamDomain)
 }
 
 func deriveWorkspaceAddWorktreePath(mainRepo, branchName string) (string, error) {

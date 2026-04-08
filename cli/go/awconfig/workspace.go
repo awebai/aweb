@@ -12,8 +12,6 @@ import (
 
 type WorktreeWorkspace struct {
 	AwebURL         string `yaml:"aweb_url,omitempty"`
-	CloudURL        string `yaml:"cloud_url,omitempty"`
-	AwidURL         string `yaml:"awid_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	IdentityID      string `yaml:"identity_id,omitempty"`
 	IdentityHandle  string `yaml:"identity_handle,omitempty"`
@@ -40,8 +38,6 @@ type WorktreeWorkspace struct {
 
 type worktreeWorkspaceYAML struct {
 	AwebURL         string `yaml:"aweb_url,omitempty"`
-	CloudURL        string `yaml:"cloud_url,omitempty"`
-	AwidURL         string `yaml:"awid_url,omitempty"`
 	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
@@ -68,7 +64,7 @@ type worktreeWorkspaceYAML struct {
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
 }
 
-const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually add aweb_url, cloud_url, awid_url to workspace.yaml."
+const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually replace server_url with aweb_url in workspace.yaml."
 const legacyWorkspaceAPIKeyError = "workspace.yaml uses removed api_key auth. Run `aw init` to reinitialize this worktree with team certificate auth."
 
 func (w *WorktreeWorkspace) syncRoleFields() {
@@ -88,8 +84,6 @@ func (w *WorktreeWorkspace) syncURLFields() {
 		return
 	}
 	w.AwebURL = strings.TrimSpace(w.AwebURL)
-	w.CloudURL = strings.TrimSpace(w.CloudURL)
-	w.AwidURL = strings.TrimSpace(w.AwidURL)
 }
 
 func (w *WorktreeWorkspace) syncHandleFields() {
@@ -187,8 +181,6 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 
 	*w = WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
-		CloudURL:        raw.CloudURL,
-		AwidURL:         raw.AwidURL,
 		TeamAddress:     raw.TeamAddress,
 		IdentityID:      raw.IdentityID,
 		IdentityHandle:  raw.IdentityHandle,
@@ -220,8 +212,6 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	w.normalize()
 	return worktreeWorkspaceYAML{
 		AwebURL:         w.AwebURL,
-		CloudURL:        w.CloudURL,
-		AwidURL:         w.AwidURL,
 		TeamAddress:     w.TeamAddress,
 		IdentityID:      w.IdentityID,
 		IdentityHandle:  w.IdentityHandle,

@@ -9,7 +9,7 @@ import (
 
 func TestCloudDIDKeySignPayload_FieldOrderAndLayout(t *testing.T) {
 	body := []byte(`{"username":"juanre","did_key":"did:key:z6Mk","did_aw":"did:aw:xyz","alias":"laptop"}`)
-	payload := cloudDIDKeySignPayload(
+	payload := onboardingDIDKeySignPayload(
 		"POST",
 		"/api/v1/onboarding/cli-signup",
 		"2026-04-07T12:00:00Z",
@@ -24,7 +24,7 @@ func TestCloudDIDKeySignPayload_FieldOrderAndLayout(t *testing.T) {
 }
 
 func TestCloudDIDKeySignPayload_EmptyBodyHashesEmptyString(t *testing.T) {
-	payload := cloudDIDKeySignPayload("GET", "/api/v1/onboarding/check-username", "2026-04-07T12:00:00Z", nil)
+	payload := onboardingDIDKeySignPayload("GET", "/api/v1/onboarding/check-username", "2026-04-07T12:00:00Z", nil)
 	emptyHash := sha256.Sum256(nil)
 	want := hex.EncodeToString(emptyHash[:])
 	if !strings.Contains(string(payload), `"body_sha256":"`+want+`"`) {
@@ -36,7 +36,7 @@ func TestCloudDIDKeySignPayload_EmptyBodyHashesEmptyString(t *testing.T) {
 // HTML-escaped to \u003c, \u003e, \u0026. This matches Python's
 // canonical_json_bytes(..., ensure_ascii=False).
 func TestCloudDIDKeySignPayload_DoesNotHTMLEscape(t *testing.T) {
-	payload := cloudDIDKeySignPayload(
+	payload := onboardingDIDKeySignPayload(
 		"POST",
 		"/api/v1/onboarding/<a&b>",
 		"2026-04-07T12:00:00Z",
@@ -54,8 +54,8 @@ func TestCloudDIDKeySignPayload_DoesNotHTMLEscape(t *testing.T) {
 // Method is normalized to uppercase. A sloppy caller passing "post" must
 // produce the same envelope bytes as a caller passing "POST".
 func TestCloudDIDKeySignPayload_NormalizesMethodToUppercase(t *testing.T) {
-	a := cloudDIDKeySignPayload("post", "/x", "2026-04-07T12:00:00Z", nil)
-	b := cloudDIDKeySignPayload("POST", "/x", "2026-04-07T12:00:00Z", nil)
+	a := onboardingDIDKeySignPayload("post", "/x", "2026-04-07T12:00:00Z", nil)
+	b := onboardingDIDKeySignPayload("POST", "/x", "2026-04-07T12:00:00Z", nil)
 	if string(a) != string(b) {
 		t.Fatalf("method normalization broke:\n%s\n%s", string(a), string(b))
 	}
@@ -68,8 +68,8 @@ func TestCloudDIDKeySignPayload_NormalizesMethodToUppercase(t *testing.T) {
 // accidental trailing newline can't desync the signed envelope from what the
 // server sees on r.Method / r.URL.Path.
 func TestCloudDIDKeySignPayload_TrimsMethodAndPath(t *testing.T) {
-	a := cloudDIDKeySignPayload("  POST  ", "  /x  ", "2026-04-07T12:00:00Z", nil)
-	b := cloudDIDKeySignPayload("POST", "/x", "2026-04-07T12:00:00Z", nil)
+	a := onboardingDIDKeySignPayload("  POST  ", "  /x  ", "2026-04-07T12:00:00Z", nil)
+	b := onboardingDIDKeySignPayload("POST", "/x", "2026-04-07T12:00:00Z", nil)
 	if string(a) != string(b) {
 		t.Fatalf("whitespace trim broke:\n%s\n%s", string(a), string(b))
 	}

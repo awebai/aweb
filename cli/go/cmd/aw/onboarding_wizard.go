@@ -38,7 +38,7 @@ type guidedOnboardingRequest struct {
 	WorkingDir         string
 	PromptIn           io.Reader
 	PromptOut          io.Writer
-	CloudURL           string
+	BaseURL            string
 	ServerName         string
 	Alias              string
 	Name               string
@@ -103,9 +103,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	}
 
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		Role:     req.Role,
-		CloudURL: serviceURLs.CloudURL,
-		AwidURL:  serviceURLs.AwidURL,
+		Role: req.Role,
 	})
 	if err != nil {
 		return nil, err
@@ -122,13 +120,13 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
-	serviceURLs, err := discoverOnboardingServiceURLs(req.CloudURL)
+	serviceURLs, err := discoverOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
 		fmt.Fprintln(req.PromptOut, "Managed onboarding is not available here. Switching to BYOD.")
 		return executeBYODPath(req)
 	}
 
-	username, err := promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.CloudURL)
+	username, err := promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.OnboardingURL)
 	if err != nil {
 		return nil, err
 	}
@@ -138,11 +136,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	}
 
 	for {
-		signingKey, cert, didKey, didAW, memberAddress, registryURL, err := provisionHostedIdentity(serviceURLs.CloudURL, serviceURLs.AwidURL, username, alias)
+		signingKey, cert, didKey, didAW, memberAddress, registryURL, err := provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
 				fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
-				username, err = promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.CloudURL)
+				username, err = promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.OnboardingURL)
 				if err != nil {
 					return nil, err
 				}
@@ -160,15 +158,13 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		Role:      req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
-		CloudURL:  serviceURLs.CloudURL,
-		AwidURL:   serviceURLs.AwidURL,
 	})
 	if err != nil {
 		return nil, err
 	}
 	printOutput(result, formatConnect)
 
-	if err := promptHostedClaimHuman(req, serviceURLs.CloudURL); err != nil {
+	if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
 		return nil, err
 	}
 	if err := runGuidedPostInitSetup(req); err != nil {
@@ -198,7 +194,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
-	serverURL, err := resolveGuidedOnboardingServerURL(req.CloudURL)
+	serverURL, err := resolveGuidedOnboardingServerURL(req.BaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +202,6 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		Role:      req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
-		AwidURL:   provisioned.Identity.Plan.RegistryURL,
 	})
 	if err != nil {
 		return nil, err
@@ -303,7 +298,7 @@ func resolveGuidedOnboardingServerURL(raw string) (string, error) {
 	if serverURL == "" {
 		serverURL = defaultWizardServerURL()
 	}
-	return cloudRootBaseURL(serverURL)
+	return normalizeServerBaseURL(serverURL)
 }
 
 func guidedOnboardingSkipDNSVerify() bool {
@@ -454,7 +449,7 @@ func defaultGuidedHostedAlias() string {
 	return "laptop"
 }
 
-func promptAvailableHostedUsername(in io.Reader, out io.Writer, cloudURL string) (string, error) {
+func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL string) (string, error) {
 	for {
 		username, err := promptRequiredStringWithIO("Username", "", in, out)
 		if err != nil {
@@ -462,7 +457,7 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, cloudURL string)
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		resp, err := guidedOnboardingCheckUsername(ctx, cloudURL, username)
+		resp, err := guidedOnboardingCheckUsername(ctx, onboardingURL, username)
 		cancel()
 		if err != nil {
 			var regErr *awid.RegistryError
@@ -489,7 +484,7 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, cloudURL string)
 }
 
 func provisionHostedIdentity(
-	cloudURL, registryURL, username, alias string,
+	onboardingURL, registryURL, username, alias string,
 ) (ed25519.PrivateKey, *awid.TeamCertificate, string, string, string, string, error) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -516,7 +511,7 @@ func provisionHostedIdentity(
 		return nil, nil, "", "", "", "", err
 	}
 
-	resp, err := guidedOnboardingCliSignup(ctx, cloudURL, &awid.CliSignupRequest{
+	resp, err := guidedOnboardingCliSignup(ctx, onboardingURL, &awid.CliSignupRequest{
 		Username: username,
 		DIDKey:   didKey,
 		DIDAW:    didAW,
@@ -618,7 +613,7 @@ func persistGuidedHostedIdentity(
 	})
 }
 
-func promptHostedClaimHuman(req guidedOnboardingRequest, cloudURL string) error {
+func promptHostedClaimHuman(req guidedOnboardingRequest, onboardingURL string) error {
 	fmt.Fprintln(req.PromptOut, "Your identity is in .aw/signing.key.")
 	fmt.Fprintln(req.PromptOut, "If you lose this file before running 'aw claim-human --email you@example.com', this account cannot be recovered. We recommend claiming now.")
 
@@ -636,7 +631,7 @@ func promptHostedClaimHuman(req guidedOnboardingRequest, cloudURL string) error 
 	}
 	resp, _, err := guidedOnboardingClaimHuman(claimHumanOptions{
 		WorkingDir: req.WorkingDir,
-		BaseURL:    cloudURL,
+		BaseURL:    onboardingURL,
 		Email:      email,
 	})
 	if err != nil {
@@ -646,26 +641,12 @@ func promptHostedClaimHuman(req guidedOnboardingRequest, cloudURL string) error 
 }
 
 func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingServiceURLs, error) {
-	if strings.TrimSpace(req.CloudURL) != "" {
-		return resolveOnboardingServiceURLs(req.CloudURL)
+	if strings.TrimSpace(req.BaseURL) != "" {
+		return resolveOnboardingServiceURLs(req.BaseURL)
 	}
 
 	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(req.WorkingDir)
 	if err == nil {
-		if strings.TrimSpace(workspace.CloudURL) != "" {
-			urls, normalizeErr := normalizeOnboardingServiceURLs(onboardingServiceURLs{
-				CloudURL: workspace.CloudURL,
-				AwebURL:  workspace.AwebURL,
-				AwidURL:  workspace.AwidURL,
-			})
-			if normalizeErr != nil {
-				return onboardingServiceURLs{}, normalizeErr
-			}
-			if strings.TrimSpace(urls.AwebURL) != "" {
-				return urls, nil
-			}
-		}
-
 		rawURL := strings.TrimSpace(workspace.AwebURL)
 		if rawURL != "" {
 			return resolveOnboardingServiceURLs(rawURL)
@@ -675,12 +656,11 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 		return onboardingServiceURLs{}, err
 	}
 
-	awebURL, err := resolveGuidedOnboardingServerURL(req.CloudURL)
+	awebURL, err := resolveGuidedOnboardingServerURL(req.BaseURL)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}
 	return onboardingServiceURLs{
-		CloudURL: awebURL,
 		AwebURL:  awebURL,
 	}, nil
 }

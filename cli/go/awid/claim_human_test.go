@@ -72,7 +72,7 @@ func TestClaimHuman(t *testing.T) {
 		t.Fatalf("did=%q want %q", parts[1], didKey)
 	}
 
-	sigPayload := cloudDIDKeySignPayload(http.MethodPost, onboardingClaimHumanPath, gotTimestamp, gotBodyBytes)
+	sigPayload := onboardingDIDKeySignPayload(http.MethodPost, onboardingClaimHumanPath, gotTimestamp, gotBodyBytes)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 	if len(parts) != 3 {
 		t.Fatalf("auth=%q", gotAuth)
 	}
-	sigPayload := cloudDIDKeySignPayload(http.MethodPost, gotPath, gotTimestamp, gotBodyBytes)
+	sigPayload := onboardingDIDKeySignPayload(http.MethodPost, gotPath, gotTimestamp, gotBodyBytes)
 	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
 	if err != nil {
 		t.Fatal(err)

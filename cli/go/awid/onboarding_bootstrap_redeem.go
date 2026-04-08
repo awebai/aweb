@@ -71,7 +71,7 @@ func (c *Client) BootstrapRedeem(ctx context.Context, req *BootstrapRedeemReques
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	signPayload := cloudDIDKeySignPayload(httpReq.Method, httpReq.URL.Path, timestamp, bodyBytes)
+	signPayload := onboardingDIDKeySignPayload(httpReq.Method, httpReq.URL.Path, timestamp, bodyBytes)
 	signature := ed25519.Sign(c.signingKey, signPayload)
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
 	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)

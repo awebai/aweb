@@ -436,7 +436,7 @@ func TestCanonicalJSONValuePreservesUnicode(t *testing.T) {
 //
 // This is the same latent bug that bit the cloud onboarding signing
 // family (cli-signup, claim-human, bootstrap-redeem); fixed there in
-// the shared cloudDIDKeySignPayload helper. aweb-aafx.10 carries the
+// the shared onboardingDIDKeySignPayload helper. aweb-aafx.10 carries the
 // fix into this sibling code path (aw id sign / aw id request).
 func TestCanonicalJSONValueDoesNotHTMLEscape(t *testing.T) {
 	t.Parallel()

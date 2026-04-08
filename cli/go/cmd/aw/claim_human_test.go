@@ -32,15 +32,15 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	var gotBody map[string]any
 	var gotAuth string
 	var gotTimestamp string
-	var cloudURL string
+	var onboardingURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": cloudURL,
-				"aweb_url":  cloudURL,
-				"awid_url":  "https://api.awid.ai",
-				"version":   "1.7.0",
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   "https://api.awid.ai",
+				"version":        "1.7.0",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
 			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
@@ -61,7 +61,7 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	cloudURL = server.URL
+	onboardingURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -26,7 +26,8 @@ FORBIDDEN_SUBSTRINGS: list[tuple[str, str]] = [
     ("aw init --project-slug", "aw init does not accept project_slug; project comes from the project-scoped API key"),
     ("aw init --project ", "aw init does not accept --project; project comes from the project-scoped API key"),
     ("aw init --namespace", "aw init does not accept --namespace; project comes from the project-scoped API key"),
-    ("aw init --url", "aw init flag is --cloud-url"),
+    ("aw init --" + "cloud-url", "aw init flag is --url"),
+    ("aw init --" + "awid-url", "aw init no longer accepts the old registry override flag"),
 ]
 
 

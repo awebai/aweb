@@ -93,7 +93,7 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 //
 // HTML escaping is explicitly disabled via json.Encoder.SetEscapeHTML(false)
 // so the output bytes match Python's canonical_json_bytes on the awid /
-// aweb-cloud verifier sides, which call json.dumps(..., ensure_ascii=False,
+// verifier sides, which call json.dumps(..., ensure_ascii=False,
 // separators=(",", ":")). Go's default json.Marshal would escape <, >, and
 // & to \u003c, \u003e, \u0026; any signed payload containing those chars
 // (common in free-form user notes and URLs) would silently fail signature
@@ -101,7 +101,7 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 // by default, so it already matches Python's ensure_ascii=False for
 // unicode — tested by TestCanonicalJSONValuePreservesUnicode.
 //
-// This matches the shared cloudDIDKeySignPayload helper used by the
+// This matches the shared onboardingDIDKeySignPayload helper used by the
 // onboarding signing family (cli-signup, claim-human, bootstrap-redeem).
 func CanonicalJSONValue(v any) (string, error) {
 	var buf bytes.Buffer

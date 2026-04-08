@@ -13,18 +13,14 @@ import (
 	"time"
 )
 
-// Onboarding HTTP helpers targeting the aweb-cloud onboarding endpoints.
-//
-// Wire contract: aweb-cloud/docs/aweb-cloud-sot.md, sections
-// "Cloud DIDKey verifier" (lines 707-768) and "POST /api/v1/onboarding/*"
-// (lines 770-911).
+// Onboarding HTTP helpers for the hosted onboarding endpoints.
 //
 // These helpers live in the awid package alongside the other HTTP client
-// code, but they speak to aweb-cloud, not to the awid registry. The split-
-// authority rule: the CLI signs its own awid operations (DID registration)
-// and its own cloud requests; the cloud signs its own controller operations
-// (namespace / team / cert registration at awid). Neither side signs for
-// the other.
+// code, but they speak to the hosted onboarding service, not to the awid
+// registry. The split-authority rule: the CLI signs its own awid operations
+// (DID registration) and its own onboarding requests; the hosted service
+// signs its own controller operations (namespace / team / cert registration
+// at awid). Neither side signs for the other.
 
 // CheckUsernameRequest is the body for POST /api/v1/onboarding/check-username.
 type CheckUsernameRequest struct {
@@ -49,7 +45,7 @@ type CliSignupRequest struct {
 	Alias    string `json:"alias"`
 }
 
-// CliSignupResponse carries the cloud's reply: the signed team certificate
+// CliSignupResponse carries the hosted onboarding reply: the signed team certificate
 // plus the identity metadata the CLI needs to write .aw/identity.yaml.
 // Certificate is a base64-encoded team certificate JSON document.
 type CliSignupResponse struct {
@@ -64,11 +60,11 @@ type CliSignupResponse struct {
 	Alias           string `json:"alias"`
 }
 
-// CheckUsername validates a username against aweb-cloud. No auth required.
-func CheckUsername(ctx context.Context, cloudURL, username string) (*CheckUsernameResponse, error) {
+// CheckUsername validates a username against the hosted onboarding service. No auth required.
+func CheckUsername(ctx context.Context, onboardingURL, username string) (*CheckUsernameResponse, error) {
 	body := &CheckUsernameRequest{Username: username}
 	var out CheckUsernameResponse
-	if err := postJSONNoAuth(ctx, cloudURL, "/api/v1/onboarding/check-username", body, &out); err != nil {
+	if err := postJSONNoAuth(ctx, onboardingURL, "/api/v1/onboarding/check-username", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -83,10 +79,10 @@ func CheckUsername(ctx context.Context, cloudURL, username string) (*CheckUserna
 // those bytes are hashed for body_sha256 in the signature envelope, and those
 // same bytes are sent as the HTTP request body. Re-marshalling after hashing
 // would desync the hash from the wire bytes and the server would reject the
-// signature (see cloud SOT GOTCHA on body_sha256 caching, lines 760-764).
+// signature.
 func CliSignup(
 	ctx context.Context,
-	cloudURL string,
+	onboardingURL string,
 	req *CliSignupRequest,
 	signingKey ed25519.PrivateKey,
 ) (*CliSignupResponse, error) {
@@ -110,30 +106,30 @@ func CliSignup(
 	}
 
 	const path = "/api/v1/onboarding/cli-signup"
-	headers := cloudDIDKeyHeaders(http.MethodPost, path, bodyBytes, signingKey)
+	headers := onboardingDIDKeyHeaders(http.MethodPost, path, bodyBytes, signingKey)
 
 	var out CliSignupResponse
-	if err := postJSONWithHeaders(ctx, cloudURL, path, bodyBytes, headers, &out); err != nil {
+	if err := postJSONWithHeaders(ctx, onboardingURL, path, bodyBytes, headers, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// cloudDIDKeyHeaders builds the DIDKey auth headers for a cloud endpoint call.
+// onboardingDIDKeyHeaders builds the DIDKey auth headers for an onboarding endpoint call.
 // The caller provides the exact body bytes that will be transmitted; this
 // function does not re-marshal anything.
 //
-// The signed envelope is built by the shared cloudDIDKeySignPayload helper
-// (cli/go/awid/cloud_didkey_signing.go), which is also used by claim-human
+// The signed envelope is built by the shared onboardingDIDKeySignPayload helper,
+// which is also used by claim-human
 // and bootstrap-redeem so all three onboarding endpoints produce
 // byte-identical canonical payloads.
-func cloudDIDKeyHeaders(
+func onboardingDIDKeyHeaders(
 	method, path string,
 	body []byte,
 	signingKey ed25519.PrivateKey,
 ) map[string]string {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	payload := cloudDIDKeySignPayload(method, path, timestamp, body)
+	payload := onboardingDIDKeySignPayload(method, path, timestamp, body)
 	sig := ed25519.Sign(signingKey, payload)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return map[string]string{

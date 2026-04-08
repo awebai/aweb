@@ -48,8 +48,8 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": server.URL,
-				"aweb_url":  server.URL,
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			gotAuthHeader = r.Header.Get("Authorization")
@@ -100,7 +100,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	// Initialize a git repo so canonical_origin is available
 	initGitRepoWithOrigin(t, tmp, "https://github.com/acme/backend.git")
 
-	run := exec.CommandContext(ctx, bin, "init", "--cloud-url", server.URL, "--role", "developer", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL, "--role", "developer", "--json")
 	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -178,7 +178,7 @@ func TestInitWithCertificateNotTriggeredWithoutCert(t *testing.T) {
 	// With no cert at all, the certificate connect flow should not trigger.
 	// The old flow runs instead — which requires an API key or TTY.
 	// We just verify the command doesn't claim "connected".
-	run := exec.CommandContext(ctx, bin, "init", "--cloud-url", "http://localhost:9999", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--url", "http://localhost:9999", "--json")
 	run.Env = append(idCreateCommandEnv(tmp), "AWEB_API_KEY=aw_sk_test_invalid")
 	run.Dir = tmp
 	out, _ := run.CombinedOutput()
@@ -216,8 +216,8 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": server.URL,
-				"aweb_url":  server.URL,
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
 			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -245,7 +245,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "init", "--cloud-url", server.URL, "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL, "--json")
 	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
