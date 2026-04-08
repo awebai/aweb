@@ -11,12 +11,17 @@ the awid teams architecture. It is the implementation spec.
    stores, or manages identities. It never decides who is in a team.
 2. **aweb owns coordination.** Mail, chat, tasks, roles, locks,
    workspaces, events. This is the only thing aweb does.
-3. **Team certificates are the single credential.** No API keys.
-   Agents authenticate every request with a DIDKey signature and a
-   team certificate.
-4. **team_address replaces project_id.** Every coordination table is
-   scoped to a team_address (e.g., `acme.com/backend`). The concept
-   of "project" as an aweb entity goes away.
+3. **Team certificates are the single credential for coordination
+   endpoints.** Agents authenticate every coordination request (mail,
+   chat, tasks, roles, locks, instructions, workspace state) with a
+   DIDKey signature and a team certificate. The `/mcp` endpoint at
+   aweb-cloud uses a separate auth model documented in
+   `aweb-cloud/docs/cloud-team-architecture-sot.md` § Hosted MCP and
+   OAuth Connector Architecture.
+4. **team_address is the coordination scope.** Every coordination table
+   is scoped to a `team_address` (e.g., `acme.com/backend`). All
+   coordination data — messages, tasks, claims, locks, roles,
+   instructions, presence — lives at the team level.
 
 ---
 
@@ -42,11 +47,19 @@ A **workspace** is a local runtime container.
 
 - It is represented by a local `.aw/` directory.
 - It stores local runtime state and configuration.
-- It may also store secret key material for self-custodial permanent identities.
+- It may also store secret key material for self-custodial persistent identities.
 - A workspace belongs to one local machine/path, but it may be moved by moving
   the `.aw/` directory.
-- A workspace has one active identity.
+- A workspace has one active identity and one active team binding.
 - Hosted OAuth MCP runtimes do **not** have a local workspace.
+
+A workspace is bound to exactly one team. An agent that needs to
+participate in multiple teams uses multiple workspaces (typically
+multiple git worktrees), each with its own `.aw/` directory and its own
+team certificate. The certificate format does not preclude an agent
+identity (`did:key`) from being a member of more than one team — multi-
+team agents are a future capability the cert format already accommodates
+— but the v1 CLI and server bind one workspace to one team.
 
 ### Identity
 
@@ -58,23 +71,23 @@ Two identity classes exist:
 - **Ephemeral identity**: disposable, internal, one alias. Has only `did:key`.
   Created by accepting a team invite or via spawn into the same team. Deleted
   when the workspace is removed. Does not carry public trust continuity.
-- **Permanent identity**: durable, trust-bearing. Has both `did:key` and
+- **Persistent identity**: durable, trust-bearing. Has both `did:key` and
   `did:aw`. Has one or more public addresses. Supports rotation, archival, and
   controlled replacement.
 
-Trust continuity is only promised for permanent identities.
+Trust continuity is only promised for persistent identities.
 
 ### Custody Modes
 
-Permanent identities have two custody modes:
+Persistent identities have two custody modes:
 
 - **Self-custodial**: the agent holds its own Ed25519 private key locally,
   inside its `.aw/` workspace. Created only from the CLI. Cannot be used by
-  hosted OAuth MCP runtimes. Created explicitly via `aw init --permanent
+  hosted OAuth MCP runtimes. Created explicitly via `aw init --persistent
   --name <name>` — never as a side effect of a default flow.
 - **Custodial**: the hosted service holds the encrypted private key. Created
   from the dashboard for hosted/browser MCP use. The dashboard creates
-  permanent custodial identities, not generic "agents".
+  persistent custodial identities, not generic "agents".
 
 ### Alias vs Address
 
@@ -85,12 +98,12 @@ An **alias** is the routing name for an ephemeral identity:
 - May be auto-assigned from a pool of standard names
 - An ephemeral identity has exactly one alias
 
-An **address** is the stable handle for a permanent identity:
+An **address** is the stable handle for a persistent identity:
 
-- Only permanent identities have addresses
-- A permanent identity may have more than one address
+- Only persistent identities have addresses
+- A persistent identity may have more than one address
 - Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
-- Public trust semantics attach to the permanent address, not to ephemeral
+- Public trust semantics attach to the persistent address, not to ephemeral
   aliases
 - Address assignment is separate from reachability (`private` /
   `org-visible` / `contacts-only` / `public`)
@@ -101,9 +114,9 @@ Three distinct lifecycle stories that must not be conflated:
 
 - **Delete**: ephemeral only. Releases the alias for reuse. The single
   user-facing lifecycle verb for ephemeral teardown.
-- **Archive**: permanent identity lifecycle cleanup with no continuity claim.
+- **Archive**: persistent identity lifecycle cleanup with no continuity claim.
   Stops active participation, keeps history.
-- **Replace**: permanent identity continuity via owner-authorized replacement
+- **Replace**: persistent identity continuity via owner-authorized replacement
   of an assigned public address. Distinct from cryptographic key rotation.
   Used when the owner has lost the key but still controls the dashboard and
   public address surface.
@@ -135,26 +148,32 @@ is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
-issued by the team controller at awid.
+issued by the team controller at awid. A base64 team certificate is on
+the order of 500–1000 bytes and is included on every authenticated
+request. For long-lived SSE connections this is a one-handshake cost
+and negligible. For high-frequency unary HTTP requests it adds
+sub-millisecond and bytes-of-overhead per call. v1 ships with
+cert-on-every-request; if measured workloads show the per-request cost
+is material, a session-token shortcut may be added later, but the cert
+remains the canonical credential.
 
 ### Verification (mostly local crypto, one cached lookup)
 
 1. Parse `Authorization` header → extract did:key and signature.
-2. Extract public key from did:key.
-3. Compute SHA256 hex digest of the request body. Verify Ed25519
+2. Compute SHA256 hex digest of the request body. Verify the Ed25519
    signature over canonical JSON of `{team_address, timestamp,
    body_sha256}`. Reject if invalid.
-4. Decode team certificate from `X-AWID-Team-Certificate`.
-5. Verify certificate signature against the team's public key
-   (cached from awid). Reject if invalid.
-6. Verify certificate `member_did_key` matches the did:key from step 1.
-7. Check certificate `certificate_id` against cached revocation list
-   (fetched from awid periodically, TTL 5-15 min). Reject if revoked.
-8. Extract team_address, alias, lifetime from certificate.
-9. Request is authenticated and authorized for the given team.
+3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
+   per the [certificate verification protocol](awid-team-architecture-sot.md#verification-by-a-service)
+   defined in the awid SoT (verify signature against the cached team
+   public key, verify certificate `member_did_key` matches the request
+   did:key, check `certificate_id` against the cached revocation list).
+4. Extract `team_address`, `alias`, `lifetime` from the certificate.
+5. Request is authenticated and authorized for the given team.
 
-Steps 1-6 are local crypto, no network. Step 7 is a cache lookup
-(revocation list fetched periodically from awid).
+Steps 1-3 are local crypto, no network. The revocation-list and team
+public key lookups in step 3 are cache hits — see [Caching from awid](#caching-from-awid)
+below.
 
 ### Caching from awid
 
@@ -176,17 +195,18 @@ after that, a hard miss triggers a synchronous refresh, and a failed
 synchronous refresh triggers the fail-closed behavior described in the
 "Dashboard auth" section below).
 
-**Cache invalidation on rotation — known gap.** Team key rotation
-(`POST /v1/namespaces/{domain}/teams/{name}/rotate-key` at awid) does
-NOT actively invalidate the aweb-side team metadata cache. After a
-rotation, aweb continues to verify incoming certificates against the
-**old** `team_did_key` for up to 20 minutes (one TTL cycle plus the
-stale window). During that window, certificates issued under the new
-team controller key will fail verification at aweb. This is fail-closed
-(no wrong access is granted) but it is a real availability window after
-every rotation. Operators planning a rotation should expect a 20-minute
-delay before new certificates start verifying. Active invalidation on
-rotation is tracked as a follow-up.
+**Cache behavior on team key rotation.** Team key rotation
+(`POST /v1/namespaces/{domain}/teams/{name}/rotate-key` at awid) propagates
+to aweb on the next cache refresh — up to 20 minutes (one TTL cycle plus the
+stale window). During that propagation window, aweb continues to verify
+incoming certificates against the previously cached `team_did_key`, so
+certificates issued under the new team controller key fail verification at
+aweb until the cache catches up. This is fail-closed (no wrong access is
+granted). Operators planning a rotation should expect up to a 20-minute
+propagation delay before new certificates start verifying. Operators who
+need faster propagation can manually flush the team metadata cache via
+Redis (key prefix `awid:team:`); after the flush the next request triggers
+a synchronous refresh against awid and picks up the new key immediately.
 
 **Operational note:** the team metadata cache TTL is intentionally short
 because the `visibility` field gates anonymous dashboard reads — a long
@@ -204,8 +224,10 @@ cluster count, not instance count.
 GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}/revocations
 → { "revocations": [{ "certificate_id": "...", "revoked_at": "..." }] }
 ```
-Cache TTL: 5-15 minutes. This is the maximum window of stale access
-after a member is removed.
+Cache TTL: 10 minutes with a 10-minute stale-while-revalidate window
+(matching the team metadata cache, so both refresh on the same schedule).
+The maximum window of stale access after a member is removed is
+20 minutes; a manual Redis cache flush is the supported faster path.
 
 ---
 
@@ -586,6 +608,25 @@ header. aweb validates the JWT signature (shared secret with
 aweb-cloud) and checks the requested team_address is in the token's
 team list.
 
+**Algorithm**: HS256 (HMAC-SHA256) using `AWEB_DASHBOARD_JWT_SECRET`. The
+secret MUST be identical in cloud and aweb deployments. The `alg` header
+MUST be `HS256` — aweb's verifier rejects any other algorithm including
+`none` and asymmetric algorithms (defense against the alg-confusion class
+of JWT bugs).
+
+**Payload**:
+```json
+{
+  "user_id": "uuid",
+  "team_addresses": ["acme.aweb.ai/default", "acme.aweb.ai/backend"],
+  "exp": 1775500000
+}
+```
+
+The JWT validation is local (no awid call at request time). aweb does
+query awid for team metadata (team_did_key, revocation list, visibility)
+but those reads are cached.
+
 **Public-team anonymous bypass.** When the requested team_address
 resolves (via the cached team metadata above) to `visibility = "public"`,
 aweb allows the dashboard read **without** a valid `X-Dashboard-Token`.
@@ -619,22 +660,12 @@ awid is unreachable") would create a privilege-escalation path. Both
 sides of this asymmetry are load-bearing.
 
 The same fail-closed property is documented in the sibling `aweb-cloud`
-repo, in `docs/cloud-team-architecture-sot.md` (alice's SOT pass 3.1).
-Both documents must stay in sync; if either side changes the security
-property, the other must be updated in the same merge.
+repo, in `docs/cloud-team-architecture-sot.md`. Both documents must stay
+in sync; if either side changes the security property, the other must be
+updated in the same merge.
 
 Environment variable: `AWEB_DASHBOARD_JWT_SECRET` (shared with
 aweb-cloud).
-
-### Auth middleware change
-
-Today: `get_actor_agent_id_from_auth()` extracts agent_id from API key.
-
-New: `verify_team_certificate()` extracts team_address, did_key, alias
-from the certificate. Looks up agent_id from `agents` table by
-(team_address, did_key). If no agent row exists, auto-provisions one
-(for the `POST /v1/connect` flow, the agent row is created; for other
-routes, 401 if not connected).
 
 ---
 
@@ -684,7 +715,7 @@ parent controller key for `*.aweb.ai`). For self-hosted aweb in Docker,
 only the BYOD path is available because vanilla aweb has no parent
 controller key.
 
-### Permanent agent (joining an existing team via invite)
+### Persistent agent (joining an existing team via invite)
 
 ```
 1. aw id create --name alice --domain acme.com
@@ -802,7 +833,7 @@ aw mcp-config
 
 ```
 .aw/
-  identity.yaml       # Permanent identity (did:aw, did:key, address)
+  identity.yaml       # Persistent identity (did:aw, did:key, address)
   signing.key          # Ed25519 private key
   workspace.yaml       # Server URL, team address, alias, role
   team-cert.pem        # Current team certificate (auto-renewed)
@@ -824,12 +855,10 @@ repo_id: ""
 updated_at: "2026-04-06T..."
 ```
 
-Removed fields: `api_key`, `project_id`, `project_slug`,
-`namespace_slug`, `identity_id`, `identity_handle`, `did`,
-`stable_id`, `signing_key`, `custody`, `lifetime`.
-
-The identity fields are in `identity.yaml`. The credential is in
-`team-cert.pem`. The workspace binding is minimal.
+The identity fields live in `identity.yaml`. The credential is in
+`team-cert.pem`. The workspace binding is minimal — it carries only the
+server URL, the team address, the alias, the role, and the repo
+metadata.
 
 ---
 
@@ -854,12 +883,8 @@ GET /v1/namespaces/{domain}/teams/{name}
 
 aweb caches the full team metadata (used for both certificate verification
 via `team_did_key` AND public-team anonymous-read bypass via `visibility`).
-TTL: 10 minutes, with a 10-minute stale-while-revalidate window (20 minutes
-total). See "Caching from awid" above for: (1) the operational implications
-of the short TTL on awid call rate (one resolution call per 10 minutes per
-active team per cluster, intentional because `visibility` gates anonymous
-reads), and (2) the known cache-invalidation gap on team key rotation
-(rotation propagates within at most 20 minutes; not actively invalidated).
+See [Caching from awid](#caching-from-awid) above for cache TTL, stale window,
+operational implications, and rotation propagation behavior.
 
 ### Address resolution (for message routing to external addresses)
 
@@ -890,8 +915,9 @@ GET /v1/namespaces/{domain}/teams/{name}/revocations?since=<timestamp>
 → { "revocations": [{ "certificate_id": "uuid", "revoked_at": "..." }] }
 ```
 
-Cache TTL: 5-15 minutes. The `since` parameter enables incremental
-sync — only fetch new revocations since last check.
+The `since` parameter enables incremental sync — only fetch new revocations
+since last check. Cache TTL is the same as team metadata; see
+[Caching from awid](#caching-from-awid) above.
 
 Dashboard reads use cached awid visibility:
 
@@ -972,7 +998,7 @@ For the full spec — including the public-team anonymous-bypass behavior
 and the fail-closed semantics on visibility lookup error — see
 **Authentication > Dashboard auth** earlier in this document. The
 companion spec on the cloud side is in the sibling `aweb-cloud` repo,
-in `docs/cloud-team-architecture-sot.md` (alice's SOT pass 3.1).
+in `docs/cloud-team-architecture-sot.md`.
 
 ---
 

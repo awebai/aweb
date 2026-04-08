@@ -1,7 +1,6 @@
 # awid — Team Architecture Source of Truth
 
-This document defines the awid.ai service after adding teams. It is
-the implementation spec.
+This document defines the awid.ai service. It is the implementation spec.
 
 ---
 
@@ -20,6 +19,53 @@ the implementation spec.
 4. **Revocation is a column update.** Revoking a certificate sets
    `revoked_at` on the certificate record. Services cache the revoked
    entries.
+
+---
+
+## Authentication
+
+awid write operations are authenticated by an Ed25519 signature over a
+**canonical JSON envelope of explicit structured fields** rather than over
+the request body bytes. Each operation has its own envelope shape.
+
+The envelope always includes:
+
+- `domain` — the namespace the operation applies to
+- `operation` — a string that locks the signature to a specific operation,
+  preventing cross-operation replay (e.g. `set_team_visibility`,
+  `register_address`, `revoke_certificate`)
+- `timestamp` — ISO 8601 UTC, enforced to ±300 seconds of server clock
+- additional operation-specific fields (e.g. `team_name`, `visibility`,
+  `certificate_id`, `address_name`)
+
+The signature is `Ed25519.sign(controller_private_key, canonical_json(envelope))`.
+The request also carries:
+
+```
+Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+```
+
+Three controller keys exist, each with its own scope:
+
+- **Parent controller key** (`*.aweb.ai`): cloud-managed, signs namespace
+  registrations under managed domains
+- **Namespace controller key**: signs namespace operations and team
+  creation under a specific namespace; held by the namespace owner (BYOD)
+  or by aweb-cloud (managed)
+- **Team controller key**: signs team-scoped operations including
+  certificate issuance, certificate revocation, team visibility toggle,
+  and team key rotation; held by the team controller (BYOD) or by
+  aweb-cloud (managed)
+
+This is the **awid pattern**, distinct from the aweb pattern
+(`{team_address, timestamp, body_sha256}`) and the cloud pattern
+(`{body_sha256, method, path, timestamp}`). The three patterns are not
+interchangeable; see the per-endpoint signed payload examples below for
+each operation's exact envelope shape.
+
+Read endpoints (`GET /v1/namespaces/{domain}`, `GET /v1/did/{did_aw}/key`,
+team metadata, revocations, etc.) are public and rate-limited. They do
+not carry signatures.
 
 ---
 
@@ -63,50 +109,11 @@ GET    /v1/did/{did_aw}/addresses      List addresses (public)
 
 ## Teams
 
-### Data model
-
-```sql
-CREATE TABLE teams (
-    team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    domain          TEXT NOT NULL,
-    name            TEXT NOT NULL,
-    display_name    TEXT NOT NULL DEFAULT '',
-    team_did_key    TEXT NOT NULL,
-    visibility      TEXT NOT NULL DEFAULT 'private'
-                    CHECK (visibility IN ('public', 'private')),
-    created_by      TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (domain, name) WHERE deleted_at IS NULL
-);
-
--- Allows name reuse after soft-delete.
--- Certificate issuance log. Records every certificate issued for
--- a team. Active members = rows where revoked_at IS NULL.
--- Services cache the revoked rows to reject removed members.
-CREATE TABLE team_certificates (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id         UUID NOT NULL REFERENCES teams(team_id),
-    certificate_id  TEXT NOT NULL,
-    member_did_key  TEXT NOT NULL,
-    member_did_aw   TEXT,
-    member_address  TEXT,
-    alias           TEXT NOT NULL,
-    lifetime        TEXT NOT NULL DEFAULT 'persistent'
-                    CHECK (lifetime IN ('persistent', 'ephemeral')),
-    issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at      TIMESTAMPTZ,
-
-    UNIQUE (team_id, certificate_id)
-);
-
-CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_id, member_did_key)
-    WHERE revoked_at IS NULL;
-CREATE INDEX idx_team_certificates_revoked
-    ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
-```
+A team is a named group within a namespace. It has a name, display name,
+public key, and visibility (`public` or `private`). The `team_certificates`
+log records every certificate issued for the team; active members are rows
+where `revoked_at IS NULL`. See [awid database schema](#awid-database-schema)
+for the full DDL.
 
 ### Endpoints
 
@@ -304,10 +311,10 @@ When the team controller removes a member:
    `POST /v1/namespaces/{domain}/teams/{name}/certificates/revoke`
    with the `certificate_id`.
 2. awid sets `revoked_at` on the `team_certificates` row.
-3. Services refresh their cached revocation list within their TTL
-   (recommended: 5-15 minutes).
-4. The revoked certificate is rejected on next request after cache
-   refresh.
+3. The revoked certificate is rejected by services on the next request
+   after they refresh their cached revocation list. Cache TTL is a
+   property of each consumer, not of awid; aweb's TTL is documented in
+   the aweb SoT under "Caching from awid".
 
 ---
 
@@ -336,11 +343,9 @@ against `partner.com`'s namespace at awid as a separate step.
 
 ---
 
-## awid database schema (complete, after teams)
+## awid database schema
 
 ```sql
--- Existing tables (unchanged)
-
 CREATE TABLE did_aw_mappings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     did_aw          TEXT UNIQUE NOT NULL,
@@ -396,14 +401,14 @@ CREATE TABLE public_addresses (
     UNIQUE (domain, name)
 );
 
--- New tables
-
 CREATE TABLE teams (
     team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
     display_name    TEXT NOT NULL DEFAULT '',
     team_did_key    TEXT NOT NULL,
+    visibility      TEXT NOT NULL DEFAULT 'private'
+                    CHECK (visibility IN ('public', 'private')),
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
@@ -411,6 +416,10 @@ CREATE TABLE teams (
     UNIQUE (domain, name) WHERE deleted_at IS NULL
 );
 
+-- Soft delete on teams allows name reuse after deletion.
+-- The team_certificates log records every certificate issued for a team.
+-- Active members = rows where revoked_at IS NULL.
+-- Services cache the revoked rows to reject removed members.
 CREATE TABLE team_certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id         UUID NOT NULL REFERENCES teams(team_id),
@@ -470,7 +479,6 @@ the CLI (BYOD) or aweb-cloud (managed namespaces).
 - Sign on behalf of agents (custody is aweb-cloud's concern)
 - Store certificate content (agents hold their own)
 - Track certificate expiry (certificates are long-lived)
-- Manage API keys (gone)
 - Coordinate agents (aweb does this)
 - Manage billing (aweb-cloud does this)
 - Manage human accounts (aweb-cloud does this)

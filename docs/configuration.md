@@ -43,12 +43,12 @@ This file is what makes worktree-aware commands like `aw workspace status`,
 `aw workspace add-worktree`, and `aw run` coordination-aware, and it is also
 the first local source of truth for binding a directory to a project identity.
 
-For permanent identities, cryptographic identity state lives in
+For persistent identities, cryptographic identity state lives in
 `.aw/identity.yaml`, not in `.aw/workspace.yaml`.
 
-## Permanent Identity State: `.aw/identity.yaml`
+## Persistent Identity State: `.aw/identity.yaml`
 
-Permanent identities store their durable identity data in:
+Persistent identities store their durable identity data in:
 
 ```text
 .aw/identity.yaml
@@ -78,7 +78,7 @@ When more than one config source is present, the effective selection order is:
 1. CLI flags such as `--server-name`
 2. environment variables such as `AWEB_URL` and `AWEB_API_KEY`
 3. local `.aw/workspace.yaml`
-4. local `.aw/identity.yaml` for permanent identity fields
+4. local `.aw/identity.yaml` for persistent identity fields
 5. local `.aw/context`
 
 That means a directory-local `.aw/` tree fully binds one repo or worktree.
@@ -120,7 +120,7 @@ Use that file for `aw run` prompt defaults and background service settings.
 ## Server Environment Variables
 
 The server also relies on a small set of deployment-time environment variables.
-These are not stored in `.aw/`, but they determine how permanent identity
+These are not stored in `.aw/`, but they determine how persistent identity
 resolution and custodial signing behave.
 
 ### Identity Resolution
@@ -134,7 +134,7 @@ resolution and custodial signing behave.
 
 ### Managed Namespace Control
 
-- `AWEB_MANAGED_DOMAIN`: the parent domain used for server-managed permanent
+- `AWEB_MANAGED_DOMAIN`: the parent domain used for server-managed persistent
   addresses
 - `AWEB_NAMESPACE_CONTROLLER_KEY`: 64-char hex Ed25519 seed used to sign
   namespace and address registrations for `AWEB_MANAGED_DOMAIN` against awid

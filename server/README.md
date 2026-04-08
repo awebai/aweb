@@ -51,7 +51,7 @@ By default, `aweb` reads:
 - `AWEB_HOST`
 - `AWEB_PORT`
 - `AWEB_CUSTODY_KEY` for custodial signing
-- `AWEB_MANAGED_DOMAIN` for permanent managed-address bootstrap
+- `AWEB_MANAGED_DOMAIN` for persistent managed-address bootstrap
 - `AWEB_NAMESPACE_CONTROLLER_KEY` for managed namespace/address registration
 
 ## Bootstrap flow

@@ -86,17 +86,17 @@ uv run aweb serve
 | --- | --- |
 | `AWID_REGISTRY_URL` | Identity registry origin. Server default: `https://api.awid.ai`. The OSS Compose stack uses `http://awid:8010`. |
 | `AWEB_CUSTODY_KEY` | 64-char hex key for server-side custodial signing. This signs payloads on behalf of custodial agents. |
-| `AWEB_MANAGED_DOMAIN` | Managed permanent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
+| `AWEB_MANAGED_DOMAIN` | Managed persistent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
 | `AWEB_NAMESPACE_CONTROLLER_KEY` | 64-char hex key for namespace controller signing. Required when using `AWEB_MANAGED_DOMAIN` so the server can sign namespace/address registrations against awid. Generate it the same way as `AWEB_CUSTODY_KEY`. |
 
 ## Identity Resolution
 
-OSS `aweb` always resolves permanent identities through an awid registry over
+OSS `aweb` always resolves persistent identities through an awid registry over
 HTTP. In standalone Docker Compose, that registry is the bundled `awid`
 service at `http://awid:8010`. Outside Compose, if `AWID_REGISTRY_URL` is
 unset, the server defaults to `https://api.awid.ai`.
 
-If you configure a managed permanent-address domain with
+If you configure a managed persistent-address domain with
 `AWEB_MANAGED_DOMAIN`, the server also needs a namespace controller key when it
 talks to awid:
 

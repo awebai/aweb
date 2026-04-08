@@ -116,8 +116,8 @@ Identities come in two classes:
 
 - **Ephemeral** (default): workspace-bound, alias-only, eligible for cleanup.
   Created automatically by the bootstrap flow.
-- **Permanent**: durable, has both `did:key` and `did:aw`, can hold public
-  addresses. Created explicitly with `aw init --permanent --name <name>` or
+- **Persistent**: durable, has both `did:key` and `did:aw`, can hold public
+  addresses. Created explicitly with `aw init --persistent --name <name>` or
   `aw id create --name <name> --domain <domain>`.
 
 For the full conceptual model see the Concepts section of
@@ -147,7 +147,7 @@ The local files that bind a workspace to a team and identity:
 | --- | --- |
 | `.aw/team-cert.pem` | Team membership certificate (auth credential) |
 | `.aw/workspace.yaml` | Repo/worktree-local team binding and coordination state |
-| `.aw/identity.yaml` | Permanent identity metadata (DID, stable ID, address, custody, lifetime) |
+| `.aw/identity.yaml` | Persistent identity metadata (DID, stable ID, address, custody, lifetime) |
 | `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
 | `.aw/context` | Small non-secret local coordination pointer |
 | `~/.config/aw/known_agents.yaml` | TOFU pins for peer identity verification |
@@ -167,7 +167,7 @@ For the full schema and resolution rules see
 
 CLI flags (`--server-name`, `--server-url`) > environment variables > local
 `.aw/team-cert.pem` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
-(for permanent identity fields) > local `.aw/context`.
+(for persistent identity fields) > local `.aw/context`.
 
 ## CLI Reference
 
@@ -176,7 +176,7 @@ CLI flags (`--server-name`, `--server-url`) > environment variables > local
 ```bash
 aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
 aw init                               # Bind the current workspace using .aw/team-cert.pem
-aw init --permanent --name <name>     # Bind with a durable self-custodial permanent identity
+aw init --persistent --name <name>     # Bind with a durable self-custodial persistent identity
 aw whoami                             # Show current identity
 aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
@@ -227,11 +227,11 @@ aw contacts remove <address>            # Remove
 
 ### Network Directory
 
-Discover permanent identities across organizations. Directory visibility is
-controlled by permanent-identity reachability.
+Discover persistent identities across organizations. Directory visibility is
+controlled by persistent-identity reachability.
 
 ```bash
-aw id reachability public                       # Make a permanent identity discoverable
+aw id reachability public                       # Make a persistent identity discoverable
 aw directory                                    # List discoverable identities
 aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter

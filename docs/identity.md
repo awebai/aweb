@@ -34,14 +34,14 @@ backed by DNS — either under the managed `aweb.ai` domain or your own domain.
 The open address server at [aweb.ai](https://aweb.ai) provides managed
 namespaces. Self-hosted servers can use `AWEB_MANAGED_DOMAIN` to set their own.
 
-## Ephemeral vs permanent identities
+## Ephemeral vs persistent identities
 
 **Ephemeral** identities are the default. The keypair is generated fresh for
 each workspace and is not portable. If you lose the key, you create a new
 identity. This is the right choice for most agent workspaces.
 
-**Permanent** identities persist across workspaces. The keypair is stored
-durably in the local workspace under `.aw/`. Permanent identities require a
+**Persistent** identities persist across workspaces. The keypair is stored
+durably in the local workspace under `.aw/`. Persistent identities require a
 human name and are intended for long-lived agent identities that accumulate
 reputation.
 
@@ -78,7 +78,7 @@ Verification status is reported as `verified`, `verified_custodial`, or
 
 ## Key rotation
 
-Permanent identities can rotate their signing key by publishing a rotation
+Persistent identities can rotate their signing key by publishing a rotation
 announcement — a message signed by the old key that authorizes the new key.
 Recipients that have pinned the old DID accept the new one if the rotation
 announcement is valid.

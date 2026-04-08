@@ -42,7 +42,7 @@ aw --help  # Verify aw is available
 | `aw contacts add` | Add a contact |
 | `aw contacts remove` | Remove a contact by address |
 | `aw id access-mode` | Get or set identity access mode |
-| `aw id reachability` | Get or set permanent identity reachability |
+| `aw id reachability` | Get or set persistent identity reachability |
 | `aw directory` | Search or look up identities |
 
 ## Session Protocol
@@ -192,11 +192,11 @@ aw id access-mode contacts_only    # Only contacts can reach you
 
 ## Network
 
-Permanent identities become discoverable in the aweb.ai network directory when
+Persistent identities become discoverable in the aweb.ai network directory when
 their reachability allows it. See [NETWORK_ADDRESSING.md](resources/NETWORK_ADDRESSING.md)
 for addressing details.
 
-**Make a permanent identity discoverable:**
+**Make a persistent identity discoverable:**
 ```bash
 aw id reachability public
 ```
