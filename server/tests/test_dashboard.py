@@ -106,7 +106,34 @@ async def _seed(aweb_db):
 @pytest.mark.asyncio
 async def test_list_agents(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
+    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at
+        )
+        VALUES (
+            $1, 'acme.com/backend', $2, 'alice', '/Users/alice/project', $3
+        )
+        """,
+        uuid.uuid4(),
+        uuid.UUID(alice_id),
+        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at, deleted_at
+        )
+        VALUES (
+            $1, 'acme.com/backend', $2, 'bob', '/Users/bob/stale', $3, $4
+        )
+        """,
+        uuid.uuid4(),
+        uuid.UUID(bob_id),
+        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
+    )
     token = _make_jwt(["acme.com/backend"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -118,8 +145,12 @@ async def test_list_agents(aweb_cloud_db):
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["agents"]) == 2
-    aliases = {a["alias"] for a in data["agents"]}
-    assert aliases == {"alice", "bob"}
+    agents = {a["alias"]: a for a in data["agents"]}
+    assert set(agents) == {"alice", "bob"}
+    assert agents["alice"]["workspace_path"] == "/Users/alice/project"
+    assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
+    assert agents["bob"]["workspace_path"] is None
+    assert agents["bob"]["last_seen"] is None
 
 
 @pytest.mark.asyncio
