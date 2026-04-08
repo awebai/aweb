@@ -231,6 +231,17 @@ async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_erro
 
 
 @pytest.mark.asyncio
+async def test_anonymous_request_fails_closed_when_registry_lookup_errors(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/acme.com/backend/agents")
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_usage_endpoint(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
