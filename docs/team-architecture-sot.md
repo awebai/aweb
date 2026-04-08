@@ -29,8 +29,9 @@ the awid teams architecture. It is the implementation spec.
 
 This section defines the conceptual taxonomy that the rest of the document
 operates on: agent vs workspace vs identity vs alias vs address. These
-distinctions are load-bearing — collapsing them produces the muddled
-"agent = identity = address" language we explicitly moved away from.
+distinctions are load-bearing — collapsing them into a single "agent =
+identity = address" notion would muddle the routing, trust, and lifecycle
+stories the rest of the spec depends on.
 
 ### Agent
 
