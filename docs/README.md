@@ -39,10 +39,12 @@ have a working `aw` binary and server.
 
 - [cli-command-reference.md](cli-command-reference.md): `aw` command and flag
   reference (generated from the live Cobra help tree)
-- [server-api-reference.md](server-api-reference.md): REST endpoint inventory
-  with request and response shapes
 - [mcp-tools-reference.md](mcp-tools-reference.md): MCP tool inventory and
   parameters
+
+The REST API surface is the canonical FastAPI app at
+[`server/src/aweb/api.py`](../server/src/aweb/api.py); use the `/docs`
+OpenAPI viewer at runtime for the live route inventory.
 - [identity-key-verification.md](identity-key-verification.md): normative
   rules for verifying `GET /v1/did/{did_aw}/key` responses
 - [self-hosting-guide.md](self-hosting-guide.md): operator guide for the OSS
