@@ -39,14 +39,14 @@ var (
 	idCreateSkipDNSVerify bool
 	idCreateCmd           = &cobra.Command{
 		Use:   "create",
-		Short: "Create a standalone permanent identity with a DNS-backed address in .aw/",
+		Short: "Create a standalone persistent identity with a DNS-backed address in .aw/",
 		RunE:  runIDCreate,
 	}
 )
 
 func init() {
-	idCreateCmd.Flags().StringVar(&idCreateName, "name", "", "Permanent identity name")
-	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Permanent identity domain")
+	idCreateCmd.Flags().StringVar(&idCreateName, "name", "", "Persistent identity name")
+	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Persistent identity domain")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
 	identityCmd.AddCommand(idCreateCmd)

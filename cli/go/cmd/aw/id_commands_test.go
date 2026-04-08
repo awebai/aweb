@@ -1041,7 +1041,7 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
 		AwebURL:        serverURL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "myteam/backend",
 		ProjectSlug:    "myteam",
 		NamespaceSlug:  namespaceSlug,
 		IdentityID:     "agent-1",

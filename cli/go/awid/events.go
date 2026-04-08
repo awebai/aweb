@@ -3,6 +3,8 @@ package awid
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,7 +103,7 @@ func (s *AgentEventStream) Next(_ context.Context) (*AgentEvent, error) {
 	}
 }
 
-// EventStream opens GET /v1/events/stream using Bearer auth when configured.
+// EventStream opens GET /v1/events/stream using the active client auth.
 // deadline is sent as an ISO8601/RFC3339 timestamp because the server expects an absolute time.
 func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEventStream, error) {
 	path := "/v1/events/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339))
@@ -112,7 +114,14 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiKey != "" {
+	if c.teamCertHeader != "" && c.signingKey != nil {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		sigPayload := certAuthSignPayload(c.teamAddress, timestamp, nil)
+		sig := ed25519.Sign(c.signingKey, sigPayload)
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 

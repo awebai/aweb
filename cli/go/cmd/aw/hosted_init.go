@@ -38,10 +38,6 @@ func runHostedInit(cmd *cobra.Command) error {
 	if alias == "" {
 		return usageError("missing required flag: --alias")
 	}
-	if strings.TrimSpace(os.Getenv("AWEB_API_KEY")) != "" {
-		return usageError("--hosted cannot be combined with AWEB_API_KEY-based init")
-	}
-
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err

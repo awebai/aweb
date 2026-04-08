@@ -31,7 +31,7 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	t.Setenv("AWEB_API_KEY", "")
 	initCloudURL = "https://app.aweb.ai"
 	initRole = "reviewer"
-	initPermanent = false
+	initPersistent = false
 	initInjectDocs = false
 	initSetupHooks = false
 	initWriteContext = true

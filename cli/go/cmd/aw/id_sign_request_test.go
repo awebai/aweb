@@ -295,7 +295,7 @@ func writeEphemeralSigningWorkspace(t *testing.T, workingDir, serverURL, address
 	}
 	writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
 		AwebURL:        serverURL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: handle,
 		NamespaceSlug:  namespace,

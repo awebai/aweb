@@ -266,8 +266,4 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	if ws.RepoID != "repo-uuid-1" {
 		t.Fatalf("repo_id=%q", ws.RepoID)
 	}
-	// Should NOT have api_key
-	if ws.APIKey != "" {
-		t.Fatalf("api_key should be empty, got %q", ws.APIKey)
-	}
 }

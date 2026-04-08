@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from aweb.alias_allocator import suggest_next_name_prefix
 from aweb.deps import get_db, get_redis
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
@@ -49,6 +50,11 @@ class HeartbeatResponse(BaseModel):
     last_seen_at: str
 
 
+class SuggestAliasPrefixResponse(BaseModel):
+    team_address: str
+    name_prefix: str
+
+
 class PatchWorkspaceRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -76,6 +82,32 @@ class SendControlSignalRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.post("/suggest-alias-prefix", response_model=SuggestAliasPrefixResponse)
+async def suggest_alias_prefix(
+    request: Request,
+    db=Depends(get_db),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> SuggestAliasPrefixResponse:
+    """Suggest the next available classic alias for the authenticated team."""
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT alias
+        FROM {{tables.workspaces}}
+        WHERE team_address = $1 AND deleted_at IS NULL
+        ORDER BY alias
+        """,
+        identity.team_address,
+    )
+    name_prefix = suggest_next_name_prefix([str(r.get("alias") or "") for r in rows])
+    if name_prefix is None:
+        raise HTTPException(status_code=409, detail="alias_exhausted")
+    return SuggestAliasPrefixResponse(
+        team_address=identity.team_address,
+        name_prefix=name_prefix,
+    )
 
 
 @router.get("", response_model=ListAgentsResponse)

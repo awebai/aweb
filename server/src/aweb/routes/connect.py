@@ -9,8 +9,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
+from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
 from aweb.coordination.routes.repos import canonicalize_git_url
@@ -55,6 +57,12 @@ def _parse_team_address(team_address: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+class AliasConflictError(ValueError):
+    """Raised when an alias is already owned by another active agent."""
+
+    pass
+
+
 async def _ensure_team(
     db: AsyncDatabaseManager,
     team_address: str,
@@ -93,27 +101,57 @@ async def _ensure_agent(
     member_address fields. Empty strings are stored as NULL (ephemeral
     certificates do not carry these fields).
     """
-    agent_id = uuid.uuid4()
-    await db.execute(
+    existing_alias = await db.fetch_one(
         """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, did_aw, address,
-             alias, lifetime, human_name, agent_type, role)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (team_address, did_key) DO NOTHING
+        SELECT agent_id, did_key FROM {{tables.agents}}
+        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        agent_id,
         team_address,
-        did_key,
-        did_aw or None,
-        address or None,
         alias,
-        lifetime,
-        human_name,
-        agent_type,
-        role,
     )
-    # Re-fetch to get the authoritative agent_id (may have been a no-op)
+    if existing_alias and existing_alias["did_key"] != did_key:
+        raise AliasConflictError(
+            f"alias {alias!r} is already in use by another active agent in team {team_address}"
+        )
+
+    agent_id = uuid.uuid4()
+    try:
+        await db.execute(
+            """
+            INSERT INTO {{tables.agents}}
+                (agent_id, team_address, did_key, did_aw, address,
+                 alias, lifetime, human_name, agent_type, role)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (team_address, did_key) DO NOTHING
+            """,
+            agent_id,
+            team_address,
+            did_key,
+            did_aw or None,
+            address or None,
+            alias,
+            lifetime,
+            human_name,
+            agent_type,
+            role,
+        )
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+            raise
+        existing_alias = await db.fetch_one(
+            """
+            SELECT agent_id, did_key FROM {{tables.agents}}
+            WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+            """,
+            team_address,
+            alias,
+        )
+        if existing_alias and existing_alias["did_key"] != did_key:
+            raise AliasConflictError(
+                f"alias {alias!r} is already in use by another active agent in team {team_address}"
+            ) from exc
+        raise
+
     row = await db.fetch_one(
         """
         SELECT agent_id FROM {{tables.agents}}
@@ -145,18 +183,17 @@ async def _ensure_workspace(
     if repo_origin:
         repo_id = await _ensure_repo(db, team_address, repo_origin)
 
-    # Check for existing active workspace for this alias
-    existing = await db.fetch_one(
-        """
-        SELECT workspace_id FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
-        """,
-        team_address,
-        alias,
-    )
+    async def _get_existing_workspace():
+        return await db.fetch_one(
+            """
+            SELECT workspace_id, agent_id FROM {{tables.workspaces}}
+            WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+            """,
+            team_address,
+            alias,
+        )
 
-    if existing:
-        workspace_id = existing["workspace_id"]
+    async def _update_existing_workspace(workspace_id: uuid.UUID | str) -> str:
         await db.execute(
             """
             UPDATE {{tables.workspaces}}
@@ -175,46 +212,46 @@ async def _ensure_workspace(
         )
         return str(workspace_id)
 
+    existing = await _get_existing_workspace()
+    if existing:
+        if str(existing["agent_id"]) != agent_id:
+            raise AliasConflictError(
+                f"alias {alias!r} is already in use by another active agent in team {team_address}"
+            )
+        return await _update_existing_workspace(existing["workspace_id"])
+
     workspace_id = uuid.uuid4()
     workspace_type = "agent" if repo_origin else "manual"
-    await db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, repo_id, alias, human_name,
-             role, hostname, workspace_path, workspace_type)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (team_address, alias) WHERE deleted_at IS NULL DO UPDATE SET
-            hostname = EXCLUDED.hostname,
-            workspace_path = EXCLUDED.workspace_path,
-            role = EXCLUDED.role,
-            human_name = EXCLUDED.human_name,
-            repo_id = COALESCE(EXCLUDED.repo_id, {{tables.workspaces}}.repo_id),
-            agent_id = EXCLUDED.agent_id,
-            last_seen_at = NOW(),
-            updated_at = NOW()
-        RETURNING workspace_id
-        """,
-        workspace_id,
-        team_address,
-        uuid.UUID(agent_id),
-        repo_id,
-        alias,
-        human_name,
-        role,
-        hostname,
-        workspace_path,
-        workspace_type,
-    )
-    # Re-fetch in case of upsert
-    row = await db.fetch_one(
-        """
-        SELECT workspace_id FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
-        """,
-        team_address,
-        alias,
-    )
-    return str(row["workspace_id"])
+    try:
+        row = await db.fetch_one(
+            """
+            INSERT INTO {{tables.workspaces}}
+                (workspace_id, team_address, agent_id, repo_id, alias, human_name,
+                 role, hostname, workspace_path, workspace_type)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING workspace_id
+            """,
+            workspace_id,
+            team_address,
+            uuid.UUID(agent_id),
+            repo_id,
+            alias,
+            human_name,
+            role,
+            hostname,
+            workspace_path,
+            workspace_type,
+        )
+        return str(row["workspace_id"])
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+            raise
+        existing = await _get_existing_workspace()
+        if existing and str(existing["agent_id"]) == agent_id:
+            return await _update_existing_workspace(existing["workspace_id"])
+        raise AliasConflictError(
+            f"alias {alias!r} is already in use by another active agent in team {team_address}"
+        ) from exc
 
 
 async def _ensure_repo(
@@ -347,17 +384,20 @@ async def connect_endpoint(
     # Use the registry-resolved team key (verified by verify_request_certificate)
     team_did_key = cert_info.get("verified_team_did_key", "")
 
-    result = await connect_agent(
-        db=aweb_db,
-        cert_info=cert_info,
-        team_did_key=team_did_key,
-        hostname=payload.hostname,
-        workspace_path=payload.workspace_path,
-        repo_origin=payload.repo_origin,
-        role=payload.role or cert_info["alias"],
-        human_name=payload.human_name,
-        agent_type=payload.agent_type,
-    )
+    try:
+        result = await connect_agent(
+            db=aweb_db,
+            cert_info=cert_info,
+            team_did_key=team_did_key,
+            hostname=payload.hostname,
+            workspace_path=payload.workspace_path,
+            repo_origin=payload.repo_origin,
+            role=payload.role or cert_info["alias"],
+            human_name=payload.human_name,
+            agent_type=payload.agent_type,
+        )
+    except AliasConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return ConnectResponse(**result)
 

@@ -100,61 +100,17 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	}
 	sel.BaseURL = baseURL
 
-	var c *aweb.Client
-
-	// Certificate auth: team certificate + signing key
-	certClient, certErr := resolveCertificateClient(workingDir, baseURL)
-	if certErr == nil && certClient != nil {
-		c = certClient
-		c.SetAddress(selectionAddress(sel))
-		if sel.StableID != "" {
-			c.SetStableID(sel.StableID)
-		}
-	} else if sel.SigningKey != "" && sel.DID != "" {
-		priv, err := awid.LoadSigningKey(sel.SigningKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load signing key: %w", err)
-		}
-		c, err = aweb.NewWithIdentity(baseURL, sel.APIKey, priv, sel.DID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid identity configuration: %w", err)
-		}
-		c.SetAddress(selectionAddress(sel))
-		c.SetProjectSlug(sel.DefaultProject)
-		if sel.StableID != "" {
-			c.SetStableID(sel.StableID)
-		}
-
-		// Load TOFU pin store for sender identity verification.
-		pinPath, err := awconfig.DefaultKnownAgentsPath()
-		if err != nil {
-			return nil, nil, err
-		}
-		ps, err := awid.LoadPinStore(pinPath)
-		if err != nil {
-			debugLog("load pin store: %v", err)
-			ps = awid.NewPinStore()
-		}
-		c.SetPinStore(ps, pinPath)
-		registry, err := newConfiguredRegistryResolver(c.Client.HTTPClient(), baseURL)
-		if err != nil {
-			return nil, nil, err
-		}
-		c.SetResolver(&awid.ChainResolver{
-			DIDKey:   &awid.DIDKeyResolver{},
-			Registry: registry,
-			Server:   &awid.ServerResolver{Client: c.Client},
-			Pin:      &awid.PinResolver{Store: ps},
-		})
-	} else {
-		var err error
-		c, err = aweb.NewWithAPIKey(baseURL, sel.APIKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid base URL: %w", err)
-		}
+	c, err := resolveCertificateClient(workingDir, baseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	if c == nil {
+		return nil, nil, errors.New("current workspace is not certificate-authenticated; accept a team invite and run `aw init` here")
+	}
+	if err := configureResolvedClient(c, sel, baseURL); err != nil {
+		return nil, nil, err
 	}
 
-	configureBaseURLFallback(c, sel, baseURL)
 	lastClient = c
 	return c, sel, nil
 }
@@ -176,38 +132,44 @@ func resolveCertificateClient(workingDir, baseURL string) (*aweb.Client, error) 
 	return aweb.NewWithCertificate(baseURL, signingKey, cert)
 }
 
+func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL string) error {
+	if c == nil || sel == nil {
+		return nil
+	}
+	c.SetAddress(selectionAddress(sel))
+	c.SetProjectSlug(sel.DefaultProject)
+	if sel.StableID != "" {
+		c.SetStableID(sel.StableID)
+	}
+
+	pinPath, err := awconfig.DefaultKnownAgentsPath()
+	if err != nil {
+		return err
+	}
+	ps, err := awid.LoadPinStore(pinPath)
+	if err != nil {
+		debugLog("load pin store: %v", err)
+		ps = awid.NewPinStore()
+	}
+	c.SetPinStore(ps, pinPath)
+	registry, err := newConfiguredRegistryResolver(c.Client.HTTPClient(), baseURL)
+	if err != nil {
+		return err
+	}
+	c.SetResolver(&awid.ChainResolver{
+		DIDKey:   &awid.DIDKeyResolver{},
+		Registry: registry,
+		Server:   &awid.ServerResolver{Client: c.Client},
+		Pin:      &awid.PinResolver{Store: ps},
+	})
+
+	configureBaseURLFallback(c, sel, baseURL)
+	return nil
+}
+
 func resolveClient() (*aweb.Client, error) {
 	c, _, err := resolveClientSelection()
 	return c, err
-}
-
-// resolveAPIKeyOnly resolves config and creates a client using only
-// the API key (no signing key). Used by commands like reset that need
-// to work even when the local signing key is missing or invalid.
-func resolveAPIKeyOnly() (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
-	return resolveAPIKeyOnlyForDir(wd)
-}
-
-func resolveAPIKeyOnlyForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionForDir(workingDir)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	sel.BaseURL = baseURL
-
-	c, err := aweb.NewWithAPIKey(baseURL, sel.APIKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid base URL: %w", err)
-	}
-	configureBaseURLFallback(c, sel, baseURL)
-	lastClient = c
-	return c, sel, nil
 }
 
 func cleanBaseURL(raw string) (string, error) {
@@ -749,7 +711,7 @@ func sanitizeKeyComponent(s string) string {
 }
 
 // deriveIdentityAddress builds the canonical external identity address from
-// namespace/project context plus the local routing handle or permanent name.
+// namespace/project context plus the local routing handle or persistent name.
 func deriveIdentityAddress(namespaceSlug, projectSlug, handle string) string {
 	if namespaceSlug != "" {
 		return namespaceSlug + "/" + handle

@@ -444,7 +444,7 @@ func TestChainResolverNoServer(t *testing.T) {
 	}
 }
 
-func TestRegistryResolverResolvesPermanentAddress(t *testing.T) {
+func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	t.Parallel()
 
 	pub, _, err := ed25519.GenerateKey(nil)

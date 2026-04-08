@@ -2,25 +2,19 @@ package awid
 
 import "context"
 
-type SuggestAliasPrefixRequest struct {
-	ProjectSlug string `json:"project_slug"`
-}
-
 type SuggestAliasPrefixResponse struct {
-	ProjectSlug string   `json:"project_slug"`
-	ProjectID   *string  `json:"project_id"`
-	NamePrefix  string   `json:"name_prefix"`
-	Roles       []string `json:"roles,omitempty"`
+	TeamAddress string `json:"team_address"`
+	NamePrefix  string `json:"name_prefix"`
 }
 
-// SuggestAliasPrefix suggests the next available classic alias prefix for a project.
+// SuggestAliasPrefix suggests the next available classic alias prefix for the
+// authenticated team.
 //
 // POST /v1/agents/suggest-alias-prefix
-func (c *Client) SuggestAliasPrefix(ctx context.Context, projectSlug string) (*SuggestAliasPrefixResponse, error) {
+func (c *Client) SuggestAliasPrefix(ctx context.Context) (*SuggestAliasPrefixResponse, error) {
 	var out SuggestAliasPrefixResponse
-	if err := c.Post(ctx, "/v1/agents/suggest-alias-prefix", &SuggestAliasPrefixRequest{ProjectSlug: projectSlug}, &out); err != nil {
+	if err := c.Post(ctx, "/v1/agents/suggest-alias-prefix", struct{}{}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
-

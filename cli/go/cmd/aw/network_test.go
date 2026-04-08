@@ -22,7 +22,7 @@ func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespac
 	t.Helper()
 	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
 		AwebURL:        serverURL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    namespace + "/backend",
 		IdentityHandle: handle,
 		NamespaceSlug:  namespace,
 		ProjectSlug:    namespace,
@@ -213,6 +213,11 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	var gotPath string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/agents/resolve/bob":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":     "did:key:z6Mkbob",
+				"address": "demo/bob",
+			})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			_ = json.NewEncoder(w).Encode(map[string]any{

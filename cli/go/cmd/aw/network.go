@@ -17,7 +17,7 @@ var (
 
 var directoryCmd = &cobra.Command{
 	Use:   "directory [namespace/name]",
-	Short: "Search or look up permanent identities in the network directory",
+	Short: "Search or look up persistent identities in the network directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

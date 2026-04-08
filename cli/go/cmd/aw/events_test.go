@@ -23,9 +23,7 @@ func TestAwEventsStream(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				t.Fatal("response writer does not support flushing")

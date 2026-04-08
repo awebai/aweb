@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -64,28 +63,6 @@ func stableIDFromDidForTest(t *testing.T, did string) string {
 		t.Fatalf("ExtractPublicKey(%q): %v", did, err)
 	}
 	return awid.ComputeStableID(pub)
-}
-
-func TestAwInitPermanentRequiresName(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	run := exec.CommandContext(ctx, bin, "init", "--permanent")
-	run.Dir = tmp
-	run.Env = append(os.Environ(), "AWEB_API_KEY=aw_sk_project_test")
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected init --permanent to fail without --name:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "--name is required with --permanent") {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
 }
 
 func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
@@ -197,9 +174,7 @@ func TestAwLockRenew(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode: %v", err)
@@ -267,9 +242,7 @@ func TestAwNamespace(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"project_id": "proj-abc",
 				"slug":       "my-project",
@@ -330,9 +303,7 @@ func TestAwLockRevoke(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode: %v", err)
@@ -434,7 +405,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: "eve",
 		NamespaceSlug:  "demo",
@@ -536,97 +507,6 @@ func TestAwChatSendAndWaitExtraArgsRejected(t *testing.T) {
 	}
 }
 
-func TestAwInitWritesConfig(t *testing.T) {
-	t.Parallel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_slug": "demo",
-				"project_id":   nil,
-				"name_prefix":  "alice",
-			})
-			return
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"created_at":     "now",
-				"project_id":     "proj-1",
-				"project_slug":   "demo",
-				"namespace_slug": "demo",
-				"identity_id":    "identity-alice",
-				"alias":          "alice",
-				"api_key":        "aw_sk_alice",
-				"created":        true,
-				"stable_id":      "did:aw:test-stable-id",
-			})
-			return
-		default:
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", "..")) // module root (aweb-go)
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--cloud-url", server.URL, "--print-exports=false", "--write-context=false", "--json")
-	run.Stdin = strings.NewReader("")
-	run.Env = append(testCommandEnv(tmp),
-		"AWEB_API_KEY=aw_sk_project_test",
-	)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if got["api_key"] != "aw_sk_alice" {
-		t.Fatalf("api_key=%v", got["api_key"])
-	}
-
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
-	}
-	if workspace.AwebURL != server.URL {
-		t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
-	}
-	if workspace.APIKey != "aw_sk_alice" {
-		t.Fatalf("workspace api_key=%q", workspace.APIKey)
-	}
-	if workspace.NamespaceSlug != "demo" {
-		t.Fatalf("workspace namespace_slug=%q", workspace.NamespaceSlug)
-	}
-	if workspace.IdentityID != "identity-alice" {
-		t.Fatalf("workspace identity_id=%q", workspace.IdentityID)
-	}
-	if workspace.IdentityHandle != "alice" {
-		t.Fatalf("workspace identity_handle=%q", workspace.IdentityHandle)
-	}
-	if workspace.StableID != "did:aw:test-stable-id" {
-		t.Fatalf("workspace stable_id=%q", workspace.StableID)
-	}
-}
-
 func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	t.Parallel()
 
@@ -674,7 +554,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: "eve",
 		NamespaceSlug:  "demo",
@@ -751,9 +631,7 @@ func TestAwContactsList(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"contacts": []map[string]any{
 					{
@@ -996,9 +874,8 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 // flow was part of the old API-key architecture. In the team architecture,
 // aw whoami reads local state and there is no server-side email gate.
 
-// TestAwMailSendPassesThroughAllAddressFormats verifies that mail send
-// passes any address format (including @handle) through to POST /v1/messages
-// and lets the server resolve it.
+// TestAwMailSendPassesThroughAllAddressFormats verifies that mail send accepts
+// the supported address forms and delivers through POST /v1/messages.
 func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 	t.Parallel()
 
@@ -1006,6 +883,16 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/agents/resolve/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":     "did:key:z6Mkalice",
+				"address": "demo/alice",
+			})
+		case "/v1/agents/resolve/@juanre":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":     "did:key:z6Mkatjuanre",
+				"address": "@juanre",
+			})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -1064,881 +951,6 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 		if gotBody["to_alias"] != addr {
 			t.Fatalf("addr=%q: to_alias=%v", addr, gotBody["to_alias"])
 		}
-	}
-}
-
-func TestAwInitProjectKeyRoutesToOSSInit(t *testing.T) {
-	t.Parallel()
-
-	// aw_sk_ keys from AWEB_API_KEY should route through /v1/workspaces/init.
-	var initAuth string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/workspaces/init":
-			initAuth = r.Header.Get("Authorization")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "live-publication-project",
-				"namespace_slug": "livepub",
-				"identity_id":    "identity-new",
-				"alias":          "coordinator",
-				"api_key":        "aw_sk_new",
-				"created":        true,
-				"did":            "did:key:z6MkTest",
-				"custody":        "self",
-				"lifetime":       "ephemeral",
-			})
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "coordinator", "roles": []string{}})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--alias", "coordinator",
-		"--write-context=false",
-	)
-	run.Env = append(testCommandEnv(tmp),
-		"AWEB_API_KEY=aw_sk_project",
-	)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	if initAuth != "Bearer aw_sk_project" {
-		t.Fatalf("Authorization=%q, want Bearer aw_sk_project", initAuth)
-	}
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workspace.APIKey != "aw_sk_new" {
-		t.Fatalf("workspace api_key=%q", workspace.APIKey)
-	}
-	if workspace.NamespaceSlug != "livepub" && workspace.NamespaceSlug != "live-publication-project" {
-		t.Fatalf("workspace namespace_slug=%q, want livepub or live-publication-project", workspace.NamespaceSlug)
-	}
-	if workspace.IdentityHandle != "coordinator" {
-		t.Fatalf("workspace identity_handle=%q", workspace.IdentityHandle)
-	}
-	if !strings.Contains(workspace.SigningKey, filepath.Join(".aw", "signing.key")) {
-		t.Fatalf("workspace signing_key=%q, want .aw/signing.key", workspace.SigningKey)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
-		t.Fatalf("signing.key missing: %v", err)
-	}
-}
-
-func TestAwInitProjectKeyRequiresExplicitRoleInNonTTYRepo(t *testing.T) {
-	t.Parallel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "coordinator", "roles": []string{"coordinator", "developer"}})
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "demo",
-				"namespace_slug": "demo",
-				"identity_id":    "identity-new",
-				"alias":          "coordinator",
-				"api_key":        "aw_sk_new",
-				"created":        true,
-				"did":            "did:key:z6MkTest",
-				"custody":        "self",
-				"lifetime":       "ephemeral",
-			})
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"coordinator": map[string]any{"title": "Coordinator"},
-					"developer":   map[string]any{"title": "Developer"},
-				},
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOrigin(t, repo, "https://github.com/acme/repo.git")
-
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--alias", "coordinator",
-	)
-	run.Env = append(testCommandEnv(tmp),
-		"AWEB_API_KEY=aw_sk_project",
-	)
-	run.Stdin = strings.NewReader("")
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected missing-role error, got success:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "no role specified; available roles: coordinator, developer") {
-		t.Fatalf("unexpected error output:\n%s", string(out))
-	}
-}
-
-func TestAwInitProjectKeyNonRepoDoesNotRequireRoleForLocalAttach(t *testing.T) {
-	t.Parallel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "demo",
-				"namespace_slug": "demo",
-				"identity_id":    "identity-new",
-				"alias":          "bob",
-				"api_key":        "aw_sk_new",
-				"created":        true,
-				"did":            "did:key:z6MkTest",
-				"custody":        "self",
-				"lifetime":       "ephemeral",
-			})
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "coordinator", "roles": []string{"coordinator", "developer"}})
-		case "/v1/workspaces/attach":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":    "11111111-1111-1111-1111-111111111111",
-				"project_id":      "proj-1",
-				"project_slug":    "demo",
-				"alias":           "bob",
-				"human_name":      "Bob",
-				"attachment_type": "local_dir",
-				"created":         true,
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--alias", "bob",
-		"--json",
-	)
-	run.Env = append(testCommandEnv(tmp),
-		"AWEB_API_KEY=aw_sk_project",
-	)
-	run.Stdin = strings.NewReader("")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
-	}
-	if !json.Valid(extractJSON(t, out)) {
-		t.Fatalf("expected JSON output, got:\n%s", string(out))
-	}
-	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); statErr != nil {
-		t.Fatalf("workspace.yaml should be written on success, statErr=%v", statErr)
-	}
-}
-
-func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
-	t.Parallel()
-
-	var attachCalls int
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{"developer", "reviewer"}})
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "demo",
-				"namespace_slug": "demo",
-				"identity_id":    "identity-new",
-				"alias":          "alice",
-				"api_key":        "aw_sk_new",
-				"created":        true,
-				"did":            "did:key:z6MkTest",
-				"custody":        "self",
-				"lifetime":       "ephemeral",
-			})
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-					"reviewer":  map[string]any{"title": "Reviewer"},
-				},
-			})
-		case "/v1/workspaces/attach":
-			attachCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":    "11111111-1111-1111-1111-111111111111",
-				"project_id":      "proj-1",
-				"project_slug":    "demo",
-				"alias":           "alice",
-				"human_name":      "Alice",
-				"attachment_type": "local_dir",
-				"created":         true,
-			})
-		case "/v1/workspaces/register":
-			t.Fatalf("unexpected repo register for non-repo init")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--alias", "alice",
-		"--role", "developer",
-		"--json",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
-	run.Stdin = strings.NewReader("")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-	if attachCalls != 1 {
-		t.Fatalf("attach calls=%d, want 1", attachCalls)
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if resp["alias"] != "alice" {
-		t.Fatalf("alias=%v", resp["alias"])
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "context")); err != nil {
-		t.Fatalf("expected .aw/context: %v", err)
-	}
-	workspaceState, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
-	}
-	if workspaceState.AwebURL != server.URL {
-		t.Fatalf("aweb_url=%q", workspaceState.AwebURL)
-	}
-	if workspaceState.APIKey != "aw_sk_new" {
-		t.Fatalf("api_key=%q", workspaceState.APIKey)
-	}
-	if workspaceState.ProjectSlug != "demo" {
-		t.Fatalf("project_slug=%q", workspaceState.ProjectSlug)
-	}
-	if workspaceState.IdentityHandle != "alice" {
-		t.Fatalf("identity_handle=%q", workspaceState.IdentityHandle)
-	}
-}
-
-func TestAwInitProjectKeyPermanentRequestsPersistentIdentity(t *testing.T) {
-	t.Parallel()
-
-	var gotBody map[string]any
-	var bootstrappedDID string
-	var bootstrappedStableID string
-	var serverURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "Alice", "roles": []string{}})
-		case "/v1/workspaces/init":
-			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-				t.Fatal(err)
-			}
-			bootstrappedDID, _ = gotBody["did"].(string)
-			bootstrappedStableID = stableIDFromDidForTest(t, bootstrappedDID)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "default",
-				"namespace_slug": "myteam",
-				"namespace":      "myteam.aweb.ai",
-				"identity_id":    "identity-new",
-				"name":           "Alice",
-				"address":        "myteam.aweb.ai/Alice",
-				"api_key":        "aw_sk_new",
-				"created":        true,
-				"did":            bootstrappedDID,
-				"stable_id":      bootstrappedStableID,
-				"custody":        "self",
-				"lifetime":       "persistent",
-			})
-		case "/v1/did":
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/" + bootstrappedStableID + "/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          bootstrappedStableID,
-				"current_did_key": bootstrappedDID,
-				"server":          serverURL,
-				"address":         "myteam.aweb.ai/Alice",
-				"handle":          "Alice",
-				"created_at":      "2026-04-04T00:00:00Z",
-				"updated_at":      "2026-04-04T00:00:00Z",
-			})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	serverURL = server.URL
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--permanent",
-		"--name", "Alice",
-		"--json",
-		"--write-context=false",
-		"--print-exports=false",
-	)
-	run.Env = append(testCommandEnv(tmp),
-		"AWEB_API_KEY=aw_sk_project",
-		"AWID_REGISTRY_URL=local",
-	)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	if gotBody["lifetime"] != "persistent" {
-		t.Fatalf("lifetime=%v", gotBody["lifetime"])
-	}
-	if gotBody["name"] != "Alice" {
-		t.Fatalf("name=%v", gotBody["name"])
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if resp["lifetime"] != "persistent" {
-		t.Fatalf("response lifetime=%v", resp["lifetime"])
-	}
-
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workspace.APIKey != "aw_sk_new" {
-		t.Fatalf("workspace api_key=%q", workspace.APIKey)
-	}
-	if workspace.NamespaceSlug != "myteam" {
-		t.Fatalf("workspace namespace_slug=%q, want myteam", workspace.NamespaceSlug)
-	}
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("identity.yaml missing: %v", err)
-	}
-	if identity.Lifetime != "persistent" {
-		t.Fatalf("identity lifetime=%q, want persistent", identity.Lifetime)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
-		t.Fatalf("signing.key missing: %v", err)
-	}
-}
-
-func TestAwInitProjectKeyPermanentUsesExistingWorktreeIdentity(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := awid.ComputeStableID(pub)
-	address := "myteam.aweb.ai/alice"
-
-	var gotBody map[string]any
-	var didCreateCalls int
-	var didUpdateCalls int
-	currentRegistryServer := ""
-	var serverURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
-		case "/v1/workspaces/init":
-			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "default",
-				"namespace_slug": "myteam",
-				"namespace":      "myteam.aweb.ai",
-				"identity_id":    "identity-existing",
-				"name":           "alice",
-				"address":        address,
-				"api_key":        "aw_sk_existing",
-				"created":        false,
-				"did":            did,
-				"stable_id":      stableID,
-				"custody":        "self",
-				"lifetime":       "persistent",
-			})
-		case "/v1/did":
-			didCreateCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/" + stableID + "/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": did,
-				"server":          currentRegistryServer,
-				"address":         address,
-				"handle":          "alice",
-				"created_at":      "2026-04-04T00:00:00Z",
-				"updated_at":      "2026-04-04T00:00:00Z",
-			})
-		case "/v1/did/" + stableID + "/key":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": did,
-				"log_head": map[string]any{
-					"seq":           1,
-					"operation":     "create",
-					"new_did_key":   did,
-					"entry_hash":    strings.Repeat("a", 64),
-					"state_hash":    strings.Repeat("b", 64),
-					"authorized_by": did,
-					"signature":     "sig",
-					"timestamp":     "2026-04-04T00:00:00Z",
-				},
-			})
-		case "/v1/did/" + stableID:
-			if r.Method != http.MethodPut {
-				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			}
-			didUpdateCalls++
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload["operation"] != "update_server" {
-				t.Fatalf("operation=%v", payload["operation"])
-			}
-			if payload["new_did_key"] != did {
-				t.Fatalf("new_did_key=%v want %v", payload["new_did_key"], did)
-			}
-			currentRegistryServer, _ = payload["server"].(string)
-			if currentRegistryServer != serverURL {
-				t.Fatalf("server=%q want %q", currentRegistryServer, serverURL)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	serverURL = server.URL
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:            did,
-		StableID:       stableID,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		RegistryURL:    serverURL,
-		RegistryStatus: "registered",
-		CreatedAt:      "2026-04-04T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
-		t.Fatal(err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--permanent",
-		"--json",
-		"--write-context=false",
-		"--print-exports=false",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	if gotBody["name"] != "alice" {
-		t.Fatalf("name=%v", gotBody["name"])
-	}
-	if gotBody["did"] != did {
-		t.Fatalf("did=%v want %v", gotBody["did"], did)
-	}
-	if gotBody["public_key"] != base64.RawStdEncoding.EncodeToString(pub) {
-		t.Fatalf("public_key=%v", gotBody["public_key"])
-	}
-	if gotBody["alias"] != nil {
-		t.Fatalf("alias=%v want nil", gotBody["alias"])
-	}
-	if didCreateCalls != 0 {
-		t.Fatalf("did create calls=%d want 0", didCreateCalls)
-	}
-	if didUpdateCalls != 1 {
-		t.Fatalf("did update calls=%d want 1", didUpdateCalls)
-	}
-
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workspace.APIKey != "aw_sk_existing" {
-		t.Fatalf("workspace api_key=%q", workspace.APIKey)
-	}
-
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
-	}
-	if identity.DID != did {
-		t.Fatalf("identity did=%q want %q", identity.DID, did)
-	}
-	if identity.StableID != stableID {
-		t.Fatalf("identity stable_id=%q want %q", identity.StableID, stableID)
-	}
-	if identity.RegistryStatus != "registered" {
-		t.Fatalf("registry_status=%q", identity.RegistryStatus)
-	}
-	if identity.RegistryURL != serverURL {
-		t.Fatalf("registry_url=%q want %q", identity.RegistryURL, serverURL)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &resp); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if resp["did"] != did {
-		t.Fatalf("response did=%v want %v", resp["did"], did)
-	}
-}
-
-func TestAwInitProjectKeyPermanentFailsWhenBootstrapReturnsDifferentDID(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := awid.ComputeStableID(pub)
-	address := "myteam.aweb.ai/alice"
-
-	otherPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherDID := awid.ComputeDIDKey(otherPub)
-
-	var didCreateCalls int
-	var didUpdateCalls int
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "default",
-				"namespace_slug": "myteam",
-				"namespace":      "myteam.aweb.ai",
-				"identity_id":    "identity-existing",
-				"name":           "alice",
-				"address":        address,
-				"api_key":        "aw_sk_existing",
-				"created":        false,
-				"did":            otherDID,
-				"stable_id":      stableID,
-				"custody":        "self",
-				"lifetime":       "persistent",
-			})
-		case "/v1/did":
-			didCreateCalls++
-			t.Fatalf("unexpected registry create after bootstrap mismatch")
-		case "/v1/did/" + stableID:
-			didUpdateCalls++
-			t.Fatalf("unexpected registry update after bootstrap mismatch")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:            did,
-		StableID:       stableID,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		RegistryURL:    server.URL,
-		RegistryStatus: "registered",
-		CreatedAt:      "2026-04-04T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
-		t.Fatal(err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--permanent",
-		"--json",
-		"--write-context=false",
-		"--print-exports=false",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected bootstrap DID mismatch failure:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), `bootstrap returned did "`) {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if didCreateCalls != 0 {
-		t.Fatalf("did create calls=%d want 0", didCreateCalls)
-	}
-	if didUpdateCalls != 0 {
-		t.Fatalf("did update calls=%d want 0", didUpdateCalls)
-	}
-}
-
-func TestAwInitProjectKeyPermanentFallsBackToRegisterWhenUpdateServerIsMissing(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := awid.ComputeStableID(pub)
-	address := "myteam.aweb.ai/alice"
-
-	createEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
-	var didCreateCalls int
-	var didUpdateCalls int
-	currentRegistryServer := ""
-	var serverURL string
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
-		case "/v1/workspaces/init":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"project_id":     "proj-1",
-				"project_slug":   "default",
-				"namespace_slug": "myteam",
-				"namespace":      "myteam.aweb.ai",
-				"identity_id":    "identity-existing",
-				"name":           "alice",
-				"address":        address,
-				"api_key":        "aw_sk_existing",
-				"created":        false,
-				"did":            did,
-				"stable_id":      stableID,
-				"custody":        "self",
-				"lifetime":       "persistent",
-			})
-		case "/v1/did":
-			didCreateCalls++
-			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload["did_aw"] != stableID {
-				t.Fatalf("did_aw=%v want %v", payload["did_aw"], stableID)
-			}
-			if payload["did_key"] != did {
-				t.Fatalf("did_key=%v want %v", payload["did_key"], did)
-			}
-			if payload["server"] != serverURL {
-				t.Fatalf("server=%v want %v", payload["server"], serverURL)
-			}
-			if payload["address"] != address {
-				t.Fatalf("address=%v want %v", payload["address"], address)
-			}
-			if payload["handle"] != "alice" {
-				t.Fatalf("handle=%v want alice", payload["handle"])
-			}
-			currentRegistryServer = serverURL
-			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
-		case "/v1/did/" + stableID + "/full":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": did,
-				"server":          currentRegistryServer,
-				"address":         address,
-				"handle":          "alice",
-				"created_at":      "2026-04-04T00:00:00Z",
-				"updated_at":      "2026-04-04T00:00:00Z",
-			})
-		case "/v1/did/" + stableID + "/key":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": did,
-				"log_head":        didLogJSON(createEntry),
-			})
-		case "/v1/did/" + stableID:
-			didUpdateCalls++
-			http.NotFound(w, r)
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	serverURL = server.URL
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:            did,
-		StableID:       stableID,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		RegistryURL:    serverURL,
-		RegistryStatus: "registered",
-		CreatedAt:      "2026-04-04T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
-		t.Fatal(err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "init",
-		"--cloud-url", server.URL,
-		"--permanent",
-		"--json",
-		"--write-context=false",
-		"--print-exports=false",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_project")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	if didUpdateCalls != 1 {
-		t.Fatalf("did update calls=%d want 1", didUpdateCalls)
-	}
-	if didCreateCalls != 1 {
-		t.Fatalf("did create calls=%d want 1", didCreateCalls)
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if got["did"] != did {
-		t.Fatalf("did=%v want %v", got["did"], did)
-	}
-
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity.RegistryStatus != "registered" {
-		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
-	}
-	if identity.RegistryURL != serverURL {
-		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, serverURL)
 	}
 }
 
@@ -2003,7 +1015,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "agent",
 		NamespaceSlug:  "myco",
@@ -2106,7 +1117,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "bot",
 		NamespaceSlug:  "acme",
@@ -2206,6 +1216,11 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/agents/resolve/eve":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did":     "did:key:z6Mkeve",
+				"address": "demo/eve",
+			})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-log-1",
@@ -2326,7 +1341,7 @@ func TestResolveBaseURLForInitFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestMCPConfig(t *testing.T) {
+func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -2336,7 +1351,7 @@ func TestMCPConfig(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        "https://app.aweb.ai",
-		APIKey:         "aw_sk_testkey123",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -2350,31 +1365,10 @@ func TestMCPConfig(t *testing.T) {
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("mcp-config failed: %v\n%s", err, string(out))
+	if err == nil {
+		t.Fatalf("expected mcp-config to fail without --channel, got:\n%s", string(out))
 	}
-
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-
-	servers, ok := got["mcpServers"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected mcpServers key, got: %s", string(out))
-	}
-	aweb, ok := servers["aweb"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected mcpServers.aweb key, got: %s", string(out))
-	}
-	if aweb["url"] != "https://app.aweb.ai/mcp" {
-		t.Fatalf("url=%v", aweb["url"])
-	}
-	headers, ok := aweb["headers"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected headers key, got: %s", string(out))
-	}
-	if headers["Authorization"] != "Bearer aw_sk_testkey123" {
-		t.Fatalf("Authorization=%v", headers["Authorization"])
+	if !strings.Contains(string(out), "use `aw mcp-config --channel`") {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

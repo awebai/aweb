@@ -64,9 +64,9 @@ var runCmd = &cobra.Command{
 	Long: `Start the requested AI coding agent in this directory.
 
 In a TTY, if this directory is not initialized yet, aw run can guide you
-through new-project creation or existing-project init before starting the
-provider. The explicit bootstrap commands remain available for scripts and
-expert use: aw project create, aw init, and aw spawn accept-invite.
+through supported onboarding before starting the provider. The explicit
+bootstrap path is aw init, backed by guided onboarding, hosted signup,
+or a team certificate already present in .aw/.
 
 Current implementation includes:
   - repeated provider invocations (currently Claude and Codex)

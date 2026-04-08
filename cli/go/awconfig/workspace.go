@@ -15,7 +15,6 @@ type WorktreeWorkspace struct {
 	CloudURL        string `yaml:"cloud_url,omitempty"`
 	AwidURL         string `yaml:"awid_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
-	APIKey          string `yaml:"api_key,omitempty"`
 	IdentityID      string `yaml:"identity_id,omitempty"`
 	IdentityHandle  string `yaml:"identity_handle,omitempty"`
 	NamespaceSlug   string `yaml:"namespace_slug,omitempty"`
@@ -70,6 +69,7 @@ type worktreeWorkspaceYAML struct {
 }
 
 const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually add aweb_url, cloud_url, awid_url to workspace.yaml."
+const legacyWorkspaceAPIKeyError = "workspace.yaml uses removed api_key auth. Run `aw init` to reinitialize this worktree with team certificate auth."
 
 func (w *WorktreeWorkspace) syncRoleFields() {
 	if w == nil {
@@ -119,7 +119,7 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false
 	}
-	return strings.TrimSpace(w.AwebURL) != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
+	return strings.TrimSpace(w.AwebURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
 func (w *WorktreeWorkspace) HasTeamBinding() bool {
@@ -181,13 +181,15 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	if strings.TrimSpace(raw.AwebURL) == "" && strings.TrimSpace(raw.ServerURL) != "" {
 		return errors.New(legacyWorkspaceFormatError)
 	}
+	if strings.TrimSpace(raw.APIKey) != "" {
+		return errors.New(legacyWorkspaceAPIKeyError)
+	}
 
 	*w = WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
 		CloudURL:        raw.CloudURL,
 		AwidURL:         raw.AwidURL,
 		TeamAddress:     raw.TeamAddress,
-		APIKey:          raw.APIKey,
 		IdentityID:      raw.IdentityID,
 		IdentityHandle:  raw.IdentityHandle,
 		NamespaceSlug:   raw.NamespaceSlug,
@@ -221,7 +223,6 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 		CloudURL:        w.CloudURL,
 		AwidURL:         w.AwidURL,
 		TeamAddress:     w.TeamAddress,
-		APIKey:          w.APIKey,
 		IdentityID:      w.IdentityID,
 		IdentityHandle:  w.IdentityHandle,
 		NamespaceSlug:   w.NamespaceSlug,

@@ -15,9 +15,7 @@ func TestAwInstructionsShowDisplaysActiveInstructions(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/instructions/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -71,9 +69,7 @@ func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/instructions/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -140,9 +136,7 @@ func TestAwInstructionsSetCreatesAndActivatesNewVersion(t *testing.T) {
 	var activatedPath string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/instructions/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -227,9 +221,7 @@ func TestAwInstructionsHistoryListsVersions(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/instructions/history":
 			if got := r.URL.Query().Get("limit"); got != "5" {

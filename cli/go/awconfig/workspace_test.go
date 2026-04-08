@@ -65,7 +65,7 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
 		AwebURL:     "https://app.aweb.ai",
-		APIKey:      "aw_sk_test",
+		TeamAddress: "acme.com/backend",
 		WorkspaceID: "ws-1",
 	}); err != nil {
 		t.Fatalf("save workspace: %v", err)
@@ -112,7 +112,7 @@ func TestLoadWorktreeWorkspaceFromIgnoresIdentityFieldsWhenIdentityExists(t *tes
 	}
 	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-api_key: aw_sk_test
+team_address: acme.com/backend
 identity_handle: alice
 did: did:key:z6MkWorkspace
 stable_id: did:aw:workspace
@@ -139,6 +139,28 @@ workspace_id: ws-1
 	}
 	if state.DID != "" || state.StableID != "" || state.SigningKey != "" || state.Custody != "" || state.Lifetime != "" {
 		t.Fatalf("workspace identity fields were not scrubbed: %#v", state)
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsLegacyAPIKeyAuth(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+api_key: aw_sk_test
+workspace_id: ws-1
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected api_key workspace load to fail")
+	}
+	if !strings.Contains(err.Error(), legacyWorkspaceAPIKeyError) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

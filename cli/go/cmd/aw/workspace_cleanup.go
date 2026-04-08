@@ -22,7 +22,7 @@ type goneWorkspace struct {
 }
 
 // detectGoneWorkspaces checks for workspaces on this hostname whose paths
-// no longer exist. Ephemeral identities are deleted; permanent identities
+// no longer exist. Ephemeral identities are deleted; persistent identities
 // keep their identity but lose the gone workspace record.
 func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWorkspace {
 	hostname, err := os.Hostname()

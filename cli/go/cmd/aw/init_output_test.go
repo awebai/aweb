@@ -21,7 +21,6 @@ func TestInitNextStepLinesHostedGitRepoPromoteRunAndDashboard(t *testing.T) {
 	for _, want := range []string{
 		"aw run codex",
 		"aw run claude",
-		"aw workspace add-worktree <role>",
 		"aw claim-human --email you@example.com",
 		"aw init --inject-docs",
 		"aw init --setup-hooks",
@@ -48,30 +47,9 @@ func TestInitNextStepLinesLocalDirStayFocused(t *testing.T) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"aw workspace add-worktree <role>", "aw init", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks", "aw init --setup-channel"} {
+	for _, unwanted := range []string{"aw init", "aw claim-human", "aw init --inject-docs", "aw init --setup-hooks", "aw init --setup-channel"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
-		}
-	}
-}
-
-func TestFormatWorkspaceAddWorktreeExplainsNewIdentity(t *testing.T) {
-	out := formatWorkspaceAddWorktree(workspaceAddWorktreeOutput{
-		Alias:        "bob",
-		Role:         "developer",
-		Branch:       "bob",
-		WorktreePath: "/tmp/repo-bob",
-	})
-
-	for _, want := range []string{
-		"New agent worktree created at",
-		"Workspace:  this worktree is now agent bob",
-		"State:      .aw/ in that worktree stores the local identity and workspace binding",
-		"aw run codex",
-		"aw run claude",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in output:\n%s", want, out)
 		}
 	}
 }

@@ -77,6 +77,14 @@ type localTeamBootstrapResult struct {
 	Certificate *awid.TeamCertificate
 }
 
+type acceptedTeamInvite struct {
+	Output      *teamAcceptInviteOutput
+	Certificate *awid.TeamCertificate
+	RegistryURL string
+	Domain      string
+	TeamName    string
+}
+
 // --- flags ---
 
 var (
@@ -245,24 +253,6 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 		return usageError("--namespace is required")
 	}
 
-	// Verify team key exists locally
-	exists, err := awconfig.TeamKeyExists(domain, team)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return usageError("no team key for %s/%s; run `aw id team create` first", domain, team)
-	}
-
-	inviteID, err := awid.GenerateUUID4()
-	if err != nil {
-		return err
-	}
-	secret, err := awconfig.GenerateInviteSecret()
-	if err != nil {
-		return err
-	}
-
 	// Read registry URL from the identity in the working directory
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -274,21 +264,7 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 		registryURL = strings.TrimSpace(identity.RegistryURL)
 	}
 
-	invite := &awconfig.TeamInvite{
-		InviteID:    inviteID,
-		Domain:      domain,
-		TeamName:    team,
-		Ephemeral:   teamInviteEphemeral,
-		Secret:      secret,
-		RegistryURL: registryURL,
-		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-	}
-
-	if err := awconfig.SaveTeamInvite(invite); err != nil {
-		return err
-	}
-
-	token, err := awconfig.EncodeInviteToken(invite)
+	inviteID, token, err := createTeamInviteToken(domain, team, registryURL, teamInviteEphemeral)
 	if err != nil {
 		return err
 	}
@@ -302,46 +278,104 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
-	decoded, err := awconfig.DecodeInviteToken(args[0])
-	if err != nil {
-		return err
-	}
-
-	// Load the stored invite to verify the secret and get ephemeral flag
-	invite, err := awconfig.LoadTeamInvite(decoded.InviteID)
-	if err != nil {
-		return fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
-	}
-	if invite.Secret != decoded.Secret {
-		return fmt.Errorf("invalid invite token: secret mismatch")
-	}
-
-	teamAddress := invite.Domain + "/" + invite.TeamName
-
-	// Load the team key (requires the team controller to be on this machine)
-	teamKey, err := awconfig.LoadTeamKey(invite.Domain, invite.TeamName)
-	if err != nil {
-		return fmt.Errorf("team key for %s not found: %w (accept-invite must run on the machine that created the team)", teamAddress, err)
-	}
-
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-
-	// Resolve the agent's did:key — either from existing identity or generate one
-	memberDIDKey, err := resolveOrGenerateMemberDIDKey(workingDir, invite.Ephemeral)
+	out, err := acceptTeamInviteAt(workingDir, args[0], teamAcceptAlias)
 	if err != nil {
 		return err
 	}
+	printOutput(*out, formatTeamAcceptInvite)
+	return nil
+}
 
-	// Determine alias
-	alias := strings.TrimSpace(teamAcceptAlias)
+func createTeamInviteToken(domain, team, registryURL string, ephemeral bool) (string, string, error) {
+	domain = awconfig.NormalizeDomain(domain)
+	team = strings.ToLower(strings.TrimSpace(team))
+	registryURL = strings.TrimSpace(registryURL)
+	if domain == "" {
+		return "", "", fmt.Errorf("domain is required")
+	}
+	if team == "" {
+		return "", "", fmt.Errorf("team is required")
+	}
+
+	exists, err := awconfig.TeamKeyExists(domain, team)
+	if err != nil {
+		return "", "", err
+	}
+	if !exists {
+		return "", "", usageError("no team key for %s/%s; run `aw id team create` first", domain, team)
+	}
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		return "", "", err
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		return "", "", err
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID:    inviteID,
+		Domain:      domain,
+		TeamName:    team,
+		Ephemeral:   ephemeral,
+		Secret:      secret,
+		RegistryURL: registryURL,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := awconfig.SaveTeamInvite(invite); err != nil {
+		return "", "", err
+	}
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		return "", "", err
+	}
+	return inviteID, token, nil
+}
+
+func acceptTeamInviteAt(workingDir, token, aliasHint string) (*teamAcceptInviteOutput, error) {
+	accepted, err := acceptTeamInviteWithDetails(workingDir, token, aliasHint)
+	if err != nil {
+		return nil, err
+	}
+	return accepted.Output, nil
+}
+
+func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*acceptedTeamInvite, error) {
+	decoded, err := awconfig.DecodeInviteToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	invite, err := awconfig.LoadTeamInvite(decoded.InviteID)
+	if err != nil {
+		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
+	}
+	if invite.Secret != decoded.Secret {
+		return nil, fmt.Errorf("invalid invite token: secret mismatch")
+	}
+
+	teamAddress := invite.Domain + "/" + invite.TeamName
+
+	teamKey, err := awconfig.LoadTeamKey(invite.Domain, invite.TeamName)
+	if err != nil {
+		return nil, fmt.Errorf("team key for %s not found: %w (accept-invite must run on the machine that created the team)", teamAddress, err)
+	}
+
+	memberDIDKey, err := resolveOrGenerateMemberDIDKey(workingDir, invite.Ephemeral)
+	if err != nil {
+		return nil, err
+	}
+
+	alias := strings.TrimSpace(aliasHint)
 	if alias == "" {
 		alias = resolveAliasFromIdentity(workingDir)
 	}
 	if alias == "" {
-		return usageError("--alias is required (no identity found to derive alias from)")
+		return nil, usageError("--alias is required (no identity found to derive alias from)")
 	}
 
 	lifetime := awid.LifetimePersistent
@@ -362,13 +396,12 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 		Lifetime:      lifetime,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Register certificate at awid — use the registry URL from the invite token
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	registryURL := strings.TrimSpace(decoded.RegistryURL)
 	if registryURL == "" {
@@ -378,26 +411,68 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
-		return fmt.Errorf("register certificate at registry: %w", err)
+		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 
-	// Save certificate to .aw/team-cert.pem
 	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Clean up consumed invite
 	if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
 
-	printOutput(teamAcceptInviteOutput{
-		Status:      "accepted",
-		TeamAddress: teamAddress,
-		Alias:       alias,
-		CertPath:    certPath,
-	}, formatTeamAcceptInvite)
+	return &acceptedTeamInvite{
+		Output: &teamAcceptInviteOutput{
+			Status:      "accepted",
+			TeamAddress: teamAddress,
+			Alias:       alias,
+			CertPath:    certPath,
+		},
+		Certificate: cert,
+		RegistryURL: registryURL,
+		Domain:      invite.Domain,
+		TeamName:    invite.TeamName,
+	}, nil
+}
+
+func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
+	if accepted == nil || accepted.Certificate == nil {
+		return nil
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := strings.TrimSpace(accepted.RegistryURL)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
+		}
+	} else {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+
+	teamKey, err := awconfig.LoadTeamKey(accepted.Domain, accepted.TeamName)
+	if err != nil {
+		return fmt.Errorf("load team key for %s/%s: %w", accepted.Domain, accepted.TeamName, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := registry.RevokeCertificate(
+		ctx,
+		registryURL,
+		accepted.Domain,
+		accepted.TeamName,
+		accepted.Certificate.CertificateID,
+		teamKey,
+	); err != nil {
+		return fmt.Errorf("revoke certificate %s: %w", accepted.Certificate.CertificateID, err)
+	}
 	return nil
 }
 

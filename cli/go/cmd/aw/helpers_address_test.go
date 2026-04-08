@@ -21,7 +21,7 @@ func TestSelectionAddressFallsBackForEphemeralIdentity(t *testing.T) {
 	}
 }
 
-func TestSelectionAddressFallsBackForManagedPermanentIdentity(t *testing.T) {
+func TestSelectionAddressFallsBackForManagedPersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	sel := &awconfig.Selection{

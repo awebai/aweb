@@ -90,7 +90,7 @@ func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 }
 
 func loadProjectInstructionsBody(workingDir string) (string, error) {
-	client, _, err := resolveAPIKeyOnlyForDir(workingDir)
+	client, _, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return "", err
 	}

@@ -8,13 +8,13 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestResolvePrefersIdentityAddressForPermanentBYOD(t *testing.T) {
+func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
 		AwebURL:        "https://app.aweb.ai",
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "myteam.aweb.ai/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: "support",
 		NamespaceSlug:  "myteam.aweb.ai",

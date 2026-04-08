@@ -18,9 +18,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			if r.URL.Query().Get("role_name") != "reviewer" {
@@ -66,7 +64,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-1",
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -101,9 +99,7 @@ func TestAwRolesListListsSortedRoles(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			if r.URL.Query().Get("only_selected") != "false" {
@@ -156,9 +152,7 @@ func TestAwRolesShowAllRolesRendersPlaybooks(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			if r.URL.Query().Get("only_selected") != "false" {
@@ -214,9 +208,7 @@ func TestAwRolesHistoryListsVersions(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/history":
 			if got := r.URL.Query().Get("limit"); got != "5" {
@@ -280,9 +272,7 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 	var activatedPath string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -371,9 +361,7 @@ func TestAwRolesActivateActivatesExistingVersion(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/roles-2/activate":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -411,9 +399,7 @@ func TestAwRolesResetResetsToDefault(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/reset":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -452,9 +438,7 @@ func TestAwRolesDeactivateDeactivatesToEmptyBundle(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/roles/deactivate":
 			_ = json.NewEncoder(w).Encode(map[string]any{

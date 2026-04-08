@@ -6,6 +6,7 @@ import base64
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -226,3 +227,82 @@ async def test_connect_http_invalid_signature_returns_401(aweb_cloud_db):
         resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
 
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_cloud_db):
+    """A second agent may not take over an existing active workspace alias."""
+    team_sk, _, team_did_key = _make_keypair()
+    first_sk, _, first_did_key = _make_keypair()
+    second_sk, _, second_did_key = _make_keypair()
+
+    existing_cert = _make_certificate(
+        team_sk, team_did_key, first_did_key,
+        team_address="acme.com/backend",
+        alias="alice",
+    )
+    new_cert = _make_certificate(
+        team_sk, team_did_key, second_did_key,
+        team_address="acme.com/backend",
+        alias="alice",
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "acme.com/backend",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    first_agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_address, did_key, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+        """,
+        first_agent_id,
+        "acme.com/backend",
+        first_did_key,
+        "alice",
+    )
+    existing_workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_address, agent_id, alias, workspace_type, workspace_path)
+        VALUES ($1, $2, $3, $4, 'agent', $5)
+        """,
+        existing_workspace_id,
+        "acme.com/backend",
+        first_agent_id,
+        "alice",
+        "/existing",
+    )
+
+    body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(second_sk, second_did_key, "acme.com/backend", body_bytes)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(new_cert)
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+
+    assert resp.status_code == 409
+    assert "already in use by another active agent" in resp.text
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT agent_id, workspace_path FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        existing_workspace_id,
+    )
+    assert str(row["agent_id"]) == str(first_agent_id)
+    assert row["workspace_path"] == "/existing"

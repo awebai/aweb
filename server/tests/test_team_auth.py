@@ -34,7 +34,7 @@ def _make_certificate(
     *,
     team_address: str = "acme.com/backend",
     alias: str = "alice",
-    lifetime: str = "permanent",
+    lifetime: str = "persistent",
     certificate_id: str = "cert-001",
     member_did_aw: str = "",
     member_address: str = "",
@@ -154,7 +154,7 @@ class TestParseAndVerifyCertificate:
             team_sk, team_did_key, agent_did_key,
             team_address="acme.com/backend",
             alias="alice",
-            lifetime="permanent",
+            lifetime="persistent",
         )
         encoded = _encode_certificate(cert)
 
@@ -168,7 +168,7 @@ class TestParseAndVerifyCertificate:
         assert result["team_address"] == "acme.com/backend"
         assert result["alias"] == "alice"
         assert result["did_key"] == agent_did_key
-        assert result["lifetime"] == "permanent"
+        assert result["lifetime"] == "persistent"
         assert result["certificate_id"] == "cert-001"
 
     def test_malformed_base64_rejected(self):

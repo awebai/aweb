@@ -16,7 +16,6 @@ type Selection struct {
 	AwebURL       string
 	CloudURL      string
 	AwidURL       string
-	APIKey        string
 
 	DefaultProject string
 	IdentityID     string
@@ -37,7 +36,6 @@ type ResolveOptions struct {
 	WorkingDir string
 
 	BaseURLOverride string
-	APIKeyOverride  string
 
 	AllowEnvOverrides bool
 }
@@ -53,38 +51,20 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 
 	overrideBaseURL := strings.TrimSpace(opts.BaseURLOverride)
-	overrideAPIKey := strings.TrimSpace(opts.APIKeyOverride)
 	if opts.AllowEnvOverrides {
 		if v := strings.TrimSpace(os.Getenv("AWEB_URL")); v != "" {
 			overrideBaseURL = v
-		}
-		if v := strings.TrimSpace(os.Getenv("AWEB_API_KEY")); v != "" {
-			overrideAPIKey = v
 		}
 	}
 
 	workspace, workspacePath, err := LoadWorktreeWorkspaceFromDir(workingDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if overrideBaseURL != "" && overrideAPIKey != "" {
-				if err := ValidateBaseURL(overrideBaseURL); err != nil {
-					return nil, fmt.Errorf("invalid base URL: %w", err)
-				}
-				serverName := strings.TrimSpace(opts.ServerName)
-				if serverName == "" {
-					derived, derr := DeriveServerNameFromURL(overrideBaseURL)
-					if derr != nil {
-						return nil, derr
-					}
-					serverName = derived
-				}
-				return finalizeWorkspaceSelection(workingDir, "", serverName, overrideBaseURL, overrideAPIKey, nil, nil), nil
-			}
 			// No workspace — check for a standalone identity (created by aw id create).
 			if identity, _, identityErr := LoadWorktreeIdentityFromDir(workingDir); identityErr == nil {
 				return finalizeStandaloneIdentitySelection(workingDir, identity), nil
 			}
-			return nil, errors.New("current directory is not initialized for aw; run `aw project create`, `aw init`, or `aw spawn accept-invite`")
+			return nil, errors.New("current directory is not initialized for aw; run `aw init` here or start with `aw run <provider>` in a TTY")
 		}
 		return nil, fmt.Errorf("invalid worktree workspace: %w", err)
 	}
@@ -97,16 +77,12 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 
 	baseURL := strings.TrimSpace(workspace.AwebURL)
-	apiKey := strings.TrimSpace(workspace.APIKey)
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
 	}
-	if overrideAPIKey != "" {
-		apiKey = overrideAPIKey
-	}
 	teamAddress := strings.TrimSpace(workspace.TeamAddress)
-	if baseURL == "" || (apiKey == "" && teamAddress == "") {
-		return nil, errors.New("worktree workspace binding is missing aweb_url and either api_key or team_address")
+	if baseURL == "" || teamAddress == "" {
+		return nil, errors.New("worktree workspace binding is missing aweb_url or team_address")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -120,10 +96,10 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		}
 		serverName = derived
 	}
-	return finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, apiKey, workspace, identity), nil
+	return finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, workspace, identity), nil
 }
 
-func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, apiKey string, ws *WorktreeWorkspace, identity *WorktreeIdentity) *Selection {
+func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity) *Selection {
 	namespaceSlug := ""
 	defaultProject := ""
 	identityHandle := ""
@@ -185,7 +161,6 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 		AwebURL:        awebURL,
 		CloudURL:       cloudURL,
 		AwidURL:        awidURL,
-		APIKey:         apiKey,
 		DefaultProject: defaultProject,
 		IdentityID:     identityID,
 		IdentityHandle: identityHandle,

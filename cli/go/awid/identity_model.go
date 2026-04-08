@@ -5,8 +5,8 @@ import "strings"
 type IdentityClass string
 
 const (
-	IdentityClassEphemeral IdentityClass = LifetimeEphemeral
-	IdentityClassPermanent IdentityClass = LifetimePersistent
+	IdentityClassEphemeral  IdentityClass = LifetimeEphemeral
+	IdentityClassPersistent IdentityClass = LifetimePersistent
 )
 
 func NormalizeLifetime(lifetime string) string {
@@ -23,14 +23,14 @@ func NormalizeLifetime(lifetime string) string {
 func IdentityClassFromLifetime(lifetime string) IdentityClass {
 	switch NormalizeLifetime(lifetime) {
 	case LifetimePersistent:
-		return IdentityClassPermanent
+		return IdentityClassPersistent
 	default:
 		return IdentityClassEphemeral
 	}
 }
 
 func IdentityHasPublicAddress(lifetime string) bool {
-	return IdentityClassFromLifetime(lifetime) == IdentityClassPermanent
+	return IdentityClassFromLifetime(lifetime) == IdentityClassPersistent
 }
 
 func RoutingHandle(alias, address, lifetime string) string {
@@ -52,8 +52,8 @@ func PublicAddress(address, lifetime string) string {
 
 func DescribeIdentityClass(lifetime string) string {
 	switch IdentityClassFromLifetime(lifetime) {
-	case IdentityClassPermanent:
-		return "permanent"
+	case IdentityClassPersistent:
+		return "persistent"
 	default:
 		return "ephemeral"
 	}

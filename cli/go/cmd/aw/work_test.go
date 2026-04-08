@@ -20,9 +20,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	const otherID = "22222222-2222-2222-2222-222222222222"
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/claims":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -60,7 +58,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     selfID,
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -88,9 +86,7 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	t.Parallel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/tasks/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -133,7 +129,7 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     "agent-self",
 		IdentityHandle: "self",
 		NamespaceSlug:  "demo",

@@ -67,7 +67,7 @@ type idRotateOutput struct {
 
 var idRegisterCmd = &cobra.Command{
 	Use:   "register",
-	Short: "Register the current permanent identity at awid.ai",
+	Short: "Register the current persistent identity at awid.ai",
 	RunE:  runIDRegister,
 }
 
@@ -118,7 +118,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requirePermanentSelfCustodialIdentity(identity, signingKey); err != nil {
+	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
 		return err
 	}
 	registry, err := resolveIdentityRegistryClient(identity)
@@ -322,12 +322,12 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func requirePermanentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey) error {
+func requirePersistentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey) error {
 	if identity == nil {
 		return fmt.Errorf("missing identity context")
 	}
 	if strings.TrimSpace(identity.Lifetime) != awid.LifetimePersistent {
-		return usageError("this command requires a permanent identity")
+		return usageError("this command requires a persistent identity")
 	}
 	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
 		return usageError("this command requires a self-custodial identity")

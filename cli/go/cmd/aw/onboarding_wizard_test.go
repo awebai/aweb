@@ -1159,35 +1159,35 @@ func TestPromptIdentityLifetimeShowsDescriptions(t *testing.T) {
 	t.Parallel()
 	in := strings.NewReader("\n") // accept default (ephemeral)
 	var out bytes.Buffer
-	permanent, err := promptIdentityLifetime(in, &out)
+	persistent, err := promptIdentityLifetime(in, &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if permanent {
-		t.Fatal("expected ephemeral (default), got permanent")
+	if persistent {
+		t.Fatal("expected ephemeral (default), got persistent")
 	}
 	output := out.String()
 	if !strings.Contains(output, "workspace-bound") {
 		t.Fatalf("expected ephemeral description, got %q", output)
 	}
 	if !strings.Contains(output, "public addresses") {
-		t.Fatalf("expected permanent description, got %q", output)
+		t.Fatalf("expected persistent description, got %q", output)
 	}
 	if strings.Contains(output, "number") {
 		t.Fatalf("prompt should not say 'number', got %q", output)
 	}
 }
 
-func TestPromptIdentityLifetimePermanent(t *testing.T) {
+func TestPromptIdentityLifetimePersistent(t *testing.T) {
 	t.Parallel()
 	in := strings.NewReader("2\n")
 	var out bytes.Buffer
-	permanent, err := promptIdentityLifetime(in, &out)
+	persistent, err := promptIdentityLifetime(in, &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !permanent {
-		t.Fatal("expected permanent, got ephemeral")
+	if !persistent {
+		t.Fatal("expected persistent, got ephemeral")
 	}
 }
 

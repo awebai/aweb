@@ -7,8 +7,8 @@ This reference is derived from the live Cobra help tree generated from the
 
 | Family | Commands |
 | --- | --- |
-| Workspace setup | `init`, `reset`, `workspace` |
-| Identity | `identity`, `mcp-config`, `whoami` |
+| Workspace setup | `connect`, `init`, `project`, `reset`, `workspace` |
+| Identity | `claim-human`, `id`, `mcp-config`, `whoami` |
 | Messaging and network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
 | Coordination and runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `help`, `upgrade`, `version` |
@@ -43,8 +43,18 @@ The CLI resolves context in this order:
 2. environment variables
 3. local `.aw/team-cert.pem`
 4. local `.aw/workspace.yaml`
-5. local `.aw/identity.yaml` for permanent identity fields
+5. local `.aw/identity.yaml` for persistent identity fields
 6. local `.aw/context`
+
+## `connect`
+
+### `connect`
+
+Flags:
+- `--address string           Persistent public address from the dashboard copy command`
+- `--bootstrap-token string   One-time bootstrap token from the dashboard`
+- `-h, --help                 help for connect`
+- `--mock-url string          Override the cloud/aweb base URL for local development`
 
 ## `init`
 
@@ -55,18 +65,29 @@ Connect to a team's coordination server. When `.aw/team-cert.pem` exists, uses c
 Flags:
 - `--agent-type string     Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--alias string          Ephemeral identity routing alias (optional; default: server-suggested)`
+- `--awid-url string       Override the awid registry URL for hosted init automation`
+- `--cloud-url string      Base URL for aweb-cloud. The CLI discovers the aweb and awid URLs from this via GET /api/v1/discovery.`
 - `-h, --help                  help for init`
+- `--hosted                Create a hosted aweb.ai identity in this directory`
 - `--human-name string     Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs           Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
-- `--name string           Permanent identity name (required with --permanent unless .aw/identity.yaml already exists)`
-- `--permanent             Create a durable self-custodial identity instead of the default ephemeral identity`
+- `--name string           Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)`
+- `--persistent            Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports         Print shell export lines after JSON output`
+- `--reachability string   Persistent address reachability (private|org-visible|contacts-only|public)`
 - `--role string           Compatibility alias for --role-name`
 - `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
-- `--server string         Base URL for the aweb server (alias for --server-url)`
-- `--server-url string     Base URL for the aweb server (or AWEB_URL). Any URL is accepted; aw probes common mounts (including /api).`
+- `--setup-channel         Set up Claude Code channel MCP server for real-time coordination`
 - `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
-- `--write-context         Write/update .aw/context in the current directory (non-secret pointer) (default true)`
+- `--username string       Hosted username to create with --hosted`
+- `--write-context         Ensure .aw/context exists in the current directory (default true)`
+
+## `project`
+
+### `project`
+
+Flags:
+- `-h, --help   help for project`
 
 ## `reset`
 
@@ -74,13 +95,6 @@ Flags:
 
 Flags:
 - `-h, --help   help for reset`
-
-## `use`
-
-### `use`
-
-Flags:
-- `-h, --help   help for use`
 
 ## `workspace`
 
@@ -105,27 +119,36 @@ Flags:
 - `-h, --help        help for status`
 - `--limit int   Maximum team workspaces to show (default 15)`
 
-## `identity`
+## `claim-human`
 
-### `identity`
+### `claim-human`
+
+Flags:
+- `--email string      Email address to attach to the current CLI-created account`
+- `-h, --help              help for claim-human`
+- `--mock-url string   Override the cloud base URL for local development`
+
+## `id`
+
+### `id`
 
 Subcommands:
-- `cert         Show or inspect the team membership certificate`
-- `create       Create a standalone permanent identity with a DNS-backed address in .aw/`
+- `cert         Team certificate operations`
+- `create       Create a standalone persistent identity with a DNS-backed address in .aw/`
 - `log          Show an identity log`
 - `namespace    Inspect a namespace and its registered addresses`
-- `register     Register the current permanent identity at awid.ai`
+- `register     Register the current persistent identity at awid.ai`
 - `request      Make a DIDKey-signed HTTP request with the local identity key`
 - `resolve      Resolve a did:aw to its current did:key`
 - `show         Show the current identity and registry status`
 - `sign         Sign a canonical JSON payload with the local identity key`
-- `team         Manage teams at awid`
+- `team         Team management (create, invite, membership)`
 - `verify       Verify the full audit log for a did:aw`
 
 Flags:
-- `-h, --help   help for identity`
+- `-h, --help   help for id`
 
-### `identity cert`
+### `id cert`
 
 Subcommands:
 - `show        Show the team membership certificate`
@@ -133,26 +156,26 @@ Subcommands:
 Flags:
 - `-h, --help   help for cert`
 
-### `identity cert show`
+### `id cert show`
 
 Flags:
 - `-h, --help   help for show`
 
-### `identity create`
+### `id create`
 
 Flags:
-- `--domain string            Permanent identity domain`
+- `--domain string            Persistent identity domain`
 - `-h, --help                 help for create`
-- `--name string              Permanent identity name`
+- `--name string              Persistent identity name`
 - `--registry string          Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify          Skip the DNS TXT verification prompt and lookup`
 
-### `identity log`
+### `id log`
 
 Flags:
 - `-h, --help   help for log`
 
-### `identity request`
+### `id request`
 
 Flags:
 - `--body string            Request body to send`
@@ -163,34 +186,34 @@ Flags:
 - `--sign string            JSON object describing the signed payload fields`
 - `--sign-file string       Read the JSON sign payload from a file`
 
-### `identity namespace`
+### `id namespace`
 
 Flags:
 - `-h, --help   help for namespace`
 
-### `identity register`
+### `id register`
 
 Flags:
 - `-h, --help   help for register`
 
-### `identity resolve`
+### `id resolve`
 
 Flags:
 - `-h, --help   help for resolve`
 
-### `identity show`
+### `id show`
 
 Flags:
 - `-h, --help   help for show`
 
-### `identity sign`
+### `id sign`
 
 Flags:
 - `-h, --help                 help for sign`
 - `--payload string           JSON object to sign`
 - `--payload-file string      Read the JSON payload to sign from a file`
 
-### `identity team`
+### `id team`
 
 Subcommands:
 - `accept-invite Accept a team invite token and store the membership certificate`
@@ -202,13 +225,13 @@ Subcommands:
 Flags:
 - `-h, --help   help for team`
 
-### `identity team accept-invite`
+### `id team accept-invite`
 
 Flags:
 - `--alias string   Local alias for the team (optional)`
 - `-h, --help           help for accept-invite`
 
-### `identity team add-member`
+### `id team add-member`
 
 Flags:
 - `-h, --help               help for add-member`
@@ -216,7 +239,7 @@ Flags:
 - `--namespace string    Team namespace`
 - `--team string         Team name`
 
-### `identity team create`
+### `id team create`
 
 Flags:
 - `--display-name string   Human-readable team display name`
@@ -225,7 +248,7 @@ Flags:
 - `--namespace string      Team namespace (required)`
 - `--registry string       Registry URL override`
 
-### `identity team invite`
+### `id team invite`
 
 Flags:
 - `--ephemeral        Create an ephemeral invite`
@@ -233,7 +256,7 @@ Flags:
 - `--namespace string Team namespace`
 - `--team string      Team name`
 
-### `identity team remove-member`
+### `id team remove-member`
 
 Flags:
 - `-h, --help               help for remove-member`
@@ -241,7 +264,7 @@ Flags:
 - `--namespace string    Team namespace`
 - `--team string         Team name`
 
-### `identity verify`
+### `id verify`
 
 Flags:
 - `-h, --help   help for verify`
@@ -250,13 +273,19 @@ Flags:
 
 ### `mcp-config`
 
+For certificate-authenticated workspaces, bare `aw mcp-config` exits with guidance to use `--channel`. The command no longer emits static HTTP MCP headers because `/mcp` requires per-request DIDKey signatures plus a team certificate.
+
 Flags:
-- `--all    Output config for all accounts`
+- `--channel   Output stdio channel config instead of HTTP MCP config`
 - `-h, --help   help for mcp-config`
 
 ## `whoami`
 
 ### `whoami`
+
+Aliases:
+- `whoami`
+- `introspect`
 
 Flags:
 - `-h, --help   help for whoami`

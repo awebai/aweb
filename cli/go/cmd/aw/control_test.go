@@ -24,9 +24,7 @@ func TestAwControlPause(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			gotAlias = strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/control"), "/v1/agents/")
 
 			var body map[string]string

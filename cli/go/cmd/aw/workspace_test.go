@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,9 +97,7 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
+			requireCertificateAuthForTest(t, r)
 			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode request: %v", err)
@@ -140,7 +139,7 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     workspaceID,
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -183,121 +182,6 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 	}
 }
 
-func TestAwInitAutoAttachesRepoContext(t *testing.T) {
-	t.Parallel()
-
-	const workspaceID = "11111111-1111-1111-1111-111111111111"
-	const projectID = "22222222-2222-2222-2222-222222222222"
-	const repoID = "33333333-3333-3333-3333-333333333333"
-	const origin = "https://github.com/acme/repo.git"
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents/suggest-alias-prefix":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name_prefix": "alice", "roles": []string{}})
-		case "/v1/workspaces/init":
-			if r.Method != http.MethodPost {
-				t.Fatalf("method=%s", r.Method)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"created_at":     "2026-03-10T10:00:00Z",
-				"project_id":     projectID,
-				"project_slug":   "demo",
-				"identity_id":    workspaceID,
-				"alias":          "alice",
-				"api_key":        "aw_sk_test",
-				"namespace_slug": "demo",
-				"created":        true,
-				"did":            "did:key:z6Mktest",
-				"custody":        "self",
-				"lifetime":       "ephemeral",
-			})
-		case "/v1/workspaces/register":
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
-			var req map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode request: %v", err)
-			}
-			if req["repo_origin"] != origin {
-				t.Fatalf("repo_origin=%v", req["repo_origin"])
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     workspaceID,
-				"project_id":       projectID,
-				"project_slug":     "demo",
-				"repo_id":          repoID,
-				"canonical_origin": "github.com/acme/repo",
-				"alias":            "alice",
-				"human_name":       "Alice",
-				"created":          true,
-			})
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOrigin(t, repo, origin)
-	buildAwBinary(t, ctx, bin)
-
-	run := exec.CommandContext(ctx, bin, "init", "--alias", "alice", "--role", "developer")
-	run.Stdin = strings.NewReader("")
-	run.Env = append(os.Environ(),
-		"AW_CONFIG_PATH=",
-		"AWEB_URL="+server.URL,
-		"AWEB_API_KEY=aw_sk_project_test",
-		"AW_DID_REGISTRY_URL=http://127.0.0.1:1",
-	)
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-	text := string(out)
-	if !strings.Contains(text, "Context:    attached github.com/acme/repo") {
-		t.Fatalf("expected repo attachment summary:\n%s", text)
-	}
-
-	if _, err := os.Stat(filepath.Join(repo, ".aw", "context")); err != nil {
-		t.Fatalf("expected .aw/context: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(repo, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("read workspace state: %v", err)
-	}
-	var state awconfig.WorktreeWorkspace
-	if err := yaml.Unmarshal(data, &state); err != nil {
-		t.Fatalf("unmarshal workspace state: %v", err)
-	}
-	if state.WorkspaceID != workspaceID {
-		t.Fatalf("workspace_id=%s", state.WorkspaceID)
-	}
-	if state.CanonicalOrigin != "github.com/acme/repo" {
-		t.Fatalf("canonical_origin=%s", state.CanonicalOrigin)
-	}
-}
-
 func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	t.Parallel()
 
@@ -305,9 +189,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	const peerID = "44444444-4444-4444-4444-444444444444"
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/workspaces/team":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -405,7 +287,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		APIKey:          "aw_sk_test",
+		TeamAddress:     "demo/backend",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
 		NamespaceSlug:   "demo",
@@ -418,9 +300,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &state); err != nil {
-		t.Fatalf("save workspace state: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -466,9 +346,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	const peerID = "44444444-4444-4444-4444-444444444444"
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/workspaces/team":
 			if got := r.URL.Query().Get("always_include_workspace_id"); got != selfID {
@@ -529,7 +407,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     selfID,
 		IdentityHandle: "coordinator",
 		NamespaceSlug:  "demo",
@@ -581,9 +459,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	const peerID = "44444444-4444-4444-4444-444444444444"
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch r.URL.Path {
 		case "/v1/workspaces/team":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -635,7 +511,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_test",
+		TeamAddress:    "demo/backend",
 		IdentityID:     selfID,
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -669,9 +545,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch {
 		case r.URL.Path == "/v1/workspaces/team":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -747,7 +621,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		APIKey:          "aw_sk_test",
+		TeamAddress:     "demo/backend",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
 		NamespaceSlug:   "demo",
@@ -760,9 +634,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &state); err != nil {
-		t.Fatalf("save workspace state: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -782,7 +654,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -793,9 +665,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch {
 		case r.URL.Path == "/v1/workspaces/team":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -840,7 +710,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 		case r.URL.Path == "/v1/agents/resolve/maintainer" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"identity_id": "agent-maintainer",
-				"did":         "did:key:z6MkPermanent",
+				"did":         "did:key:z6MkPersistent",
 				"address":     "demo/maintainer",
 				"custody":     "self",
 				"lifetime":    "persistent",
@@ -870,7 +740,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		APIKey:          "aw_sk_test",
+		TeamAddress:     "demo/backend",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
 		NamespaceSlug:   "demo",
@@ -883,9 +753,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &state); err != nil {
-		t.Fatalf("save workspace state: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -895,7 +763,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 	if deletedIdentity.Load() {
-		t.Fatal("did not expect permanent identity deletion")
+		t.Fatal("did not expect persistent identity deletion")
 	}
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
@@ -916,9 +784,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-		}
+		requireCertificateAuthForTest(t, r)
 		switch {
 		case r.URL.Path == "/v1/workspaces/team":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -995,7 +861,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		APIKey:          "aw_sk_test",
+		TeamAddress:     "demo/backend",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
 		NamespaceSlug:   "demo",
@@ -1008,9 +874,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &state); err != nil {
-		t.Fatalf("save workspace state: %v", err)
-	}
+	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -1030,20 +894,67 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 	}
 }
 
-func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
+func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	t.Parallel()
 
-	const sourceID = "11111111-1111-1111-1111-111111111111"
+	const origin = "https://github.com/acme/repo.git"
+	const teamAddress = "source/backend"
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var registeredCert map[string]any
+	var connectBody map[string]any
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
+			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_roles_id": "pol-1",
 				"roles": map[string]any{
-					"coordinator": map[string]any{"title": "Coordinator"},
-					"developer":   map[string]any{"title": "Developer"},
+					"developer": map[string]any{"title": "Developer"},
 				},
+			})
+		case "/v1/agents/suggest-alias-prefix":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": teamAddress,
+				"name_prefix":  "charlie",
+			})
+		case "/v1/namespaces/source/teams/backend/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatalf("decode registered certificate: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
+				t.Fatalf("decode connect request: %v", err)
+			}
+			if connectBody["repo_origin"] != origin {
+				t.Fatalf("repo_origin=%v", connectBody["repo_origin"])
+			}
+			role, _ := connectBody["role"].(string)
+			if role != "developer" {
+				t.Fatalf("role=%q", role)
+			}
+			path, _ := connectBody["workspace_path"].(string)
+			if !strings.HasSuffix(path, string(filepath.Separator)+"repo-charlie") {
+				t.Fatalf("workspace_path=%q", path)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": teamAddress,
+				"alias":        "charlie",
+				"agent_id":     "agent-3",
+				"workspace_id": "workspace-3",
+				"repo_id":      "repo-3",
+				"team_did_key": "did:key:z6MkTeam",
+				"role":         "developer",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1052,8 +963,140 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 		}
 	}))
 
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, origin)
+	buildAwBinary(t, ctx, bin)
+
+	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
+	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
+		AwebURL:        server.URL,
+		AwidURL:        server.URL,
+		CloudURL:       server.URL,
+		TeamAddress:    teamAddress,
+		IdentityID:     "source-1",
+		IdentityHandle: "alice",
+		NamespaceSlug:  "source",
+		ProjectSlug:    "source",
+		HumanName:      "Wendy",
+		AgentType:      "agent",
+	})
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("seed .aw/context: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run.Env = testCommandEnv(tmp)
+	run.Stdin = strings.NewReader("")
+	run.Dir = repo
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "New agent worktree created at") {
+		t.Fatalf("unexpected output:\n%s", text)
+	}
+	if registeredCert["alias"] != "charlie" {
+		t.Fatalf("registered alias=%v", registeredCert["alias"])
+	}
+	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("registered lifetime=%v", registeredCert["lifetime"])
+	}
+
+	child := filepath.Join(tmp, "repo-charlie")
+	if _, err := os.Stat(child); err != nil {
+		t.Fatalf("expected sibling worktree: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(child, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("read child workspace binding: %v", err)
+	}
+	var state awconfig.WorktreeWorkspace
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		t.Fatalf("unmarshal child workspace binding: %v", err)
+	}
+	if state.TeamAddress != teamAddress {
+		t.Fatalf("child team_address=%q", state.TeamAddress)
+	}
+	if state.Alias != "charlie" {
+		t.Fatalf("child alias=%q", state.Alias)
+	}
+	if state.WorkspaceID != "workspace-3" {
+		t.Fatalf("child workspace_id=%q", state.WorkspaceID)
+	}
+
+	cert, err := awid.LoadTeamCertificate(filepath.Join(child, ".aw", "team-cert.pem"))
+	if err != nil {
+		t.Fatalf("load child team certificate: %v", err)
+	}
+	if cert.Alias != "charlie" {
+		t.Fatalf("cert alias=%q", cert.Alias)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("cert lifetime=%q", cert.Lifetime)
+	}
+	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral worktree should not create identity.yaml, stat err=%v", err)
+	}
+}
+
+func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) {
+	t.Parallel()
+
+	const origin = "https://github.com/acme/repo.git"
+	const teamAddress = "source/backend"
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var registeredCert map[string]any
+	var revokedCert map[string]any
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project_roles_id": "pol-1",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case "/v1/agents/suggest-alias-prefix":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": teamAddress,
+				"name_prefix":  "charlie",
+			})
+		case "/v1/namespaces/source/teams/backend/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatalf("decode registered certificate: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case "/v1/namespaces/source/teams/backend/certificates/revoke":
+			if err := json.NewDecoder(r.Body).Decode(&revokedCert); err != nil {
+				t.Fatalf("decode revoked certificate: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			http.Error(w, "alias conflict", http.StatusConflict)
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
@@ -1061,22 +1104,25 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	initGitRepoWithOriginAndCommit(t, repo, origin)
 	buildAwBinary(t, ctx, bin)
 
+	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_source",
-		IdentityID:     sourceID,
+		AwidURL:        server.URL,
+		CloudURL:       server.URL,
+		TeamAddress:    teamAddress,
+		IdentityID:     "source-1",
 		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		NamespaceSlug:  "source",
+		ProjectSlug:    "source",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -1084,38 +1130,53 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
-	text := string(out)
-	if !strings.Contains(text, "no role specified") {
-		t.Fatalf("expected missing role error, got:\n%s", text)
+	if !strings.Contains(string(out), "connect new worktree") {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
-	if !strings.Contains(text, "coordinator") || !strings.Contains(text, "developer") {
-		t.Fatalf("expected available roles in error, got:\n%s", text)
+	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
+		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
+	}
+	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
+		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
+	}
+
+	child := filepath.Join(tmp, "repo-charlie")
+	if _, err := os.Stat(child); !os.IsNotExist(err) {
+		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
 	}
 }
 
-func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
+func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	t.Parallel()
 
-	const sourceID = "11111111-1111-1111-1111-111111111111"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
+			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"project_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
 			})
+		case "/v1/workspaces/team":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{
+					{"workspace_id": "source-1", "alias": "alice", "status": "active"},
+					{"workspace_id": "source-2", "alias": "bob", "status": "offline"},
+				},
+				"has_more": false,
+			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
-			t.Fatalf("path=%s", r.URL.Path)
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
@@ -1128,25 +1189,28 @@ func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:        server.URL,
-		APIKey:         "aw_sk_source",
-		IdentityID:     sourceID,
+		AwidURL:        server.URL,
+		CloudURL:       server.URL,
+		TeamAddress:    "source/backend",
+		IdentityID:     "source-1",
 		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		NamespaceSlug:  "source",
+		ProjectSlug:    "source",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "_invalid")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "bob")
 	run.Env = testCommandEnv(tmp)
+	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "invalid alias") {
-		t.Fatalf("expected invalid alias error, got:\n%s", string(out))
+	if !strings.Contains(string(out), `alias "bob" is already in use by this team`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
 
@@ -1161,7 +1225,7 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:        "https://example.com",
-		APIKey:         "aw_sk_source",
+		TeamAddress:    "source/backend",
 		IdentityID:     "source-1",
 		IdentityHandle: "alice",
 		NamespaceSlug:  "demo",
@@ -1178,101 +1242,5 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "workspace add-worktree requires a git worktree") {
 		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-}
-
-func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
-	t.Parallel()
-
-	const sourceID = "11111111-1111-1111-1111-111111111111"
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
-		case "/api/v1/spawn/create-invite":
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]any{
-					"code":    "NOT_ALIAS_RELATED",
-					"message": "invite creation failed",
-				},
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
-	buildAwBinary(t, ctx, bin)
-
-	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		APIKey:         "aw_sk_source",
-		IdentityID:     sourceID,
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-	})
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed .aw/context: %v", err)
-	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:         server.URL,
-		APIKey:          "aw_sk_source",
-		IdentityID:      sourceID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
-		WorkspaceID:     sourceID,
-		ProjectID:       "proj-1",
-		ProjectSlug:     "demo",
-		CanonicalOrigin: "github.com/acme/repo",
-		Alias:           "alice",
-		HumanName:       "Wendy",
-		Role:            "developer",
-		WorkspacePath:   repo,
-	}); err != nil {
-		t.Fatalf("seed workspace state: %v", err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "dave")
-	run.Env = testCommandEnv(tmp)
-	run.Dir = repo
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error, got success:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "Cleaning up worktree") {
-		t.Fatalf("expected cleanup message, got:\n%s", string(out))
-	}
-
-	worktreePath := filepath.Join(tmp, "repo-dave")
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree cleanup, stat err=%v", err)
-	}
-
-	branchCmd := exec.Command("git", "-C", repo, "branch", "--list", "dave")
-	branchOut, err := branchCmd.Output()
-	if err != nil {
-		t.Fatalf("git branch --list: %v", err)
-	}
-	if strings.TrimSpace(string(branchOut)) != "" {
-		t.Fatalf("expected branch cleanup, got %q", string(branchOut))
 	}
 }

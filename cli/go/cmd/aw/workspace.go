@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +14,6 @@ import (
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -225,14 +223,14 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
+	client, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
+	}
+
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {
 		return usageError("workspace add-worktree requires a git worktree")
-	}
-
-	client, sel, err := resolveClientSelectionForDir(workingDir)
-	if err != nil {
-		return err
 	}
 
 	requested := ""
@@ -244,8 +242,25 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	role = normalizeWorkspaceRole(role)
-	if !isValidWorkspaceRole(role) {
+	if role != "" && !isValidWorkspaceRole(role) {
 		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
+	}
+
+	state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err != nil {
+		return fmt.Errorf("load workspace binding: %w", err)
+	}
+	if !state.HasTeamBinding() {
+		return usageError("current worktree is missing team binding; run `aw init` first")
+	}
+
+	teamAddress := strings.TrimSpace(state.TeamAddress)
+	if teamAddress == "" {
+		return usageError("current worktree is missing team_address; run `aw init` first")
+	}
+	sourceServerURL := strings.TrimSpace(state.AwebURL)
+	if sourceServerURL == "" {
+		return usageError("current worktree is missing aweb_url; run `aw init` first")
 	}
 
 	alias := strings.TrimSpace(workspaceAddAlias)
@@ -254,142 +269,114 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("invalid alias %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", alias)
 	}
 
-	namespaceSlug := strings.TrimSpace(sel.NamespaceSlug)
-	if namespaceSlug == "" {
-		namespaceSlug = strings.TrimSpace(sel.DefaultProject)
-	}
-	var state *awconfig.WorktreeWorkspace
-	if loaded, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil {
-		state = loaded
-		if namespaceSlug == "" {
-			namespaceSlug = strings.TrimSpace(loaded.ProjectSlug)
-		}
-	}
-	if namespaceSlug == "" {
-		return usageError("selected account has no namespace/project context; run 'aw init' first")
-	}
-
-	sourceAPIKey := strings.TrimSpace(sel.APIKey)
-	if sourceAPIKey == "" {
-		return usageError("selected account has no API key; run 'aw init' first")
-	}
-	sourceBaseURL := strings.TrimSpace(sel.BaseURL)
-	if sourceBaseURL == "" {
-		return fmt.Errorf("selected account missing server URL")
-	}
-	sourceServerName := strings.TrimSpace(sel.ServerName)
-	if sourceServerName == "" {
-		derived, derr := awconfig.DeriveServerNameFromURL(sourceBaseURL)
-		if derr != nil {
-			return fmt.Errorf("derive server name: %w", derr)
-		}
-		sourceServerName = derived
-	}
-
-	humanName := ""
-	if state != nil {
-		humanName = strings.TrimSpace(state.HumanName)
-	}
-
-	wantJSON := jsonFlag
-
-	const maxAttempts = 25
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if !aliasExplicit {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			suggestion, err := client.SuggestAliasPrefix(ctx, namespaceSlug)
-			cancel()
-			if err != nil {
-				return fmt.Errorf("failed to suggest alias prefix: %w", err)
-			}
-			if !isValidSuggestedAliasPrefix(strings.TrimSpace(suggestion.NamePrefix)) {
-				return fmt.Errorf("invalid alias prefix from server: %q", suggestion.NamePrefix)
-			}
-			alias = strings.TrimSpace(suggestion.NamePrefix)
-		}
-
-		branchName := alias
-		worktreePath, err := deriveWorkspaceAddWorktreePath(root, branchName)
+	if aliasExplicit {
+		teamAliases, err := fetchWorkspaceTeamAliases(client, strings.TrimSpace(state.WorkspaceID))
 		if err != nil {
-			return fmt.Errorf("security error: %w", err)
+			return err
 		}
-		if _, err := os.Stat(worktreePath); err == nil {
-			return fmt.Errorf("directory %s already exists", worktreePath)
+		if teamAliases[strings.ToLower(alias)] {
+			return usageError("alias %q is already in use by this team", alias)
 		}
-
-		if !wantJSON {
-			fmt.Fprintf(os.Stderr, "Creating worktree for branch %q...\n", branchName)
-			fmt.Fprintf(os.Stderr, "  Main repo: %s\n", root)
-			fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
-			fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
-			fmt.Fprintf(os.Stderr, "  Alias:     %s\n\n", alias)
-			fmt.Fprintln(os.Stderr, "Creating git worktree...")
-		}
-
-		branchCreated, err := createWorkspaceGitWorktree(root, worktreePath, branchName, wantJSON)
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		suggestion, err := client.SuggestAliasPrefix(ctx)
+		cancel()
 		if err != nil {
-			return fmt.Errorf("failed to create worktree: %w", err)
+			return fmt.Errorf("suggest next alias from server: %w", err)
 		}
-
-		if !wantJSON {
-			fmt.Fprintln(os.Stderr, "Initializing aw...")
+		alias = strings.TrimSpace(suggestion.NamePrefix)
+		if !isValidSuggestedAliasPrefix(alias) {
+			return fmt.Errorf("server returned invalid alias suggestion %q", alias)
 		}
-
-		// Create a short-lived invite from the current workspace,
-		// then accept it in the new worktree. This is the supported
-		// hosted path for one workspace spawning another in the same project.
-		inviteToken, initErr := createWorktreeInvite(client, alias)
-		if initErr == nil {
-			initOpts := initOptions{
-				Flow:          flowInvite,
-				WorkingDir:    worktreePath,
-				BaseURL:       sourceBaseURL,
-				ServerName:    sourceServerName,
-				IdentityAlias: alias,
-				HumanName:     humanName,
-				AgentType:     "agent",
-				WriteContext:  true,
-				InviteToken:   inviteToken,
-				WorkspaceRole: role,
-				Lifetime:      awid.LifetimeEphemeral,
-			}
-			_, initErr = executeInit(initOpts)
-		}
-		if initErr != nil {
-			if !wantJSON {
-				fmt.Fprintln(os.Stderr)
-				fmt.Fprintln(os.Stderr, "Error: Failed to initialize aw. Cleaning up worktree...")
-			}
-			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-
-			if !aliasExplicit && isWorkspaceAliasTakenError(initErr) {
-				if !wantJSON {
-					fmt.Fprintf(os.Stderr, "Alias %q was taken; retrying with a new name...\n", alias)
-				}
-				if attempt < maxAttempts {
-					time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
-				}
-				continue
-			}
-
-			return fmt.Errorf("aw init failed: %w", initErr)
-		}
-
-		output := workspaceAddWorktreeOutput{
-			Alias:        alias,
-			Role:         role,
-			Branch:       branchName,
-			WorktreePath: worktreePath,
-		}
-		if wantJSON {
-			printJSON(output)
-		} else {
-			fmt.Print(formatWorkspaceAddWorktree(output))
-		}
-		return nil
 	}
 
-	return fmt.Errorf("exhausted %d attempts to create a worktree (try specifying --alias)", maxAttempts)
+	branchName := alias
+	worktreePath, err := deriveWorkspaceAddWorktreePath(root, branchName)
+	if err != nil {
+		return fmt.Errorf("security error: %w", err)
+	}
+	if _, err := os.Stat(worktreePath); err == nil {
+		return fmt.Errorf("directory %s already exists", worktreePath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", worktreePath, err)
+	}
+
+	if !jsonFlag {
+		fmt.Fprintf(os.Stderr, "Creating worktree for branch %q...\n", branchName)
+		fmt.Fprintf(os.Stderr, "  Main repo: %s\n", root)
+		fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
+		fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
+		fmt.Fprintf(os.Stderr, "  Alias:     %s\n\n", alias)
+		fmt.Fprintln(os.Stderr, "Creating git worktree...")
+	}
+
+	branchCreated, err := createWorkspaceGitWorktree(root, worktreePath, branchName, jsonFlag)
+	if err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	if !jsonFlag {
+		fmt.Fprintln(os.Stderr, "Bootstrapping team certificate...")
+	}
+
+	teamDomain, teamName, err := parseAddress(teamAddress)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return fmt.Errorf("invalid team_address in workspace.yaml: %w", err)
+	}
+
+	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, strings.TrimSpace(state.AwidURL), true)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return fmt.Errorf("create ephemeral team invite for %s: %w", teamAddress, err)
+	}
+	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, alias)
+	if err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return fmt.Errorf("accept team invite in new worktree: %w", err)
+	}
+	rollbackAcceptedInvite := func(step string, cause error) error {
+		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		if rollbackErr != nil {
+			return fmt.Errorf("%s: %w (rollback revoke failed: %v)", step, cause, rollbackErr)
+		}
+		return fmt.Errorf("%s: %w", step, cause)
+	}
+
+	if !jsonFlag {
+		fmt.Fprintln(os.Stderr, "Connecting new workspace...")
+	}
+
+	connectResult, err := initCertificateConnectWithOptions(worktreePath, sourceServerURL, certificateConnectOptions{
+		Role:      role,
+		HumanName: strings.TrimSpace(state.HumanName),
+		AgentType: strings.TrimSpace(state.AgentType),
+		CloudURL:  strings.TrimSpace(state.CloudURL),
+		AwidURL:   strings.TrimSpace(state.AwidURL),
+	})
+	if err != nil {
+		return rollbackAcceptedInvite("connect new worktree", err)
+	}
+	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
+		return rollbackAcceptedInvite(
+			"validate new worktree alias",
+			fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
+		)
+	}
+
+	output := workspaceAddWorktreeOutput{
+		Alias:        alias,
+		Role:         role,
+		Branch:       branchName,
+		WorktreePath: worktreePath,
+	}
+	if jsonFlag {
+		printJSON(output)
+	} else {
+		fmt.Print(formatWorkspaceAddWorktree(output))
+	}
+	return nil
 }
 
 func currentGitWorktreeRoot() (string, error) {
@@ -457,8 +444,8 @@ func registerWorkspaceForRoot(root string, client *aweb.Client, roleOverride str
 		role = strings.TrimSpace(existingState.Role)
 	}
 	// Only resolve from project roles if we don't already have a role.
-	// Callers that pre-validate the role (init, project create,
-	// add-worktree, role-name set) pass it here already validated.
+	// Callers that pre-validate the role (init, role-name set) pass it here
+	// already validated.
 	if role == "" {
 		role, err = resolveRole(client, "", isTTY(), os.Stdin, os.Stderr)
 		if err != nil {
@@ -819,6 +806,33 @@ func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt 
 	return "", usageError("invalid role %q; available roles: %s", role, strings.Join(roles, ", "))
 }
 
+func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.WorkspaceTeam(ctx, aweb.WorkspaceTeamParams{
+		IncludeClaims:            false,
+		IncludePresence:          false,
+		AlwaysIncludeWorkspaceID: strings.TrimSpace(workspaceID),
+		Limit:                    1000,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list team aliases: %w", err)
+	}
+	if resp.HasMore {
+		return nil, usageError("team has more than 1000 workspaces; specify --alias explicitly")
+	}
+
+	aliases := make(map[string]bool, len(resp.Workspaces))
+	for _, workspace := range resp.Workspaces {
+		alias := strings.ToLower(strings.TrimSpace(workspace.Alias))
+		if alias != "" {
+			aliases[alias] = true
+		}
+	}
+	return aliases, nil
+}
+
 func deriveWorkspaceAddWorktreePath(mainRepo, branchName string) (string, error) {
 	repoName := filepath.Base(mainRepo)
 	parentDir := filepath.Dir(mainRepo)
@@ -832,7 +846,6 @@ func deriveWorkspaceAddWorktreePath(mainRepo, branchName string) (string, error)
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid worktree path: path traversal detected")
 	}
-
 	return cleanPath, nil
 }
 
@@ -891,33 +904,6 @@ func cleanupWorkspaceWorktree(repoPath, worktreePath, branchName string, deleteB
 	}
 }
 
-// createWorktreeInvite creates a single-use, short-lived CLI invite for
-// bootstrapping another workspace identity in a sibling worktree. The current
-// workspace's authenticated client creates the invite; the new worktree then
-// accepts it via flowInvite.
-func createWorktreeInvite(client *aweb.Client, aliasHint string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	resp, err := client.SpawnCreateInvite(ctx, &awid.SpawnInviteCreateRequest{
-		AliasHint:        aliasHint,
-		MaxUses:          1,
-		ExpiresInSeconds: 300, // 5 minutes
-	})
-	if err != nil {
-		return "", fmt.Errorf("creating worktree invite: %w", err)
-	}
-	return resp.Token, nil
-}
-
-func isWorkspaceAliasTakenError(err error) bool {
-	if err == nil {
-		return false
-	}
-	code, ok := apiStructuredErrorCode(err)
-	return ok && code == "ALIAS_TAKEN"
-}
-
 func workspaceBranchInUse(repoPath, branchName string) (bool, error) {
 	cmd := exec.Command("git", "-C", repoPath, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
@@ -934,22 +920,6 @@ func workspaceBranchInUse(repoPath, branchName string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func apiStructuredErrorCode(err error) (string, bool) {
-	body, ok := awid.HTTPErrorBody(err)
-	if !ok {
-		return "", false
-	}
-	var envelope struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if json.Unmarshal([]byte(body), &envelope) != nil || strings.TrimSpace(envelope.Error.Code) == "" {
-		return "", false
-	}
-	return strings.TrimSpace(envelope.Error.Code), true
 }
 
 func formatWorkspaceStatus(v any) string {

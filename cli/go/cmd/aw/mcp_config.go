@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -31,30 +30,7 @@ var mcpConfigCmd = &cobra.Command{
 			return nil
 		}
 
-		sel, err := resolveSelectionForDir("")
-		if err != nil {
-			return err
-		}
-
-		baseURL := strings.TrimRight(sel.BaseURL, "/")
-
-		cfg := map[string]any{
-			"mcpServers": map[string]any{
-				"aweb": map[string]any{
-					"url": baseURL + "/mcp",
-					"headers": map[string]string{
-						"Authorization": "Bearer " + sel.APIKey,
-					},
-				},
-			},
-		}
-
-		out, err := json.MarshalIndent(cfg, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal config: %w", err)
-		}
-		fmt.Println(string(out))
-		return nil
+		return usageError("HTTP MCP config is not emitted by this command because /mcp now requires per-request DIDKey signatures plus a team certificate; use `aw mcp-config --channel`")
 	},
 }
 
