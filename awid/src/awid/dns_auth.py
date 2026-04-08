@@ -29,6 +29,10 @@ def require_timestamp(request: Request, *, header_name: str = "X-AWEB-Timestamp"
     return value
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def enforce_timestamp_skew(ts: str, *, max_delta_seconds: int = 300) -> None:
     try:
         normalized = ts.strip()
@@ -42,7 +46,7 @@ def enforce_timestamp_skew(ts: str, *, max_delta_seconds: int = 300) -> None:
         raise
     except Exception:
         raise HTTPException(status_code=401, detail="Malformed timestamp")
-    delta = abs((datetime.now(timezone.utc) - dt).total_seconds())
+    delta = abs((_utc_now() - dt).total_seconds())
     if delta > max_delta_seconds:
         raise HTTPException(status_code=401, detail="Timestamp outside allowed skew window")
 
