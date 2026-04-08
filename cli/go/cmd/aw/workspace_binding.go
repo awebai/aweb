@@ -12,6 +12,9 @@ import (
 
 type workspaceBindingInput struct {
 	WorkingDir     string
+	AwebURL        string
+	CloudURL       string
+	AwidURL        string
 	ServerURL      string
 	APIKey         string
 	ProjectID      string
@@ -43,8 +46,21 @@ func persistWorkspaceBinding(input workspaceBindingInput) error {
 		state = &awconfig.WorktreeWorkspace{}
 	}
 
+	if v := strings.TrimSpace(input.AwebURL); v != "" {
+		state.AwebURL = v
+		state.ServerURL = v
+	}
+	if v := strings.TrimSpace(input.CloudURL); v != "" {
+		state.CloudURL = v
+	}
+	if v := strings.TrimSpace(input.AwidURL); v != "" {
+		state.AwidURL = v
+	}
 	if v := strings.TrimSpace(input.ServerURL); v != "" {
 		state.ServerURL = v
+		if strings.TrimSpace(state.AwebURL) == "" {
+			state.AwebURL = v
+		}
 	}
 	if v := strings.TrimSpace(input.APIKey); v != "" {
 		state.APIKey = v

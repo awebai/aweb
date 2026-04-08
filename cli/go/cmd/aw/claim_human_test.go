@@ -32,25 +32,36 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	var gotBody map[string]any
 	var gotAuth string
 	var gotTimestamp string
+	var cloudURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/onboarding/claim-human" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  cloudURL,
+				"awid_url":  "https://api.awid.ai",
+				"version":   "1.7.0",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+			var err error
+			gotBodyBytes, err = io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "verification_sent",
+				"email":  "alice@example.com",
+			})
+		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
-		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		var err error
-		gotBodyBytes, err = io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "verification_sent",
-			"email":  "alice@example.com",
-		})
 	}))
+	cloudURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

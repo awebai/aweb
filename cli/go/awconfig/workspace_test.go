@@ -80,6 +80,46 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	}
 }
 
+func TestLoadWorktreeWorkspaceFromMigratesLegacyServerURLToAwebURL(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+server_url: https://coord.example
+team_address: acme.com/default
+workspace_id: ws-1
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	state, err := LoadWorktreeWorkspaceFrom(path)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if state.AwebURL != "https://coord.example" {
+		t.Fatalf("aweb_url=%q", state.AwebURL)
+	}
+	if state.ServerURL != "https://coord.example" {
+		t.Fatalf("server_url=%q", state.ServerURL)
+	}
+
+	if err := SaveWorktreeWorkspaceTo(path, state); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read workspace: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "aweb_url: https://coord.example") {
+		t.Fatalf("workspace yaml missing aweb_url:\n%s", text)
+	}
+	if strings.Contains(text, "server_url:") {
+		t.Fatalf("workspace yaml still wrote legacy server_url:\n%s", text)
+	}
+}
+
 func TestLoadWorktreeWorkspaceFromIgnoresIdentityFieldsWhenIdentityExists(t *testing.T) {
 	t.Parallel()
 

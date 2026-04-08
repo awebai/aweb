@@ -13,6 +13,9 @@ type Selection struct {
 	WorkspacePath string
 	ServerName    string
 	BaseURL       string
+	AwebURL       string
+	CloudURL      string
+	AwidURL       string
 	APIKey        string
 
 	DefaultProject string
@@ -93,7 +96,10 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		return nil, fmt.Errorf("invalid worktree identity: %w", identityErr)
 	}
 
-	baseURL := strings.TrimSpace(workspace.ServerURL)
+	baseURL := strings.TrimSpace(workspace.AwebURL)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(workspace.ServerURL)
+	}
 	apiKey := strings.TrimSpace(workspace.APIKey)
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
@@ -103,7 +109,7 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 	teamAddress := strings.TrimSpace(workspace.TeamAddress)
 	if baseURL == "" || (apiKey == "" && teamAddress == "") {
-		return nil, errors.New("worktree workspace binding is missing server_url and either api_key or team_address")
+		return nil, errors.New("worktree workspace binding is missing aweb_url and either api_key or team_address")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -131,7 +137,16 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 	signingKey := ""
 	custody := ""
 	lifetime := ""
+	awebURL := ""
+	cloudURL := ""
+	awidURL := ""
 	if ws != nil {
+		awebURL = strings.TrimSpace(ws.AwebURL)
+		if awebURL == "" {
+			awebURL = strings.TrimSpace(ws.ServerURL)
+		}
+		cloudURL = strings.TrimSpace(ws.CloudURL)
+		awidURL = strings.TrimSpace(ws.AwidURL)
 		namespaceSlug = strings.TrimSpace(ws.NamespaceSlug)
 		defaultProject = strings.TrimSpace(ws.ProjectSlug)
 		identityHandle = strings.TrimSpace(ws.IdentityHandle)
@@ -173,6 +188,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 		WorkspacePath:  strings.TrimSpace(workspacePath),
 		ServerName:     serverName,
 		BaseURL:        baseURL,
+		AwebURL:        awebURL,
+		CloudURL:       cloudURL,
+		AwidURL:        awidURL,
 		APIKey:         apiKey,
 		DefaultProject: defaultProject,
 		IdentityID:     identityID,

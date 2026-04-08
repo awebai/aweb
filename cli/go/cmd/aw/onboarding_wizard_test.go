@@ -100,6 +100,102 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 }
 
+func TestExecuteReconnectPathMigratesLegacyServerURLThroughDiscovery(t *testing.T) {
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "jack.aweb.ai/default",
+		MemberDIDKey: awid.ComputeDIDKey(memberPub),
+		Alias:        "laptop",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cloudURL string
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": "jack.aweb.ai/default",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamPub),
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	cloudServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  awebServer.URL,
+				"awid_url":  "https://api.awid.ai",
+				"version":   "1.7.0",
+			})
+		default:
+			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	cloudURL = cloudServer.URL
+
+	tmp := t.TempDir()
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       awid.ComputeDIDKey(memberPub),
+		StableID:  awid.ComputeStableID(memberPub),
+		Address:   "jack.aweb.ai/laptop",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"), cert); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".aw", "workspace.yaml"), []byte("server_url: "+cloudServer.URL+"\nteam_address: jack.aweb.ai/default\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = executeReconnectPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader(""),
+		PromptOut:  &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("executeReconnectPath: %v", err)
+	}
+
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
+	}
+	if workspace.CloudURL != cloudServer.URL {
+		t.Fatalf("cloud_url=%q", workspace.CloudURL)
+	}
+	if workspace.AwebURL != awebServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
+	}
+	if workspace.ServerURL != awebServer.URL {
+		t.Fatalf("server_url=%q", workspace.ServerURL)
+	}
+}
+
 func TestGuidedOnboardingDefaultsToHostedPath(t *testing.T) {
 	oldHosted := guidedOnboardingExecuteHostedPath
 	oldBYOD := guidedOnboardingExecuteBYODPath
@@ -178,26 +274,37 @@ func TestGuidedOnboardingCanSelectBYODPath(t *testing.T) {
 }
 
 func TestExecuteHostedPathRejectsServersWithoutManagedOnboarding(t *testing.T) {
+	oldProvision := guidedOnboardingProvisionBYODIdentity
+	t.Cleanup(func() {
+		guidedOnboardingProvisionBYODIdentity = oldProvision
+	})
+
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
 			http.NotFound(w, r)
 			return
 		}
 		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 	}))
+	guidedOnboardingProvisionBYODIdentity = func(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
+		return nil, usageError("byod fallback hit")
+	}
 
 	var out bytes.Buffer
 	_, err := executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader(""),
+		PromptIn:   strings.NewReader("Alice\nacme.com\n"),
 		PromptOut:  &out,
 		ServerURL:  server.URL,
 	})
 	if err == nil {
 		t.Fatal("expected hosted path to return an error")
 	}
-	if !strings.Contains(err.Error(), "choose BYOD") {
+	if !strings.Contains(err.Error(), "byod fallback hit") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Switching to BYOD") {
+		t.Fatalf("expected fallback message, got %q", out.String())
 	}
 }
 
@@ -406,14 +513,41 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	var checkBodies []map[string]any
 	var signupBody map[string]any
 	var claimBody map[string]any
 	var connectBody map[string]any
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var cloudURL string
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": "jack.aweb.ai/default",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	cloudServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  awebServer.URL,
+				"awid_url":  registryServer.URL,
+				"version":   "1.7.0",
+				"features":  []string{"managed_namespaces", "claim_human"},
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -470,22 +604,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"status": "verification_sent",
 				"email":  claimBody["email"],
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "jack.aweb.ai/default",
-				"alias":        "laptop",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "repo-1",
-				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-			})
 		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	cloudURL = cloudServer.URL
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
@@ -493,7 +616,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
 		PromptOut:  &out,
-		ServerURL:  server.URL + "/api",
+		ServerURL:  cloudServer.URL + "/api",
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
@@ -502,11 +625,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		t.Fatalf("executeHostedPath: %v", err)
 	}
 
-	if len(checkBodies) != 2 {
+	if len(checkBodies) != 1 {
 		t.Fatalf("check username calls=%d", len(checkBodies))
 	}
-	if checkBodies[1]["username"] != "jack" {
-		t.Fatalf("username=%v", checkBodies[1]["username"])
+	if checkBodies[0]["username"] != "jack" {
+		t.Fatalf("username=%v", checkBodies[0]["username"])
 	}
 	if len(didRequests) != 1 {
 		t.Fatalf("did registrations=%d", len(didRequests))
@@ -560,8 +683,17 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if workspace.TeamAddress != "jack.aweb.ai/default" {
 		t.Fatalf("team_address=%q", workspace.TeamAddress)
 	}
-	if workspace.ServerURL != server.URL {
+	if workspace.CloudURL != cloudServer.URL {
+		t.Fatalf("cloud_url=%q", workspace.CloudURL)
+	}
+	if workspace.AwebURL != awebServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
+	}
+	if workspace.ServerURL != awebServer.URL {
 		t.Fatalf("server_url=%q", workspace.ServerURL)
+	}
+	if workspace.AwidURL != registryServer.URL {
+		t.Fatalf("awid_url=%q", workspace.AwidURL)
 	}
 	if workspace.Alias != "laptop" {
 		t.Fatalf("alias=%q", workspace.Alias)
@@ -649,8 +781,16 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	var signupBodies []map[string]any
+	var cloudURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  cloudURL,
+				"awid_url":  registryServer.URL,
+				"version":   "1.7.0",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -718,6 +858,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	cloudURL = server.URL
 
 	tmp := t.TempDir()
 	var out bytes.Buffer

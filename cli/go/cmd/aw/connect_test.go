@@ -34,10 +34,18 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 		redeemBody       map[string]any
 		redeemAuth       string
 		redeemTimestamp  string
+		cloudURL         string
 	)
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  cloudURL,
+				"awid_url":  cloudURL,
+				"version":   "1.7.0",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -120,6 +128,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	cloudURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -197,8 +206,16 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var redeemBody map[string]any
+	var cloudURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  cloudURL,
+				"awid_url":  cloudURL,
+				"version":   "1.7.0",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
 			t.Fatal("ephemeral connect should not register did:aw")
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
@@ -242,6 +259,7 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	cloudURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -275,8 +293,16 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 func TestConnectBootstrapMapsConflict(t *testing.T) {
 	t.Parallel()
 
+	var cloudURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  cloudURL,
+				"awid_url":  cloudURL,
+				"version":   "1.7.0",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = io.WriteString(w, `{"detail":"token already consumed"}`)
@@ -284,6 +310,7 @@ func TestConnectBootstrapMapsConflict(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	cloudURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -301,6 +328,136 @@ func TestConnectBootstrapMapsConflict(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Token expired or already used. Mint a fresh one from the dashboard.") {
 		t.Fatalf("output=%q", string(out))
+	}
+}
+
+func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var (
+		persistentDidAW  string
+		persistentDidKey string
+		cloudURL         string
+		connectCalls     int
+	)
+
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_address": "juanre.aweb.ai/default",
+				"alias":        "laptop-agent",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	cloudServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"cloud_url": cloudURL,
+				"aweb_url":  awebServer.URL,
+				"awid_url":  cloudURL,
+				"version":   "1.7.0",
+				"features":  []string{"bootstrap_tokens"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			persistentDidAW, _ = payload["did_aw"].(string)
+			persistentDidKey, _ = payload["did_key"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case r.Method == http.MethodGet && persistentDidAW != "" && r.URL.Path == "/v1/did/"+persistentDidAW+"/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          persistentDidAW,
+				"current_did_key": persistentDidKey,
+				"server":          "",
+				"address":         "juanre.aweb.ai/laptop-agent",
+				"handle":          "laptop-agent",
+				"created_at":      "2026-04-07T00:00:00Z",
+				"updated_at":      "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/bootstrap-redeem":
+			var redeemBody map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&redeemBody); err != nil {
+				t.Fatal(err)
+			}
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "juanre.aweb.ai/default",
+				MemberDIDKey:  persistentDidKey,
+				MemberDIDAW:   persistentDidAW,
+				MemberAddress: "juanre.aweb.ai/laptop-agent",
+				Alias:         "laptop-agent",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"certificate":    encoded,
+				"team_address":   "juanre.aweb.ai/default",
+				"lifetime":       "persistent",
+				"alias":          "laptop-agent",
+				"did_aw":         persistentDidAW,
+				"member_address": "juanre.aweb.ai/laptop-agent",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			t.Fatal("connect should use discovered aweb_url, not the cloud base URL")
+		default:
+			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	cloudURL = cloudServer.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-123", "--address", "juanre.aweb.ai/laptop-agent", "--mock-url", cloudServer.URL)
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("connect failed: %v\n%s", err, string(out))
+	}
+
+	if connectCalls != 1 {
+		t.Fatalf("connect_calls=%d", connectCalls)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("workspace.yaml missing: %v", err)
+	}
+	if workspace.CloudURL != cloudServer.URL {
+		t.Fatalf("cloud_url=%q", workspace.CloudURL)
+	}
+	if workspace.AwebURL != awebServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
+	}
+	if workspace.ServerURL != awebServer.URL {
+		t.Fatalf("server_url=%q", workspace.ServerURL)
 	}
 }
 

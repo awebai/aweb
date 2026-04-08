@@ -136,14 +136,11 @@ func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.Cla
 }
 
 func onboardingBaseURL(mockURL string) (string, error) {
-	mockURL = strings.TrimSpace(mockURL)
-	if mockURL != "" {
-		return cleanBaseURL(mockURL)
+	urls, err := resolveOnboardingServiceURLs(mockURL)
+	if err != nil {
+		return "", err
 	}
-	if sel, err := resolveSelectionForDir(""); err == nil && strings.TrimSpace(sel.BaseURL) != "" {
-		return cleanBaseURL(sel.BaseURL)
-	}
-	return cleanBaseURL(DefaultServerURL)
+	return strings.TrimSpace(urls.CloudURL), nil
 }
 
 func usernameFromMemberAddress(address string) (string, error) {

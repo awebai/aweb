@@ -96,8 +96,8 @@ func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cfgData), "server_url: "+server.URL+"/api") {
-		t.Fatalf("expected workspace binding to persist recovered /api URL, got:\n%s", string(cfgData))
+	if !strings.Contains(string(cfgData), "aweb_url: "+server.URL+"/api") {
+		t.Fatalf("expected workspace binding to persist recovered /api URL under aweb_url, got:\n%s", string(cfgData))
 	}
 
 	pathsMu.Lock()

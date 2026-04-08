@@ -401,9 +401,10 @@ func persistResolvedServerURL(workspacePath, baseURL string) error {
 		}
 		return err
 	}
-	if strings.TrimSpace(workspace.ServerURL) == baseURL {
+	if strings.TrimSpace(workspace.AwebURL) == baseURL && strings.TrimSpace(workspace.ServerURL) == baseURL {
 		return nil
 	}
+	workspace.AwebURL = baseURL
 	workspace.ServerURL = baseURL
 	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }

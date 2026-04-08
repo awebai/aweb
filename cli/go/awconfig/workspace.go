@@ -11,6 +11,9 @@ import (
 )
 
 type WorktreeWorkspace struct {
+	AwebURL         string `yaml:"aweb_url,omitempty"`
+	CloudURL        string `yaml:"cloud_url,omitempty"`
+	AwidURL         string `yaml:"awid_url,omitempty"`
 	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
@@ -38,6 +41,9 @@ type WorktreeWorkspace struct {
 }
 
 type worktreeWorkspaceYAML struct {
+	AwebURL         string `yaml:"aweb_url,omitempty"`
+	CloudURL        string `yaml:"cloud_url,omitempty"`
+	AwidURL         string `yaml:"awid_url,omitempty"`
 	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
@@ -76,6 +82,21 @@ func (w *WorktreeWorkspace) syncRoleFields() {
 	w.Role = resolved
 }
 
+func (w *WorktreeWorkspace) syncURLFields() {
+	if w == nil {
+		return
+	}
+	awebURL := strings.TrimSpace(w.AwebURL)
+	legacyURL := strings.TrimSpace(w.ServerURL)
+	if awebURL == "" {
+		awebURL = legacyURL
+	}
+	w.AwebURL = awebURL
+	w.CloudURL = strings.TrimSpace(w.CloudURL)
+	w.AwidURL = strings.TrimSpace(w.AwidURL)
+	w.ServerURL = awebURL
+}
+
 func (w *WorktreeWorkspace) syncHandleFields() {
 	if w == nil {
 		return
@@ -94,6 +115,7 @@ func (w *WorktreeWorkspace) normalize() {
 	if w == nil {
 		return
 	}
+	w.syncURLFields()
 	w.syncRoleFields()
 	w.syncHandleFields()
 }
@@ -102,14 +124,22 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false
 	}
-	return strings.TrimSpace(w.ServerURL) != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
+	awebURL := strings.TrimSpace(w.AwebURL)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(w.ServerURL)
+	}
+	return awebURL != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
 }
 
 func (w *WorktreeWorkspace) HasTeamBinding() bool {
 	if w == nil {
 		return false
 	}
-	return strings.TrimSpace(w.ServerURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
+	awebURL := strings.TrimSpace(w.AwebURL)
+	if awebURL == "" {
+		awebURL = strings.TrimSpace(w.ServerURL)
+	}
+	return awebURL != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
 func (w *WorktreeWorkspace) hasIdentityFields() bool {
@@ -163,6 +193,9 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	*w = WorktreeWorkspace{
+		AwebURL:         raw.AwebURL,
+		CloudURL:        raw.CloudURL,
+		AwidURL:         raw.AwidURL,
 		ServerURL:       raw.ServerURL,
 		TeamAddress:     raw.TeamAddress,
 		APIKey:          raw.APIKey,
@@ -195,7 +228,9 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	w.normalize()
 	return worktreeWorkspaceYAML{
-		ServerURL:       w.ServerURL,
+		AwebURL:         w.AwebURL,
+		CloudURL:        w.CloudURL,
+		AwidURL:         w.AwidURL,
 		TeamAddress:     w.TeamAddress,
 		APIKey:          w.APIKey,
 		IdentityID:      w.IdentityID,

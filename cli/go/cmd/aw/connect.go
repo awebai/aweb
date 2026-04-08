@@ -50,7 +50,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	baseURL, err := onboardingBaseURL(connectMockURL)
+	serviceURLs, err := resolveOnboardingServiceURLs(connectMockURL)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := bootstrapConnect(ctx, workingDir, baseURL, token, address)
+	result, err := bootstrapConnect(ctx, workingDir, serviceURLs, token, address)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func bootstrapConnect(ctx context.Context, workingDir, baseURL, token, address string) (connectOutput, error) {
+func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboardingServiceURLs, token, address string) (connectOutput, error) {
 	pub, signingKey, err := awid.GenerateKeypair()
 	if err != nil {
 		return connectOutput{}, err
@@ -91,9 +91,14 @@ func bootstrapConnect(ctx context.Context, workingDir, baseURL, token, address s
 		}
 
 		stableID = awid.ComputeStableID(pub)
-		registry, err := newConfiguredRegistryClient(nil, baseURL)
+		registry, err := newConfiguredRegistryClient(nil, serviceURLs.CloudURL)
 		if err != nil {
 			return connectOutput{}, err
+		}
+		if strings.TrimSpace(serviceURLs.AwidURL) != "" {
+			if err := registry.SetFallbackRegistryURL(serviceURLs.AwidURL); err != nil {
+				return connectOutput{}, err
+			}
 		}
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 		if err := registerBootstrapDID(ctx, registry, didKey, stableID, addressInfo, signingKey); err != nil {
@@ -102,7 +107,7 @@ func bootstrapConnect(ctx context.Context, workingDir, baseURL, token, address s
 		redeemReq.DIDAW = stableID
 	}
 
-	client, err := awid.NewWithIdentity(baseURL, "", signingKey, didKey)
+	client, err := awid.NewWithIdentity(serviceURLs.CloudURL, "", signingKey, didKey)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("invalid bootstrap identity: %w", err)
 	}
@@ -121,7 +126,15 @@ func bootstrapConnect(ctx context.Context, workingDir, baseURL, token, address s
 		return connectOutput{}, err
 	}
 
-	return initCertificateConnect(workingDir, baseURL, "")
+	awidURL := strings.TrimSpace(registryURL)
+	if awidURL == "" {
+		awidURL = strings.TrimSpace(serviceURLs.AwidURL)
+	}
+
+	return initCertificateConnectWithOptions(workingDir, serviceURLs.AwebURL, certificateConnectOptions{
+		CloudURL: serviceURLs.CloudURL,
+		AwidURL:  awidURL,
+	})
 }
 
 type addressParts struct {
