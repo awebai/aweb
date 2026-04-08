@@ -1024,11 +1024,201 @@ in `docs/aweb-cloud-sot.md`.
 
 ## MCP server
 
-The aweb MCP server exposes coordination tools (mail, chat, tasks, etc.).
+aweb ships an MCP (Model Context Protocol) server that exposes the
+coordination primitives — mail, chat, tasks, claims, work, roles,
+instructions, contacts, presence — as MCP tools. Any MCP-capable agent
+runtime (Claude Code, Claude Desktop, ChatGPT custom connectors,
+programmatic MCP clients, internal tooling) can call them via the MCP
+protocol.
 
-- Auth: certificate-based
-- Scope: tools are scoped to the team from the certificate
-- Identity signing tools are owned by awid, not aweb's MCP server
+### Two integration patterns
+
+The MCP server is delivered through two patterns, one for each client
+class:
+
+1. **Local CLI MCP server** — the `aw` CLI embeds the MCP server inside
+   the local agent process. Used by terminal agents in their own
+   workspace via `aw mcp-config` (which writes the connection config
+   into the LLM client). This is the path covered by aweb's OSS code.
+
+2. **Hosted `/mcp` endpoint** — for browser-based MCP clients that have
+   no local key storage (Claude Desktop, claude.ai connectors) and for
+   local MCP clients that need a long-lived bearer token (Claude Code,
+   programmatic clients). This path runs at aweb-cloud and is described
+   in
+   [`../../aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md)
+   § Hosted MCP and OAuth Connector Architecture. The /mcp two-auth-path
+   model (OAuth + direct bearer) is owned by the cloud SoT, not by this
+   document.
+
+The rest of this section describes the OSS local CLI MCP server only.
+
+### Mount and transport
+
+The MCP server is created via `aweb.mcp.create_mcp_app(db_infra, redis)`
+and mounted on the FastAPI app at `/mcp`:
+
+```python
+from aweb.mcp import create_mcp_app
+mcp_app = create_mcp_app(db_infra=infra, redis=redis)
+fastapi_app.mount("/mcp", mcp_app)
+```
+
+Transport is **MCP-over-Streamable-HTTP** with `stateless_http=True`
+(implemented via `FastMCP`). The streamable endpoint clients should hit
+is `/mcp/` (with the trailing slash). A small ASGI middleware
+(`NormalizeMountedMCPPathMiddleware`) rewrites bare `/mcp` requests to
+`/mcp/` so that browser MCP clients which strip the trailing slash from
+the advertised resource URL keep working.
+
+### Authentication
+
+MCP requests authenticate with the **same team certificate** that
+coordination requests use — DIDKey signature plus team certificate
+header:
+
+```
+Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+X-AWID-Team-Certificate: <base64-encoded certificate JSON>
+```
+
+The MCP middleware (`MCPAuthMiddleware` in
+`server/src/aweb/mcp/auth.py`) parses both headers, runs the same
+verification protocol as the REST API (parse signature, verify against
+the request envelope, decode and verify the team certificate against
+the cached team public key, check the revocation list), and resolves
+the calling identity.
+
+API keys are NOT accepted on the local CLI MCP path. The team
+certificate is the sole credential — consistent with the aweb principle
+that team certificates are the single credential for coordination
+endpoints. (The hosted `/mcp` endpoint at aweb-cloud has its own auth
+model with `aw_sk_*` direct bearer tokens for local-tool MCP clients;
+that is a cloud surface, not an aweb surface.)
+
+### Auth context for tools
+
+After authentication, MCP tool handlers can read the calling identity
+via `aweb.mcp.auth.get_auth()`, which returns:
+
+```python
+@dataclass
+class AuthContext:
+    team_address: str   # e.g., "acme.com/backend"
+    agent_id: str        # the aweb-side agent UUID
+    alias: str           # routing name within the team
+    did_key: str         # the calling agent's did:key
+```
+
+The context is stored in a contextvar and is per-request. Tools that
+need to know who the caller is read from `get_auth()`; tools that
+operate on the team's coordination data scope by `team_address`. Tools
+do NOT receive the raw certificate or signing material.
+
+### Tool inventory
+
+Tools are organized by family. The canonical list lives in
+[`mcp-tools-reference.md`](mcp-tools-reference.md), which is generated
+from the live registration in `server/src/aweb/mcp/server.py`. The
+families are:
+
+| Family | Tools |
+|---|---|
+| Identity | `whoami` |
+| Mail | `send_mail`, `check_inbox` |
+| Chat | `chat_send`, `chat_pending`, `chat_history`, `chat_read` |
+| Tasks | `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_close`, `task_reopen`, `task_comment_add`, `task_comment_list`, `task_ready` |
+| Work discovery | `work_ready`, `work_active`, `work_blocked` |
+| Roles | `roles_show`, `roles_list` |
+| Instructions | `instructions_show`, `instructions_history` |
+| Contacts | `contacts_list`, `contacts_add`, `contacts_remove` |
+| Presence | `list_agents`, `heartbeat` |
+| Workspace | `workspace_status` |
+
+Identity-creating operations (DID registration, team creation, address
+registration, certificate issuance) are deliberately NOT exposed as MCP
+tools — those operations belong to awid and the CLI / dashboard, not to
+agent runtime tool calls. Tools operate on team-scoped coordination
+state only.
+
+All registered tools currently return human-readable strings. Callers
+should treat the result as tool output text rather than a stable JSON
+contract.
+
+---
+
+## Operations
+
+This section describes the operational behavior aweb exposes that is
+not strictly part of the wire contract but matters for operators and
+callers planning around it.
+
+### Garbage collection
+
+aweb provides two GC functions in `aweb.gc` that operators run on a
+schedule (cron, Kubernetes Job, or equivalent). Both default to a
+30-day TTL and are configurable per-call:
+
+| Function | Default TTL | What it deletes |
+|---|---|---|
+| `gc_expired_messages(db_infra, ttl_days=30)` | 30 days | Mail messages and chat messages older than `ttl_days` (raw `created_at < now - ttl_days`). |
+| `gc_inactive_scopes(db_infra, ttl_days=30)` | 30 days | Teams with no message activity (mail or chat) for `ttl_days`, hard-deleted with all dependent rows (chat sessions, agents, workspaces, tasks, locks, etc.). |
+
+The GC functions are deletion-only — they do NOT cascade up to awid.
+Removing a team from aweb does not revoke its team controller key or
+delete its awid registration; those are awid-side lifecycle actions.
+Re-running the team's first-connect flow against awid would re-create
+the aweb-side team row.
+
+GC is not run automatically by the aweb server process. Operators
+choose how often to call these functions (typically nightly). For
+hosted deployments, aweb-cloud schedules the GC according to the
+billing-tier retention windows (see the cloud SoT for tier-specific
+TTLs).
+
+### Rate limiting
+
+Rate limiting at the **coordination layer** is not enforced by aweb
+itself in the steady state. Aweb provides a Redis-backed rate-limit
+infrastructure (`aweb.rate_limit`) for routes that need it, but the
+team-architecture coordination endpoints do not currently apply
+per-team or per-message rate limits.
+
+Rate limiting policy is owned by aweb-cloud for hosted deployments
+(per-org message quotas tied to billing tier — see the cloud SoT
+§ Billing). Self-hosted aweb instances are unlimited by default;
+operators add their own rate limits (reverse proxy, cloud load
+balancer, or custom middleware) if their workload requires them.
+
+This intentional split means a self-hosted aweb deployed inside a
+private VPC behind authenticated agent traffic does not pay the cost
+of artificial limits, while the public hosted instance at app.aweb.ai
+gets the per-org enforcement aweb-cloud layers on top.
+
+### Server lifecycle
+
+aweb starts up in this order:
+
+1. Read configuration from environment (see Configuration below).
+2. Connect to PostgreSQL via the `pgdbm` shared-pool pattern. In
+   standalone mode aweb owns the pool; in embedded mode (when mounted
+   inside aweb-cloud under Option M) the pool is supplied by the host
+   process and aweb runs in the dual-mode library shape with
+   `_owns_pool=False`.
+3. Apply migrations against the `aweb` schema with
+   `module_name="aweb-aweb"`. Idempotent — re-running is safe.
+4. Connect to Redis (for caches and the optional rate-limit
+   infrastructure).
+5. Initialize the awid registry client against `AWID_REGISTRY_URL`. No
+   embedded awid mode — aweb always talks to a real awid instance over
+   HTTP.
+6. Mount the FastAPI app and the `/mcp` MCP server.
+7. Begin serving.
+
+Shutdown reverses the order: stop accepting requests, close Redis,
+close the database pool (only if `_owns_pool=True`), exit. The
+`DatabaseInfra.close()` method is a no-op for the pool when running in
+embedded mode — the host process owns the pool's lifecycle.
 
 ---
 
