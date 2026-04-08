@@ -95,8 +95,15 @@ async def suggest_alias_prefix(
     rows = await aweb_db.fetch_all(
         """
         SELECT alias
-        FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        FROM (
+            SELECT alias
+            FROM {{tables.workspaces}}
+            WHERE team_address = $1 AND deleted_at IS NULL
+            UNION
+            SELECT alias
+            FROM {{tables.agents}}
+            WHERE team_address = $1 AND deleted_at IS NULL
+        ) aliases
         ORDER BY alias
         """,
         identity.team_address,

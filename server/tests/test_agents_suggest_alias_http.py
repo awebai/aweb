@@ -186,7 +186,7 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_suggest_alias_prefix_defaults_to_alice_for_empty_team(aweb_cloud_db):
+async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
 
@@ -227,5 +227,5 @@ async def test_suggest_alias_prefix_defaults_to_alice_for_empty_team(aweb_cloud_
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
         "team_address": "acme.com/backend",
-        "name_prefix": "alice",
+        "name_prefix": "bob",
     }
