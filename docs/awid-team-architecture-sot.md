@@ -313,6 +313,31 @@ When the team controller removes a member:
 
 ---
 
+## Cross-namespace team membership
+
+A team in one namespace can include members from other namespaces. The
+membership certificate is signed by the team controller of the namespace
+that owns the team, and the certificate's `member_address` field carries
+the cross-namespace address.
+
+Example: a team in `acme.com` namespace adds `partner.com/bob` as a member.
+The certificate is signed by the `acme.com/backend` team controller. The
+verifying service sees that bob (whose home namespace is `partner.com`) is
+a member of `acme.com/backend`. No special protocol support is needed —
+the certificate format already accommodates this because `member_address`
+is just a string and is not constrained to match the team's namespace.
+
+Authorization model: the namespace controller of the team-owning namespace
+(`acme.com` in the example) is the sole authority for adding cross-namespace
+members. The home namespace of the external member (`partner.com`) does
+not need to authorize anything — the team controller is making a claim
+about who is in their team, not about who controls the external address.
+A verifying service that wants to additionally check that the external
+address actually belongs to the named identity can resolve the address
+against `partner.com`'s namespace at awid as a separate step.
+
+---
+
 ## awid database schema (complete, after teams)
 
 ```sql

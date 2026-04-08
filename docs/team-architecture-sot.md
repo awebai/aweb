@@ -20,6 +20,104 @@ after the transition to awid teams. It is the implementation spec.
 
 ---
 
+## Concepts
+
+This section defines the conceptual taxonomy that the rest of the document
+operates on: agent vs workspace vs identity vs alias vs address. These
+distinctions are load-bearing — collapsing them produces the muddled
+"agent = identity = address" language we explicitly moved away from.
+
+### Agent
+
+An **agent** is a running participant.
+
+- A local CLI runtime is an agent.
+- A hosted OAuth MCP runtime is an agent.
+- An agent uses exactly one identity at a time.
+- An identity may be inactive even when no agent is currently running under it.
+
+### Workspace
+
+A **workspace** is a local runtime container.
+
+- It is represented by a local `.aw/` directory.
+- It stores local runtime state and configuration.
+- It may also store secret key material for self-custodial permanent identities.
+- A workspace belongs to one local machine/path, but it may be moved by moving
+  the `.aw/` directory.
+- A workspace has one active identity.
+- Hosted OAuth MCP runtimes do **not** have a local workspace.
+
+### Identity
+
+An **identity** is the principal the agent uses for messaging, coordination,
+and trust.
+
+Two identity classes exist:
+
+- **Ephemeral identity**: disposable, internal, one alias. Has only `did:key`.
+  Created by accepting a team invite or via spawn into the same team. Deleted
+  when the workspace is removed. Does not carry public trust continuity.
+- **Permanent identity**: durable, trust-bearing. Has both `did:key` and
+  `did:aw`. Has one or more public addresses. Supports rotation, archival, and
+  controlled replacement.
+
+Trust continuity is only promised for permanent identities.
+
+### Custody Modes
+
+Permanent identities have two custody modes:
+
+- **Self-custodial**: the agent holds its own Ed25519 private key locally,
+  inside its `.aw/` workspace. Created only from the CLI. Cannot be used by
+  hosted OAuth MCP runtimes. Created explicitly via `aw init --permanent
+  --name <name>` — never as a side effect of a default flow.
+- **Custodial**: the hosted service holds the encrypted private key. Created
+  from the dashboard for hosted/browser MCP use. The dashboard creates
+  permanent custodial identities, not generic "agents".
+
+### Alias vs Address
+
+An **alias** is the routing name for an ephemeral identity:
+
+- Internal/team scoped (e.g., `alice` within the team)
+- Not the external public trust surface
+- May be auto-assigned from a pool of standard names
+- An ephemeral identity has exactly one alias
+
+An **address** is the stable handle for a permanent identity:
+
+- Only permanent identities have addresses
+- A permanent identity may have more than one address
+- Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
+- Public trust semantics attach to the permanent address, not to ephemeral
+  aliases
+- Address assignment is separate from reachability (`private` /
+  `org-visible` / `contacts-only` / `public`)
+
+### Lifecycle: Delete vs Archive vs Replace
+
+Three distinct lifecycle stories that must not be conflated:
+
+- **Delete**: ephemeral only. Releases the alias for reuse. The single
+  user-facing lifecycle verb for ephemeral teardown.
+- **Archive**: permanent identity lifecycle cleanup with no continuity claim.
+  Stops active participation, keeps history.
+- **Replace**: permanent identity continuity via owner-authorized replacement
+  of an assigned public address. Distinct from cryptographic key rotation.
+  Used when the owner has lost the key but still controls the dashboard and
+  public address surface.
+
+Replacement preserves address continuity (`acme.com/support` keeps working)
+but is not cryptographic continuity of the old `did:aw`. Recipients must be
+able to distinguish:
+
+- key rotation / signed retirement: continuity vouched for by the old key
+- admin-authorized replacement: continuity vouched for by the org/project
+  controller, not by the old key
+
+---
+
 ## Authentication
 
 ### Request format
