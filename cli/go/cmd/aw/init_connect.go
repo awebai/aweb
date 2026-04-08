@@ -26,7 +26,7 @@ type connectOutput struct {
 	Status      string `json:"status"`
 	TeamAddress string `json:"team_address"`
 	Alias       string `json:"alias"`
-	ServerURL   string `json:"server_url"`
+	AwebURL     string `json:"aweb_url"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
@@ -132,7 +132,7 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 		Status:      "connected",
 		TeamAddress: resp.TeamAddress,
 		Alias:       resp.Alias,
-		ServerURL:   serverURL,
+		AwebURL:     serverURL,
 		WorkspaceID: resp.WorkspaceID,
 	}, nil
 }
@@ -231,6 +231,6 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamAddress))
 	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
-	sb.WriteString(fmt.Sprintf("Server:      %s\n", out.ServerURL))
+	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
 	return sb.String()
 }

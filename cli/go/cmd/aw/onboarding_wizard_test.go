@@ -61,7 +61,7 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 			Status:      "connected",
 			TeamAddress: "alice.aweb.ai/default",
 			Alias:       "alice",
-			ServerURL:   serverURL,
+			AwebURL:     serverURL,
 		}, nil
 	}
 	guidedOnboardingExecuteHostedPath = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -327,7 +327,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 			Status:      "connected",
 			TeamAddress: "acme.com/default",
 			Alias:       "alice",
-			ServerURL:   serverURL,
+			AwebURL:     serverURL,
 		}, nil
 	}
 
@@ -1062,7 +1062,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 			Status:      "connected",
 			TeamAddress: "acme.com/default",
 			Alias:       "alice",
-			ServerURL:   serverURL,
+			AwebURL:     serverURL,
 		}, nil
 	}
 	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {

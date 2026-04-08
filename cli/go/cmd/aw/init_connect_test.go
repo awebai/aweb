@@ -121,6 +121,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if got["alias"] != "alice" {
 		t.Fatalf("alias=%v", got["alias"])
 	}
+	if got["aweb_url"] != server.URL {
+		t.Fatalf("aweb_url=%v", got["aweb_url"])
+	}
+	if _, ok := got["server_url"]; ok {
+		t.Fatalf("unexpected legacy server_url in output: %v", got["server_url"])
+	}
 
 	// Verify DIDKey auth was used
 	if !strings.HasPrefix(gotAuthHeader, "DIDKey ") {

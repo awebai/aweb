@@ -848,7 +848,9 @@ func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (st
 
 	meta, err := awconfig.LoadControllerMeta(teamDomain)
 	if err == nil && meta != nil {
-		return strings.TrimSpace(meta.RegistryURL), nil
+		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
+			return registryURL, nil
+		}
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)

@@ -1262,3 +1262,27 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
+
+func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if err := awconfig.SaveControllerMeta("source", &awconfig.ControllerMeta{
+		Domain:      "source",
+		RegistryURL: "  ",
+		CreatedAt:   "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save controller meta: %v", err)
+	}
+
+	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), "https://app.aweb.ai", "source")
+	if err == nil {
+		t.Fatalf("expected error, got registry_url=%q", registryURL)
+	}
+	if registryURL != "" {
+		t.Fatalf("registry_url=%q", registryURL)
+	}
+	if !strings.Contains(err.Error(), "missing identity registry_url") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
