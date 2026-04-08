@@ -97,9 +97,6 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 
 	baseURL := strings.TrimSpace(workspace.AwebURL)
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(workspace.ServerURL)
-	}
 	apiKey := strings.TrimSpace(workspace.APIKey)
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
@@ -142,9 +139,6 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, 
 	awidURL := ""
 	if ws != nil {
 		awebURL = strings.TrimSpace(ws.AwebURL)
-		if awebURL == "" {
-			awebURL = strings.TrimSpace(ws.ServerURL)
-		}
 		cloudURL = strings.TrimSpace(ws.CloudURL)
 		awidURL = strings.TrimSpace(ws.AwidURL)
 		namespaceSlug = strings.TrimSpace(ws.NamespaceSlug)

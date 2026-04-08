@@ -14,7 +14,6 @@ type WorktreeWorkspace struct {
 	AwebURL         string `yaml:"aweb_url,omitempty"`
 	CloudURL        string `yaml:"cloud_url,omitempty"`
 	AwidURL         string `yaml:"awid_url,omitempty"`
-	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
 	IdentityID      string `yaml:"identity_id,omitempty"`
@@ -88,15 +87,9 @@ func (w *WorktreeWorkspace) syncURLFields() {
 	if w == nil {
 		return
 	}
-	awebURL := strings.TrimSpace(w.AwebURL)
-	legacyURL := strings.TrimSpace(w.ServerURL)
-	if awebURL == "" {
-		awebURL = legacyURL
-	}
-	w.AwebURL = awebURL
+	w.AwebURL = strings.TrimSpace(w.AwebURL)
 	w.CloudURL = strings.TrimSpace(w.CloudURL)
 	w.AwidURL = strings.TrimSpace(w.AwidURL)
-	w.ServerURL = awebURL
 }
 
 func (w *WorktreeWorkspace) syncHandleFields() {
@@ -126,22 +119,14 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false
 	}
-	awebURL := strings.TrimSpace(w.AwebURL)
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(w.ServerURL)
-	}
-	return awebURL != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
+	return strings.TrimSpace(w.AwebURL) != "" && (strings.TrimSpace(w.APIKey) != "" || strings.TrimSpace(w.TeamAddress) != "")
 }
 
 func (w *WorktreeWorkspace) HasTeamBinding() bool {
 	if w == nil {
 		return false
 	}
-	awebURL := strings.TrimSpace(w.AwebURL)
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(w.ServerURL)
-	}
-	return awebURL != "" && strings.TrimSpace(w.TeamAddress) != ""
+	return strings.TrimSpace(w.AwebURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
 func (w *WorktreeWorkspace) hasIdentityFields() bool {
@@ -201,7 +186,6 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		AwebURL:         raw.AwebURL,
 		CloudURL:        raw.CloudURL,
 		AwidURL:         raw.AwidURL,
-		ServerURL:       raw.ServerURL,
 		TeamAddress:     raw.TeamAddress,
 		APIKey:          raw.APIKey,
 		IdentityID:      raw.IdentityID,

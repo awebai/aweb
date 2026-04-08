@@ -139,7 +139,7 @@ func TestAwWorkspaceInitWritesWorkspaceState(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     workspaceID,
 		IdentityHandle: "alice",
@@ -404,7 +404,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := awconfig.WorktreeWorkspace{
-		ServerURL:       server.URL,
+		AwebURL:         server.URL,
 		APIKey:          "aw_sk_test",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
@@ -528,7 +528,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     selfID,
 		IdentityHandle: "coordinator",
@@ -634,7 +634,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     selfID,
 		IdentityHandle: "alice",
@@ -746,7 +746,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := awconfig.WorktreeWorkspace{
-		ServerURL:       server.URL,
+		AwebURL:         server.URL,
 		APIKey:          "aw_sk_test",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
@@ -869,7 +869,7 @@ func TestAwWorkspaceStatusKeepsGonePermanentIdentity(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := awconfig.WorktreeWorkspace{
-		ServerURL:       server.URL,
+		AwebURL:         server.URL,
 		APIKey:          "aw_sk_test",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
@@ -994,7 +994,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 	buildAwBinary(t, ctx, bin)
 
 	state := awconfig.WorktreeWorkspace{
-		ServerURL:       server.URL,
+		AwebURL:         server.URL,
 		APIKey:          "aw_sk_test",
 		IdentityID:      selfID,
 		IdentityHandle:  "alice",
@@ -1065,7 +1065,7 @@ func TestAwWorkspaceAddWorktreeRequiresRoleInNonTTYMode(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_source",
 		IdentityID:     sourceID,
 		IdentityHandle: "alice",
@@ -1127,7 +1127,7 @@ func TestAwWorkspaceAddWorktreeRejectsInvalidExplicitAlias(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_source",
 		IdentityID:     sourceID,
 		IdentityHandle: "alice",
@@ -1160,7 +1160,7 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      "https://example.com",
+		AwebURL:        "https://example.com",
 		APIKey:         "aw_sk_source",
 		IdentityID:     "source-1",
 		IdentityHandle: "alice",
@@ -1223,7 +1223,7 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_source",
 		IdentityID:     sourceID,
 		IdentityHandle: "alice",
@@ -1234,7 +1234,7 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		ServerURL:       server.URL,
+		AwebURL:         server.URL,
 		APIKey:          "aw_sk_source",
 		IdentityID:      sourceID,
 		IdentityHandle:  "alice",
@@ -1276,4 +1276,3 @@ func TestAwWorkspaceAddWorktreeCleansUpOnInitFailure(t *testing.T) {
 		t.Fatalf("expected branch cleanup, got %q", string(branchOut))
 	}
 }
-

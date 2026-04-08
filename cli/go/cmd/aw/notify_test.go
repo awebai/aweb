@@ -161,7 +161,7 @@ func TestAwNotifySilentOnAPIError(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "notify-api-error",
@@ -217,7 +217,7 @@ func TestAwNotifyOutputsHookJSONWhenPendingChatsExist(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "notify-pending",

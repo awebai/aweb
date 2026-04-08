@@ -48,7 +48,6 @@ func persistWorkspaceBinding(input workspaceBindingInput) error {
 
 	if v := strings.TrimSpace(input.AwebURL); v != "" {
 		state.AwebURL = v
-		state.ServerURL = v
 	}
 	if v := strings.TrimSpace(input.CloudURL); v != "" {
 		state.CloudURL = v
@@ -57,10 +56,7 @@ func persistWorkspaceBinding(input workspaceBindingInput) error {
 		state.AwidURL = v
 	}
 	if v := strings.TrimSpace(input.ServerURL); v != "" {
-		state.ServerURL = v
-		if strings.TrimSpace(state.AwebURL) == "" {
-			state.AwebURL = v
-		}
+		state.AwebURL = v
 	}
 	if v := strings.TrimSpace(input.APIKey); v != "" {
 		state.APIKey = v

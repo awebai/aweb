@@ -64,7 +64,7 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
-		ServerURL:   "https://app.aweb.ai",
+		AwebURL:     "https://app.aweb.ai",
 		APIKey:      "aw_sk_test",
 		WorkspaceID: "ws-1",
 	}); err != nil {
@@ -99,32 +99,6 @@ workspace_id: ws-1
 	}
 	if !strings.Contains(err.Error(), legacyWorkspaceFormatError) {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestSaveWorktreeWorkspaceToUpcastsServerURLFieldToAwebURL(t *testing.T) {
-	t.Parallel()
-
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "workspace.yaml")
-	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
-		ServerURL:   "https://coord.example",
-		TeamAddress: "acme.com/default",
-		WorkspaceID: "ws-1",
-	}); err != nil {
-		t.Fatalf("save workspace: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read workspace: %v", err)
-	}
-	text := string(data)
-	if !strings.Contains(text, "aweb_url: https://coord.example") {
-		t.Fatalf("workspace yaml missing aweb_url:\n%s", text)
-	}
-	if strings.Contains(text, "server_url:") {
-		t.Fatalf("workspace yaml still wrote legacy server_url:\n%s", text)
 	}
 }
 

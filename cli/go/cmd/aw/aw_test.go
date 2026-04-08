@@ -433,7 +433,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "eve",
@@ -607,8 +607,8 @@ func TestAwInitWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if workspace.ServerURL != server.URL {
-		t.Fatalf("workspace server_url=%q", workspace.ServerURL)
+	if workspace.AwebURL != server.URL {
+		t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
 	}
 	if workspace.APIKey != "aw_sk_alice" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)
@@ -673,7 +673,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "eve",
@@ -1367,8 +1367,8 @@ func TestAwInitProjectKeyWithExplicitRoleAttachesLocalDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if workspaceState.ServerURL != server.URL {
-		t.Fatalf("server_url=%q", workspaceState.ServerURL)
+	if workspaceState.AwebURL != server.URL {
+		t.Fatalf("aweb_url=%q", workspaceState.AwebURL)
 	}
 	if workspaceState.APIKey != "aw_sk_new" {
 		t.Fatalf("api_key=%q", workspaceState.APIKey)
@@ -2002,7 +2002,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	address := "myco/agent"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "agent",
@@ -2105,7 +2105,7 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	address := "acme/bot"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "bot",
@@ -2335,7 +2335,7 @@ func TestMCPConfig(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		ServerURL:      "https://app.aweb.ai",
+		AwebURL:        "https://app.aweb.ai",
 		APIKey:         "aw_sk_testkey123",
 		IdentityID:     "agent-1",
 		IdentityHandle: "alice",

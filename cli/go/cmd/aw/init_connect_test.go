@@ -51,12 +51,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address":  "acme.com/backend",
-				"alias":         "alice",
-				"agent_id":      "agent-uuid-1",
-				"workspace_id":  "ws-uuid-1",
-				"repo_id":       "",
-				"team_did_key":  teamDIDKey,
+				"team_address": "acme.com/backend",
+				"alias":        "alice",
+				"agent_id":     "agent-uuid-1",
+				"workspace_id": "ws-uuid-1",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -143,8 +143,8 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if ws.Alias != "alice" {
 		t.Fatalf("workspace alias=%q", ws.Alias)
 	}
-	if ws.ServerURL != server.URL {
-		t.Fatalf("workspace server_url=%q want %q", ws.ServerURL, server.URL)
+	if ws.AwebURL != server.URL {
+		t.Fatalf("workspace aweb_url=%q want %q", ws.AwebURL, server.URL)
 	}
 
 	// Verify connect payload had expected fields

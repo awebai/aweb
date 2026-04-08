@@ -65,7 +65,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		ServerURL:      server.URL,
+		AwebURL:        server.URL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "alice",

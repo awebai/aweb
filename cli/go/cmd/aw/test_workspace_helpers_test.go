@@ -58,7 +58,7 @@ func writeIdentityForTest(t *testing.T, workingDir string, state awconfig.Worktr
 
 func defaultWorkspaceBinding(serverURL string) awconfig.WorktreeWorkspace {
 	return awconfig.WorktreeWorkspace{
-		ServerURL:      serverURL,
+		AwebURL:        serverURL,
 		APIKey:         "aw_sk_test",
 		IdentityID:     "agent-1",
 		IdentityHandle: "alice",
@@ -74,7 +74,7 @@ func writeDefaultWorkspaceBindingForTest(t *testing.T, workingDir, serverURL str
 }
 
 type testSelectionFixture struct {
-	ServerURL      string
+	AwebURL        string
 	APIKey         string
 	IdentityID     string
 	IdentityHandle string
@@ -93,7 +93,7 @@ type testSelectionFixture struct {
 func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testSelectionFixture) {
 	t.Helper()
 	workspace := awconfig.WorktreeWorkspace{
-		ServerURL:      fixture.ServerURL,
+		AwebURL:        fixture.AwebURL,
 		APIKey:         fixture.APIKey,
 		IdentityID:     fixture.IdentityID,
 		IdentityHandle: fixture.IdentityHandle,

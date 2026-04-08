@@ -667,9 +667,6 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 		}
 
 		rawURL := strings.TrimSpace(workspace.AwebURL)
-		if rawURL == "" {
-			rawURL = strings.TrimSpace(workspace.ServerURL)
-		}
 		if rawURL != "" {
 			return resolveOnboardingServiceURLs(rawURL)
 		}

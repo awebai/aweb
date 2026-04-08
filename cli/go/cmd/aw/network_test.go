@@ -21,7 +21,7 @@ import (
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
 	t.Helper()
 	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		ServerURL:      serverURL,
+		AwebURL:        serverURL,
 		APIKey:         "aw_sk_test",
 		IdentityHandle: handle,
 		NamespaceSlug:  namespace,

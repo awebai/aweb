@@ -123,7 +123,6 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 		AwebURL:         serverURL,
 		CloudURL:        cloudURL,
 		AwidURL:         awidURL,
-		ServerURL:       serverURL,
 		TeamAddress:     resp.TeamAddress,
 		Alias:           resp.Alias,
 		WorkspaceID:     resp.WorkspaceID,

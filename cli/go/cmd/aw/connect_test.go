@@ -456,8 +456,8 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
-	if workspace.ServerURL != awebServer.URL {
-		t.Fatalf("server_url=%q", workspace.ServerURL)
+	if workspace.AwebURL != awebServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
 }
 

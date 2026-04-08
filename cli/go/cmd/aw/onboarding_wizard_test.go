@@ -622,8 +622,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
-	if workspace.ServerURL != awebServer.URL {
-		t.Fatalf("server_url=%q", workspace.ServerURL)
+	if workspace.AwebURL != awebServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
 	if workspace.AwidURL != registryServer.URL {
 		t.Fatalf("awid_url=%q", workspace.AwidURL)
@@ -1019,8 +1019,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if workspace.TeamAddress != "acme.com/default" {
 		t.Fatalf("team_address=%q", workspace.TeamAddress)
 	}
-	if workspace.ServerURL != connectServer.URL {
-		t.Fatalf("server_url=%q", workspace.ServerURL)
+	if workspace.AwebURL != connectServer.URL {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
 	if workspace.HumanName != "Operator Jane" {
 		t.Fatalf("human_name=%q", workspace.HumanName)
