@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from aweb.routes.dashboard import router as dashboard_router
 
 _JWT_SECRET = "test-dashboard-secret-at-least-32bytes!"
+_DEFAULT_REGISTRY = object()
 
 
 def _make_jwt(team_addresses: list[str], user_id: str = "user-123") -> str:
@@ -48,7 +49,7 @@ class _FailingRegistryClient:
         raise RuntimeError(f"registry unavailable for {domain}/{name}")
 
 
-def _build_app(aweb_db, *, registry_client=None):
+def _build_app(aweb_db, *, registry_client=_DEFAULT_REGISTRY):
     app = FastAPI()
     app.include_router(dashboard_router)
 
@@ -58,6 +59,8 @@ def _build_app(aweb_db, *, registry_client=None):
 
     app.state.db = _DbShim()
     app.state.dashboard_jwt_secret = _JWT_SECRET
+    if registry_client is _DEFAULT_REGISTRY:
+        registry_client = _FakeRegistryClient(visibility="private")
     if registry_client is not None:
         app.state.awid_registry_client = registry_client
     return app
@@ -315,6 +318,32 @@ async def test_anonymous_request_fails_closed_when_registry_lookup_errors(aweb_c
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/teams/acme.com/backend/agents")
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_anonymous_request_returns_503_during_partial_init_without_registry_client(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/acme.com/backend/agents")
+
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_authenticated_request_returns_503_during_partial_init_without_registry_client(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/agents",
+            headers={"X-Dashboard-Token": token},
+        )
 
     assert resp.status_code == 503
 

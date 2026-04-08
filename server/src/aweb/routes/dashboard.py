@@ -37,7 +37,9 @@ async def _require_dashboard_auth(request: Request, team_address: str) -> dict[s
     token = request.headers.get("X-Dashboard-Token")
     try:
         visibility = await _get_team_visibility(request, team_address)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == 503 and getattr(request.app.state, "awid_registry_client", None) is None:
+            raise
         if not token:
             raise
         visibility = "private"
@@ -67,7 +69,7 @@ async def _get_team_visibility(request: Request, team_address: str) -> str:
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        return "private"
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
     try:
         team = await registry_client.get_team(parts[0], parts[1])
