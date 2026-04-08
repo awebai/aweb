@@ -101,6 +101,37 @@ async def _ensure_agent(
     member_address fields. Empty strings are stored as NULL (ephemeral
     certificates do not carry these fields).
     """
+    existing_agent = await db.fetch_one(
+        """
+        SELECT agent_id, alias FROM {{tables.agents}}
+        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        """,
+        team_address,
+        did_key,
+    )
+    if existing_agent:
+        existing_alias = existing_agent["alias"]
+        if existing_alias != alias:
+            raise AliasConflictError(
+                f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_address}"
+            )
+        await db.execute(
+            """
+            UPDATE {{tables.agents}}
+            SET did_aw = $1, address = $2, lifetime = $3, human_name = $4,
+                agent_type = $5, role = $6, status = 'active'
+            WHERE agent_id = $7
+            """,
+            did_aw or None,
+            address or None,
+            lifetime,
+            human_name,
+            agent_type,
+            role,
+            existing_agent["agent_id"],
+        )
+        return str(existing_agent["agent_id"])
+
     existing_alias = await db.fetch_one(
         """
         SELECT agent_id, did_key FROM {{tables.agents}}
@@ -138,6 +169,36 @@ async def _ensure_agent(
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
             raise
+        existing_agent = await db.fetch_one(
+            """
+            SELECT agent_id, alias FROM {{tables.agents}}
+            WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+            """,
+            team_address,
+            did_key,
+        )
+        if existing_agent:
+            existing_alias = existing_agent["alias"]
+            if existing_alias != alias:
+                raise AliasConflictError(
+                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_address}"
+                ) from exc
+            await db.execute(
+                """
+                UPDATE {{tables.agents}}
+                SET did_aw = $1, address = $2, lifetime = $3, human_name = $4,
+                    agent_type = $5, role = $6, status = 'active'
+                WHERE agent_id = $7
+                """,
+                did_aw or None,
+                address or None,
+                lifetime,
+                human_name,
+                agent_type,
+                role,
+                existing_agent["agent_id"],
+            )
+            return str(existing_agent["agent_id"])
         existing_alias = await db.fetch_one(
             """
             SELECT agent_id, did_key FROM {{tables.agents}}

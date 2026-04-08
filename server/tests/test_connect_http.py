@@ -180,6 +180,80 @@ async def test_connect_http_idempotent(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
+    """An existing active agent may reconnect with the same alias and update mutable fields."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    existing_cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key,
+        team_address="acme.com/backend",
+        alias="alice",
+        lifetime="persistent",
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "acme.com/backend",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    existing_agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_address, did_key, did_aw, address, alias, lifetime, human_name, agent_type, role, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'Old Name', 'old-type', 'old-role', 'retired')
+        """,
+        existing_agent_id,
+        "acme.com/backend",
+        agent_did_key,
+        "did:aw:old",
+        "acme.com/alice",
+        "alice",
+    )
+
+    body = {
+        "hostname": "Mac.local",
+        "workspace_path": "/new-path",
+        "role": "developer",
+        "human_name": "Alice Updated",
+        "agent_type": "codex",
+    }
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(existing_cert)
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+
+    assert resp.status_code == 200
+    assert resp.json()["agent_id"] == str(existing_agent_id)
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT did_aw, address, human_name, agent_type, role, status
+        FROM {{tables.agents}}
+        WHERE agent_id = $1
+        """,
+        existing_agent_id,
+    )
+    assert row["did_aw"] is None
+    assert row["address"] is None
+    assert row["human_name"] == "Alice Updated"
+    assert row["agent_type"] == "codex"
+    assert row["role"] == "developer"
+    assert row["status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_connect_http_missing_cert_returns_401(aweb_cloud_db):
     """Request without certificate header returns 401."""
     team_sk, _, team_did_key = _make_keypair()
@@ -306,3 +380,78 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
     )
     assert str(row["agent_id"]) == str(first_agent_id)
     assert row["workspace_path"] == "/existing"
+
+
+@pytest.mark.asyncio
+async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
+    """A reconnect may not silently change the alias already bound to a did:key."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    new_cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key,
+        team_address="acme.com/backend",
+        alias="bob",
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "acme.com/backend",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    existing_agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_address, did_key, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+        """,
+        existing_agent_id,
+        "acme.com/backend",
+        agent_did_key,
+        "alice",
+    )
+    existing_workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_address, agent_id, alias, workspace_type, workspace_path)
+        VALUES ($1, $2, $3, $4, 'agent', $5)
+        """,
+        existing_workspace_id,
+        "acme.com/backend",
+        existing_agent_id,
+        "alice",
+        "/existing",
+    )
+
+    body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(new_cert)
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+
+    assert resp.status_code == 409
+    assert "did_key is already bound to alias" in resp.text
+
+    workspace_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT alias, workspace_path FROM {{tables.workspaces}}
+        WHERE team_address = $1 AND deleted_at IS NULL
+        ORDER BY alias
+        """,
+        "acme.com/backend",
+    )
+    assert len(workspace_rows) == 1
+    assert workspace_rows[0]["alias"] == "alice"
+    assert workspace_rows[0]["workspace_path"] == "/existing"
