@@ -15,7 +15,7 @@ import (
 
 // Onboarding HTTP helpers targeting the aweb-cloud onboarding endpoints.
 //
-// Wire contract: aweb-cloud/docs/cloud-team-architecture-sot.md, sections
+// Wire contract: aweb-cloud/docs/aweb-cloud-sot.md, sections
 // "Cloud DIDKey verifier" (lines 707-768) and "POST /api/v1/onboarding/*"
 // (lines 770-911).
 //

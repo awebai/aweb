@@ -1,7 +1,26 @@
-# aweb Server & CLI — Team Architecture Source of Truth
+# aweb — Source of Truth
 
-This document defines the exact shape of the aweb server and aw CLI under
-the awid teams architecture. It is the implementation spec.
+This is the canonical contract for **aweb**: the OSS coordination
+server (Python FastAPI) and the `aw` CLI (Go). It defines the exact
+shape of every endpoint, schema, authentication mechanism, dependency,
+and configuration knob aweb exposes or relies on. Implementers build
+against this document; operators run aweb against the contract it
+defines here.
+
+aweb-cloud (the proprietary hosted wrapper) is described in
+[`aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md).
+awid (the public identity registry that aweb depends on) is described
+in [`awid-sot.md`](awid-sot.md).
+
+For supporting reference material that does not redefine the contract:
+- [`cli-command-reference.md`](cli-command-reference.md) — full `aw`
+  CLI surface, generated from the live Cobra help tree
+- [`mcp-tools-reference.md`](mcp-tools-reference.md) — MCP tool
+  inventory and parameters exposed by aweb's MCP server
+- [`self-hosting-guide.md`](self-hosting-guide.md) — operator runbook
+  for the OSS stack
+- [`identity-key-verification.md`](identity-key-verification.md) —
+  normative rules for verifying `GET /v1/did/{did_aw}/key` responses
 
 ---
 
@@ -16,7 +35,7 @@ the awid teams architecture. It is the implementation spec.
    chat, tasks, roles, locks, instructions, workspace state) with a
    DIDKey signature and a team certificate. The `/mcp` endpoint at
    aweb-cloud uses a separate auth model documented in
-   `aweb-cloud/docs/cloud-team-architecture-sot.md` § Hosted MCP and
+   `aweb-cloud/docs/aweb-cloud-sot.md` § Hosted MCP and
    OAuth Connector Architecture.
 4. **team_address is the coordination scope.** Every coordination table
    is scoped to a `team_address` (e.g., `acme.com/backend`). All
@@ -165,7 +184,7 @@ remains the canonical credential.
    signature over canonical JSON of `{team_address, timestamp,
    body_sha256}`. Reject if invalid.
 3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
-   per the [certificate verification protocol](awid-team-architecture-sot.md#verification-by-a-service)
+   per the [certificate verification protocol](awid-sot.md#verification-by-a-service)
    defined in the awid SoT (verify signature against the cached team
    public key, verify certificate `member_did_key` matches the request
    did:key, check `certificate_id` against the cached revocation list).
@@ -661,7 +680,7 @@ awid is unreachable") would create a privilege-escalation path. Both
 sides of this asymmetry are load-bearing.
 
 The same fail-closed property is documented in the sibling `aweb-cloud`
-repo, in `docs/cloud-team-architecture-sot.md`. Both documents must stay
+repo, in `docs/aweb-cloud-sot.md`. Both documents must stay
 in sync; if either side changes the security property, the other must be
 updated in the same merge.
 
@@ -999,7 +1018,7 @@ For the full spec — including the public-team anonymous-bypass behavior
 and the fail-closed semantics on visibility lookup error — see
 **Authentication > Dashboard auth** earlier in this document. The
 companion spec on the cloud side is in the sibling `aweb-cloud` repo,
-in `docs/cloud-team-architecture-sot.md`.
+in `docs/aweb-cloud-sot.md`.
 
 ---
 

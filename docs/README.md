@@ -7,11 +7,11 @@ the public `aweb` repo.
 
 These two documents define the system:
 
-- [team-architecture-sot.md](team-architecture-sot.md): the implementation
+- [aweb-sot.md](aweb-sot.md): the implementation
   spec for the `aweb` server and `aw` CLI under the awid teams architecture,
   including the conceptual taxonomy (agent, workspace, identity, alias,
   address, lifecycle)
-- [awid-team-architecture-sot.md](awid-team-architecture-sot.md): the awid
+- [awid-sot.md](awid-sot.md): the awid
   service spec for namespaces, addresses, the DID registry, teams, and
   membership certificates
 

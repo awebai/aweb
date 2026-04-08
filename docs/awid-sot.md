@@ -1,6 +1,14 @@
-# awid — Team Architecture Source of Truth
+# awid — Source of Truth
 
-This document defines the awid.ai service. It is the implementation spec.
+This is the canonical contract for **awid**: the public identity registry
+that holds DIDs, namespaces, addresses, teams, and certificate issuance
+records. It is the implementation spec for the awid.ai service.
+
+aweb (the coordination server that depends on awid) is described in
+[`aweb-sot.md`](aweb-sot.md). aweb-cloud (the hosted SaaS wrapper that
+manages controller keys and custodial signing on top of awid) is
+described in
+[`aweb-cloud/docs/aweb-cloud-sot.md`](../../aweb-cloud/docs/aweb-cloud-sot.md).
 
 ---
 

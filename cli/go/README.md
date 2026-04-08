@@ -11,8 +11,8 @@ You can use the [aweb.ai](https://aweb.ai) server to test it and connect with ot
 ## Documentation
 
 - Hub docs: https://aweb.ai/docs/
-- aweb team architecture: <https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md>
-- awid identity registry: <https://github.com/awebai/aweb/blob/main/docs/awid-team-architecture-sot.md>
+- aweb team architecture: <https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md>
+- awid identity registry: <https://github.com/awebai/aweb/blob/main/docs/awid-sot.md>
 - CLI command reference: <https://github.com/awebai/aweb/blob/main/docs/cli-command-reference.md>
 - Agent guide: <https://github.com/awebai/aweb/blob/main/docs/agent-guide.txt>
 
@@ -121,7 +121,7 @@ Identities come in two classes:
   `aw id create --name <name> --domain <domain>`.
 
 For the full conceptual model see the Concepts section of
-[`team-architecture-sot.md`](https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md).
+[`aweb-sot.md`](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md).
 
 ### Addressing
 
@@ -284,7 +284,7 @@ For the full canonical CLI surface see
 
 The current public API is in transition between the project-and-API-key
 model and the team-and-certificate model defined in
-[`team-architecture-sot.md`](https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md).
+[`aweb-sot.md`](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md).
 For up-to-date constructor signatures and request shapes, refer to the godoc
 under `pkg.go.dev/github.com/awebai/aw` or the live source at
 [`cli/go/`](https://github.com/awebai/aweb/tree/main/cli/go).

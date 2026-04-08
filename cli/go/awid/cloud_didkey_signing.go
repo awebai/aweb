@@ -26,7 +26,7 @@ import (
 // string at MVP"). body is the exact raw HTTP request body bytes that will
 // be sent over the wire; empty body hashes the empty string.
 //
-// Wire contract reference: aweb-cloud/docs/cloud-team-architecture-sot.md
+// Wire contract reference: aweb-cloud/docs/aweb-cloud-sot.md
 // lines 707-768 ("Cloud DIDKey verifier (shared across cli-signup,
 // claim-human, bootstrap-redeem)").
 func cloudDIDKeySignPayload(method, path, timestamp string, body []byte) []byte {
@@ -55,7 +55,7 @@ func cloudDIDKeySignPayload(method, path, timestamp string, body []byte) []byte 
 // bytes are byte-identical across the Go CLI and the Python cloud verifier
 // even if a field value contains <, >, or &.
 //
-// See cloud-team-architecture-sot.md GOTCHA on body_sha256 caching (lines
+// See aweb-cloud-sot.md GOTCHA on body_sha256 caching (lines
 // 760-764) for why cross-language byte stability matters.
 func encodeJSONString(b *strings.Builder, s string) {
 	var buf bytes.Buffer

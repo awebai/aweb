@@ -86,5 +86,5 @@ announcement is valid.
 ## For more detail
 
 The canonical identity model is the Concepts section of
-[team-architecture-sot.md](team-architecture-sot.md). It covers the full
+[aweb-sot.md](aweb-sot.md). It covers the full
 taxonomy, custody modes, lifecycle, and edge cases.
