@@ -867,21 +867,22 @@ aw mcp-config
 
 ```
 .aw/
-  identity.yaml       # Persistent identity (did:aw, did:key, address)
+  identity.yaml       # Persistent identity (did:aw, did:key, address, registry_url)
   signing.key          # Ed25519 private key
-  workspace.yaml       # Server URL, team address, alias, role
+  workspace.yaml       # aweb server URL + workspace/team binding
   team-cert.pem        # Current team certificate (auto-renewed)
 ```
 
 ### workspace.yaml (new format)
 
 ```yaml
-server_url: https://aweb.ai
+aweb_url: https://aweb.ai
 team_address: acme.com/backend
 alias: alice
-role: developer
+role_name: developer
 human_name: ""
 agent_type: agent
+workspace_id: "550e8400-e29b-41d4-a716-446655440000"
 hostname: Mac.local
 workspace_path: /Users/alice/project
 canonical_origin: github.com/acme/backend
@@ -889,10 +890,12 @@ repo_id: ""
 updated_at: "2026-04-06T..."
 ```
 
-The identity fields live in `identity.yaml`. The credential is in
-`team-cert.pem`. The workspace binding is minimal — it carries only the
-server URL, the team address, the alias, the role, and the repo
-metadata.
+The identity state lives in `identity.yaml`, including `registry_url`
+when the identity needs one. The credential is in `team-cert.pem`.
+`workspace.yaml` is an aweb coordination binding only: it carries the
+aweb server URL, the team/workspace identity, and local repo/workspace
+metadata. It does not carry awid-specific URL fields, cloud-specific
+URL fields, or identity key material.
 
 ---
 
