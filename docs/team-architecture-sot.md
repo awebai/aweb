@@ -62,12 +62,46 @@ Steps 1-6 are local crypto, no network. Step 7 is a cache lookup
 
 aweb caches two things from awid per team:
 
-**Team public key** (for certificate signature verification):
+**Team metadata** (for certificate signature verification AND public-team
+visibility bypass on dashboard reads):
 ```
 GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}
-→ { "team_did_key": "did:key:z6Mk...", ... }
+→ {
+    "team_did_key": "did:key:z6Mk...",
+    "visibility": "private" | "public",
+    ...
+  }
 ```
-Cache TTL: 24 hours. Invalidated on team key rotation.
+Cache TTL: 10 minutes. Stale-while-revalidate window: an additional
+10 minutes (so cached values can be served for up to 20 minutes total;
+after that, a hard miss triggers a synchronous refresh, and a failed
+synchronous refresh triggers the fail-closed behavior described in the
+"Dashboard auth" section below).
+
+**Cache invalidation on rotation — known gap.** Team key rotation
+(`POST /v1/namespaces/{domain}/teams/{name}/rotate-key` at awid) does
+NOT actively invalidate the aweb-side team metadata cache. After a
+rotation, aweb continues to verify incoming certificates against the
+**old** `team_did_key` for up to 20 minutes (one TTL cycle plus the
+stale window). During that window, certificates issued under the new
+team controller key will fail verification at aweb. This is fail-closed
+(no wrong access is granted) but it is a real availability window after
+every rotation. Operators planning a rotation should expect a 20-minute
+delay before new certificates start verifying. Active invalidation on
+rotation is tracked as a follow-up.
+
+**Operational note:** the team metadata cache TTL is intentionally short
+because the `visibility` field gates anonymous dashboard reads — a long
+TTL would mean a team flipped from public to private would still serve
+anonymous reads for the duration of the TTL. The 10-minute TTL bounds
+that window. As a consequence, aweb's call rate against awid for team
+metadata is approximately 144x what it would be at the legacy 24-hour
+TTL (one resolution call per 10 minutes per active team **per aweb
+cluster**, where a cluster is the set of aweb instances sharing the
+same Redis cache backend, vs one per 24 hours at the legacy rate).
+Operators sizing the awid API budget should account for this — note
+that the cache is shared across all aweb instances behind the same
+Redis, so the call rate scales with cluster count, not instance count.
 
 **Revocation list** (for checking removed members):
 ```
@@ -511,7 +545,44 @@ team_addresses the human has access to (derived from awid team
 membership). The JWT is passed to aweb in an `X-Dashboard-Token`
 header. aweb validates the JWT signature (shared secret with
 aweb-cloud) and checks the requested team_address is in the token's
-team list. No awid call at request time.
+team list.
+
+**Public-team anonymous bypass.** When the requested team_address
+resolves (via the cached team metadata above) to `visibility = "public"`,
+aweb allows the dashboard read **without** a valid `X-Dashboard-Token`.
+This makes public team activity (agents, messages, tasks, status)
+available for anonymous read. Visibility is checked against the cached
+team metadata before any data fetch — never serve data and then check.
+
+**Fail-closed semantics on visibility lookup error (security property,
+do not remove without explicit cross-repo SOT update).** If the team
+metadata lookup fails or the cache is hard-stale (past the
+stale-while-revalidate window) and a synchronous refresh fails, the
+behavior is:
+
+1. **Anonymous request (no `X-Dashboard-Token`):** return HTTP 503 "AWID
+   registry unavailable". **NEVER** serve dashboard data on indeterminate
+   visibility — doing so would be a privilege-escalation path that
+   discloses private team data to anonymous callers when awid is
+   unreachable.
+2. **Authenticated request (valid `X-Dashboard-Token`):** treat
+   visibility as `private` (the safe assumption) and proceed with the
+   normal JWT validation path. The JWT alone is sufficient authority
+   for the read; the visibility lookup is only needed for the anonymous
+   bypass, not for the authenticated path.
+
+This asymmetry — fail-closed for anonymous, fail-functional for
+authenticated — is the intended behavior. A future maintainer who
+removes the visibility check on the authenticated path would unnecessarily
+fail dashboard reads during awid outages. A future maintainer who relaxes
+the anonymous fail-closed to a fail-open (e.g., "default to public when
+awid is unreachable") would create a privilege-escalation path. Both
+sides of this asymmetry are load-bearing.
+
+The same fail-closed property is documented in the sibling `aweb-cloud`
+repo, in `docs/cloud-team-architecture-sot.md` (alice's SOT pass 3.1).
+Both documents must stay in sync; if either side changes the security
+property, the other must be updated in the same merge.
 
 Environment variable: `AWEB_DASHBOARD_JWT_SECRET` (shared with
 aweb-cloud).
@@ -756,16 +827,21 @@ GET /v1/namespaces/{domain}/teams/{name}
     "team_id": "uuid",
     "domain": "acme.com",
     "name": "backend",
+    "display_name": "...",
     "team_did_key": "did:key:z6Mk...",
-    "visibility": "private",
+    "visibility": "private" | "public",
     "created_at": "..."
   }
 ```
 
-aweb caches awid team metadata from this response for certificate
-verification and dashboard visibility checks. Effective TTL is about
-10 minutes with stale-while-revalidate behavior, so visibility flips
-propagate eventually rather than instantly.
+aweb caches the full team metadata (used for both certificate verification
+via `team_did_key` AND public-team anonymous-read bypass via `visibility`).
+TTL: 10 minutes, with a 10-minute stale-while-revalidate window (20 minutes
+total). See "Caching from awid" above for: (1) the operational implications
+of the short TTL on awid call rate (~144x the legacy 24-hour rate,
+intentional because `visibility` gates anonymous reads), and (2) the
+known cache-invalidation gap on team key rotation (rotation propagates
+within at most 20 minutes; not actively invalidated).
 
 ### Address resolution (for message routing to external addresses)
 
@@ -868,14 +944,17 @@ GET /v1/agents/{alias}?team_address=acme.com/backend
 
 ### Dashboard auth
 
-The dashboard authenticates to aweb using a session-scoped mechanism
-(JWT or similar) that maps the human user to the teams they have
-access to. The human's team access is determined by awid (the human
-is a team member or a namespace controller). aweb-cloud handles this
-mapping — aweb just checks that the dashboard token is valid for the
-requested team_address.
+The dashboard authenticates to aweb using a short-lived
+`X-Dashboard-Token` JWT issued by aweb-cloud, signed with a shared
+secret (`AWEB_DASHBOARD_JWT_SECRET`). The JWT carries the list of
+team_addresses the human has access to (derived from awid team
+membership).
 
-Exact mechanism TBD by Alice in the aweb-cloud SOT.
+For the full spec — including the public-team anonymous-bypass behavior
+and the fail-closed semantics on visibility lookup error — see
+**Authentication > Dashboard auth** earlier in this document. The
+companion spec on the cloud side is in the sibling `aweb-cloud` repo,
+in `docs/cloud-team-architecture-sot.md` (alice's SOT pass 3.1).
 
 ---
 
