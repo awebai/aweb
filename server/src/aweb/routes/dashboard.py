@@ -139,7 +139,7 @@ async def list_team_agents(
         LEFT JOIN LATERAL (
             SELECT last_seen_at, workspace_path
             FROM {{tables.workspaces}}
-            WHERE agent_id = a.agent_id AND team_address = a.team_address
+            WHERE agent_id = a.agent_id AND team_address = a.team_address AND deleted_at IS NULL
             ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
             LIMIT 1
         ) w ON TRUE

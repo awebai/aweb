@@ -94,6 +94,20 @@ async def test_list_agents(aweb_cloud_db):
         uuid.UUID(alice_id),
         datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
     )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at, deleted_at
+        )
+        VALUES (
+            $1, 'acme.com/backend', $2, 'bob', '/Users/bob/stale', $3, $4
+        )
+        """,
+        uuid.uuid4(),
+        uuid.UUID(bob_id),
+        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
+    )
     token = _make_jwt(["acme.com/backend"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
