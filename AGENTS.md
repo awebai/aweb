@@ -64,8 +64,14 @@ You are part of a team working toward a shared goal. Optimize for the project ou
 - Keep changes small and reviewable so others can build on them
 <!-- AWEB:END -->
 
-## Branches
+## Branches and code reviews
 
 NEVER make work in progress or temp branches. You have been assigned a worktree and a branch, ALWAYS stay there and work there. If you are in main, stay in main; main is the combined shared branch.
 
+Whenever you finish a task make sure that:
 
+- You stand back and review the code;
+- You merge your branch to main;
+- You merge main back to your branch.
+
+This is VERY important. It is impossible to keep many agents coordinated if they do not keep their branches in sync with main.
