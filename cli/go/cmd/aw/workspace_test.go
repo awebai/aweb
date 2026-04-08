@@ -1180,3 +1180,32 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestResolveWorkspaceTeamRegistryURLPrefersControllerRegistryOverIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workingDir := t.TempDir()
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:         "did:key:z6MkMember",
+		RegistryURL: "https://member-registry.example",
+		CreatedAt:   "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+	if err := awconfig.SaveControllerMeta("source", &awconfig.ControllerMeta{
+		Domain:      "source",
+		RegistryURL: "https://team-registry.example",
+		CreatedAt:   "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save controller meta: %v", err)
+	}
+
+	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "https://app.aweb.ai", "source")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceTeamRegistryURL: %v", err)
+	}
+	if registryURL != "https://team-registry.example" {
+		t.Fatalf("registry_url=%q", registryURL)
+	}
+}

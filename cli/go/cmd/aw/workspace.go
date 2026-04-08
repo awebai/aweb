@@ -582,14 +582,6 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 }
 
 func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (string, error) {
-	if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
-		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
-			return registryURL, nil
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("load worktree identity: %w", err)
-	}
-
 	meta, err := awconfig.LoadControllerMeta(teamDomain)
 	if err == nil && meta != nil {
 		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
@@ -598,6 +590,13 @@ func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (st
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)
+	}
+	if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
+		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
+			return registryURL, nil
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("load worktree identity: %w", err)
 	}
 	if strings.TrimSpace(awebURL) != "" {
 		return "", usageError("current worktree is missing identity registry_url; run `aw init` again or restore .aw/identity.yaml")
