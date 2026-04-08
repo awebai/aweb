@@ -100,99 +100,32 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 }
 
-func TestExecuteReconnectPathMigratesLegacyServerURLThroughDiscovery(t *testing.T) {
-	teamPub, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberPub, memberKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "jack.aweb.ai/default",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "laptop",
-		Lifetime:     awid.LifetimePersistent,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var cloudURL string
-	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "jack.aweb.ai/default",
-				"alias":        "laptop",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "repo-1",
-				"team_did_key": awid.ComputeDIDKey(teamPub),
-			})
-		default:
-			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	cloudServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"cloud_url": cloudURL,
-				"aweb_url":  awebServer.URL,
-				"awid_url":  "https://api.awid.ai",
-				"version":   "1.7.0",
-			})
-		default:
-			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	cloudURL = cloudServer.URL
-
+func TestExecuteReconnectPathFailsOnLegacyServerURLWorkspace(t *testing.T) {
 	tmp := t.TempDir()
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       awid.ComputeDIDKey(memberPub),
-		StableID:  awid.ComputeStableID(memberPub),
-		Address:   "jack.aweb.ai/laptop",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-08T00:00:00Z",
-	}); err != nil {
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("did: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := awid.SaveTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"), cert); err != nil {
+	if err := os.WriteFile(filepath.Join(awDir, "team-cert.pem"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".aw", "workspace.yaml"), []byte("server_url: "+cloudServer.URL+"\nteam_address: jack.aweb.ai/default\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\nteam_address: jack.aweb.ai/default\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = executeReconnectPath(guidedOnboardingRequest{
+	_, err := executeReconnectPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader(""),
 		PromptOut:  &bytes.Buffer{},
 	})
-	if err != nil {
-		t.Fatalf("executeReconnectPath: %v", err)
+	if err == nil {
+		t.Fatal("expected legacy workspace to fail")
 	}
-
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
-	}
-	if workspace.CloudURL != cloudServer.URL {
-		t.Fatalf("cloud_url=%q", workspace.CloudURL)
-	}
-	if workspace.AwebURL != awebServer.URL {
-		t.Fatalf("aweb_url=%q", workspace.AwebURL)
-	}
-	if workspace.ServerURL != awebServer.URL {
-		t.Fatalf("server_url=%q", workspace.ServerURL)
+	if !strings.Contains(err.Error(), "workspace.yaml is in the legacy format") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

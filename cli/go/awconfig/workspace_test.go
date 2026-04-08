@@ -80,7 +80,7 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	}
 }
 
-func TestLoadWorktreeWorkspaceFromMigratesLegacyServerURLToAwebURL(t *testing.T) {
+func TestLoadWorktreeWorkspaceFromRejectsLegacyServerURLOnly(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -93,20 +93,28 @@ workspace_id: ws-1
 		t.Fatalf("write workspace: %v", err)
 	}
 
-	state, err := LoadWorktreeWorkspaceFrom(path)
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected legacy workspace load to fail")
 	}
-	if state.AwebURL != "https://coord.example" {
-		t.Fatalf("aweb_url=%q", state.AwebURL)
+	if !strings.Contains(err.Error(), legacyWorkspaceFormatError) {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if state.ServerURL != "https://coord.example" {
-		t.Fatalf("server_url=%q", state.ServerURL)
-	}
+}
 
-	if err := SaveWorktreeWorkspaceTo(path, state); err != nil {
+func TestSaveWorktreeWorkspaceToUpcastsServerURLFieldToAwebURL(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
+		ServerURL:   "https://coord.example",
+		TeamAddress: "acme.com/default",
+		WorkspaceID: "ws-1",
+	}); err != nil {
 		t.Fatalf("save workspace: %v", err)
 	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read workspace: %v", err)
@@ -129,7 +137,7 @@ func TestLoadWorktreeWorkspaceFromIgnoresIdentityFieldsWhenIdentityExists(t *tes
 		t.Fatalf("mkdir .aw: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte(strings.TrimSpace(`
-server_url: https://app.aweb.ai
+aweb_url: https://app.aweb.ai
 api_key: aw_sk_test
 identity_handle: alice
 did: did:key:z6MkWorkspace

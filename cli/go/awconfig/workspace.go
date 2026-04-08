@@ -70,6 +70,8 @@ type worktreeWorkspaceYAML struct {
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
 }
 
+const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually add aweb_url, cloud_url, awid_url to workspace.yaml."
+
 func (w *WorktreeWorkspace) syncRoleFields() {
 	if w == nil {
 		return
@@ -190,6 +192,9 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	var raw worktreeWorkspaceYAML
 	if err := value.Decode(&raw); err != nil {
 		return err
+	}
+	if strings.TrimSpace(raw.AwebURL) == "" && strings.TrimSpace(raw.ServerURL) != "" {
+		return errors.New(legacyWorkspaceFormatError)
 	}
 
 	*w = WorktreeWorkspace{
