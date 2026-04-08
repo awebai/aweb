@@ -1,7 +1,7 @@
 # aweb Server & CLI — Team Architecture Source of Truth
 
-This document defines the exact shape of the aweb server and aw CLI
-after the transition to awid teams. It is the implementation spec.
+This document defines the exact shape of the aweb server and aw CLI under
+the awid teams architecture. It is the implementation spec.
 
 ---
 
@@ -192,14 +192,12 @@ rotation is tracked as a follow-up.
 because the `visibility` field gates anonymous dashboard reads — a long
 TTL would mean a team flipped from public to private would still serve
 anonymous reads for the duration of the TTL. The 10-minute TTL bounds
-that window. As a consequence, aweb's call rate against awid for team
-metadata is approximately 144x what it would be at the legacy 24-hour
-TTL (one resolution call per 10 minutes per active team **per aweb
-cluster**, where a cluster is the set of aweb instances sharing the
-same Redis cache backend, vs one per 24 hours at the legacy rate).
-Operators sizing the awid API budget should account for this — note
-that the cache is shared across all aweb instances behind the same
-Redis, so the call rate scales with cluster count, not instance count.
+that window. Aweb makes one resolution call per 10 minutes per active
+team **per aweb cluster**, where a cluster is the set of aweb instances
+sharing the same Redis cache backend. Operators sizing the awid API
+budget should account for this — note that the cache is shared across
+all aweb instances behind the same Redis, so the call rate scales with
+cluster count, not instance count.
 
 **Revocation list** (for checking removed members):
 ```
@@ -208,15 +206,6 @@ GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}/revocations
 ```
 Cache TTL: 5-15 minutes. This is the maximum window of stale access
 after a member is removed.
-
-### No API keys
-
-The `api_keys` table is removed. There is no `aw_sk_*` token. The
-team certificate is the sole credential. This eliminates:
-- API key generation during bootstrap
-- API key storage and lookup on every request
-- API key rotation and revocation
-- The key_prefix/key_hash columns and indices
 
 ---
 
@@ -518,64 +507,19 @@ CREATE TABLE audit_log (
 );
 ```
 
-### Tables removed (vs today)
-
-| Removed table | Why |
-|---------------|-----|
-| `projects` | Replaced by `teams` |
-| `api_keys` | Replaced by certificate auth |
-| `spawn_invite_tokens` | Invites move to awid |
-| `agents.did` column | awid owns identity |
-| `agents.public_key` column | Embedded in did:key |
-| `agents.custody` column | aweb-cloud manages custody for managed namespaces |
-| `agents.signing_key_enc` column | aweb-cloud holds custodial signing keys |
-| `agents.stable_id` column | Stored as `did_aw` (reference only) |
-| `agents.program` column | Unused |
-| `agents.context` column | Unused |
-| `agents.access_mode` column | Team membership is the access control |
-| `rotation_announcements` | awid audit log handles this |
-| `rotation_peer_acks` | Gone with rotation_announcements |
-| `agent_log` | awid audit log handles this |
-
-### Tables simplified
-
-| Table | Change |
-|-------|--------|
-| `agents` | 15 columns → 12 columns. No identity management. |
-| `messages` | `project_id` → `team_address`. Drop `recipient_project_id`. |
-| `chat_sessions` | `project_id` → `team_address`. |
-| `tasks` | `project_id` → `team_address`. Assignee by alias, not agent_id. |
-| `workspaces` | `project_id` → `team_address`. |
-| All other tables | `project_id` → `team_address`. |
-
 ---
 
 ## API routes
 
-### Removed routes
+### Bootstrap and team metadata
 
-| Route | Why |
-|-------|-----|
-| `POST /v1/workspaces/init` | Replaced by certificate-based auto-provisioning |
-| `POST /api/v1/create-project` | Teams created at awid |
-| `POST /v1/spawn/create-invite` | Invites at awid |
-| `POST /v1/spawn/accept-invite` | Invites at awid |
-| `GET /v1/spawn/invites` | Invites at awid |
-| `DELETE /v1/spawn/invites/{id}` | Invites at awid |
-| `POST /v1/agents/register` | Agent auto-provisioned on first cert auth |
-| `PUT /v1/agents/me/identity` | awid manages identity |
-| `POST /v1/agents/me/identity/reset` | awid manages identity |
-| `PUT /v1/agents/me/rotate` | `aw id rotate-key` at awid |
-| `PUT /v1/agents/me/retire` | Team membership removal at awid |
-| `PUT /v1/agents/{id}/retire` | Team membership removal at awid |
-| `GET /v1/agents/me/log` | awid audit log |
-| `POST /v1/custody/sign` | Moves to aweb-cloud (custody is aweb-cloud's concern) |
-| All `/v1/did/*` routes | awid routes, no longer mounted |
-| All `/v1/dns/*` routes | awid routes, no longer mounted |
-| `POST /v1/agents/suggest-alias-prefix` | Alias comes from address or is auto-generated |
-| `GET /v1/projects/current` | No projects, team info from certificate |
+| Route | Purpose |
+|-------|---------|
+| `POST /v1/connect` | Agent connects with certificate. Auto-provisions team + agent if needed. Returns workspace binding info. Called by `aw init` under the hood. |
+| `GET /v1/team` | Get team info (team_address, team_did_key, member count). |
+| `GET /v1/usage` | Usage metrics for billing. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Polled by aweb-cloud daily. |
 
-### Unchanged routes (team_address replaces project_id in scope)
+### Messaging
 
 | Route | Notes |
 |-------|-------|
@@ -589,6 +533,11 @@ CREATE TABLE audit_log (
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
 | `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream |
 | `POST /v1/chat/sessions/{id}/read` | Mark read |
+
+### Agents and presence
+
+| Route | Notes |
+|-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
 | `GET /v1/status/stream` | Status SSE |
@@ -601,7 +550,7 @@ CREATE TABLE audit_log (
 | `POST /v1/contacts` | Add contact |
 | `DELETE /v1/contacts/{id}` | Remove contact |
 
-### Unchanged coordination routes
+### Coordination
 
 | Route | Notes |
 |-------|-------|
@@ -612,14 +561,6 @@ CREATE TABLE audit_log (
 | `GET/POST /v1/instructions/*` | Versioned instructions |
 | `GET/POST /v1/repos/*` | Git repos |
 | `GET/POST /v1/workspaces/*` | Workspace management |
-
-### New routes
-
-| Route | Purpose |
-|-------|---------|
-| `POST /v1/connect` | Agent connects with certificate. Auto-provisions team + agent if needed. Returns workspace binding info. Called by `aw init` under the hood. |
-| `GET /v1/team` | Get team info (team_address, team_did_key, member count). |
-| `GET /v1/usage` | Usage metrics for billing. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Polled by aweb-cloud daily. |
 
 ### Dashboard routes
 
@@ -814,49 +755,28 @@ managed by aweb-cloud (custodial agents).
 
 ## CLI commands
 
-### Removed
-
-| Command | Why |
-|---------|-----|
-| `aw project create` | Teams created at awid |
-| `aw spawn create-invite` | Team invites at awid |
-| `aw spawn accept-invite` | Team invites at awid |
-| `aw spawn list-invites` | Team invites at awid |
-| `aw spawn revoke-invite` | Team invites at awid |
-| `aw namespace add/verify/list/delete` | Namespaces at awid |
-| `aw identity rotate-key` | `aw id rotate-key` (already exists) |
-| `aw identity delete` | Team membership removal at awid |
-| `aw identity access-mode` | Team membership controls access |
-| `aw identity reachability` | awid address property |
-| `aw identities` | `aw id show` covers this |
-
-### New
+The canonical `aw` CLI surface is documented in
+[`cli-command-reference.md`](cli-command-reference.md), generated from the
+live Cobra help tree. The bootstrap and team-management primitives this SOT
+relies on are:
 
 | Command | Purpose |
 |---------|---------|
+| `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
+| `aw init` | Bind the current workspace using `.aw/team-cert.pem` (`POST /v1/connect`) |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite --team X --namespace Y` | Create invite token |
-| `aw id team invite --team X --namespace Y --ephemeral` | Create ephemeral invite |
+| `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
 | `aw id team accept-invite <token>` | Accept invite, receive certificate |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
-| `aw claim-human --email <email>` | Attach an email to the existing aweb.ai account created at `aw init`. Triggers email verification. After verification the human can log into the dashboard. |
+| `aw claim-human --email <email>` | Attach an email to the aweb.ai account; triggers email verification; unlocks dashboard access after verification |
+| `aw whoami` | Show team membership + certificate info |
+| `aw workspace status` | Show team coordination state |
 
-### Changed
-
-| Command | Change |
-|---------|--------|
-| `aw init` | No longer needs API key. Uses team certificate. |
-| `aw init --server URL` | Presents certificate, auto-provisions at aweb. |
-| `aw init --team X --ephemeral` | Creates ephemeral agent with temp cert. |
-| `aw run` | Uses team certificate for auth. |
-| `aw whoami` | Shows team membership + certificate info. |
-| `aw workspace status` | team_address instead of project. Shows team info. |
-
-### Unchanged
-
-All coordination commands stay exactly the same:
+All coordination commands (mail, chat, tasks, claims, locks, roles,
+instructions, work, contacts, etc.) are listed in
+[`cli-command-reference.md`](cli-command-reference.md):
 
 ```
 aw mail send/inbox
@@ -936,10 +856,10 @@ aweb caches the full team metadata (used for both certificate verification
 via `team_did_key` AND public-team anonymous-read bypass via `visibility`).
 TTL: 10 minutes, with a 10-minute stale-while-revalidate window (20 minutes
 total). See "Caching from awid" above for: (1) the operational implications
-of the short TTL on awid call rate (~144x the legacy 24-hour rate,
-intentional because `visibility` gates anonymous reads), and (2) the
-known cache-invalidation gap on team key rotation (rotation propagates
-within at most 20 minutes; not actively invalidated).
+of the short TTL on awid call rate (one resolution call per 10 minutes per
+active team per cluster, intentional because `visibility` gates anonymous
+reads), and (2) the known cache-invalidation gap on team key rotation
+(rotation propagates within at most 20 minutes; not actively invalidated).
 
 ### Address resolution (for message routing to external addresses)
 
@@ -1058,13 +978,11 @@ in `docs/cloud-team-architecture-sot.md` (alice's SOT pass 3.1).
 
 ## MCP server
 
-The aweb MCP server stays. It exposes the same coordination tools
-(mail, chat, tasks, etc). Changes:
+The aweb MCP server exposes coordination tools (mail, chat, tasks, etc.).
 
-- Auth: certificate-based instead of API key
-- Tool: `sign` tool removed from aweb MCP (moves to awid MCP or
-  standalone awid signing service)
+- Auth: certificate-based
 - Scope: tools are scoped to the team from the certificate
+- Identity signing tools are owned by awid, not aweb's MCP server
 
 ---
 
@@ -1087,26 +1005,20 @@ AWEB_PORT=8000
 AWEB_LOG_JSON=true
 ```
 
-Removed:
-- `AWEB_CUSTODY_KEY` — custody is aweb-cloud's concern
-- `AWEB_MANAGED_DOMAIN` — namespaces are awid's concern
-- `AWEB_NAMESPACE_CONTROLLER_KEY` — namespaces are awid's concern
-- `AWEB_API_KEY` / any API key config — certificates replace API keys
-
 ---
 
-## What aweb does NOT do (and who does)
+## Responsibilities
 
 | Concern | Owner |
 |---------|-------|
-| Create/manage identities | awid |
-| Create/manage teams | awid |
-| Issue team certificates | CLI (BYOD) or aweb-cloud (managed) |
-| Manage namespaces | awid |
-| Verify team membership | Certificate (local crypto) |
-| Manage API keys | Nobody (gone) |
-| Bootstrap agents | Auto-provisioned from certificate |
+| Identity creation and management | awid |
+| Team creation and management | awid |
+| Namespace management | awid |
+| Team certificate issuance | CLI (BYOD) or aweb-cloud (managed) |
+| Team membership verification | Certificate (local crypto) |
+| Agent bootstrap | Auto-provisioned from certificate on `POST /v1/connect` |
 | Custody (signing on behalf) | aweb-cloud (managed) or agent (self) |
 | Billing | aweb-cloud |
 | Dashboard | aweb-cloud |
 | Human accounts | aweb-cloud |
+| Coordination (mail, chat, tasks, claims, locks, roles, instructions) | aweb |

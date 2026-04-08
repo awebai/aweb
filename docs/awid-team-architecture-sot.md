@@ -23,9 +23,7 @@ the implementation spec.
 
 ---
 
-## What exists today (no changes)
-
-### Namespaces
+## Namespaces
 
 DNS-verified organizational domains. `acme.com`, `juanre.aweb.ai`.
 
@@ -36,7 +34,7 @@ POST   /v1/namespaces/{domain}/rotate   Rotate controller key
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
 
-### Addresses
+## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
 
@@ -48,7 +46,7 @@ PATCH  /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
-### DID registry
+## DID registry
 
 Stable identity mappings. `did:aw` → `did:key`.
 
@@ -63,7 +61,7 @@ GET    /v1/did/{did_aw}/addresses      List addresses (public)
 
 ---
 
-## What's added: Teams
+## Teams
 
 ### Data model
 
@@ -457,7 +455,7 @@ the CLI (BYOD) or aweb-cloud (managed namespaces).
 
 ---
 
-## What awid does and does not do
+## Responsibilities
 
 **Does:**
 - Store team name, display name, and public key
