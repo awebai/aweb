@@ -155,35 +155,44 @@ The default compose file does the following:
 
 ## Bootstrap Flow After Startup
 
-Option A, guided bootstrap:
+Option A, guided bootstrap (the primary human entrypoint):
 
 ```bash
 export AWEB_URL=http://localhost:8000
 aw run codex
 ```
 
+`aw run` walks the user through team connection, identity creation, and
+team certificate provisioning when the current directory has no `.aw/`.
+
 Option B, explicit bootstrap primitives:
 
 ```bash
 export AWEB_URL=http://localhost:8000
 
-aw project create --server-url http://localhost:8000 --project myteam
+# Create a team at awid (requires the namespace controller key locally
+# for self-hosted, or hosted equivalent)
+aw id team create --namespace myteam.example.com --name backend
 
-export AWEB_API_KEY=aw_sk_...
+# Issue a team invite token from an existing team member
+aw id team invite --namespace myteam.example.com --team backend
+
+# On the joining workspace, accept the invite (writes .aw/team-cert.pem)
+aw id team accept-invite <token> --server-url http://localhost:8000
+
+# Then bind the workspace to the coordination server using the certificate
 aw init --server-url http://localhost:8000 --alias second-workspace
-
-aw spawn create-invite
-aw spawn accept-invite <token> --server-url http://localhost:8000
 ```
 
 Important bootstrap rules:
 
-- `aw project create` is the only unauthenticated project creation flow
-- `aw init` requires project authority through `AWEB_API_KEY`
-- `aw spawn create-invite` requires an existing identity
-- `aw spawn accept-invite` requires the invite token; in interactive mode it
-  may also prompt for alias, name, or role. In non-interactive mode supply
-  `--alias` and `--role` explicitly if the project has defined roles
+- The team is created at awid; aweb auto-provisions team and agent rows on
+  the first `POST /v1/connect` request that carries a valid certificate
+- Authentication is via team certificate (`.aw/team-cert.pem`), not API key
+- `aw id team invite` requires an existing identity in the team
+- `aw id team accept-invite` requires the invite token; in interactive mode
+  it may prompt for alias, name, or role. In non-interactive mode supply
+  `--alias` and `--role` explicitly if the team has defined roles
 
 ## Health Checks and Smoke Tests
 

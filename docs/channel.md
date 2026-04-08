@@ -87,9 +87,8 @@ The channel does not expose outbound tools. Use the `aw` CLI for all responses:
 | Action | Command |
 | --- | --- |
 | Reply to chat | `aw chat send-and-wait <from> "<reply>"` |
-| Acknowledge mail | `aw mail ack <message_id>` |
 | Send mail | `aw mail send --to <alias> --body "..."` |
-| Check inbox | `aw mail inbox` |
+| Check inbox | `aw mail inbox` (reading marks unread messages as acknowledged) |
 | Check pending chats | `aw chat pending` |
 
 ## Event types

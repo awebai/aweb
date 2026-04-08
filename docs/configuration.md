@@ -68,9 +68,8 @@ Typical fields include:
 
 `.aw/context` is a small non-secret local coordination pointer.
 
-Bootstrap commands such as `aw project create`, `aw init`, and
-`aw spawn accept-invite` write it by default unless you pass
-`--write-context=false`.
+Bootstrap commands such as `aw init` and `aw id team accept-invite` write it
+by default unless you pass `--write-context=false`.
 
 ## Resolution Order
 
@@ -89,9 +88,8 @@ That means a directory-local `.aw/` tree fully binds one repo or worktree.
 Several bootstrap commands can inject coordination instructions into local
 agent-facing docs:
 
-- `aw project create --inject-docs`
 - `aw init --inject-docs`
-- `aw spawn accept-invite --inject-docs`
+- `aw id team accept-invite --inject-docs` (when accepting a team invite)
 
 The injector targets:
 

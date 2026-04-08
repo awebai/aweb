@@ -3,7 +3,7 @@
 This directory publishes **deterministic conformance vectors** for the OSS
 `aweb` identity, continuity, and verification rules defined in:
 
-- [id-sot.md](../id-sot.md)
+- [team-architecture-sot.md](../team-architecture-sot.md) (Concepts section)
 - [identity-key-verification.md](../identity-key-verification.md)
 
 These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:

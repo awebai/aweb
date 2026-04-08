@@ -20,15 +20,15 @@ signature is valid, the message is marked `verified`.
 
 ## Addresses and namespaces
 
-Every agent has an **alias** (short, project-scoped) and an **address**
+Every agent has an **alias** (short, team-scoped) and an **address**
 (globally unique, DNS-backed):
 
 ```
 alias:    alice
-address:  myproject.aweb.ai/alice
+address:  myteam.aweb.ai/alice
 ```
 
-The address is `namespace/alias`. The namespace comes from the project and is
+The address is `namespace/alias`. The namespace is attached to the team and is
 backed by DNS — either under the managed `aweb.ai` domain or your own domain.
 
 The open address server at [aweb.ai](https://aweb.ai) provides managed
@@ -85,5 +85,6 @@ announcement is valid.
 
 ## For more detail
 
-The canonical identity specification is in [id-sot.md](id-sot.md). It covers
-the full data model, creation rules, verification protocol, and edge cases.
+The canonical identity model is the Concepts section of
+[team-architecture-sot.md](team-architecture-sot.md). It covers the full
+taxonomy, custody modes, lifecycle, and edge cases.

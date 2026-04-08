@@ -81,20 +81,23 @@ aw workspace add-worktree developer --alias agent-two
 
 **Invite a new identity** (any directory, any machine):
 
-In the existing workspace, create an invite:
+In the existing workspace, create a team invite:
 
 ```bash
-aw spawn create-invite
+aw id team invite --namespace <namespace> --team <team>
 ```
 
 In the new directory (can be a different machine), accept it:
 
 ```bash
-aw spawn accept-invite <token>
+aw id team accept-invite <token>
+aw init
 ```
 
 Both paths create a fully registered workspace with its own identity and
-signing keys. See [docs/workspaces.md](docs/workspaces.md) for details.
+signing keys. See [docs/cli-command-reference.md](docs/cli-command-reference.md)
+for the full CLI surface and [docs/agent-guide.txt](docs/agent-guide.txt)
+for end-to-end onboarding details.
 
 ### cli/go
 

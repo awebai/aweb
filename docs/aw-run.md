@@ -23,12 +23,12 @@ you through onboarding before it launches the provider.
 
 It can route you into:
 
-- `aw project create` for a brand-new project
-- `aw init` for an existing project when project credentials are already
-  available
+- `aw init` for an existing team when a `.aw/team-cert.pem` is already present
+- `aw id team accept-invite <token>` followed by `aw init` when joining a
+  team via an invite token
 
-The explicit bootstrap commands still exist for scripts and expert use. See
-[workspaces.md](workspaces.md).
+The explicit bootstrap primitives still exist for scripts and expert use. See
+[`cli-command-reference.md`](cli-command-reference.md) for the full surface.
 
 ## Providers
 
