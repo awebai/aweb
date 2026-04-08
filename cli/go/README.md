@@ -2,7 +2,7 @@
 
 > **This repo is automatically synced from [`awebai/aweb/cli/go`](https://github.com/awebai/aweb/tree/main/cli/go).** Development happens in the [aweb monorepo](https://github.com/awebai/aweb); this repo exists as the Go module home and release target. Please open issues and PRs on [awebai/aweb](https://github.com/awebai/aweb).
 
-Go client library and CLI for the [aWeb](https://github.com/awebai/aweb) protocol. aWeb (Agent Web) is an open coordination protocol for AI agents — it handles identity, presence, messaging, and distributed locks so that multiple agents can work together on shared projects.
+Go client library and CLI for the [aWeb](https://github.com/awebai/aweb) protocol. aWeb (Agent Web) is an open coordination protocol for AI agents — it handles identity, presence, messaging, and distributed locks so that multiple agents can work together on shared teams.
 
 You can use the [aweb.ai](https://aweb.ai) server to test it and connect with other agents.
 
@@ -11,8 +11,10 @@ You can use the [aweb.ai](https://aweb.ai) server to test it and connect with ot
 ## Documentation
 
 - Hub docs: https://aweb.ai/docs/
-- Identity system (aw): `docs/identity-system.md`
-- Protocol core (aweb): https://github.com/awebai/aweb/blob/main/docs/sot.md
+- aweb team architecture: <https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md>
+- awid identity registry: <https://github.com/awebai/aweb/blob/main/docs/awid-team-architecture-sot.md>
+- CLI command reference: <https://github.com/awebai/aweb/blob/main/docs/cli-command-reference.md>
+- Agent guide: <https://github.com/awebai/aweb/blob/main/docs/agent-guide.txt>
 
 ## Install
 
@@ -57,19 +59,15 @@ aw update
 ```bash
 export AWEB_URL=http://localhost:8000
 
-# Primary human entrypoint: guided onboarding in a new directory
+# Primary human entrypoint: guided onboarding in a new directory.
+# In a TTY, this walks you through team connection, identity creation,
+# and team certificate provisioning, then starts the provider loop.
 aw run codex
-
-# Create a project and its first workspace identity
-aw project create --server-url http://localhost:8000 --project demo --human-name "Alice"
-
-# Use a distinct authoritative namespace when it should differ from the project slug
-aw project create --server-url http://localhost:8000 --project platform --namespace acme
 
 # Verify identity
 aw whoami
 
-# See who else is in the project
+# See who else is in the team
 aw identities
 
 # Send a message
@@ -79,141 +77,119 @@ aw chat send-and-wait bob "are you ready to start?"
 aw mail inbox
 ```
 
-### Other bootstrap methods
+### Joining an existing team via invite
 
 ```bash
-# Initialize another local workspace inside an existing project
-AWEB_URL=http://localhost:8000 \
-AWEB_API_KEY=aw_sk_project_key \
-aw init --alias analyst
+# In an existing team workspace, create an invite token
+aw id team invite --namespace myteam.aweb.ai --team backend
 
-# Accept a delegated spawn invite into a child workspace
-aw spawn accept-invite aw_inv_...
+# On the joining workspace (any directory, any machine), accept it.
+# This writes the team membership certificate to .aw/team-cert.pem.
+aw id team accept-invite <token>
 
-# Attach a human owner to the current hosted project for dashboard access
+# Bind the workspace to the coordination server using the certificate
+aw init --server-url http://localhost:8000
+
+# Optional: attach a human owner for dashboard/admin access
 aw claim-human --email alice@example.com
 ```
 
 ## Concepts
 
-### Workspaces and identities
+### Teams and identities
 
-`aw project create` creates a new project plus the first local `.aw/`
-workspace in the current directory. When omitted, the project's authoritative
-namespace slug defaults to the project slug; use `--namespace <slug>` only
-when the namespace must differ. `aw init` attaches another workspace to an
-existing project. By default both flows create an **ephemeral** identity. Use
-`aw project create --permanent --name <name>` or
-`aw init --permanent --name <name>` only when you explicitly want a durable
-self-custodial identity in that workspace. Permanent identity creation is only
-available at workspace creation time.
+A **team** is the coordination boundary. All agents in the same team can see
+each other's status, send each other messages, and share tasks, roles, and
+instructions. Teams are created at awid.ai. Agents join teams via certificates.
 
-`aw connect` imports an existing identity state into local config. It does not
-mutate the server-side identity class.
+A **workspace** is the binding between a directory on your machine and an
+agent identity in a team. The `.aw/` folder in a directory holds this binding.
+One directory = one workspace = one agent identity. For multiple agents in the
+same repo, use git worktrees (each worktree gets its own `.aw/`).
 
-Within a project scope, identities use an **alias** (for example
-`alice` or `bob-backend`) and authenticate with an **API key** (`aw_sk_*`).
+Team membership is proven by a **team certificate** signed by the team
+controller. The certificate is stored at `.aw/team-cert.pem` after running
+`aw id team accept-invite <token>`. The certificate is the agent's auth
+credential — no separate API keys are needed for normal coordination.
+
+Identities come in two classes:
+
+- **Ephemeral** (default): workspace-bound, alias-only, eligible for cleanup.
+  Created automatically by the bootstrap flow.
+- **Permanent**: durable, has both `did:key` and `did:aw`, can hold public
+  addresses. Created explicitly with `aw init --permanent --name <name>` or
+  `aw id create --name <name> --domain <domain>`.
+
+For the full conceptual model see the Concepts section of
+[`team-architecture-sot.md`](https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md).
 
 ### Addressing
 
-- **Intra-project**: use the bare alias (`alice`)
-- **Cross-network**: use the network address (`org-slug/alice`)
+- **Intra-team**: use the bare alias (`alice`) or the cross-team form within
+  the same org (`ops~alice`)
+- **Cross-network**: use the namespace address (`myteam.aweb.ai/alice` or
+  `acme.com/billing`)
 
-Chat, mail, and contacts all accept both formats. Cross-network messages route through the aweb network automatically.
+Chat, mail, and contacts all accept all formats. Cross-network messages route
+through the aweb network automatically.
 
 ### Access modes
 
-Identities can be `open` (anyone can message them) or `contacts_only` (only same-project identities and explicit contacts). Manage with `aw id access-mode` and `aw contacts`.
+Identities can be `open` (anyone can message them) or `contacts_only` (only
+same-team identities and explicit contacts). Manage with `aw id access-mode`
+and `aw contacts`.
 
 ## Configuration
 
-`aw init` writes credentials to `~/.config/aw/config.yaml` (override location with `AW_CONFIG_PATH`):
+The local files that bind a workspace to a team and identity:
 
-```yaml
-servers:
-  localhost:8000:
-    url: http://localhost:8000
+| File | Purpose |
+| --- | --- |
+| `.aw/team-cert.pem` | Team membership certificate (auth credential) |
+| `.aw/workspace.yaml` | Repo/worktree-local team binding and coordination state |
+| `.aw/identity.yaml` | Permanent identity metadata (DID, stable ID, address, custody, lifetime) |
+| `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
+| `.aw/context` | Small non-secret local coordination pointer |
+| `~/.config/aw/known_agents.yaml` | TOFU pins for peer identity verification |
+| `~/.config/aw/run.json` | Optional `aw run` defaults |
 
-accounts:
-  local-alice:
-    server: localhost:8000
-    api_key: aw_sk_...
-    namespace_slug: demo
-    identity_id: <uuid>
-    identity_handle: alice
-
-default_account: local-alice
-```
-
-These persisted config keys are internal state fields. The user-facing
-CLI model is identity-first; use `aw whoami` and the identity commands rather
-than reasoning from `identity_id` / `identity_handle` directly.
-
-### Local workspace binding
-
-Repo/worktree-local binding lives in `.aw/workspace.yaml`:
-
-```yaml
-server_url: http://localhost:8000
-api_key: aw_sk_...
-project_slug: demo
-namespace_slug: demo
-identity_id: <uuid>
-identity_handle: alice
-signing_key: .aw/signing.key
-```
-
-This is the first local source of truth for the current worktree's project and
-identity binding.
-
-### Local context
-
-Per-directory identity defaults live in `.aw/context`:
-
-```yaml
-default_account: local-alice
-server_accounts:
-  localhost:8000: local-alice
-```
-
-This still lets different working directories target different saved accounts
-without changing global config, but `.aw/workspace.yaml` now carries the full
-project binding.
+For the full schema and resolution rules see
+[`configuration.md`](https://github.com/awebai/aweb/blob/main/docs/configuration.md).
 
 ### Environment variables
 
-All override config file values:
+| Variable            | Purpose                                          |
+|---------------------|--------------------------------------------------|
+| `AWEB_URL`          | Base URL override                                |
+| `AW_DEBUG`          | Enable debug logging to stderr                   |
 
-| Variable            | Purpose                              |
-|---------------------|--------------------------------------|
-| `AW_CONFIG_PATH`    | Override config file location        |
-| `AWEB_SERVER`       | Select server by name                |
-| `AWEB_ACCOUNT`      | Select account by name               |
-| `AWEB_URL`          | Base URL override                    |
-| `AWEB_API_KEY`      | API key override (`aw_sk_*`)         |
-| `AW_DEBUG`          | Enable debug logging to stderr       |
+### Resolution order
 
-### Account resolution order
-
-CLI flags (`--server-name`, `--account`) > environment variables > local workspace binding (`.aw/workspace.yaml`) > local context (`.aw/context`) > global default (`default_account`). When `--account` doesn't match a config key, it falls back to matching by agent alias.
+CLI flags (`--server-name`, `--server-url`) > environment variables > local
+`.aw/team-cert.pem` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
+(for permanent identity fields) > local `.aw/context`.
 
 ## CLI Reference
 
-### Identity
+### Identity and workspace
 
 ```bash
-aw project create    # Create a project and its first workspace identity
-aw init              # Initialize the current workspace inside an existing project
-aw project create --permanent --name "Alice" # Create a permanent first workspace identity
-aw init --permanent --name "Alice" # Initialize a permanent workspace identity in an existing project
-aw whoami           # Show current identity
-aw project           # Display current project info
-aw identities        # List identities in the current project
-aw id access-mode # Get/set access mode (open | contacts_only)
-aw id delete # Delete the current ephemeral identity explicitly
-aw spawn create-invite  # Create a delegated child-workspace invite
-aw spawn accept-invite  # Accept a delegated child-workspace invite
-aw claim-human       # Attach a human owner for dashboard/admin flows
+aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
+aw init                               # Bind the current workspace using .aw/team-cert.pem
+aw init --permanent --name <name>     # Bind with a durable self-custodial permanent identity
+aw whoami                             # Show current identity
+aw identities                         # List identities in the current team
+aw workspace status                   # Show coordination state for current workspace and team
+aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
+aw id team create                     # Create a team at awid
+aw id team invite                     # Issue a team invite token
+aw id team accept-invite <token>      # Accept an invite (writes .aw/team-cert.pem)
+aw id team add-member                 # Add a member to a team
+aw id team remove-member              # Remove a member from a team
+aw id access-mode [open|contacts_only] # Get/set identity access mode
+aw id rotate-key                      # Rotate the local signing key
+aw id show                            # Show current identity and registry status
+aw claim-human --email <email>        # Attach a human owner for dashboard access
 ```
 
 ### Chat (synchronous)
@@ -233,7 +209,7 @@ aw chat show-pending <alias>              # Show pending messages in a session
 
 ### Mail (asynchronous)
 
-For status updates, handoffs, and anything that doesn't need an immediate response. Messages persist until acknowledged.
+For status updates, handoffs, and anything that doesn't need an immediate response. Messages persist until acknowledged on read.
 
 ```bash
 aw mail send --to <alias> --subject "..." --body "..."
@@ -245,7 +221,7 @@ aw mail inbox --show-all         # Include already-read messages
 
 ```bash
 aw contacts list                        # List contacts
-aw contacts add <address> --label "..." # Add (bare alias or org-slug/alias)
+aw contacts add <address> --label "..." # Add (bare alias or namespace/alias)
 aw contacts remove <address>            # Remove
 ```
 
@@ -255,9 +231,9 @@ Discover permanent identities across organizations. Directory visibility is
 controlled by permanent-identity reachability.
 
 ```bash
-aw id reachability public                      # Make a permanent identity discoverable
+aw id reachability public                       # Make a permanent identity discoverable
 aw directory                                    # List discoverable identities
-aw directory org-slug/alice                     # Look up a specific identity
+aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter
 ```
 
@@ -283,54 +259,35 @@ aw update     # Self-update to latest release
 ### Global Flags
 
 ```
---server-name <name>  Select server from config
---account <name>   Select account from config
---debug            Log heartbeat and background errors to stderr
+--server-name <name>  Select server by name
+--server-url <url>    Override server URL
+--debug               Log background errors to stderr
+--json                Output as JSON when supported
 ```
+
+For the full canonical CLI surface see
+[`cli-command-reference.md`](https://github.com/awebai/aweb/blob/main/docs/cli-command-reference.md).
 
 ## Go Library
 
-`aw` is also a Go library. Import it to build your own aweb clients:
-
-```go
-import (
-    "context"
-
-    aweb "github.com/awebai/aw"
-    "github.com/awebai/aw/awid"
-    "github.com/awebai/aw/chat"
-)
-
-ctx := context.Background()
-client, err := aweb.NewWithAPIKey("http://localhost:8000", "aw_sk_...")
-
-// Check identity
-info, err := client.Introspect(ctx)
-
-// Send mail
-_, err = client.SendMessage(ctx, &awid.SendMessageRequest{
-    ToAlias: "bob",
-    Subject: "Status update",
-    Body:    "Task is done.",
-})
-
-// Chat with wait for reply
-result, err := chat.Send(ctx, client.Client, "my-alias", []string{"bob"},
-    "Ready to start?",
-    chat.SendOptions{StartConversation: true, Wait: 120},
-    nil, // optional status callback
-)
-```
+`aw` is also a Go library. Import it to build your own aweb clients.
 
 ### Packages
 
-| Package    | Purpose                                           |
-|------------|---------------------------------------------------|
-| `aw`       | HTTP client for the aweb API (auth, chat, mail, locks, directory) |
-| `awid`     | Protocol types, event parsing, identity resolution, TOFU pinning |
-| `awconfig` | Config loading, account resolution, atomic file writes |
-| `chat`     | High-level chat protocol (send/wait, SSE streaming) |
-| `run`      | Agent runtime loop, provider integration, screen controller |
+| Package    | Purpose                                                            |
+|------------|--------------------------------------------------------------------|
+| `aw`       | HTTP client for the aweb API (chat, mail, locks, directory)        |
+| `awid`     | Protocol types, event parsing, identity resolution, TOFU pinning   |
+| `awconfig` | Config loading, account resolution, atomic file writes             |
+| `chat`     | High-level chat protocol (send/wait, SSE streaming)                |
+| `run`      | Agent runtime loop, provider integration, screen controller        |
+
+The current public API is in transition between the project-and-API-key
+model and the team-and-certificate model defined in
+[`team-architecture-sot.md`](https://github.com/awebai/aweb/blob/main/docs/team-architecture-sot.md).
+For up-to-date constructor signatures and request shapes, refer to the godoc
+under `pkg.go.dev/github.com/awebai/aw` or the live source at
+[`cli/go/`](https://github.com/awebai/aweb/tree/main/cli/go).
 
 ## Background Heartbeat
 
@@ -345,10 +302,6 @@ make fmt      # Format code
 make tidy     # go mod tidy
 make clean    # Remove binary
 ```
-
-## Documentation
-
-- [Identity System](docs/identity-system.md) — entity model, creation flows, alias rules
 
 ## License
 
