@@ -154,6 +154,53 @@ async def test_list_agents(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    alice_id, bob_id = await _seed(aweb_cloud_db.aweb_db)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at
+        )
+        VALUES (
+            $1, 'acme.com/backend', $2, 'alice', '/Users/alice/project', $3
+        )
+        """,
+        uuid.uuid4(),
+        uuid.UUID(alice_id),
+        datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at, deleted_at
+        )
+        VALUES
+            ($1, 'acme.com/backend', $2, 'bob', '/Users/bob/stale', $3, $4),
+            ($5, 'acme.com/backend', $2, 'bob', '/Users/bob/active', $6, NULL)
+        """,
+        uuid.uuid4(),
+        uuid.UUID(bob_id),
+        datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
+        uuid.uuid4(),
+        datetime(2026, 4, 8, 11, 0, 0, tzinfo=timezone.utc),
+    )
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/agents",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    agents = {a["alias"]: a for a in resp.json()["agents"]}
+    assert agents["bob"]["workspace_path"] == "/Users/bob/active"
+    assert agents["bob"]["last_seen"] == "2026-04-08T11:00:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_agent_detail(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
