@@ -63,3 +63,9 @@ You are part of a team working toward a shared goal. Optimize for the project ou
 - Escalate blockers early rather than spinning alone
 - Keep changes small and reviewable so others can build on them
 <!-- AWEB:END -->
+
+## Branches
+
+NEVER make work in progress or temp branches. You have been assigned a worktree and a branch, ALWAYS stay there and work there. If you are in main, stay in main; main is the combined shared branch.
+
+
