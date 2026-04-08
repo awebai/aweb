@@ -8,7 +8,6 @@ type ClaimView struct {
 	Alias       string `json:"alias"`
 	HumanName   string `json:"human_name"`
 	ClaimedAt   string `json:"claimed_at"`
-	ProjectID   string `json:"project_id"`
 }
 
 type ClaimsResponse struct {

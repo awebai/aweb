@@ -17,7 +17,6 @@ type ReservationAcquireRequest struct {
 
 type ReservationAcquireResponse struct {
 	Status        string `json:"status"`
-	ProjectID     string `json:"project_id,omitempty"`
 	ResourceKey   string `json:"resource_key"`
 	HolderAgentID string `json:"holder_agent_id,omitempty"`
 	HolderAlias   string `json:"holder_alias,omitempty"`
@@ -111,7 +110,6 @@ func (c *Client) ReservationRelease(ctx context.Context, req *ReservationRelease
 }
 
 type ReservationView struct {
-	ProjectID     string         `json:"project_id"`
 	ResourceKey   string         `json:"resource_key"`
 	HolderAgentID string         `json:"holder_agent_id"`
 	HolderAlias   string         `json:"holder_alias"`

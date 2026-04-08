@@ -391,16 +391,6 @@ func formatContactAdd(v any) string {
 	return fmt.Sprintf("Added contact %s\n", resp.ContactAddress)
 }
 
-// --- namespace ---
-
-func formatProject(v any) string {
-	resp := v.(*aweb.ProjectResponse)
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Project: %s\n", resp.Name))
-	sb.WriteString(fmt.Sprintf("Slug:    %s\n", resp.Slug))
-	return sb.String()
-}
-
 // --- network ---
 
 func formatDirectoryGet(v any) string {

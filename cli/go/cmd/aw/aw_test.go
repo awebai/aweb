@@ -233,67 +233,6 @@ func TestAwLockRenew(t *testing.T) {
 	}
 }
 
-func TestAwNamespace(t *testing.T) {
-	t.Parallel()
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/projects/current":
-			if r.Method != http.MethodGet {
-				t.Fatalf("method=%s", r.Method)
-			}
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"project_id": "proj-abc",
-				"slug":       "my-project",
-				"name":       "My Project",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("unexpected path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-
-	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
-
-	run := exec.CommandContext(ctx, bin, "project", "--json")
-	run.Env = testCommandEnv(tmp)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if got["project_id"] != "proj-abc" {
-		t.Fatalf("project_id=%v", got["project_id"])
-	}
-	if got["slug"] != "my-project" {
-		t.Fatalf("slug=%v", got["slug"])
-	}
-}
-
 func TestAwLockRevoke(t *testing.T) {
 	t.Parallel()
 

@@ -4,8 +4,6 @@ import "context"
 
 type CoordinationWorkspace struct {
 	WorkspaceID    string `json:"workspace_id,omitempty"`
-	ProjectID      string `json:"project_id,omitempty"`
-	ProjectSlug    string `json:"project_slug,omitempty"`
 	RepoID         string `json:"repo_id,omitempty"`
 	WorkspaceCount int    `json:"workspace_count,omitempty"`
 }
@@ -44,7 +42,6 @@ type CoordinationClaim struct {
 	ClaimedAt     string  `json:"claimed_at"`
 	ClaimantCount int     `json:"claimant_count"`
 	Title         *string `json:"title,omitempty"`
-	ProjectID     string  `json:"project_id"`
 	ApexTaskRef   *string `json:"apex_task_ref,omitempty"`
 	ApexTitle     *string `json:"apex_title,omitempty"`
 	ApexType      *string `json:"apex_type,omitempty"`
@@ -62,7 +59,6 @@ type CoordinationConflict struct {
 }
 
 type CoordinationReservation struct {
-	ProjectID           string         `json:"project_id"`
 	ResourceKey         string         `json:"resource_key"`
 	HolderAgentID       string         `json:"holder_agent_id"`
 	HolderAlias         string         `json:"holder_alias"`

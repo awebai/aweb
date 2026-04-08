@@ -60,7 +60,6 @@ func init() {
 		&cobra.Group{ID: groupUtility, Title: "Utility"},
 	)
 	initCmd.GroupID = groupWorkspace
-	projectCmd.GroupID = groupWorkspace
 	resetCmd.GroupID = groupWorkspace
 	workspaceCmd.GroupID = groupWorkspace
 
