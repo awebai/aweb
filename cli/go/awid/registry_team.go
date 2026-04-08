@@ -10,11 +10,13 @@ import (
 
 // RegistryTeam represents a team from the awid registry.
 type RegistryTeam struct {
-	TeamID     string `json:"team_id"`
-	Domain     string `json:"domain"`
-	Name       string `json:"name"`
-	TeamDIDKey string `json:"team_did_key"`
-	CreatedAt  string `json:"created_at"`
+	TeamID      string `json:"team_id"`
+	Domain      string `json:"domain"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	TeamDIDKey  string `json:"team_did_key"`
+	Visibility  string `json:"visibility"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // RegistryCertificate represents a registered team membership certificate.
@@ -32,6 +34,11 @@ type teamCreateRequest struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name,omitempty"`
 	TeamDIDKey  string `json:"team_did_key"`
+	Visibility  string `json:"visibility,omitempty"`
+}
+
+type teamVisibilityRequest struct {
+	Visibility string `json:"visibility"`
 }
 
 // certificateRegisterRequest sends only issuance metadata to awid.
@@ -90,7 +97,53 @@ func (c *RegistryClient) CreateTeam(
 			Name:        name,
 			DisplayName: strings.TrimSpace(displayName),
 			TeamDIDKey:  strings.TrimSpace(teamDIDKey),
+			Visibility:  "private",
 		},
+		&out,
+	); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetTeamVisibility updates a team's visibility metadata at awid.
+// Auth: team controller DIDKey signature (using the team private key).
+func (c *RegistryClient) SetTeamVisibility(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	visibility string,
+	teamKey ed25519.PrivateKey,
+) (*RegistryTeam, error) {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	visibility = strings.TrimSpace(visibility)
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("team name is required")
+	}
+	if visibility != "public" && visibility != "private" {
+		return nil, fmt.Errorf("visibility must be 'public' or 'private'")
+	}
+	if teamKey == nil {
+		return nil, fmt.Errorf("team signing key is required")
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/visibility"
+	var out RegistryTeam
+	if err := c.requestJSON(
+		ctx,
+		http.MethodPost,
+		registryURL,
+		path,
+		signedNamespaceHeaders(domain, "set_team_visibility", teamKey, map[string]string{
+			"team_name":  name,
+			"visibility": visibility,
+		}),
+		teamVisibilityRequest{Visibility: visibility},
 		&out,
 	); err != nil {
 		return nil, err

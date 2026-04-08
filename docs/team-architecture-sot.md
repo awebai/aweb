@@ -105,6 +105,9 @@ CREATE TABLE teams (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Team visibility does not live in aweb. It is read from awid team
+-- metadata and cached for dashboard auth decisions.
+
 -- Agents. One row per agent per team. Created on first connection
 -- with a valid certificate. No identity columns — the certificate
 -- IS the identity proof.
@@ -754,11 +757,15 @@ GET /v1/namespaces/{domain}/teams/{name}
     "domain": "acme.com",
     "name": "backend",
     "team_did_key": "did:key:z6Mk...",
+    "visibility": "private",
     "created_at": "..."
   }
 ```
 
-aweb caches `team_did_key` for certificate verification. TTL: 24 hours.
+aweb caches awid team metadata from this response for certificate
+verification and dashboard visibility checks. Effective TTL is about
+10 minutes with stale-while-revalidate behavior, so visibility flips
+propagate eventually rather than instantly.
 
 ### Address resolution (for message routing to external addresses)
 
@@ -791,6 +798,12 @@ GET /v1/namespaces/{domain}/teams/{name}/revocations?since=<timestamp>
 
 Cache TTL: 5-15 minutes. The `since` parameter enables incremental
 sync — only fetch new revocations since last check.
+
+Dashboard reads use cached awid visibility:
+
+- `private` teams require `X-Dashboard-Token`
+- `public` teams allow anonymous dashboard reads
+- write routes still require certificate auth regardless of visibility
 
 ### That's it.
 

@@ -95,6 +95,7 @@ class TeamCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     display_name: str = Field(default="", max_length=256)
     team_did_key: str = Field(..., min_length=1, max_length=256)
+    visibility: str = Field(default="private", max_length=32)
 
     @field_validator("name")
     @classmethod
@@ -107,6 +108,13 @@ class TeamCreateRequest(BaseModel):
     @classmethod
     def validate_team_did_key(cls, value: str) -> str:
         return _validate_did_key(value)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, value: str) -> str:
+        if value not in ("public", "private"):
+            raise ValueError("must be 'public' or 'private'")
+        return value
 
 
 class TeamRotateKeyRequest(BaseModel):
@@ -126,6 +134,7 @@ class TeamResponse(BaseModel):
     name: str
     display_name: str
     team_did_key: str
+    visibility: str
     created_at: str
 
 
@@ -139,6 +148,19 @@ class TeamDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=512)
+
+
+class TeamVisibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: str = Field(..., max_length=32)
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, value: str) -> str:
+        if value not in ("public", "private"):
+            raise ValueError("must be 'public' or 'private'")
+        return value
 
 
 class CertificateRegisterRequest(BaseModel):
@@ -212,6 +234,7 @@ class TeamRotateResponse(BaseModel):
     name: str
     display_name: str
     team_did_key: str
+    visibility: str
     created_at: str
     key_changed: bool
 
@@ -242,14 +265,15 @@ async def create_team(
         row = await db.fetch_one(
             """
             INSERT INTO {{tables.teams}}
-                (domain, name, display_name, team_did_key, created_by, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING team_id, domain, name, display_name, team_did_key, created_at
+                (domain, name, display_name, team_did_key, visibility, created_by, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
             """,
             domain,
             body.name,
             body.display_name,
             body.team_did_key,
+            body.visibility,
             caller_did,
             now,
         )
@@ -297,7 +321,7 @@ async def list_teams(
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT team_id, domain, name, display_name, team_did_key, created_at"
+        "SELECT team_id, domain, name, display_name, team_did_key, visibility, created_at"
         " FROM {{tables.teams}}"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY created_at, team_id"
@@ -330,7 +354,7 @@ async def get_team(domain: str, name: str, db_infra=Depends(get_db)) -> TeamResp
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT team_id, domain, name, display_name, team_did_key, created_at
+        SELECT team_id, domain, name, display_name, team_did_key, visibility, created_at
         FROM {{tables.teams}}
         WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
         """,
@@ -439,7 +463,7 @@ async def rotate_team_key(
             UPDATE {{tables.teams}}
             SET team_did_key = $3
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-            RETURNING team_id, domain, name, display_name, team_did_key, created_at
+            RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
             """,
             domain,
             name,
@@ -493,6 +517,40 @@ async def register_certificate(
         raise HTTPException(status_code=409, detail="Certificate already registered")
 
     return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
+
+
+@router.post(
+    "/{name}/visibility",
+    response_model=TeamResponse,
+    dependencies=[Depends(rate_limit_dep("team_update"))],
+)
+async def set_team_visibility(
+    request: Request,
+    domain: str,
+    name: str,
+    body: TeamVisibilityRequest,
+    db_infra=Depends(get_db),
+) -> TeamResponse:
+    db = db_infra.get_manager("aweb")
+    await _require_team_controller(
+        request, db, domain=domain, name=name,
+        operation="set_team_visibility", visibility=body.visibility,
+    )
+
+    row = await db.fetch_one(
+        """
+        UPDATE {{tables.teams}}
+        SET visibility = $3
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
+        """,
+        domain,
+        name,
+        body.visibility,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return _team_response(row)
 
 
 @router.get(
@@ -686,6 +744,7 @@ def _team_response(row) -> TeamResponse:
         name=row["name"],
         display_name=row["display_name"],
         team_did_key=row["team_did_key"],
+        visibility=row["visibility"],
         created_at=row["created_at"].isoformat(),
     )
 

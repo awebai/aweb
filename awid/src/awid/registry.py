@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
 _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
-_TEAM_KEY_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+_TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
@@ -84,6 +84,17 @@ class Address:
     did_aw: str
     current_did_key: str
     reachability: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class Team:
+    team_id: str
+    domain: str
+    name: str
+    display_name: str
+    team_did_key: str
+    visibility: str
     created_at: str
 
 
@@ -526,6 +537,13 @@ class RegistryClient:
         GET /v1/namespaces/{domain}/teams/{name}
         Returns team_did_key or None if team not found.
         """
+        team = await self.get_team(domain, name)
+        if team is None:
+            return None
+        return team.team_did_key
+
+    async def get_team(self, domain: str, name: str) -> Team | None:
+        """Fetch team metadata from awid."""
         data = await self._request_optional_json(
             "GET",
             f"/v1/namespaces/{domain}/teams/{name}",
@@ -533,7 +551,7 @@ class RegistryClient:
         )
         if data is None:
             return None
-        return data.get("team_did_key")
+        return _team_from_json(data)
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
         """Fetch the set of revoked certificate IDs for a team.
@@ -807,12 +825,18 @@ class CachedRegistryClient(RegistryClient):
         )
 
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
+        team = await self.get_team(domain, name)
+        if team is None:
+            return None
+        return team.team_did_key
+
+    async def get_team(self, domain: str, name: str) -> Team | None:
         return await self._cached_read(
-            cache_key=self._team_key_cache_key(domain, name),
-            ttl_seconds=_TEAM_KEY_CACHE_TTL_SECONDS,
-            fetcher=lambda: super(CachedRegistryClient, self).get_team_public_key(domain, name),
-            encode=lambda value: value,
-            decode=lambda payload: payload,
+            cache_key=self._team_metadata_cache_key(domain, name),
+            ttl_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).get_team(domain, name),
+            encode=lambda value: None if value is None else _team_to_json(value),
+            decode=lambda payload: None if payload is None else _team_from_json(payload),
         )
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
@@ -1136,8 +1160,8 @@ class CachedRegistryClient(RegistryClient):
     def _address_cache_key(self, domain: str, name: str, *, registry_url: str) -> str:
         return f"awid:registry_cache:v1:address:{registry_url}:{domain}:{name}"
 
-    def _team_key_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v1:team_key:{self.registry_url}:{domain}/{name}"
+    def _team_metadata_cache_key(self, domain: str, name: str) -> str:
+        return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}"
 
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
@@ -1222,6 +1246,18 @@ def _address_from_json(data: dict[str, Any]) -> Address:
     )
 
 
+def _team_from_json(data: dict[str, Any]) -> Team:
+    return Team(
+        team_id=data["team_id"],
+        domain=data["domain"],
+        name=data["name"],
+        display_name=data.get("display_name", ""),
+        team_did_key=data["team_did_key"],
+        visibility=data.get("visibility", "private"),
+        created_at=data["created_at"],
+    )
+
+
 def _key_resolution_to_json(value: KeyResolution) -> dict[str, Any]:
     return {
         "did_aw": value.did_aw,
@@ -1235,4 +1271,8 @@ def _namespace_to_json(value: Namespace) -> dict[str, Any]:
 
 
 def _address_to_json(value: Address) -> dict[str, Any]:
+    return asdict(value)
+
+
+def _team_to_json(value: Team) -> dict[str, Any]:
     return asdict(value)

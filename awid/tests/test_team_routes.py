@@ -187,6 +187,25 @@ async def test_get_team(client, controller_identity):
     body = resp.json()
     assert body["name"] == "infra"
     assert body["team_did_key"] == team_did_key
+    assert body["visibility"] == "private"
+
+
+@pytest.mark.asyncio
+async def test_create_team_accepts_public_visibility(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "public.com")
+
+    _, pub = generate_keypair()
+    team_did_key = did_from_public_key(pub)
+    headers = _sign(signing_key, controller_did, domain="public.com", operation="create_team", name="showcase")
+    resp = await client.post(
+        "/v1/namespaces/public.com/teams",
+        json={"name": "showcase", "team_did_key": team_did_key, "visibility": "public"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["visibility"] == "public"
 
 
 @pytest.mark.asyncio
@@ -468,3 +487,101 @@ async def test_rotate_same_key_reports_no_invalidation(client, controller_identi
     )
     assert resp.status_code == 200
     assert resp.json()["key_changed"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/namespaces/{domain}/teams/{name}/visibility — set visibility
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_team_visibility_updates_get_response(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "vis.com")
+
+    team_key, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="vis.com", operation="create_team", name="backend")
+    resp = await client.post(
+        "/v1/namespaces/vis.com/teams",
+        json={"name": "backend", "team_did_key": team_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["visibility"] == "private"
+
+    headers = _sign(
+        team_key, team_did_key,
+        domain="vis.com", operation="set_team_visibility",
+        team_name="backend", visibility="public",
+    )
+    resp = await client.post(
+        "/v1/namespaces/vis.com/teams/backend/visibility",
+        json={"visibility": "public"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["visibility"] == "public"
+
+    resp = await client.get("/v1/namespaces/vis.com/teams/backend")
+    assert resp.status_code == 200
+    assert resp.json()["visibility"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_set_team_visibility_is_idempotent(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "idempotent.com")
+
+    team_key, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="idempotent.com", operation="create_team", name="backend")
+    resp = await client.post(
+        "/v1/namespaces/idempotent.com/teams",
+        json={"name": "backend", "team_did_key": team_did_key, "visibility": "public"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    headers = _sign(
+        team_key, team_did_key,
+        domain="idempotent.com", operation="set_team_visibility",
+        team_name="backend", visibility="public",
+    )
+    resp = await client.post(
+        "/v1/namespaces/idempotent.com/teams/backend/visibility",
+        json={"visibility": "public"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["visibility"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_set_team_visibility_wrong_signer_returns_403(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "visfail.com")
+
+    _, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="visfail.com", operation="create_team", name="backend")
+    resp = await client.post(
+        "/v1/namespaces/visfail.com/teams",
+        json={"name": "backend", "team_did_key": team_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    wrong_key, wrong_pub = generate_keypair()
+    wrong_did = did_from_public_key(wrong_pub)
+    headers = _sign(
+        wrong_key, wrong_did,
+        domain="visfail.com", operation="set_team_visibility",
+        team_name="backend", visibility="public",
+    )
+    resp = await client.post(
+        "/v1/namespaces/visfail.com/teams/backend/visibility",
+        json={"visibility": "public"},
+        headers=headers,
+    )
+    assert resp.status_code == 403

@@ -74,6 +74,8 @@ CREATE TABLE teams (
     name            TEXT NOT NULL,
     display_name    TEXT NOT NULL DEFAULT '',
     team_did_key    TEXT NOT NULL,
+    visibility      TEXT NOT NULL DEFAULT 'private'
+                    CHECK (visibility IN ('public', 'private')),
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
@@ -116,12 +118,14 @@ POST   /v1/namespaces/{domain}/teams
        Auth: namespace controller DIDKey signature.
        Body: { "name": "backend",
                "display_name": "Backend Team",
-               "team_did_key": "did:key:z6Mk..." }
+               "team_did_key": "did:key:z6Mk...",
+               "visibility": "private" | "public" }
        The caller generates the team keypair and provides the public
        key. awid never sees the private key.
        Response: { "team_id": "uuid", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
+                   "visibility": "private",
                    "created_at": "..." }
 
 GET    /v1/namespaces/{domain}/teams
@@ -129,15 +133,18 @@ GET    /v1/namespaces/{domain}/teams
        Auth: none (public).
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
-                   "team_did_key": "did:key:z6Mk...", ... }] }
+                   "team_did_key": "did:key:z6Mk...",
+                   "visibility": "private", ... }] }
 
 GET    /v1/namespaces/{domain}/teams/{name}
        Get team details.
        Auth: none (public). Services call this to get the team
-       public key for certificate verification.
+       public key and visibility metadata for certificate verification
+       and dashboard auth.
        Response: { "team_id": "uuid", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
+                   "visibility": "private" | "public",
                    "created_at": "..." }
 
 DELETE /v1/namespaces/{domain}/teams/{name}
@@ -150,6 +157,18 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
        Body: { "new_team_did_key": "did:key:z6Mk..." }
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+
+POST   /v1/namespaces/{domain}/teams/{name}/visibility
+       Set team visibility.
+       Auth: team controller DIDKey signature.
+       Body: { "visibility": "private" | "public" }
+       Signed payload:
+       { "domain": "...",
+         "operation": "set_team_visibility",
+         "team_name": "...",
+         "visibility": "...",
+         "timestamp": "..." }
+       Response: full team object including updated visibility.
 
 POST   /v1/namespaces/{domain}/teams/{name}/certificates
        Register a certificate.

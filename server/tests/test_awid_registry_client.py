@@ -926,6 +926,36 @@ async def test_transport_uses_registry_origin_for_requests_when_no_base_url():
 
 
 @pytest.mark.asyncio
+async def test_get_team_returns_visibility():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/example.com/teams/backend"
+        return httpx.Response(
+            200,
+            json={
+                "team_id": "team-1",
+                "domain": "example.com",
+                "name": "backend",
+                "display_name": "Backend",
+                "team_did_key": "did:key:z6Mkteam",
+                "visibility": "public",
+                "created_at": "2026-04-08T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    team = await client.get_team("example.com", "backend")
+
+    assert team is not None
+    assert team.visibility == "public"
+    assert team.team_did_key == "did:key:z6Mkteam"
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_reuses_cached_resolve_key():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
@@ -957,6 +987,90 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
     assert first.current_did_key == did_key
     assert second.current_did_key == did_key
     assert request_count["value"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_reuses_cached_team_metadata():
+    request_count = {"value": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/acme.com/teams/backend"
+        request_count["value"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "team_id": "team-1",
+                "domain": "acme.com",
+                "name": "backend",
+                "display_name": "Backend",
+                "team_did_key": "did:key:z6Mkteam",
+                "visibility": "public",
+                "created_at": "2026-04-08T00:00:00Z",
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = await client.get_team("acme.com", "backend")
+    second = await client.get_team("acme.com", "backend")
+
+    assert first is not None
+    assert second is not None
+    assert first.visibility == "public"
+    assert second.visibility == "public"
+    assert request_count["value"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_serves_stale_team_metadata_then_refreshes_in_background(monkeypatch):
+    now = {"value": 0}
+    current_visibility = {"value": "private"}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/acme.com/teams/backend"
+        return httpx.Response(
+            200,
+            json={
+                "team_id": "team-1",
+                "domain": "acme.com",
+                "name": "backend",
+                "display_name": "Backend",
+                "team_did_key": "did:key:z6Mkteam",
+                "visibility": current_visibility["value"],
+                "created_at": "2026-04-08T00:00:00Z",
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    fresh = await client.get_team("acme.com", "backend")
+    assert fresh is not None
+    assert fresh.visibility == "private"
+
+    current_visibility["value"] = "public"
+    now["value"] = 601
+    stale = await client.get_team("acme.com", "backend")
+    assert stale is not None
+    assert stale.visibility == "private"
+
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    refreshed = await client.get_team("acme.com", "backend")
+    assert refreshed is not None
+    assert refreshed.visibility == "public"
 
 
 @pytest.mark.asyncio

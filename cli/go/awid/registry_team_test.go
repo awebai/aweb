@@ -34,7 +34,9 @@ func TestCreateTeam(t *testing.T) {
 			"team_id":      "team-uuid-1",
 			"domain":       "acme.com",
 			"name":         "backend",
+			"display_name": "Backend Team",
 			"team_did_key": gotPayload["team_did_key"],
+			"visibility":   "private",
 			"created_at":   "2026-04-06T00:00:00Z",
 		})
 	}))
@@ -76,7 +78,9 @@ func TestGetTeam(t *testing.T) {
 			"team_id":      "team-uuid-1",
 			"domain":       "acme.com",
 			"name":         "backend",
+			"display_name": "Backend Team",
 			"team_did_key": "did:key:z6MkTeam",
+			"visibility":   "public",
 			"created_at":   "2026-04-06T00:00:00Z",
 		})
 	}))
@@ -92,6 +96,118 @@ func TestGetTeam(t *testing.T) {
 	}
 	if team.TeamDIDKey != "did:key:z6MkTeam" {
 		t.Fatalf("team_did_key=%q", team.TeamDIDKey)
+	}
+	if team.Visibility != "public" {
+		t.Fatalf("visibility=%q", team.Visibility)
+	}
+}
+
+func TestSetTeamVisibility(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := ComputeDIDKey(teamPub)
+
+	var gotPayload map[string]any
+	var gotAuthHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/visibility" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		gotAuthHeader = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":      "team-uuid-1",
+			"domain":       "acme.com",
+			"name":         "backend",
+			"display_name": "Backend Team",
+			"team_did_key": teamDID,
+			"visibility":   gotPayload["visibility"],
+			"created_at":   "2026-04-06T00:00:00Z",
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	team, err := client.SetTeamVisibility(ctx, server.URL, "acme.com", "backend", "public", teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPayload["visibility"] != "public" {
+		t.Fatalf("payload visibility=%v", gotPayload["visibility"])
+	}
+	if team.Visibility != "public" {
+		t.Fatalf("visibility=%q", team.Visibility)
+	}
+	auth := strings.TrimSpace(gotAuthHeader)
+	parts := strings.Split(auth, " ")
+	if len(parts) != 3 || parts[0] != "DIDKey" {
+		t.Fatalf("auth=%q", gotAuthHeader)
+	}
+	if parts[1] != teamDID {
+		t.Fatalf("authorization DID=%s want team DID=%s", parts[1], teamDID)
+	}
+}
+
+func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := ComputeDIDKey(teamPub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		parts := strings.Split(auth, " ")
+		if len(parts) != 3 || parts[0] != "DIDKey" {
+			t.Fatalf("unexpected Authorization header %q", auth)
+		}
+		if parts[1] != teamDID {
+			t.Fatalf("authorization DID=%s want team DID=%s", parts[1], teamDID)
+		}
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		payload := canonicalRegistryJSON(map[string]string{
+			"domain":     "acme.com",
+			"operation":  "set_team_visibility",
+			"team_name":  "backend",
+			"timestamp":  timestamp,
+			"visibility": "public",
+		})
+		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+		if err != nil {
+			t.Fatalf("decode signature: %v", err)
+		}
+		if !ed25519.Verify(teamPub, []byte(payload), sig) {
+			t.Fatalf("invalid team signature for payload %s", payload)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":      "team-uuid-1",
+			"domain":       "acme.com",
+			"name":         "backend",
+			"display_name": "Backend Team",
+			"team_did_key": teamDID,
+			"visibility":   "public",
+			"created_at":   "2026-04-06T00:00:00Z",
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := client.SetTeamVisibility(ctx, server.URL, "acme.com", "backend", "public", teamKey); err != nil {
+		t.Fatal(err)
 	}
 }
 

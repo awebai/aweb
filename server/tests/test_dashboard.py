@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import jwt
 import pytest
@@ -24,7 +25,30 @@ def _make_jwt(team_addresses: list[str], user_id: str = "user-123") -> str:
     )
 
 
-def _build_app(aweb_db):
+class _FakeRegistryClient:
+    def __init__(self, *, visibility: str = "private") -> None:
+        self.visibility = visibility
+        self.calls: list[tuple[str, str]] = []
+
+    async def get_team(self, domain: str, name: str):
+        self.calls.append((domain, name))
+        return SimpleNamespace(
+            team_id="team-1",
+            domain=domain,
+            name=name,
+            display_name="",
+            team_did_key="did:key:z6Mkteam",
+            visibility=self.visibility,
+            created_at="2026-04-08T00:00:00Z",
+        )
+
+
+class _FailingRegistryClient:
+    async def get_team(self, domain: str, name: str):
+        raise RuntimeError(f"registry unavailable for {domain}/{name}")
+
+
+def _build_app(aweb_db, *, registry_client=None):
     app = FastAPI()
     app.include_router(dashboard_router)
 
@@ -34,6 +58,8 @@ def _build_app(aweb_db):
 
     app.state.db = _DbShim()
     app.state.dashboard_jwt_secret = _JWT_SECRET
+    if registry_client is not None:
+        app.state.awid_registry_client = registry_client
     return app
 
 
@@ -172,6 +198,36 @@ async def test_missing_token_returns_401(aweb_cloud_db):
         resp = await client.get("/v1/teams/acme.com/backend/agents")
 
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
+    registry_client = _FakeRegistryClient(visibility="public")
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=registry_client)
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/acme.com/backend/agents")
+
+    assert resp.status_code == 200
+    assert len(resp.json()["agents"]) == 2
+    assert registry_client.calls == [("acme.com", "backend")]
+
+
+@pytest.mark.asyncio
+async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["acme.com/backend"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/acme.com/backend/agents",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    assert len(resp.json()["agents"]) == 2
 
 
 @pytest.mark.asyncio

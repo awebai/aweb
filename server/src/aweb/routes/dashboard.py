@@ -33,8 +33,18 @@ def _get_dashboard_secret(request: Request) -> str:
 
 
 async def _require_dashboard_auth(request: Request, team_address: str) -> dict[str, Any]:
-    """Verify dashboard JWT and check team authorization."""
+    """Allow anonymous reads for public teams; otherwise verify dashboard JWT."""
     token = request.headers.get("X-Dashboard-Token")
+    try:
+        visibility = await _get_team_visibility(request, team_address)
+    except HTTPException:
+        if not token:
+            raise
+        visibility = "private"
+
+    if visibility == "public":
+        return {"user_id": "", "team_addresses": [team_address]}
+
     if not token:
         raise HTTPException(status_code=401, detail="Missing X-Dashboard-Token header")
 
@@ -48,6 +58,25 @@ async def _require_dashboard_auth(request: Request, team_address: str) -> dict[s
         if "not authorized" in msg:
             raise HTTPException(status_code=403, detail=msg)
         raise HTTPException(status_code=401, detail=msg)
+
+
+async def _get_team_visibility(request: Request, team_address: str) -> str:
+    parts = team_address.split("/", 1)
+    if len(parts) != 2:
+        return "private"
+
+    registry_client = getattr(request.app.state, "awid_registry_client", None)
+    if registry_client is None:
+        return "private"
+
+    try:
+        team = await registry_client.get_team(parts[0], parts[1])
+    except Exception:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+
+    if team is None:
+        return "private"
+    return getattr(team, "visibility", "private")
 
 
 # ---------------------------------------------------------------------------
