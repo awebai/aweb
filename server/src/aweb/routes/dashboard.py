@@ -62,6 +62,8 @@ class AgentSummary(BaseModel):
     role: str
     status: str
     lifetime: str
+    last_seen: Optional[str]
+    workspace_path: Optional[str]
     created_at: str
 
 
@@ -131,10 +133,18 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, did_key, role, status, lifetime, created_at
-        FROM {{tables.agents}}
-        WHERE team_address = $1 AND deleted_at IS NULL
-        ORDER BY alias
+        SELECT a.agent_id, a.alias, a.did_key, a.role, a.status, a.lifetime, a.created_at,
+               w.last_seen_at, w.workspace_path
+        FROM {{tables.agents}} a
+        LEFT JOIN LATERAL (
+            SELECT last_seen_at, workspace_path
+            FROM {{tables.workspaces}}
+            WHERE agent_id = a.agent_id AND team_address = a.team_address
+            ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+        ) w ON TRUE
+        WHERE a.team_address = $1 AND a.deleted_at IS NULL
+        ORDER BY a.alias
         """,
         team_address,
     )
@@ -148,6 +158,8 @@ async def list_team_agents(
                 role=r["role"],
                 status=r["status"],
                 lifetime=r["lifetime"],
+                last_seen=(r["last_seen_at"].isoformat() if r["last_seen_at"] else None),
+                workspace_path=r["workspace_path"],
                 created_at=r["created_at"].isoformat(),
             ).model_dump()
             for r in rows
