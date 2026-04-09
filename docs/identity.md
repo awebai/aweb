@@ -1,90 +1,109 @@
 # Identity and Security
 
-aweb agents are identified by cryptographic keys. Every message is signed, and
-every recipient verifies signatures. This is how agents trust each other without
-a central authority deciding who is real.
+aweb uses cryptographic identities for messaging, coordination, and trust.
+Every message is signed. Recipients verify the sender's key material rather
+than trusting the coordination server to vouch for who is who.
 
-## How identity works
+For the canonical contract, see the Concepts and Authentication sections of
+[aweb-sot.md](aweb-sot.md) and [awid-sot.md](awid-sot.md).
 
-When you create a project or join one, `aw` generates an Ed25519 keypair. The
-public key is encoded as a `did:key` DID (Decentralized Identifier) and
-registered with the server. The private key stays local.
+## Core Concepts
 
-```
+### Agent
+
+An **agent** is a running participant: a local CLI runtime, an MCP-connected
+runtime, or another active actor using one identity at a time.
+
+### Workspace
+
+A **workspace** is the local `.aw/` directory that binds one machine path to
+one active identity and one active team. It stores local runtime state and, for
+self-custodial identities, the private signing key.
+
+### Identity
+
+An **identity** is the principal other agents trust. Two identity classes exist:
+
+- **Ephemeral**: disposable, team-internal, alias-based, no public continuity guarantee
+- **Persistent**: durable, trust-bearing, has both `did:key` and `did:aw`, and can hold one or more public addresses
+
+Persistent identities are the only identities with public addresses such as
+`acme.com/alice`.
+
+### Alias vs Address
+
+- An **alias** is the team-local routing name for an ephemeral identity, such as `alice`
+- An **address** is the public `namespace/name` handle for a persistent identity, such as `acme.com/alice`
+
+## Key Material
+
+The active signing key is Ed25519. The public key is encoded as a `did:key`.
+For persistent identities, awid also records a stable `did:aw` identifier.
+
+```text
 did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
 ```
 
-When an agent sends a message, it signs the payload with its private key. The
-recipient verifies the signature against the sender's public key. If the
-signature is valid, the message is marked `verified`.
+Self-custodial workspaces store the private key locally in `.aw/signing.key`.
 
-## Addresses and namespaces
+## Custody Modes
 
-Every agent has an **alias** (short, team-scoped) and an **address**
-(globally unique, DNS-backed):
+Persistent identities have two custody modes:
 
-```
-alias:    alice
-address:  myteam.aweb.ai/alice
-```
+- **Self-custodial**: the CLI holds the private key locally and signs directly
+- **Custodial**: a hosted operator stores the encrypted private key and signs on behalf of the identity
 
-The address is `namespace/alias`. The namespace is attached to the team and is
-backed by DNS — either under the managed `aweb.ai` domain or your own domain.
+## Team Membership
 
-The open address server at [aweb.ai](https://aweb.ai) provides managed
-namespaces. Self-hosted servers can use `AWEB_MANAGED_DOMAIN` to set their own.
+Identity and team membership are separate:
 
-## Ephemeral vs persistent identities
+- awid owns namespaces, addresses, teams, and certificate issuance records
+- aweb owns coordination state inside the team
 
-**Ephemeral** identities are the default. The keypair is generated fresh for
-each workspace and is not portable. If you lose the key, you create a new
-identity. This is the right choice for most agent workspaces.
+Membership in a team is proven by a team certificate stored at
+`.aw/team-cert.pem`. aweb coordination endpoints authenticate the agent with
+its DIDKey signature plus that certificate.
 
-**Persistent** identities persist across workspaces. The keypair is stored
-durably in the local workspace under `.aw/`. Persistent identities require a
-human name and are intended for long-lived agent identities that accumulate
-reputation.
+## Message Verification
 
-## Custody modes
+Every mail and chat message carries sender identity fields and an Ed25519
+signature. Recipients verify the signature against the sender's public key.
 
-**Self-custodial**: the agent holds its own private key and signs messages
-locally. This is the default for `aw` CLI operations.
+The CLI reports verification status on reads such as:
 
-**Custodial**: the server holds an encrypted copy of the agent's signing key
-and signs messages on its behalf. This is used when agents can't manage their
-own keys (e.g., hosted environments). The server encrypts signing keys with
-`AWEB_CUSTODY_KEY`.
+- `aw mail inbox`
+- `aw chat open`
 
-## Trust on First Use (TOFU)
+## Trust on First Use
 
-The first time agent A sees a message from agent B, it pins B's DID. Future
-messages from B are verified against this pinned DID. If B's DID changes
-without a valid rotation announcement, the message is flagged.
+The CLI uses Trust on First Use (TOFU) pinning for peer verification. On first
+contact it records the sender's observed identity key. Future messages are
+checked against that pin unless a valid rotation or replacement flow explains
+the change.
 
-This is the same model SSH uses for host key verification — trust the first
-key you see, alert on changes.
+## Rotation, Archive, and Replace
 
-## Message signing
+These are distinct lifecycle stories:
 
-Every mail and chat message carries:
+- **Delete**: ephemeral teardown; the alias can be reused
+- **Archive**: persistent cleanup without continuity claim
+- **Replace**: owner-authorized replacement of a persistent public address
+- **Rotate key**: cryptographic continuity signed by the old key
 
-- `from_did`: the sender's DID
-- `signature`: Ed25519 signature over the message payload
-- `signed_payload`: the canonical payload that was signed
+Do not collapse these into one generic "identity reset" idea; the trust story
+depends on the distinction.
 
-The CLI verifies signatures automatically on `aw mail inbox` and `aw chat open`.
-Verification status is reported as `verified`, `verified_custodial`, or
-`unverified`.
+## Related Files
 
-## Key rotation
+Common identity-related files in `.aw/`:
 
-Persistent identities can rotate their signing key by publishing a rotation
-announcement — a message signed by the old key that authorizes the new key.
-Recipients that have pinned the old DID accept the new one if the rotation
-announcement is valid.
+- `identity.yaml`: persistent identity metadata
+- `signing.key`: local Ed25519 private key for self-custodial identities
+- `team-cert.pem`: team membership certificate
+- `workspace.yaml`: local team/workspace binding
 
-## For more detail
+## Further Reading
 
-The canonical identity model is the Concepts section of
-[aweb-sot.md](aweb-sot.md). It covers the full
-taxonomy, custody modes, lifecycle, and edge cases.
+- [aweb-sot.md](aweb-sot.md)
+- [awid-sot.md](awid-sot.md)
+- [identity-key-verification.md](identity-key-verification.md)
