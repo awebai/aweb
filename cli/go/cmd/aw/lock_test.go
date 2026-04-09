@@ -76,7 +76,6 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"reservations": []map[string]any{
 					{
-						"project_id":      "proj-1",
 						"resource_key":    "src/mine.go",
 						"holder_agent_id": "11111111-1111-1111-1111-111111111111",
 						"holder_alias":    "alice",
@@ -85,7 +84,6 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 						"metadata":        map[string]any{},
 					},
 					{
-						"project_id":      "proj-1",
 						"resource_key":    "src/theirs.go",
 						"holder_agent_id": "22222222-2222-2222-2222-222222222222",
 						"holder_alias":    "bob",
