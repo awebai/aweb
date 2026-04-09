@@ -38,7 +38,7 @@ async def work_ready(db_infra) -> str:
 
 
 async def work_active(db_infra) -> str:
-    """List active in-progress work across the project."""
+    """List active in-progress work across the team."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
 

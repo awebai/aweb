@@ -470,15 +470,6 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 				},
 				"has_more": false,
 			})
-		case r.URL.Path == "/v1/agents/resolve/bob" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-bob",
-				"did":         "did:key:z6MkEphemeral",
-				"address":     "demo/bob",
-				"custody":     "custodial",
-				"lifetime":    "ephemeral",
-				"public_key":  "",
-			})
 		case r.URL.Path == "/v1/agents/demo/bob" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)
 			w.WriteHeader(http.StatusNoContent)
@@ -584,14 +575,6 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 					},
 				},
 				"has_more": false,
-			})
-		case r.URL.Path == "/v1/agents/resolve/maintainer" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-maintainer",
-				"did":         "did:key:z6MkPersistent",
-				"address":     "demo/maintainer",
-				"custody":     "self",
-				"lifetime":    "persistent",
 			})
 		case r.URL.Path == "/v1/agents/demo/maintainer" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)
@@ -699,15 +682,6 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 					},
 				},
 				"has_more": false,
-			})
-		case r.URL.Path == "/v1/agents/resolve/demo.example.com/bot" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-bot",
-				"did":         "did:key:z6MkEphemeral",
-				"address":     "demo.example.com/bot",
-				"custody":     "custodial",
-				"lifetime":    "ephemeral",
-				"public_key":  "",
 			})
 		case r.URL.Path == "/v1/agents/demo.example.com/bot" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)

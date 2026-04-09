@@ -137,7 +137,7 @@ async def chat_send(
 
         target = await get_agent_by_alias(db_infra, team_address=auth.team_address, alias=to_alias)
         if not target:
-            return json.dumps({"error": f"Agent '{to_alias}' not found in project"})
+            return json.dumps({"error": f"Agent '{to_alias}' not found in team"})
 
         try:
             sid = await ensure_session(

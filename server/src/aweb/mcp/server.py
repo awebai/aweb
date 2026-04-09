@@ -431,7 +431,7 @@ def register_tools(
 
     @mcp.tool(
         name="work_active",
-        description="List active in-progress work across the project.",
+        description="List active in-progress work across the team.",
     )
     async def work_active() -> str:
         return await _work_active_impl(db_infra)
@@ -456,21 +456,21 @@ def register_tools(
 
     @mcp.tool(
         name="contacts_list",
-        description="List all contacts in the project's address book.",
+        description="List all contacts in the team's address book.",
     )
     async def contacts_list() -> str:
         return await _contacts_list_impl(db_infra)
 
     @mcp.tool(
         name="contacts_add",
-        description="Add a contact address to the project's address book.",
+        description="Add a contact address to the team's address book.",
     )
     async def contacts_add(contact_address: str, label: str = "") -> str:
         return await _contacts_add_impl(db_infra, contact_address=contact_address, label=label)
 
     @mcp.tool(
         name="contacts_remove",
-        description="Remove a contact from the project's address book.",
+        description="Remove a contact from the team's address book.",
     )
     async def contacts_remove(contact_id: str) -> str:
         return await _contacts_remove_impl(db_infra, contact_id=contact_id)

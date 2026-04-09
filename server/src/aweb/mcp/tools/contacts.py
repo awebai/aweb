@@ -11,7 +11,7 @@ from aweb.service_errors import ServiceError
 
 
 async def contacts_list(db_infra) -> str:
-    """List all contacts in the project."""
+    """List all contacts in the team."""
     auth = get_auth()
     try:
         contacts = await list_contacts(db_infra, team_address=auth.team_address)
@@ -21,7 +21,7 @@ async def contacts_list(db_infra) -> str:
 
 
 async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> str:
-    """Add a contact to the project."""
+    """Add a contact to the team."""
     auth = get_auth()
     try:
         result = await add_contact(
@@ -38,7 +38,7 @@ async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> st
 
 
 async def contacts_remove(db_infra, *, contact_id: str) -> str:
-    """Remove a contact from the project."""
+    """Remove a contact from the team."""
     auth = get_auth()
     try:
         await remove_contact(db_infra, team_address=auth.team_address, contact_id=contact_id)
