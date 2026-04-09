@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -280,7 +281,6 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
 		t.Fatal(err)
 	}
-
 	// Step 1: Create invite
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
@@ -613,5 +613,298 @@ func TestCertShow(t *testing.T) {
 	}
 	if got["certificate_id"] != cert.CertificateID {
 		t.Fatalf("certificate_id=%v want %v", got["certificate_id"], cert.CertificateID)
+	}
+}
+
+func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
+	var registeredCert map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
+			if err != nil {
+				t.Fatalf("decode cert header: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      cert.Team,
+				"alias":        cert.Alias,
+				"agent_id":     "agent-ops",
+				"workspace_id": "ws-ops",
+				"repo_id":      "repo-1",
+				"team_did_key": cert.TeamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	t.Setenv("HOME", tmp)
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberPub)
+	memberStableID := awid.ComputeStableID(memberPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:         memberDIDKey,
+		StableID:    memberStableID,
+		Address:     "acme.com/alice",
+		RegistryURL: server.URL,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		CreatedAt:   "2026-04-09T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	keyBefore, err := os.ReadFile(filepath.Join(tmp, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityBefore, err := os.ReadFile(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		AwebURL:    server.URL,
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			WorkspaceID: "ws-backend",
+			CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
+	})
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "ops", teamKey)
+	_, token, err := createTeamInviteToken("acme.com", "ops", server.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runAdd := exec.CommandContext(ctx, bin, "id", "team", "add", token, "--json")
+	runAdd.Env = testCommandEnv(tmp)
+	runAdd.Dir = tmp
+	addOut, err := runAdd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team add failed: %v\n%s", err, string(addOut))
+	}
+
+	var addGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, addOut), &addGot); err != nil {
+		t.Fatalf("invalid add json: %v\n%s", err, string(addOut))
+	}
+	if addGot["team_id"] != "ops:acme.com" {
+		t.Fatalf("team_id=%v", addGot["team_id"])
+	}
+	if registeredCert["member_did_key"] != memberDIDKey {
+		t.Fatalf("registered cert member_did_key=%v", registeredCert["member_did_key"])
+	}
+	keyAfter, err := os.ReadFile(filepath.Join(tmp, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityAfter, err := os.ReadFile(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(keyBefore, keyAfter) {
+		t.Fatal("signing.key changed during aw id team add")
+	}
+	if !bytes.Equal(identityBefore, identityAfter) {
+		t.Fatal("identity.yaml changed during aw id team add")
+	}
+
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	}
+	if workspace.Membership("ops:acme.com") == nil {
+		t.Fatal("expected ops team membership")
+	}
+	if workspace.Membership("ops:acme.com").WorkspaceID != "ws-ops" {
+		t.Fatalf("workspace_id=%q", workspace.Membership("ops:acme.com").WorkspaceID)
+	}
+
+	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
+	runList.Env = testCommandEnv(tmp)
+	runList.Dir = tmp
+	listOut, err := runList.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team list failed: %v\n%s", err, string(listOut))
+	}
+	var listGot struct {
+		ActiveTeam  string         `json:"active_team"`
+		Memberships []teamListItem `json:"memberships"`
+	}
+	if err := json.Unmarshal(extractJSON(t, listOut), &listGot); err != nil {
+		t.Fatalf("invalid list json: %v\n%s", err, string(listOut))
+	}
+	if listGot.ActiveTeam != "backend:acme.com" || len(listGot.Memberships) != 2 {
+		t.Fatalf("list=%+v", listGot)
+	}
+
+	runSwitch := exec.CommandContext(ctx, bin, "id", "team", "switch", "ops:acme.com", "--json")
+	runSwitch.Env = testCommandEnv(tmp)
+	runSwitch.Dir = tmp
+	switchOut, err := runSwitch.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team switch failed: %v\n%s", err, string(switchOut))
+	}
+	var switchGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, switchOut), &switchGot); err != nil {
+		t.Fatalf("invalid switch json: %v\n%s", err, string(switchOut))
+	}
+	if switchGot["active_team"] != "ops:acme.com" {
+		t.Fatalf("active_team=%v", switchGot["active_team"])
+	}
+
+	runLeave := exec.CommandContext(ctx, bin, "id", "team", "leave", "ops:acme.com", "--json")
+	runLeave.Env = testCommandEnv(tmp)
+	runLeave.Dir = tmp
+	leaveOut, err := runLeave.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team leave failed: %v\n%s", err, string(leaveOut))
+	}
+	var leaveGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, leaveOut), &leaveGot); err != nil {
+		t.Fatalf("invalid leave json: %v\n%s", err, string(leaveOut))
+	}
+	if leaveGot["active_team"] != "backend:acme.com" {
+		t.Fatalf("active_team=%v", leaveGot["active_team"])
+	}
+	workspace, err = awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Membership("ops:acme.com") != nil {
+		t.Fatal("expected ops membership removed")
+	}
+	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "ops:acme.com")); !os.IsNotExist(err) {
+		t.Fatalf("ops cert should be removed, stat err=%v", err)
+	}
+}
+
+func TestTeamLeaveRejectsOnlyMembership(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "leave", "backend:demo")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "cannot leave the only team") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestTeamSwitchAlreadyActiveIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
+
+	before, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "switch", "backend:demo")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team switch failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Team backend:demo is already active") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+
+	after, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("workspace.yaml changed for already-active switch")
+	}
+}
+
+func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.WorktreeMembership{
+			{
+				TeamID:      "backend:acme.com",
+				Alias:       "alice",
+				WorkspaceID: "ws-backend",
+				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:acme.com",
+				Alias:       "alice-ops",
+				WorkspaceID: "ws-ops",
+				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+		},
+	})
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "switch", "unknown:acme.com")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `team "unknown:acme.com" is not present in workspace memberships; available: backend:acme.com, ops:acme.com`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

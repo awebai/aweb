@@ -103,6 +103,7 @@ Flags:
 Show coordination status for the current workspace/identity and team
 
 Flags:
+- `--all Show all local team memberships in addition to the selected team status`
 - `-h, --help help for status`
 - `--limit int Maximum team workspaces to show (default 15)`
 
@@ -251,14 +252,28 @@ Flags:
 Team management (create, invite, membership)
 
 Subcommands:
+- `add` Join another team in this workspace with the current identity
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
 - `invite` Generate an invite token for a team
+- `leave` Remove a team membership from this workspace
+- `list` List team memberships for this workspace
 - `remove-member` Remove a member from a team (revoke certificate)
+- `switch` Switch the active team for this workspace
 
 Flags:
 - `-h, --help help for team`
+
+## `id team add`
+
+### `id team add`
+
+Join another team in this workspace with the current identity
+
+Flags:
+- `--alias string Alias for the added team membership (defaults to the current identity name)`
+- `-h, --help help for add`
 
 ## `id team accept-invite`
 
@@ -307,6 +322,24 @@ Flags:
 - `--namespace string Namespace domain`
 - `--team string Team name`
 
+## `id team leave`
+
+### `id team leave`
+
+Remove a team membership from this workspace
+
+Flags:
+- `-h, --help help for leave`
+
+## `id team list`
+
+### `id team list`
+
+List team memberships for this workspace
+
+Flags:
+- `-h, --help help for list`
+
 ## `id team remove-member`
 
 ### `id team remove-member`
@@ -319,6 +352,15 @@ Flags:
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
 - `--team string Team name`
+
+## `id team switch`
+
+### `id team switch`
+
+Switch the active team for this workspace
+
+Flags:
+- `-h, --help help for switch`
 
 ## `id verify`
 

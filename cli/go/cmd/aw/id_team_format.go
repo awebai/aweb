@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"text/tabwriter"
 	"strings"
 )
 
@@ -53,6 +54,63 @@ func formatTeamRemoveMember(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Member:      %s\n", out.MemberAddress))
+	return sb.String()
+}
+
+func formatTeamAdd(v any) string {
+	out := v.(teamAddOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
+	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	if strings.TrimSpace(out.WorkspaceID) != "" {
+		sb.WriteString(fmt.Sprintf("Workspace:   %s\n", out.WorkspaceID))
+	}
+	return sb.String()
+}
+
+func formatTeamSwitch(v any) string {
+	out := v.(teamSwitchOutput)
+	if strings.TrimSpace(out.Status) == "already_active" {
+		return fmt.Sprintf("Team %s is already active\n", out.ActiveTeam)
+	}
+	return fmt.Sprintf("Active team switched to %s\n", out.ActiveTeam)
+}
+
+func formatTeamList(v any) string {
+	out := v.(teamListOutput)
+	if len(out.Memberships) == 0 {
+		return "No team memberships.\n"
+	}
+	var sb strings.Builder
+	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ACTIVE\tTEAM\tALIAS\tROLE\tLIFETIME\tISSUED")
+	for _, item := range out.Memberships {
+		active := ""
+		if item.Active {
+			active = "*"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			active,
+			item.TeamID,
+			item.Alias,
+			firstNonEmpty(item.RoleName, "-"),
+			firstNonEmpty(item.Lifetime, "-"),
+			firstNonEmpty(item.IssuedAt, "-"),
+		)
+	}
+	_ = tw.Flush()
+	return sb.String()
+}
+
+func formatTeamLeave(v any) string {
+	out := v.(teamLeaveOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Left team %s\n", out.TeamID))
+	if strings.TrimSpace(out.ActiveTeam) != "" {
+		sb.WriteString(fmt.Sprintf("Active team: %s\n", out.ActiveTeam))
+	}
 	return sb.String()
 }
 

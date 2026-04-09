@@ -873,13 +873,20 @@ relies on are:
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
 | `aw id team accept-invite <token>` | Accept invite, receive certificate |
+| `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
+| `aw id team switch <team_id>` | Change the active local team membership for this workspace |
+| `aw id team list` | Show local team memberships stored in `.aw/workspace.yaml` |
+| `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
 | `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (for the public hosted service, <https://app.aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |
 | `aw whoami` | Show team membership + certificate info |
 | `aw workspace add-worktree [role]` | Create a sibling git worktree with its own ephemeral team certificate and connect it to the same team |
-| `aw workspace status` | Show team coordination state |
+| `aw workspace status [--all]` | Show team coordination state for the selected team, optionally including all local memberships |
+
+Most coordination commands also accept `--team <team_id>` to override `active_team`
+for a single invocation without mutating `.aw/workspace.yaml`.
 
 All coordination commands (mail, chat, tasks, claims, locks, roles,
 instructions, work, contacts, etc.) are listed in

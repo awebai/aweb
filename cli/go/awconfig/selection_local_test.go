@@ -83,3 +83,39 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 		t.Fatalf("domain=%q", sel.Domain)
 	}
 }
+
+func TestResolveWorkspaceRejectsUnknownTeamOverrideWithAvailableMemberships(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []WorktreeMembership{
+			{
+				TeamID:      "backend:acme.com",
+				Alias:       "alice",
+				WorkspaceID: "workspace-1",
+				CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:acme.com",
+				Alias:       "alice-ops",
+				WorkspaceID: "workspace-2",
+				CertPath:    TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp, TeamIDOverride: "unknown:acme.com"})
+	if err == nil {
+		t.Fatal("expected unknown team override error")
+	}
+	if got := err.Error(); got != `team "unknown:acme.com" is not present in workspace memberships; available: backend:acme.com, ops:acme.com` {
+		t.Fatalf("error=%q", got)
+	}
+}

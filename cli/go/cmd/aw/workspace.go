@@ -44,10 +44,13 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 
 var (
 	workspaceStatusLimit int
+	workspaceStatusAll   bool
 	workspaceAddAlias    string
 )
 
 type workspaceStatusOutput struct {
+	SelectedTeam       string                            `json:"selected_team"`
+	Memberships        []workspaceTeamMembershipItem     `json:"memberships,omitempty"`
 	Workspace          aweb.WorkspaceInfo                `json:"workspace"`
 	ContextKind        string                            `json:"context_kind"`
 	Locks              []aweb.ReservationView            `json:"locks,omitempty"`
@@ -64,6 +67,14 @@ type workspaceAddWorktreeOutput struct {
 	WorktreePath string `json:"worktree_path"`
 }
 
+type workspaceTeamMembershipItem struct {
+	TeamID      string `json:"team_id"`
+	Alias       string `json:"alias"`
+	RoleName    string `json:"role_name,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Active      bool   `json:"active"`
+}
+
 type workspaceMigrateMultiTeamOutput struct {
 	Status      string `json:"status"`
 	ActiveTeam  string `json:"active_team"`
@@ -76,6 +87,7 @@ var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
 
 func init() {
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
+	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusAll, "all", false, "Show all local team memberships in addition to the selected team status")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
 
 	workspaceCmd.AddCommand(workspaceStatusCmd)
@@ -107,8 +119,8 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 
 	workspaceID := strings.TrimSpace(sel.WorkspaceID)
 	if state != nil {
-		if activeMembership := state.ActiveMembership(); activeMembership != nil && strings.TrimSpace(activeMembership.WorkspaceID) != "" {
-			workspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+		if membership, err := workspaceMembershipForSelection(state, sel); err == nil && membership != nil && strings.TrimSpace(membership.WorkspaceID) != "" {
+			workspaceID = strings.TrimSpace(membership.WorkspaceID)
 		}
 	}
 
@@ -172,6 +184,8 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	printOutput(workspaceStatusOutput{
+		SelectedTeam:       strings.TrimSpace(sel.TeamID),
+		Memberships:        membershipItemsForWorkspaceState(state, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
 		Workspace:          self,
 		ContextKind:        inferWorkspaceContextKind(self, state),
 		Locks:              locksByWorkspace[workspaceID],
@@ -491,15 +505,15 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 	if state == nil {
 		return info
 	}
-	if activeMembership := state.ActiveMembership(); activeMembership != nil {
-		if strings.TrimSpace(activeMembership.WorkspaceID) != "" {
-			info.WorkspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+	if membership, err := workspaceMembershipForSelection(state, sel); err == nil && membership != nil {
+		if strings.TrimSpace(membership.WorkspaceID) != "" {
+			info.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
 		}
-		if strings.TrimSpace(activeMembership.Alias) != "" {
-			info.Alias = strings.TrimSpace(activeMembership.Alias)
+		if strings.TrimSpace(membership.Alias) != "" {
+			info.Alias = strings.TrimSpace(membership.Alias)
 		}
-		if strings.TrimSpace(activeMembership.RoleName) != "" {
-			info.Role = stringPtr(strings.TrimSpace(activeMembership.RoleName))
+		if strings.TrimSpace(membership.RoleName) != "" {
+			info.Role = stringPtr(strings.TrimSpace(membership.RoleName))
 		}
 	}
 	if strings.TrimSpace(state.HumanName) != "" {
@@ -825,6 +839,9 @@ func formatWorkspaceStatus(v any) string {
 	now := time.Now()
 
 	sb.WriteString("## Self\n")
+	if strings.TrimSpace(out.SelectedTeam) != "" {
+		sb.WriteString(fmt.Sprintf("- Team: %s\n", out.SelectedTeam))
+	}
 	sb.WriteString(fmt.Sprintf("- Alias: %s\n", out.Workspace.Alias))
 	sb.WriteString(fmt.Sprintf("- Context: %s\n", out.ContextKind))
 	if out.Workspace.Role != nil && strings.TrimSpace(*out.Workspace.Role) != "" {
@@ -849,6 +866,9 @@ func formatWorkspaceStatus(v any) string {
 	}
 	sb.WriteString(fmt.Sprintf("- Claims: %s\n", formatWorkspaceClaimsSummary(out.Workspace.Claims)))
 	sb.WriteString(fmt.Sprintf("- Locks: %s\n", formatWorkspaceLocksSummary(out.Locks, now, 0)))
+	if len(out.Memberships) > 0 {
+		sb.WriteString(fmt.Sprintf("- Memberships: %s\n", formatWorkspaceMembershipSummary(out.Memberships)))
+	}
 
 	sb.WriteString("\n## Team\n")
 	if len(out.Team) == 0 {
@@ -884,6 +904,60 @@ func formatWorkspaceStatus(v any) string {
 		sb.WriteString(fmt.Sprintf("Claim conflicts: %d\n", out.ConflictCount))
 	}
 	return sb.String()
+}
+
+func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, selectedTeam string, includeAll bool) []workspaceTeamMembershipItem {
+	if state == nil {
+		return nil
+	}
+	if !includeAll {
+		if membership := state.Membership(selectedTeam); membership != nil {
+			return []workspaceTeamMembershipItem{{
+				TeamID:      strings.TrimSpace(membership.TeamID),
+				Alias:       strings.TrimSpace(membership.Alias),
+				RoleName:    strings.TrimSpace(membership.RoleName),
+				WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
+				Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(state.ActiveTeam)),
+			}}
+		}
+		return nil
+	}
+
+	items := make([]workspaceTeamMembershipItem, 0, len(state.Memberships))
+	for _, membership := range state.Memberships {
+		items = append(items, workspaceTeamMembershipItem{
+			TeamID:      strings.TrimSpace(membership.TeamID),
+			Alias:       strings.TrimSpace(membership.Alias),
+			RoleName:    strings.TrimSpace(membership.RoleName),
+			WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
+			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(state.ActiveTeam)),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Active != items[j].Active {
+			return items[i].Active
+		}
+		return items[i].TeamID < items[j].TeamID
+	})
+	return items
+}
+
+func formatWorkspaceMembershipSummary(items []workspaceTeamMembershipItem) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		label := item.TeamID
+		if strings.TrimSpace(item.RoleName) != "" {
+			label += " (" + strings.TrimSpace(item.RoleName) + ")"
+		}
+		if item.Active {
+			label += " [active]"
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func formatWorkspaceHostPath(workspace aweb.WorkspaceInfo) string {

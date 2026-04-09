@@ -181,6 +181,28 @@ func (w *WorktreeWorkspace) ActiveMembership() *WorktreeMembership {
 	return w.Membership(w.ActiveTeam)
 }
 
+func (w *WorktreeWorkspace) AvailableTeamIDs() []string {
+	if w == nil || len(w.Memberships) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(w.Memberships))
+	teamIDs := make([]string, 0, len(w.Memberships))
+	for _, membership := range w.Memberships {
+		teamID := strings.TrimSpace(membership.TeamID)
+		if teamID == "" {
+			continue
+		}
+		key := strings.ToLower(teamID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		teamIDs = append(teamIDs, teamID)
+	}
+	sort.Strings(teamIDs)
+	return teamIDs
+}
+
 func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false

@@ -71,6 +71,14 @@ Key points:
 - `memberships` holds the per-team alias/workspace/certificate state for this one identity
 - repo/worktree metadata such as `repo_id`, `canonical_origin`, `hostname`, and `workspace_path` are local coordination metadata, not identity data
 
+Multi-team commands:
+
+- `aw id team add <invite-token>` adds another team membership to the same local identity without switching `active_team`
+- `aw id team switch <team_id>` changes `active_team`
+- `aw id team list` shows all local memberships for the current worktree
+- `aw id team leave <team_id>` removes one local membership and its certificate from this worktree only
+- relevant coordination commands accept `--team <team_id>` to use a non-active membership for that one command
+
 `workspace.yaml` is an aweb binding only. It does not carry:
 
 - `registry_url`

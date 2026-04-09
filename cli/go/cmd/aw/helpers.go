@@ -70,6 +70,7 @@ func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
 	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
 		ServerName:        serverFlag,
+		TeamIDOverride:    strings.TrimSpace(teamFlag),
 		WorkingDir:        workingDir,
 		AllowEnvOverrides: true,
 	})
@@ -100,7 +101,7 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	}
 	sel.BaseURL = baseURL
 
-	c, err := resolveCertificateClient(workingDir, baseURL)
+	c, err := resolveCertificateClient(workingDir, baseURL, strings.TrimSpace(sel.TeamID))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -118,19 +119,22 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
-func resolveCertificateClient(workingDir, baseURL string) (*aweb.Client, error) {
+func resolveCertificateClient(workingDir, baseURL, teamID string) (*aweb.Client, error) {
 	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
 	if err != nil {
 		return nil, nil
 	}
-	activeMembership := workspace.ActiveMembership()
-	if activeMembership == nil {
+	selectedMembership := workspace.Membership(teamID)
+	if selectedMembership == nil {
+		if strings.TrimSpace(teamID) != "" {
+			return nil, fmt.Errorf("team %q is not present in workspace memberships; available: %s", teamID, strings.Join(workspace.AvailableTeamIDs(), ", "))
+		}
 		return nil, fmt.Errorf("workspace is missing active_team membership")
 	}
-	certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
+	certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
-		return nil, fmt.Errorf("load team certificate for %s: %w", activeMembership.TeamID, err)
+		return nil, fmt.Errorf("load team certificate for %s: %w", selectedMembership.TeamID, err)
 	}
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
@@ -902,11 +906,14 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 	if err != nil || ws == nil {
 		return nil
 	}
-	activeMembership := ws.ActiveMembership()
-	if activeMembership == nil {
+	selectedMembership, err := workspaceMembershipForSelection(ws, sel)
+	if err != nil || selectedMembership == nil {
+		if err != nil {
+			return err
+		}
 		return nil
 	}
-	wsAlias := strings.TrimSpace(activeMembership.Alias)
+	wsAlias := strings.TrimSpace(selectedMembership.Alias)
 	selAlias := strings.TrimSpace(sel.Alias)
 	if wsAlias == "" || selAlias == "" {
 		return nil
@@ -934,4 +941,24 @@ func debugLog(format string, args ...any) {
 	if debugFlag {
 		fmt.Fprintf(os.Stderr, "[debug] "+format+"\n", args...)
 	}
+}
+
+func workspaceMembershipForSelection(ws *awconfig.WorktreeWorkspace, sel *awconfig.Selection) (*awconfig.WorktreeMembership, error) {
+	if ws == nil {
+		return nil, nil
+	}
+	teamID := ""
+	if sel != nil {
+		teamID = strings.TrimSpace(sel.TeamID)
+	}
+	if teamID == "" {
+		teamID = strings.TrimSpace(teamFlag)
+	}
+	if teamID != "" {
+		if membership := ws.Membership(teamID); membership != nil {
+			return membership, nil
+		}
+		return nil, fmt.Errorf("team %q is not present in workspace memberships; available: %s", teamID, strings.Join(ws.AvailableTeamIDs(), ", "))
+	}
+	return ws.ActiveMembership(), nil
 }

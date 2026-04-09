@@ -222,6 +222,156 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	}
 }
 
+func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/workspaces/team":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
+		case "/v1/reservations":
+			_ = json.NewEncoder(w).Encode(map[string]any{"reservations": []map[string]any{}})
+		case "/v1/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace":           map[string]any{"workspace_count": 1},
+				"agents":              []map[string]any{},
+				"claims":              []map[string]any{},
+				"conflicts":           []map[string]any{},
+				"escalations_pending": 0,
+				"timestamp":           "2026-03-10T10:10:00Z",
+			})
+		case "/v1/workspaces":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{}, "has_more": false})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buildAwBinary(t, ctx, bin)
+
+	state := awconfig.WorktreeWorkspace{
+		AwebURL:    server.URL,
+		ActiveTeam: "backend:demo",
+		Memberships: []awconfig.WorktreeMembership{
+			{
+				TeamID:      "backend:demo",
+				Alias:       "alice",
+				RoleName:    "developer",
+				WorkspaceID: "ws-backend",
+				CertPath:    awconfig.TeamCertificateRelativePath("backend:demo"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+			{
+				TeamID:      "design:demo",
+				Alias:       "alice-design",
+				RoleName:    "designer",
+				WorkspaceID: "ws-design",
+				CertPath:    awconfig.TeamCertificateRelativePath("design:demo"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:demo",
+				Alias:       "alice-ops",
+				RoleName:    "operator",
+				WorkspaceID: "ws-ops",
+				CertPath:    awconfig.TeamCertificateRelativePath("ops:demo"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+		},
+	}
+	writeWorkspaceBindingForTest(t, tmp, state)
+
+	runDefault := exec.CommandContext(ctx, bin, "workspace", "status", "--json")
+	runDefault.Env = testCommandEnv(tmp)
+	runDefault.Dir = tmp
+	defaultOut, err := runDefault.CombinedOutput()
+	if err != nil {
+		t.Fatalf("default status failed: %v\n%s", err, string(defaultOut))
+	}
+	var defaultGot struct {
+		SelectedTeam string                         `json:"selected_team"`
+		Memberships  []workspaceTeamMembershipItem `json:"memberships"`
+	}
+	if err := json.Unmarshal(extractJSON(t, defaultOut), &defaultGot); err != nil {
+		t.Fatalf("invalid default json: %v\n%s", err, string(defaultOut))
+	}
+	if defaultGot.SelectedTeam != "backend:demo" {
+		t.Fatalf("selected_team=%q", defaultGot.SelectedTeam)
+	}
+	if len(defaultGot.Memberships) != 1 || defaultGot.Memberships[0].TeamID != "backend:demo" || !defaultGot.Memberships[0].Active {
+		t.Fatalf("default memberships=%+v", defaultGot.Memberships)
+	}
+
+	runDefaultText := exec.CommandContext(ctx, bin, "workspace", "status")
+	runDefaultText.Env = testCommandEnv(tmp)
+	runDefaultText.Dir = tmp
+	defaultTextOut, err := runDefaultText.CombinedOutput()
+	if err != nil {
+		t.Fatalf("default text status failed: %v\n%s", err, string(defaultTextOut))
+	}
+	defaultText := string(defaultTextOut)
+	if !strings.Contains(defaultText, "- Memberships: backend:demo (developer) [active]") {
+		t.Fatalf("default text missing active membership summary:\n%s", defaultText)
+	}
+	if strings.Contains(defaultText, "design:demo") || strings.Contains(defaultText, "ops:demo") {
+		t.Fatalf("default text should not list non-selected memberships:\n%s", defaultText)
+	}
+
+	runAll := exec.CommandContext(ctx, bin, "workspace", "status", "--all", "--json")
+	runAll.Env = testCommandEnv(tmp)
+	runAll.Dir = tmp
+	allOut, err := runAll.CombinedOutput()
+	if err != nil {
+		t.Fatalf("all status failed: %v\n%s", err, string(allOut))
+	}
+	var allGot struct {
+		SelectedTeam string                         `json:"selected_team"`
+		Memberships  []workspaceTeamMembershipItem `json:"memberships"`
+	}
+	if err := json.Unmarshal(extractJSON(t, allOut), &allGot); err != nil {
+		t.Fatalf("invalid all json: %v\n%s", err, string(allOut))
+	}
+	if len(allGot.Memberships) != 3 {
+		t.Fatalf("all memberships=%+v", allGot.Memberships)
+	}
+	wantOrder := []string{"backend:demo", "design:demo", "ops:demo"}
+	for i, want := range wantOrder {
+		if allGot.Memberships[i].TeamID != want {
+			t.Fatalf("membership order=%+v", allGot.Memberships)
+		}
+	}
+	if !allGot.Memberships[0].Active || allGot.Memberships[1].Active || allGot.Memberships[2].Active {
+		t.Fatalf("active flags=%+v", allGot.Memberships)
+	}
+
+	runAllText := exec.CommandContext(ctx, bin, "workspace", "status", "--all")
+	runAllText.Env = testCommandEnv(tmp)
+	runAllText.Dir = tmp
+	allTextOut, err := runAllText.CombinedOutput()
+	if err != nil {
+		t.Fatalf("all text status failed: %v\n%s", err, string(allTextOut))
+	}
+	allText := string(allTextOut)
+	for _, want := range []string{
+		"- Memberships: backend:demo (developer) [active], design:demo (designer), ops:demo (operator)",
+	} {
+		if !strings.Contains(allText, want) {
+			t.Fatalf("all text missing %q:\n%s", want, allText)
+		}
+	}
+}
+
 func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	t.Parallel()
 

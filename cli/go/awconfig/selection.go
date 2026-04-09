@@ -50,6 +50,8 @@ type ResolveOptions struct {
 
 	BaseURLOverride string
 
+	TeamIDOverride string
+
 	AllowEnvOverrides bool
 }
 
@@ -93,13 +95,27 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
 	}
+	selectedTeamID := strings.TrimSpace(opts.TeamIDOverride)
 	activeMembership := workspace.ActiveMembership()
-	teamID := ""
-	if activeMembership != nil {
-		teamID = strings.TrimSpace(activeMembership.TeamID)
+	selectedMembership := activeMembership
+	if selectedTeamID != "" {
+		selectedMembership = workspace.Membership(selectedTeamID)
+		if selectedMembership == nil {
+			return nil, fmt.Errorf("team %q is not present in workspace memberships; available: %s", selectedTeamID, strings.Join(workspace.AvailableTeamIDs(), ", "))
+		}
 	}
-	if baseURL == "" || teamID == "" {
-		return nil, errors.New("worktree workspace binding is missing aweb_url or active_team membership")
+	teamID := ""
+	if selectedMembership != nil {
+		teamID = strings.TrimSpace(selectedMembership.TeamID)
+	}
+	if baseURL == "" {
+		return nil, errors.New("worktree workspace binding is missing aweb_url")
+	}
+	if teamID == "" {
+		if strings.TrimSpace(workspace.ActiveTeam) != "" {
+			return nil, fmt.Errorf("active team %q is not in memberships; run aw id team switch <valid-team>", workspace.ActiveTeam)
+		}
+		return nil, errors.New("worktree workspace binding is missing active_team membership")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -113,10 +129,10 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		}
 		serverName = derived
 	}
-	return finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, workspace, identity), nil
+	return finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, workspace, identity, teamID), nil
 }
 
-func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity) *Selection {
+func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity, selectedTeamID string) *Selection {
 	domain := ""
 	alias := ""
 	workspaceID := ""
@@ -130,13 +146,16 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	registryURL := ""
 	awebURL := ""
 	if ws != nil {
-		activeMembership := ws.ActiveMembership()
-		if activeMembership != nil {
-			teamID = strings.TrimSpace(activeMembership.TeamID)
+		selectedMembership := ws.Membership(selectedTeamID)
+		if selectedMembership == nil {
+			selectedMembership = ws.ActiveMembership()
+		}
+		if selectedMembership != nil {
+			teamID = strings.TrimSpace(selectedMembership.TeamID)
 			teamDomain, _ := splitTeamID(teamID)
 			domain = teamDomain
-			alias = strings.TrimSpace(activeMembership.Alias)
-			workspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+			alias = strings.TrimSpace(selectedMembership.Alias)
+			workspaceID = strings.TrimSpace(selectedMembership.WorkspaceID)
 		}
 		awebURL = strings.TrimSpace(ws.AwebURL)
 	}

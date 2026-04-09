@@ -64,9 +64,12 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("setting role name: %w", err)
 	}
-	activeMembership := workspace.ActiveMembership()
+	activeMembership, err := workspaceMembershipForSelection(workspace, nil)
+	if err != nil {
+		return err
+	}
 	if activeMembership == nil {
-		return fmt.Errorf("workspace is missing active_team membership")
+		return fmt.Errorf("workspace is missing selected team membership")
 	}
 	activeMembership.RoleName = strings.TrimSpace(resp.Role)
 	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
