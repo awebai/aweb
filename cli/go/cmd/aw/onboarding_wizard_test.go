@@ -538,7 +538,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"email":  claimBody["email"],
 			})
 		default:
-			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	onboardingURL = onboardingServer.URL

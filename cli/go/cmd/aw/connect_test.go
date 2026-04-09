@@ -421,9 +421,9 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				"member_address": "juanre.aweb.ai/laptop-agent",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			t.Fatal("connect should use discovered aweb_url, not the cloud base URL")
+			t.Fatal("connect should use discovered aweb_url, not the bootstrap base URL")
 		default:
-			t.Fatalf("unexpected cloud %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected bootstrap service request %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	onboardingURL = onboardingServer.URL
