@@ -153,7 +153,7 @@ async def _ensure_agent(
                 (agent_id, team_address, did_key, did_aw, address,
                  alias, lifetime, human_name, agent_type, role)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (team_address, did_key) DO NOTHING
+            ON CONFLICT (team_address, did_key) WHERE deleted_at IS NULL DO NOTHING
             """,
             agent_id,
             team_address,
