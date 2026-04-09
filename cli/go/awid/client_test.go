@@ -15,37 +15,6 @@ import (
 	"time"
 )
 
-func TestIntrospectAddsBearerHeader(t *testing.T) {
-	t.Parallel()
-
-	wantProjectID := "11111111-1111-1111-1111-111111111111"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("method=%s", r.Method)
-		}
-		if r.URL.Path != "/v1/auth/introspect" {
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", got)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": wantProjectID})
-	}))
-	t.Cleanup(server.Close)
-
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := c.Introspect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.ProjectID != wantProjectID {
-		t.Fatalf("project_id=%s", resp.ProjectID)
-	}
-}
-
 func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
 	t.Parallel()
 
@@ -744,52 +713,6 @@ func TestDeregisterAgent(t *testing.T) {
 	}
 	if gotAuth != "Bearer aw_sk_test" {
 		t.Fatalf("auth=%q", gotAuth)
-	}
-}
-
-func TestPatchIdentityAccessMode(t *testing.T) {
-	t.Parallel()
-
-	var gotMethod, gotPath, gotContentType string
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		gotContentType = r.Header.Get("Content-Type")
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"agent_id":    "agent-1",
-			"access_mode": "open",
-		})
-	}))
-	t.Cleanup(server.Close)
-
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := c.PatchIdentity(context.Background(), "agent-1", &PatchIdentityRequest{
-		AccessMode: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotMethod != http.MethodPatch {
-		t.Fatalf("method=%s", gotMethod)
-	}
-	if gotPath != "/v1/agents/agent-1" {
-		t.Fatalf("path=%s", gotPath)
-	}
-	if gotContentType != "application/json" {
-		t.Fatalf("content-type=%s", gotContentType)
-	}
-	if gotBody["access_mode"] != "open" {
-		t.Fatalf("access_mode=%v", gotBody["access_mode"])
-	}
-	if resp.AccessMode != "open" {
-		t.Fatalf("access_mode=%s", resp.AccessMode)
 	}
 }
 
@@ -3614,7 +3537,7 @@ func TestLatestClientVersionCapturedFromHeader(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Latest-Client-Version", "v0.99.0")
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": "p1"})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 	t.Cleanup(server.Close)
 
@@ -3628,8 +3551,8 @@ func TestLatestClientVersionCapturedFromHeader(t *testing.T) {
 		t.Fatalf("before request: LatestClientVersion=%q, want empty", v)
 	}
 
-	var resp IntrospectResponse
-	if err := c.Get(context.Background(), "/v1/auth/introspect", &resp); err != nil {
+	var resp map[string]bool
+	if err := c.Get(context.Background(), "/v1/ping", &resp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3642,7 +3565,7 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": "p1"})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 	t.Cleanup(server.Close)
 
@@ -3651,8 +3574,8 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var resp IntrospectResponse
-	if err := c.Get(context.Background(), "/v1/auth/introspect", &resp); err != nil {
+	var resp map[string]bool
+	if err := c.Get(context.Background(), "/v1/ping", &resp); err != nil {
 		t.Fatal(err)
 	}
 
