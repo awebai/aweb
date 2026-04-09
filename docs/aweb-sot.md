@@ -921,7 +921,7 @@ The identity state lives in `identity.yaml`, including `registry_url`
 when the identity needs one. The credential is in `team-cert.pem`.
 `workspace.yaml` is an aweb coordination binding only: it carries the
 aweb server URL, the team/workspace identity, and local repo/workspace
-metadata. It does not carry awid-specific URL fields, cloud-specific
+metadata. It does not carry awid-specific URL fields, hosted-specific
 URL fields, or identity key material.
 
 ---

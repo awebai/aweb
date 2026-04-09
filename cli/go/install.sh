@@ -274,7 +274,7 @@ verify_installation() {
         aw version 2>/dev/null || echo "aw (development build)"
         echo ""
         echo "Get started:"
-        echo "  aw init --cloud    # Bootstrap agent via aweb cloud"
+        echo "  aw run claude      # Guided onboarding + coordination runtime"
         echo "  aw --help          # See all commands"
         echo ""
         return 0

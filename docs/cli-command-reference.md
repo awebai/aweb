@@ -54,7 +54,7 @@ Flags:
 - `--address string           Persistent public address from the dashboard copy command`
 - `--bootstrap-token string   One-time bootstrap token from the dashboard`
 - `-h, --help                 help for connect`
-- `--mock-url string          Override the cloud/aweb base URL for local development`
+- `--mock-url string          Override the bootstrap/aweb base URL for local development`
 
 ## `init`
 
@@ -125,7 +125,7 @@ Flags:
 Flags:
 - `--email string      Email address to attach to the current CLI-created account`
 - `-h, --help              help for claim-human`
-- `--mock-url string   Override the cloud base URL for local development`
+- `--mock-url string   Override the bootstrap base URL for local development`
 
 ## `id`
 
