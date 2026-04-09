@@ -34,7 +34,7 @@ type AgentEvent struct {
 	Type          AgentEventType  `json:"type"`
 	Raw           json.RawMessage `json:"raw,omitempty"`
 	AgentID       string          `json:"agent_id,omitempty"`
-	ProjectID     string          `json:"project_id,omitempty"`
+	TeamAddress   string          `json:"team_address,omitempty"`
 	WakeMode      string          `json:"wake_mode,omitempty"`
 	Channel       string          `json:"channel,omitempty"`
 	MessageID     string          `json:"message_id,omitempty"`
@@ -152,17 +152,17 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 	switch AgentEventType(eventName) {
 	case AgentEventConnected:
 		var payload struct {
-			AgentID   string `json:"agent_id"`
-			ProjectID string `json:"project_id"`
+			AgentID     string `json:"agent_id"`
+			TeamAddress string `json:"team_address"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return AgentEvent{}, false, fmt.Errorf("parse connected event: %w", err)
 		}
 		return AgentEvent{
-			Type:      AgentEventConnected,
-			Raw:       raw,
-			AgentID:   payload.AgentID,
-			ProjectID: payload.ProjectID,
+			Type:        AgentEventConnected,
+			Raw:         raw,
+			AgentID:     payload.AgentID,
+			TeamAddress: payload.TeamAddress,
 		}, true, nil
 
 	case AgentEventActionableMail:

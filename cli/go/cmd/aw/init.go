@@ -71,7 +71,7 @@ func init() {
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
-	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active project roles bundle)")
+	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
 	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Create a durable self-custodial identity instead of the default ephemeral identity")
 
 	rootCmd.AddCommand(initCmd)
@@ -373,7 +373,7 @@ func shouldSuggestClaimHuman(result *initResult) bool {
 	return false
 }
 
-func normalizeServerBaseURL(baseURL string) (string, error) {
+func normalizeAwebBaseURL(baseURL string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
 		return "", err

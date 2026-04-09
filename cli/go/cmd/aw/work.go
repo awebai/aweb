@@ -24,7 +24,7 @@ var workReadyCmd = &cobra.Command{
 
 var workActiveCmd = &cobra.Command{
 	Use:   "active",
-	Short: "List active in-progress work across the project",
+	Short: "List active in-progress work across the team",
 	RunE:  runWorkActive,
 }
 
@@ -73,7 +73,7 @@ func runWorkReady(cmd *cobra.Command, args []string) error {
 	}
 	claimedByOthers := map[string]bool{}
 	for _, claim := range claimsResp.Claims {
-		if claim.WorkspaceID != sel.IdentityID {
+		if claim.WorkspaceID != sel.WorkspaceID {
 			claimedByOthers[claim.BeadID] = true
 		}
 	}
@@ -268,7 +268,7 @@ func currentWorkspaceID(workingDir string, sel *awconfig.Selection) string {
 	if sel == nil {
 		return ""
 	}
-	return strings.TrimSpace(sel.IdentityID)
+	return strings.TrimSpace(sel.WorkspaceID)
 }
 
 func isClaimStale(claimedAt string) bool {

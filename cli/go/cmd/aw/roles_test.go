@@ -28,11 +28,11 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id":        "roles-1",
-				"active_project_roles_id": "roles-1",
-				"project_id":              "proj-1",
-				"version":                 3,
-				"updated_at":              "2026-03-10T10:00:00Z",
+				"team_roles_id":        "roles-1",
+				"active_team_roles_id": "roles-1",
+				"team_address":         "proj-1",
+				"version":              3,
+				"updated_at":           "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
 					"reviewer": map[string]any{"title": "Reviewer", "playbook_md": "Review before merge."},
 				},
@@ -63,14 +63,11 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		WorkspaceID:    "agent-1",
-		ProjectSlug:    "demo",
-		Role:           "reviewer",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "agent-1",
+		RoleName:    "reviewer",
 	}); err != nil {
 		t.Fatalf("save workspace state: %v", err)
 	}
@@ -84,7 +81,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"Project Roles v3",
+		"Team Roles v3",
 		"Role: reviewer",
 		"## Role: Reviewer",
 		"Review before merge.",
@@ -106,10 +103,10 @@ func TestAwRolesListListsSortedRoles(t *testing.T) {
 				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "roles-1",
-				"project_id":       "proj-1",
-				"version":          1,
-				"updated_at":       "2026-03-10T10:00:00Z",
+				"team_roles_id": "roles-1",
+				"team_address":  "proj-1",
+				"version":       1,
+				"updated_at":    "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
 					"reviewer":  map[string]any{"title": "Reviewer", "playbook_md": ""},
 					"developer": map[string]any{"title": "Developer", "playbook_md": ""},
@@ -159,10 +156,10 @@ func TestAwRolesShowAllRolesRendersPlaybooks(t *testing.T) {
 				t.Fatalf("only_selected=%q", r.URL.Query().Get("only_selected"))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "roles-2",
-				"project_id":       "proj-1",
-				"version":          2,
-				"updated_at":       "2026-03-10T10:00:00Z",
+				"team_roles_id": "roles-2",
+				"team_address":  "proj-1",
+				"version":       2,
+				"updated_at":    "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
 					"reviewer":  map[string]any{"title": "Reviewer", "playbook_md": "Review carefully."},
 					"developer": map[string]any{"title": "Developer", "playbook_md": "Ship the change."},
@@ -215,20 +212,20 @@ func TestAwRolesHistoryListsVersions(t *testing.T) {
 				t.Fatalf("limit=%q", got)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_versions": []map[string]any{
+				"team_roles_versions": []map[string]any{
 					{
-						"project_roles_id":        "roles-2",
-						"version":                 2,
-						"created_at":              "2026-03-11T10:00:00Z",
-						"created_by_workspace_id": "ivy",
-						"is_active":               true,
+						"team_roles_id":    "roles-2",
+						"version":          2,
+						"created_at":       "2026-03-11T10:00:00Z",
+						"created_by_alias": "ivy",
+						"is_active":        true,
 					},
 					{
-						"project_roles_id":        "roles-1",
-						"version":                 1,
-						"created_at":              "2026-03-10T10:00:00Z",
-						"created_by_workspace_id": "ivy",
-						"is_active":               false,
+						"team_roles_id":    "roles-1",
+						"version":          1,
+						"created_at":       "2026-03-10T10:00:00Z",
+						"created_by_alias": "ivy",
+						"is_active":        false,
 					},
 				},
 			})
@@ -276,13 +273,13 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id":        "roles-1",
-				"active_project_roles_id": "roles-1",
-				"project_id":              "proj-1",
-				"version":                 1,
-				"updated_at":              "2026-03-10T10:00:00Z",
-				"roles":                   map[string]any{},
-				"adapters":                map[string]any{},
+				"team_roles_id":        "roles-1",
+				"active_team_roles_id": "roles-1",
+				"team_address":         "proj-1",
+				"version":              1,
+				"updated_at":           "2026-03-10T10:00:00Z",
+				"roles":                map[string]any{},
+				"adapters":             map[string]any{},
 			})
 		case "/v1/roles":
 			if r.Method != http.MethodPost {
@@ -292,16 +289,16 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 				t.Fatalf("decode create body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "roles-2",
-				"project_id":       "proj-1",
-				"version":          2,
-				"created":          true,
+				"team_roles_id": "roles-2",
+				"team_address":  "proj-1",
+				"version":       2,
+				"created":       true,
 			})
 		case "/v1/roles/roles-2/activate":
 			activatedPath = r.URL.Path
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"activated":               true,
-				"active_project_roles_id": "roles-2",
+				"activated":            true,
+				"active_team_roles_id": "roles-2",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -334,8 +331,8 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 	if !ok {
 		t.Fatalf("bundle=%#v", createBody["bundle"])
 	}
-	if createBody["base_project_roles_id"] != "roles-1" {
-		t.Fatalf("base_project_roles_id=%v", createBody["base_project_roles_id"])
+	if createBody["base_team_roles_id"] != "roles-1" {
+		t.Fatalf("base_team_roles_id=%v", createBody["base_team_roles_id"])
 	}
 	roles, ok := bundle["roles"].(map[string]any)
 	if !ok {
@@ -352,7 +349,7 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 		t.Fatalf("adapters should be omitted when not provided: %#v", bundle["adapters"])
 	}
 
-	if !strings.Contains(string(out), "Activated project roles v2 (roles-2)") {
+	if !strings.Contains(string(out), "Activated team roles v2 (roles-2)") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
@@ -365,8 +362,8 @@ func TestAwRolesActivateActivatesExistingVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/roles-2/activate":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"activated":               true,
-				"active_project_roles_id": "roles-2",
+				"activated":            true,
+				"active_team_roles_id": "roles-2",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -390,7 +387,7 @@ func TestAwRolesActivateActivatesExistingVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Activated project roles roles-2") {
+	if !strings.Contains(string(out), "Activated team roles roles-2") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
@@ -403,9 +400,9 @@ func TestAwRolesResetResetsToDefault(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/reset":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"reset":                   true,
-				"active_project_roles_id": "roles-3",
-				"version":                 3,
+				"reset":                true,
+				"active_team_roles_id": "roles-3",
+				"version":              3,
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -429,7 +426,7 @@ func TestAwRolesResetResetsToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Reset project roles to default (v3, roles-3)") {
+	if !strings.Contains(string(out), "Reset team roles to default (v3, roles-3)") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
@@ -442,9 +439,9 @@ func TestAwRolesDeactivateDeactivatesToEmptyBundle(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/roles/deactivate":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"deactivated":             true,
-				"active_project_roles_id": "roles-4",
-				"version":                 4,
+				"deactivated":          true,
+				"active_team_roles_id": "roles-4",
+				"version":              4,
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -468,7 +465,7 @@ func TestAwRolesDeactivateDeactivatesToEmptyBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Deactivated project roles (v4, roles-4)") {
+	if !strings.Contains(string(out), "Deactivated team roles (v4, roles-4)") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

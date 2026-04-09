@@ -57,7 +57,7 @@ Flags:
 - `--print-exports Print shell export lines after JSON output`
 - `--reachability string Persistent address reachability (private|org-visible|contacts-only|public)`
 - `--role string Compatibility alias for --role-name`
-- `--role-name string Workspace role name (must match a role in the active project roles bundle)`
+- `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code channel MCP server for real-time coordination`
 - `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
@@ -536,9 +536,9 @@ Search or look up persistent identities in the network directory
 
 Flags:
 - `--capability string Filter by capability`
+- `--domain string Filter by domain`
 - `-h, --help help for directory`
 - `--limit int Max results (default 100)`
-- `--namespace string Filter by namespace slug`
 - `--query string Search handle/description`
 
 ## `events`
@@ -625,14 +625,14 @@ Flags:
 
 ### `instructions`
 
-Read and manage shared project instructions
+Read and manage shared team instructions
 
 Subcommands:
-- `activate` Activate an existing shared project instructions version
-- `history` List shared project instructions history
-- `reset` Reset shared project instructions to the server default
-- `set` Create and activate a new shared project instructions version
-- `show` Show shared project instructions
+- `activate` Activate an existing shared team instructions version
+- `history` List shared team instructions history
+- `reset` Reset shared team instructions to the server default
+- `set` Create and activate a new shared team instructions version
+- `show` Show shared team instructions
 
 Flags:
 - `-h, --help help for instructions`
@@ -641,7 +641,7 @@ Flags:
 
 ### `instructions activate`
 
-Activate an existing shared project instructions version
+Activate an existing shared team instructions version
 
 Flags:
 - `-h, --help help for activate`
@@ -650,7 +650,7 @@ Flags:
 
 ### `instructions history`
 
-List shared project instructions history
+List shared team instructions history
 
 Flags:
 - `-h, --help help for history`
@@ -660,7 +660,7 @@ Flags:
 
 ### `instructions reset`
 
-Reset shared project instructions to the server default
+Reset shared team instructions to the server default
 
 Flags:
 - `-h, --help help for reset`
@@ -669,7 +669,7 @@ Flags:
 
 ### `instructions set`
 
-Create and activate a new shared project instructions version
+Create and activate a new shared team instructions version
 
 Flags:
 - `--body string Instructions markdown body`
@@ -680,7 +680,7 @@ Flags:
 
 ### `instructions show`
 
-Show shared project instructions
+Show shared team instructions
 
 Flags:
 - `-h, --help help for show`
@@ -800,16 +800,16 @@ Flags:
 
 ### `roles`
 
-Read and manage project roles bundles and role definitions
+Read and manage team roles bundles and role definitions
 
 Subcommands:
-- `activate` Activate an existing project roles bundle version
-- `deactivate` Deactivate project roles by replacing the active bundle with an empty bundle
-- `history` List project roles history
-- `list` List roles defined in the active project roles bundle
-- `reset` Reset project roles to the server default bundle
-- `set` Create and activate a new project roles bundle version
-- `show` Show role guidance from the active project roles bundle
+- `activate` Activate an existing team roles bundle version
+- `deactivate` Deactivate team roles by replacing the active bundle with an empty bundle
+- `history` List team roles history
+- `list` List roles defined in the active team roles bundle
+- `reset` Reset team roles to the server default bundle
+- `set` Create and activate a new team roles bundle version
+- `show` Show role guidance from the active team roles bundle
 
 Flags:
 - `-h, --help help for roles`
@@ -818,7 +818,7 @@ Flags:
 
 ### `roles activate`
 
-Activate an existing project roles bundle version
+Activate an existing team roles bundle version
 
 Flags:
 - `-h, --help help for activate`
@@ -827,7 +827,7 @@ Flags:
 
 ### `roles deactivate`
 
-Deactivate project roles by replacing the active bundle with an empty bundle
+Deactivate team roles by replacing the active bundle with an empty bundle
 
 Flags:
 - `-h, --help help for deactivate`
@@ -836,7 +836,7 @@ Flags:
 
 ### `roles history`
 
-List project roles history
+List team roles history
 
 Flags:
 - `-h, --help help for history`
@@ -846,7 +846,7 @@ Flags:
 
 ### `roles list`
 
-List roles defined in the active project roles bundle
+List roles defined in the active team roles bundle
 
 Flags:
 - `-h, --help help for list`
@@ -855,7 +855,7 @@ Flags:
 
 ### `roles reset`
 
-Reset project roles to the server default bundle
+Reset team roles to the server default bundle
 
 Flags:
 - `-h, --help help for reset`
@@ -864,18 +864,18 @@ Flags:
 
 ### `roles set`
 
-Create and activate a new project roles bundle version
+Create and activate a new team roles bundle version
 
 Flags:
-- `--bundle-file string Read project roles bundle JSON from file ('-' for stdin)`
-- `--bundle-json string Project roles bundle JSON`
+- `--bundle-file string Read team roles bundle JSON from file ('-' for stdin)`
+- `--bundle-json string Team roles bundle JSON`
 - `-h, --help help for set`
 
 ## `roles show`
 
 ### `roles show`
 
-Show role guidance from the active project roles bundle
+Show role guidance from the active team roles bundle
 
 Flags:
 - `--all-roles Include all role playbooks instead of only the selected role`
@@ -1115,7 +1115,7 @@ Flags:
 Discover coordination-aware work
 
 Subcommands:
-- `active` List active in-progress work across the project
+- `active` List active in-progress work across the team
 - `blocked` List blocked tasks
 - `ready` List ready tasks that are not already claimed by other workspaces
 
@@ -1126,7 +1126,7 @@ Flags:
 
 ### `work active`
 
-List active in-progress work across the project
+List active in-progress work across the team
 
 Flags:
 - `-h, --help help for active`

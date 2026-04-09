@@ -23,10 +23,10 @@ func TestParseAgentEvent(t *testing.T) {
 		{
 			name:      "connected",
 			eventName: "connected",
-			data:      `{"agent_id":"a1","project_id":"p1"}`,
+			data:      `{"agent_id":"a1","team_address":"acme.com/backend"}`,
 			check: func(t *testing.T, evt AgentEvent) {
 				t.Helper()
-				if evt.Type != AgentEventConnected || evt.AgentID != "a1" || evt.ProjectID != "p1" {
+				if evt.Type != AgentEventConnected || evt.AgentID != "a1" || evt.TeamAddress != "acme.com/backend" {
 					t.Fatalf("unexpected connected event: %#v", evt)
 				}
 			},
@@ -145,7 +145,7 @@ func TestEventStreamRequestsEventStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, ": keepalive\n\n")
 		_, _ = io.WriteString(w, "event: connected\n")
-		_, _ = io.WriteString(w, "data: {\"agent_id\":\"a1\",\"project_id\":\"p1\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"agent_id\":\"a1\",\"team_address\":\"acme.com/backend\"}\n\n")
 	}))
 	t.Cleanup(server.Close)
 
@@ -187,7 +187,7 @@ func TestEventStreamRequestsEventStream(t *testing.T) {
 	if ev.Type != AgentEventConnected {
 		t.Fatalf("event=%q", ev.Type)
 	}
-	if ev.AgentID != "a1" || ev.ProjectID != "p1" {
+	if ev.AgentID != "a1" || ev.TeamAddress != "acme.com/backend" {
 		t.Fatalf("unexpected event payload: %#v", ev)
 	}
 }
@@ -265,7 +265,7 @@ func TestEventStreamReturnsEOFOnCleanClose(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: connected\n")
-		_, _ = fmt.Fprint(w, "data: {\"agent_id\":\"a1\",\"project_id\":\"p1\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"agent_id\":\"a1\",\"team_address\":\"acme.com/backend\"}\n\n")
 	}))
 	t.Cleanup(server.Close)
 

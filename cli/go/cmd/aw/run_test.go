@@ -127,7 +127,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 		if !strings.HasSuffix(dir, "testdata") {
 			t.Fatalf("expected selection dir to match working dir, got %q", dir)
 		}
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose", IdentityID: "ws-1"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose", WorkspaceID: "ws-1"}, nil
 	}
 	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) {
 		return runWorkspaceStateInitialized, nil
@@ -320,7 +320,7 @@ func TestRunAllowsEmptyPromptWhenInteractiveScreenIsAvailable(t *testing.T) {
 		return awrun.ClaudeProvider{}, nil
 	}
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
@@ -387,7 +387,7 @@ func TestRunDefaultsCodexToNonPTYWhenInteractive(t *testing.T) {
 		return awrun.CodexProvider{}, nil
 	}
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
@@ -451,7 +451,7 @@ func TestRunHonorsExplicitCodexPTYOverride(t *testing.T) {
 		return awrun.CodexProvider{}, nil
 	}
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
@@ -560,7 +560,7 @@ func TestRunInteractiveOnboardsBeforeRunning(t *testing.T) {
 	var resolveCalls int
 	runResolveClientForDir = func(dir string) (*aweb.Client, *awconfig.Selection, error) {
 		resolveCalls++
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
@@ -901,7 +901,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"project_id\":\"p-1\"}\n\n")
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
 			flusher.Flush()
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"mia\",\"session_id\":\"s-1\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()
@@ -934,7 +934,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 		return provider, nil
 	}
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
-		return client, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return client, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
@@ -1018,7 +1018,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"project_id\":\"p-1\"}\n\n")
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
 			flusher.Flush()
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-2\",\"from_alias\":\"henry\",\"session_id\":\"s-9\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()
@@ -1051,7 +1051,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 		return provider, nil
 	}
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
-		return client, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return client, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
@@ -1133,7 +1133,7 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 	}
 	runNewProvider = func(name string) (awrun.Provider, error) { return awrun.ClaudeProvider{}, nil }
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }
@@ -1253,7 +1253,7 @@ func TestRunPrintsContinueAndProviderCommandsOnExit(t *testing.T) {
 	provider := &exitCommandProvider{}
 	runNewProvider = func(name string) (awrun.Provider, error) { return provider, nil }
 	runResolveClientForDir = func(string) (*aweb.Client, *awconfig.Selection, error) {
-		return &aweb.Client{}, &awconfig.Selection{NamespaceSlug: "team", IdentityHandle: "rose"}, nil
+		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
 	runNewEventBus = func(client *aweb.Client) *awrun.EventBus { return nil }

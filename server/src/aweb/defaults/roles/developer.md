@@ -55,7 +55,7 @@ aw mail send --to-alias coordinator --body "Completed task-42, ready for review"
 **When blocked:**
 ```bash
 # For quick questions:
-aw chat send-and-wait coordinator "Is project_id nullable?" --start-conversation
+aw chat send-and-wait coordinator "Is team_address required here?" --start-conversation
 
 # For status updates:
 aw mail send --to-alias coordinator --body "Blocked on task-42: need API access"

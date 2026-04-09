@@ -180,14 +180,9 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectID:       "proj-1",
-		ProjectSlug:     "demo",
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -298,12 +293,10 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     selfID,
-		IdentityHandle: "coordinator",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "coordinator",
+		WorkspaceID: selfID,
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -402,12 +395,10 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     selfID,
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: selfID,
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -472,21 +463,11 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "bob",
-						"project_slug":   "demo",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
 				},
 				"has_more": false,
-			})
-		case r.URL.Path == "/v1/agents/resolve/bob" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-bob",
-				"did":         "did:key:z6MkEphemeral",
-				"address":     "demo/bob",
-				"custody":     "custodial",
-				"lifetime":    "ephemeral",
-				"public_key":  "",
 			})
 		case r.URL.Path == "/v1/agents/demo/bob" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)
@@ -514,14 +495,9 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectID:       "proj-1",
-		ProjectSlug:     "demo",
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -592,20 +568,11 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "maintainer",
-						"project_slug":   "demo",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
 				},
 				"has_more": false,
-			})
-		case r.URL.Path == "/v1/agents/resolve/maintainer" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-maintainer",
-				"did":         "did:key:z6MkPersistent",
-				"address":     "demo/maintainer",
-				"custody":     "self",
-				"lifetime":    "persistent",
 			})
 		case r.URL.Path == "/v1/agents/demo/maintainer" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)
@@ -633,14 +600,9 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectID:       "proj-1",
-		ProjectSlug:     "demo",
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -665,7 +627,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing.T) {
+func TestAwWorkspaceStatusSkipsGoneIdentityDeletionWithoutLegacyFields(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -711,22 +673,11 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 					{
 						"workspace_id":   goneID,
 						"alias":          "bot",
-						"project_slug":   "demo",
-						"namespace_slug": "demo.example.com",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
 				},
 				"has_more": false,
-			})
-		case r.URL.Path == "/v1/agents/resolve/demo.example.com/bot" && r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"identity_id": "agent-bot",
-				"did":         "did:key:z6MkEphemeral",
-				"address":     "demo.example.com/bot",
-				"custody":     "custodial",
-				"lifetime":    "ephemeral",
-				"public_key":  "",
 			})
 		case r.URL.Path == "/v1/agents/demo.example.com/bot" && r.Method == http.MethodDelete:
 			deletedIdentity.Store(true)
@@ -754,14 +705,9 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectID:       "proj-1",
-		ProjectSlug:     "demo",
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -807,7 +753,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -878,14 +824,12 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    teamAddress,
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
-		HumanName:      "Wendy",
-		AgentType:      "agent",
+		AwebURL:     server.URL,
+		TeamAddress: teamAddress,
+		WorkspaceID: "source-1",
+		Alias:       "alice",
+		HumanName:   "Wendy",
+		AgentType:   "agent",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -969,7 +913,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1023,12 +967,10 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    teamAddress,
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
+		AwebURL:     server.URL,
+		TeamAddress: teamAddress,
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -1069,7 +1011,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1100,12 +1042,10 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "source/backend",
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
+		AwebURL:     server.URL,
+		TeamAddress: "source/backend",
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -1134,12 +1074,10 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        "https://example.com",
-		TeamAddress:    "source/backend",
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     "https://example.com",
+		TeamAddress: "source/backend",
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")

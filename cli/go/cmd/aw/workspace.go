@@ -74,10 +74,10 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Cert-auth workspaces have alias/did but no IdentityID. Either form is valid.
-	hasIdentity := strings.TrimSpace(sel.IdentityID) != "" ||
+	// Team-bound workspaces need a local alias/workspace identity to function.
+	hasIdentity := strings.TrimSpace(sel.WorkspaceID) != "" ||
 		strings.TrimSpace(sel.DID) != "" ||
-		strings.TrimSpace(sel.IdentityHandle) != ""
+		strings.TrimSpace(sel.Alias) != ""
 	if !hasIdentity {
 		return usageError("selected account has no identity; run 'aw init' first")
 	}
@@ -87,7 +87,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load workspace state: %w", err)
 	}
 
-	workspaceID := strings.TrimSpace(sel.IdentityID)
+	workspaceID := strings.TrimSpace(sel.WorkspaceID)
 	if state != nil && strings.TrimSpace(state.WorkspaceID) != "" {
 		workspaceID = strings.TrimSpace(state.WorkspaceID)
 	}
@@ -371,8 +371,8 @@ func resolveWorkspaceRepoOrigin(root, explicit string) (string, error) {
 
 func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWorkspace) aweb.WorkspaceInfo {
 	info := aweb.WorkspaceInfo{
-		WorkspaceID: sel.IdentityID,
-		Alias:       sel.IdentityHandle,
+		WorkspaceID: sel.WorkspaceID,
+		Alias:       sel.Alias,
 		Status:      "offline",
 	}
 	if state == nil {
@@ -387,14 +387,8 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 	if strings.TrimSpace(state.HumanName) != "" {
 		info.HumanName = stringPtr(strings.TrimSpace(state.HumanName))
 	}
-	if strings.TrimSpace(state.ProjectID) != "" {
-		info.ProjectID = stringPtr(strings.TrimSpace(state.ProjectID))
-	}
-	if strings.TrimSpace(state.ProjectSlug) != "" {
-		info.ProjectSlug = stringPtr(strings.TrimSpace(state.ProjectSlug))
-	}
-	if strings.TrimSpace(state.Role) != "" {
-		info.Role = stringPtr(strings.TrimSpace(state.Role))
+	if strings.TrimSpace(state.RoleName) != "" {
+		info.Role = stringPtr(strings.TrimSpace(state.RoleName))
 	}
 	if strings.TrimSpace(state.Hostname) != "" {
 		info.Hostname = stringPtr(strings.TrimSpace(state.Hostname))
@@ -484,15 +478,15 @@ func isValidWorkspaceRole(role string) bool {
 	return true
 }
 
-// fetchAvailableRoles returns the available roles from the project roles bundle.
+// fetchAvailableRoles returns the available roles from the team roles bundle.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
+	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
 	if err != nil {
-		return nil, fmt.Errorf("fetching project roles: %w", err)
+		return nil, fmt.Errorf("fetching team roles: %w", err)
 	}
 
 	roles := make([]string, 0, len(resp.Roles))
@@ -503,7 +497,7 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	return roles, nil
 }
 
-// resolveRole fetches available roles from the project roles bundle, validates
+// resolveRole fetches available roles from the team roles bundle, validates
 // the requested role against them, and optionally prompts the user to
 // choose. This is the single entry point for role resolution.
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
@@ -520,7 +514,7 @@ func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.
 
 func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
 	if len(roles) == 0 {
-		return "", usageError("no roles defined in the active project roles")
+		return "", usageError("no roles defined in the active team roles")
 	}
 
 	normalizedRoles := make(map[string]string, len(roles))

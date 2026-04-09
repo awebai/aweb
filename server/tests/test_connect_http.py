@@ -61,12 +61,29 @@ def _build_test_app(aweb_db, team_did_key):
 
     @app.middleware("http")
     async def cache_body(request, call_next):
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            request.state.cached_body = b""
+            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
+            return await call_next(request)
+
+        original_receive = request._receive
         body = await request.body()
         request.state.cached_body = body
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest()
+        replayed = False
 
         async def _receive():
-            return {"type": "http.request", "body": body}
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            while True:
+                message = await original_receive()
+                if message["type"] == "http.disconnect":
+                    return message
+                if message["type"] == "http.request" and not message.get("more_body", False):
+                    continue
+                return message
 
         request._receive = _receive
         return await call_next(request)
@@ -511,3 +528,77 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
     assert len(workspace_rows) == 1
     assert workspace_rows[0]["alias"] == "alice"
     assert workspace_rows[0]["workspace_path"] == "/existing"
+
+
+@pytest.mark.asyncio
+async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db):
+    """Soft-deleted agents release alias and did_key for clean rejoin."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key,
+        team_address="acme.com/backend",
+        alias="alice",
+        lifetime="persistent",
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "acme.com/backend",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    deleted_agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_address, did_key, alias, lifetime, status, deleted_at)
+        VALUES ($1, $2, $3, $4, 'persistent', 'deleted', NOW())
+        """,
+        deleted_agent_id,
+        "acme.com/backend",
+        agent_did_key,
+        "alice",
+    )
+
+    body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
+    body_bytes = json.dumps(body).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/connect",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    new_agent_id = resp.json()["agent_id"]
+    assert new_agent_id != str(deleted_agent_id)
+
+    rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT agent_id, alias, did_key, status, deleted_at
+        FROM {{tables.agents}}
+        WHERE team_address = $1
+        ORDER BY deleted_at NULLS FIRST, created_at
+        """,
+        "acme.com/backend",
+    )
+    assert len(rows) == 2
+    assert str(rows[0]["agent_id"]) == new_agent_id
+    assert rows[0]["alias"] == "alice"
+    assert rows[0]["did_key"] == agent_did_key
+    assert rows[0]["status"] == "active"
+    assert rows[0]["deleted_at"] is None
+    assert str(rows[1]["agent_id"]) == str(deleted_agent_id)
+    assert rows[1]["deleted_at"] is not None

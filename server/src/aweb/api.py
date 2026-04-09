@@ -30,8 +30,8 @@ from .routes.events import router as events_router
 from .routes.messages import router as messages_router
 from .routes.reservations import router as reservations_router
 from .routes.status import router as status_router
-from .coordination.routes.project_instructions import instructions_router
-from .coordination.routes.project_roles import roles_router
+from .coordination.routes.team_instructions import instructions_router
+from .coordination.routes.team_roles import roles_router
 from .coordination.routes.repos import router as repos_router
 from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
@@ -259,12 +259,29 @@ def create_app(
         """
         import hashlib as _hashlib
 
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            request.state.cached_body = b""
+            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
+            return await call_next(request)
+
+        original_receive = request._receive
         body = await request.body()
         request.state.cached_body = body
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
+        replayed = False
 
         async def _receive():
-            return {"type": "http.request", "body": body}
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            while True:
+                message = await original_receive()
+                if message["type"] == "http.disconnect":
+                    return message
+                if message["type"] == "http.request" and not message.get("more_body", False):
+                    continue
+                return message
 
         request._receive = _receive
         return await call_next(request)

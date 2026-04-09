@@ -33,14 +33,16 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (team_address, alias),
-    UNIQUE (team_address, did_key)
+    deleted_at      TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_agents_did_key
-    ON {{tables.agents}} (did_key) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_alias
+    ON {{tables.agents}} (team_address, alias)
+    WHERE deleted_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_did_key
+    ON {{tables.agents}} (team_address, did_key)
+    WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_agents_did_aw
     ON {{tables.agents}} (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
@@ -290,7 +292,7 @@ CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
 -- Roles (versioned per team)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
+CREATE TABLE IF NOT EXISTS {{tables.team_roles}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -307,7 +309,7 @@ CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
 -- Instructions (versioned per team)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.project_instructions}} (
+CREATE TABLE IF NOT EXISTS {{tables.team_instructions}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,

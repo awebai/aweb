@@ -194,11 +194,11 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
-	serverURL, err := resolveGuidedOnboardingServerURL(req.BaseURL)
+	awebURL, err := resolveGuidedOnboardingAwebURL(req.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	result, err := guidedOnboardingConnect(req.WorkingDir, serverURL, certificateConnectOptions{
+	result, err := guidedOnboardingConnect(req.WorkingDir, awebURL, certificateConnectOptions{
 		Role:      req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
@@ -286,19 +286,19 @@ func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Write
 	}
 }
 
-func defaultWizardServerURL() string {
-	if serverURL := strings.TrimSpace(os.Getenv("AWEB_URL")); serverURL != "" {
-		return serverURL
+func defaultWizardAwebURL() string {
+	if awebURL := strings.TrimSpace(os.Getenv("AWEB_URL")); awebURL != "" {
+		return awebURL
 	}
-	return DefaultServerURL
+	return DefaultAwebURL
 }
 
-func resolveGuidedOnboardingServerURL(raw string) (string, error) {
-	serverURL := strings.TrimSpace(raw)
-	if serverURL == "" {
-		serverURL = defaultWizardServerURL()
+func resolveGuidedOnboardingAwebURL(raw string) (string, error) {
+	awebURL := strings.TrimSpace(raw)
+	if awebURL == "" {
+		awebURL = defaultWizardAwebURL()
 	}
-	return normalizeServerBaseURL(serverURL)
+	return normalizeAwebBaseURL(awebURL)
 }
 
 func guidedOnboardingSkipDNSVerify() bool {
@@ -411,11 +411,11 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	})
 }
 
-func ensureHostedOnboardingAvailable(serverURL string) error {
+func ensureHostedOnboardingAvailable(awebURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := guidedOnboardingCheckUsername(ctx, serverURL, "Invalid_Probe")
+	resp, err := guidedOnboardingCheckUsername(ctx, awebURL, "Invalid_Probe")
 	if err == nil && resp != nil {
 		return nil
 	}
@@ -656,12 +656,12 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 		return onboardingServiceURLs{}, err
 	}
 
-	awebURL, err := resolveGuidedOnboardingServerURL(req.BaseURL)
+	awebURL, err := resolveGuidedOnboardingAwebURL(req.BaseURL)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}
 	return onboardingServiceURLs{
-		AwebURL:  awebURL,
+		AwebURL: awebURL,
 	}, nil
 }
 

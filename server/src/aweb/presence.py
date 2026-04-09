@@ -47,11 +47,6 @@ def _branch_workspaces_index_key(repo_id: str, branch: str) -> str:
     return f"idx:branch_workspaces:{repo_id}:{_safe_key_component(branch)}"
 
 
-def _project_slug_workspaces_index_key(project_slug: str) -> str:
-    """Secondary index: workspace_ids by project_slug."""
-    return f"idx:project_slug_workspaces:{_safe_key_component(project_slug)}"
-
-
 def _all_workspaces_index_key() -> str:
     """Global index: all workspace_ids with active presence."""
     return "idx:all_workspaces"
@@ -74,7 +69,6 @@ async def update_agent_presence(
     model: Optional[str] = None,
     human_name: Optional[str] = None,
     team_address: Optional[str] = None,
-    project_slug: Optional[str] = None,
     repo_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     member_email: str = "",
@@ -93,7 +87,6 @@ async def update_agent_presence(
         alias: Human-friendly workspace identifier for addressing.
         human_name: Name of the human who owns this workspace.
         team_address: Team address (for secondary index).
-        project_slug: Human-readable project slug.
         repo_id: UUID of the repo (for secondary index).
         current_branch: Optional branch name.
         role: Brief description of workspace purpose (max 50 chars).
@@ -113,7 +106,6 @@ async def update_agent_presence(
         "alias": alias,
         "human_name": human_name or "",
         "team_address": team_address or "",
-        "project_slug": project_slug or "",
         "repo_id": repo_id or "",
         "member_email": member_email,
         "program": program or "",
@@ -136,8 +128,8 @@ async def update_agent_presence(
     # Index TTL is 2x presence TTL to ensure index entries outlive presence keys,
     # allowing lazy cleanup to detect stale entries via EXISTS checks.
     # Note: workspace → team is immutable (see architecture docs), so team_address
-    # and project_slug don't change for a given workspace. Branch and repo indexes
-    # may have transient staleness (up to TTL*2) when workspaces switch branches.
+    # doesn't change for a given workspace. Branch and repo indexes may have
+    # transient staleness (up to TTL*2) when workspaces switch branches.
 
     # Global all_workspaces index (always maintained)
     all_idx_key = _all_workspaces_index_key()
@@ -152,11 +144,6 @@ async def update_agent_presence(
         # Alias index for O(1) collision checking (1:1 mapping, not a set)
         alias_idx_key = _alias_index_key(team_address, alias)
         await redis.set(alias_idx_key, workspace_id, ex=ttl_seconds * 2)
-
-    if project_slug:
-        idx_key = _project_slug_workspaces_index_key(project_slug)
-        await redis.sadd(idx_key, workspace_id)
-        await redis.expire(idx_key, ttl_seconds * 2)
 
     if repo_id:
         idx_key = _repo_workspaces_index_key(repo_id)
@@ -321,27 +308,6 @@ async def _filter_valid_workspace_ids(
     return valid_workspace_ids
 
 
-async def get_workspace_ids_by_project_slug(
-    redis: Redis,
-    project_slug: str,
-) -> List[str]:
-    """
-    Get all workspace_ids that belong to a project by slug.
-
-    Uses secondary index for O(M) lookup where M is workspaces in project.
-    Stale entries (presence expired but index entry remains) are filtered
-    out and lazily removed from the index.
-
-    Args:
-        project_slug: Human-readable project slug.
-
-    Returns:
-        List of workspace_ids with matching project_slug.
-    """
-    idx_key = _project_slug_workspaces_index_key(project_slug)
-    return await _filter_valid_workspace_ids(redis, idx_key)
-
-
 async def get_workspace_ids_by_team_address(
     redis: Redis,
     team_address: str,
@@ -458,26 +424,6 @@ async def get_workspace_id_by_alias(
         return None
 
     return ws_id
-
-
-async def get_workspace_project_slug(
-    redis: Redis,
-    workspace_id: str,
-) -> Optional[str]:
-    """Get the project_slug for a workspace from its presence data.
-
-    Args:
-        redis: Redis client.
-        workspace_id: Workspace UUID.
-
-    Returns:
-        project_slug if available, None otherwise.
-    """
-    data = await redis.hget(_presence_key(workspace_id), "project_slug")
-    if not data:
-        return None
-    slug = data.decode("utf-8") if isinstance(data, bytes) else data
-    return slug if slug else None
 
 
 async def clear_workspace_presence(

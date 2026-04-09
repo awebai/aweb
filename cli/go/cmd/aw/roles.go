@@ -17,49 +17,49 @@ import (
 
 var rolesCmd = &cobra.Command{
 	Use:   "roles",
-	Short: "Read and manage project roles bundles and role definitions",
+	Short: "Read and manage team roles bundles and role definitions",
 }
 
 var rolesShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show role guidance from the active project roles bundle",
-	RunE:  runProjectRolesShow,
+	Short: "Show role guidance from the active team roles bundle",
+	RunE:  runTeamRolesShow,
 }
 
 var rolesListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List roles defined in the active project roles bundle",
+	Short: "List roles defined in the active team roles bundle",
 	RunE:  runRolesList,
 }
 
 var rolesHistoryCmd = &cobra.Command{
 	Use:   "history",
-	Short: "List project roles history",
+	Short: "List team roles history",
 	RunE:  runRolesHistory,
 }
 
 var rolesSetCmd = &cobra.Command{
 	Use:   "set",
-	Short: "Create and activate a new project roles bundle version",
+	Short: "Create and activate a new team roles bundle version",
 	RunE:  runRolesSet,
 }
 
 var rolesActivateCmd = &cobra.Command{
-	Use:   "activate <project-roles-id>",
-	Short: "Activate an existing project roles bundle version",
+	Use:   "activate <team-roles-id>",
+	Short: "Activate an existing team roles bundle version",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runRolesActivate,
 }
 
 var rolesResetCmd = &cobra.Command{
 	Use:   "reset",
-	Short: "Reset project roles to the server default bundle",
+	Short: "Reset team roles to the server default bundle",
 	RunE:  runRolesReset,
 }
 
 var rolesDeactivateCmd = &cobra.Command{
 	Use:   "deactivate",
-	Short: "Deactivate project roles by replacing the active bundle with an empty bundle",
+	Short: "Deactivate team roles by replacing the active bundle with an empty bundle",
 	RunE:  runRolesDeactivate,
 }
 
@@ -71,29 +71,29 @@ var (
 	rolesSetBundleFile    string
 )
 
-type projectRolesShowOutput struct {
-	RoleName     string                           `json:"role_name,omitempty"`
-	Role         string                           `json:"role,omitempty"`
-	OnlySelected bool                             `json:"only_selected"`
-	ProjectRoles *aweb.ActiveProjectRolesResponse `json:"project_roles"`
+type teamRolesShowOutput struct {
+	RoleName     string                        `json:"role_name,omitempty"`
+	Role         string                        `json:"role,omitempty"`
+	OnlySelected bool                          `json:"only_selected"`
+	TeamRoles    *aweb.ActiveTeamRolesResponse `json:"team_roles"`
 }
 
-type projectRolesListOutput struct {
-	Roles []projectRoleItem `json:"roles"`
+type teamRolesListOutput struct {
+	Roles []teamRoleItem `json:"roles"`
 }
 
-type projectRolesSetOutput struct {
-	ProjectRolesID string `json:"project_roles_id"`
-	Version        int    `json:"version"`
-	Activated      bool   `json:"activated"`
+type teamRolesSetOutput struct {
+	TeamRolesID string `json:"team_roles_id"`
+	Version     int    `json:"version"`
+	Activated   bool   `json:"activated"`
 }
 
-type projectRolesActivateOutput struct {
-	ProjectRolesID string `json:"project_roles_id"`
-	Activated      bool   `json:"activated"`
+type teamRolesActivateOutput struct {
+	TeamRolesID string `json:"team_roles_id"`
+	Activated   bool   `json:"activated"`
 }
 
-type projectRoleItem struct {
+type teamRoleItem struct {
 	Name  string `json:"name"`
 	Title string `json:"title"`
 }
@@ -101,8 +101,8 @@ type projectRoleItem struct {
 func init() {
 	addRolesShowFlags(rolesShowCmd)
 	rolesHistoryCmd.Flags().IntVar(&rolesHistoryLimit, "limit", 20, "Max role bundle versions")
-	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Project roles bundle JSON")
-	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read project roles bundle JSON from file ('-' for stdin)")
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Team roles bundle JSON")
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read team roles bundle JSON from file ('-' for stdin)")
 
 	rolesCmd.AddCommand(rolesShowCmd)
 	rolesCmd.AddCommand(rolesListCmd)
@@ -121,7 +121,7 @@ func addRolesShowFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&rolesShowAllFlag, "all-roles", false, "Include all role playbooks instead of only the selected role")
 }
 
-func runProjectRolesShow(cmd *cobra.Command, args []string) error {
+func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 	client, sel, err := resolveClientSelection()
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func runProjectRolesShow(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{
+	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
 		RoleName:     roleName,
 		OnlySelected: !rolesShowAllFlag,
 	})
@@ -142,12 +142,12 @@ func runProjectRolesShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printOutput(projectRolesShowOutput{
+	printOutput(teamRolesShowOutput{
 		RoleName:     roleName,
 		Role:         roleName,
 		OnlySelected: !rolesShowAllFlag,
-		ProjectRoles: resp,
-	}, formatProjectRolesShow)
+		TeamRoles:    resp,
+	}, formatTeamRolesShow)
 	return nil
 }
 
@@ -161,7 +161,7 @@ func runRolesList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
-	printOutput(projectRolesListOutput{Roles: roles}, formatProjectRolesList)
+	printOutput(teamRolesListOutput{Roles: roles}, formatTeamRolesList)
 	return nil
 }
 
@@ -174,11 +174,11 @@ func runRolesHistory(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ProjectRolesHistory(ctx, rolesHistoryLimit)
+	resp, err := client.TeamRolesHistory(ctx, rolesHistoryLimit)
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatProjectRolesHistory)
+	printOutput(resp, formatTeamRolesHistory)
 	return nil
 }
 
@@ -196,28 +196,28 @@ func runRolesSet(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	active, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
+	active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
 	if err != nil {
 		return err
 	}
 
-	created, err := client.CreateProjectRoles(ctx, &aweb.CreateProjectRolesRequest{
-		Bundle:             bundle,
-		BaseProjectRolesID: active.ProjectRolesID,
+	created, err := client.CreateTeamRoles(ctx, &aweb.CreateTeamRolesRequest{
+		Bundle:          bundle,
+		BaseTeamRolesID: active.TeamRolesID,
 	})
 	if err != nil {
 		return err
 	}
 
-	if _, err := client.ActivateProjectRoles(ctx, created.ProjectRolesID); err != nil {
+	if _, err := client.ActivateTeamRoles(ctx, created.TeamRolesID); err != nil {
 		return err
 	}
 
-	printOutput(projectRolesSetOutput{
-		ProjectRolesID: created.ProjectRolesID,
-		Version:        created.Version,
-		Activated:      true,
-	}, formatProjectRolesSet)
+	printOutput(teamRolesSetOutput{
+		TeamRolesID: created.TeamRolesID,
+		Version:     created.Version,
+		Activated:   true,
+	}, formatTeamRolesSet)
 	return nil
 }
 
@@ -230,15 +230,15 @@ func runRolesActivate(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActivateProjectRoles(ctx, strings.TrimSpace(args[0]))
+	resp, err := client.ActivateTeamRoles(ctx, strings.TrimSpace(args[0]))
 	if err != nil {
 		return err
 	}
 
-	printOutput(projectRolesActivateOutput{
-		ProjectRolesID: resp.ActiveProjectRolesID,
-		Activated:      resp.Activated,
-	}, formatProjectRolesActivate)
+	printOutput(teamRolesActivateOutput{
+		TeamRolesID: resp.ActiveTeamRolesID,
+		Activated:   resp.Activated,
+	}, formatTeamRolesActivate)
 	return nil
 }
 
@@ -251,11 +251,11 @@ func runRolesReset(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ResetProjectRoles(ctx)
+	resp, err := client.ResetTeamRoles(ctx)
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatProjectRolesReset)
+	printOutput(resp, formatTeamRolesReset)
 	return nil
 }
 
@@ -268,32 +268,32 @@ func runRolesDeactivate(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.DeactivateProjectRoles(ctx)
+	resp, err := client.DeactivateTeamRoles(ctx)
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatProjectRolesDeactivate)
+	printOutput(resp, formatTeamRolesDeactivate)
 	return nil
 }
 
-func fetchAvailableRoleItems(client *aweb.Client) ([]projectRoleItem, error) {
+func fetchAvailableRoleItems(client *aweb.Client) ([]teamRoleItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{
+	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
 		OnlySelected: false,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	roles := make([]projectRoleItem, 0, len(resp.Roles))
+	roles := make([]teamRoleItem, 0, len(resp.Roles))
 	for name, info := range resp.Roles {
 		title := strings.TrimSpace(info.Title)
 		if title == "" {
 			title = name
 		}
-		roles = append(roles, projectRoleItem{Name: name, Title: title})
+		roles = append(roles, teamRoleItem{Name: name, Title: title})
 	}
 	return roles, nil
 }
@@ -307,43 +307,40 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 		if roleName := strings.TrimSpace(state.RoleName); roleName != "" {
 			return roleName
 		}
-		if role := strings.TrimSpace(state.Role); role != "" {
-			return role
-		}
 	}
 	_ = sel
 	return "developer"
 }
 
-func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.ProjectRolesBundle, error) {
+func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.TeamRolesBundle, error) {
 	bundleJSON = strings.TrimSpace(bundleJSON)
 	bundleFile = strings.TrimSpace(bundleFile)
 
 	var raw []byte
 	switch {
 	case bundleJSON != "" && bundleFile != "":
-		return aweb.ProjectRolesBundle{}, usageError("use only one of --bundle-json or --bundle-file")
+		return aweb.TeamRolesBundle{}, usageError("use only one of --bundle-json or --bundle-file")
 	case bundleJSON != "":
 		raw = []byte(bundleJSON)
 	case bundleFile == "":
-		return aweb.ProjectRolesBundle{}, usageError("missing required flag: --bundle-json or --bundle-file")
+		return aweb.TeamRolesBundle{}, usageError("missing required flag: --bundle-json or --bundle-file")
 	case bundleFile == "-":
 		data, err := io.ReadAll(stdin)
 		if err != nil {
-			return aweb.ProjectRolesBundle{}, err
+			return aweb.TeamRolesBundle{}, err
 		}
 		raw = data
 	default:
 		data, err := os.ReadFile(bundleFile)
 		if err != nil {
-			return aweb.ProjectRolesBundle{}, err
+			return aweb.TeamRolesBundle{}, err
 		}
 		raw = data
 	}
 
-	var bundle aweb.ProjectRolesBundle
+	var bundle aweb.TeamRolesBundle
 	if err := json.Unmarshal(raw, &bundle); err != nil {
-		return aweb.ProjectRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: %w", err)
+		return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: %w", err)
 	}
 	if bundle.Roles == nil {
 		bundle.Roles = map[string]aweb.RoleDefinition{}
@@ -351,21 +348,21 @@ func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.Pr
 	return bundle, nil
 }
 
-func formatProjectRolesShow(v any) string {
-	out := v.(projectRolesShowOutput)
-	if out.ProjectRoles == nil {
-		return "No active project roles.\n"
+func formatTeamRolesShow(v any) string {
+	out := v.(teamRolesShowOutput)
+	if out.TeamRoles == nil {
+		return "No active team roles.\n"
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Project Roles v%d\n", out.ProjectRoles.Version))
+	sb.WriteString(fmt.Sprintf("Team Roles v%d\n", out.TeamRoles.Version))
 	if out.RoleName != "" {
 		sb.WriteString(fmt.Sprintf("Role: %s\n", out.RoleName))
 	}
 
-	if out.ProjectRoles.SelectedRole != nil {
-		sb.WriteString(fmt.Sprintf("\n## Role: %s\n", out.ProjectRoles.SelectedRole.Title))
-		for _, line := range strings.Split(strings.TrimSpace(out.ProjectRoles.SelectedRole.PlaybookMD), "\n") {
+	if out.TeamRoles.SelectedRole != nil {
+		sb.WriteString(fmt.Sprintf("\n## Role: %s\n", out.TeamRoles.SelectedRole.Title))
+		for _, line := range strings.Split(strings.TrimSpace(out.TeamRoles.SelectedRole.PlaybookMD), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -375,15 +372,15 @@ func formatProjectRolesShow(v any) string {
 		return sb.String()
 	}
 
-	if len(out.ProjectRoles.Roles) > 0 {
-		names := make([]string, 0, len(out.ProjectRoles.Roles))
-		for name := range out.ProjectRoles.Roles {
+	if len(out.TeamRoles.Roles) > 0 {
+		names := make([]string, 0, len(out.TeamRoles.Roles))
+		for name := range out.TeamRoles.Roles {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		sb.WriteString("\n## Roles\n")
 		for _, name := range names {
-			role := out.ProjectRoles.Roles[name]
+			role := out.TeamRoles.Roles[name]
 			title := strings.TrimSpace(role.Title)
 			if title == "" {
 				title = name
@@ -407,8 +404,8 @@ func formatProjectRolesShow(v any) string {
 	return sb.String()
 }
 
-func formatProjectRolesList(v any) string {
-	out := v.(projectRolesListOutput)
+func formatTeamRolesList(v any) string {
+	out := v.(teamRolesListOutput)
 	if len(out.Roles) == 0 {
 		return "No roles defined.\n"
 	}
@@ -423,49 +420,49 @@ func formatProjectRolesList(v any) string {
 	return sb.String()
 }
 
-func formatProjectRolesHistory(v any) string {
-	out := v.(*aweb.ProjectRolesHistoryResponse)
-	if out == nil || len(out.ProjectRolesVersions) == 0 {
-		return "No project roles versions.\n"
+func formatTeamRolesHistory(v any) string {
+	out := v.(*aweb.TeamRolesHistoryResponse)
+	if out == nil || len(out.TeamRolesVersions) == 0 {
+		return "No team roles versions.\n"
 	}
 
 	var sb strings.Builder
-	for _, item := range out.ProjectRolesVersions {
+	for _, item := range out.TeamRolesVersions {
 		status := "inactive"
 		if item.IsActive {
 			status = "active"
 		}
-		sb.WriteString(fmt.Sprintf("v%d\t%s\t%s\t%s", item.Version, status, item.CreatedAt, item.ProjectRolesID))
-		if item.CreatedByWorkspaceID != nil && strings.TrimSpace(*item.CreatedByWorkspaceID) != "" {
-			sb.WriteString("\t" + strings.TrimSpace(*item.CreatedByWorkspaceID))
+		sb.WriteString(fmt.Sprintf("v%d\t%s\t%s\t%s", item.Version, status, item.CreatedAt, item.TeamRolesID))
+		if item.CreatedByAlias != nil && strings.TrimSpace(*item.CreatedByAlias) != "" {
+			sb.WriteString("\t" + strings.TrimSpace(*item.CreatedByAlias))
 		}
 		sb.WriteString("\n")
 	}
 	return sb.String()
 }
 
-func formatProjectRolesSet(v any) string {
-	out := v.(projectRolesSetOutput)
-	return fmt.Sprintf("Activated project roles v%d (%s)\n", out.Version, out.ProjectRolesID)
+func formatTeamRolesSet(v any) string {
+	out := v.(teamRolesSetOutput)
+	return fmt.Sprintf("Activated team roles v%d (%s)\n", out.Version, out.TeamRolesID)
 }
 
-func formatProjectRolesActivate(v any) string {
-	out := v.(projectRolesActivateOutput)
-	return fmt.Sprintf("Activated project roles %s\n", out.ProjectRolesID)
+func formatTeamRolesActivate(v any) string {
+	out := v.(teamRolesActivateOutput)
+	return fmt.Sprintf("Activated team roles %s\n", out.TeamRolesID)
 }
 
-func formatProjectRolesReset(v any) string {
-	out := v.(*aweb.ResetProjectRolesResponse)
+func formatTeamRolesReset(v any) string {
+	out := v.(*aweb.ResetTeamRolesResponse)
 	if out == nil {
-		return "Project roles reset.\n"
+		return "Team roles reset.\n"
 	}
-	return fmt.Sprintf("Reset project roles to default (v%d, %s)\n", out.Version, out.ActiveProjectRolesID)
+	return fmt.Sprintf("Reset team roles to default (v%d, %s)\n", out.Version, out.ActiveTeamRolesID)
 }
 
-func formatProjectRolesDeactivate(v any) string {
-	out := v.(*aweb.DeactivateProjectRolesResponse)
+func formatTeamRolesDeactivate(v any) string {
+	out := v.(*aweb.DeactivateTeamRolesResponse)
 	if out == nil {
-		return "Project roles deactivated.\n"
+		return "Team roles deactivated.\n"
 	}
-	return fmt.Sprintf("Deactivated project roles (v%d, %s)\n", out.Version, out.ActiveProjectRolesID)
+	return fmt.Sprintf("Deactivated team roles (v%d, %s)\n", out.Version, out.ActiveTeamRolesID)
 }

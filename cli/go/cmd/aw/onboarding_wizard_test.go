@@ -124,7 +124,7 @@ func TestExecuteReconnectPathFailsOnLegacyServerURLWorkspace(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected legacy workspace to fail")
 	}
-	if !strings.Contains(err.Error(), "workspace.yaml is in the legacy format") {
+	if !strings.Contains(err.Error(), "workspace.yaml uses removed server_url") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

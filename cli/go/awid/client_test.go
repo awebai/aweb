@@ -15,35 +15,23 @@ import (
 	"time"
 )
 
-func TestIntrospectAddsBearerHeader(t *testing.T) {
-	t.Parallel()
+type stubIdentityResolver struct {
+	resolve func(context.Context, string) (*ResolvedIdentity, error)
+	verify  func(context.Context, string, string) *StableIdentityVerification
+}
 
-	wantProjectID := "11111111-1111-1111-1111-111111111111"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("method=%s", r.Method)
-		}
-		if r.URL.Path != "/v1/auth/introspect" {
-			t.Fatalf("path=%s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_test" {
-			t.Fatalf("auth=%q", got)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": wantProjectID})
-	}))
-	t.Cleanup(server.Close)
+func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if r.resolve == nil {
+		return nil, context.Canceled
+	}
+	return r.resolve(ctx, identifier)
+}
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
-	if err != nil {
-		t.Fatal(err)
+func (r stubIdentityResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {
+	if r.verify == nil {
+		return nil
 	}
-	resp, err := c.Introspect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.ProjectID != wantProjectID {
-		t.Fatalf("project_id=%s", resp.ProjectID)
-	}
+	return r.verify(ctx, address, stableID)
 }
 
 func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
@@ -170,7 +158,7 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	}
 }
 
-func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
+func TestChatCreateSessionSignsLocalAliases(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -193,10 +181,9 @@ func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
-		ToAliases: []string{"project-2~bob", "project-2~ann"},
+		ToAliases: []string{"bob", "ann"},
 		Message:   "hello",
 	})
 	if err != nil {
@@ -204,9 +191,9 @@ func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "project-1~agent",
+		From:      "agent",
 		FromDID:   did,
-		To:        "project-2~ann,project-2~bob",
+		To:        "ann,bob",
 		Type:      "chat",
 		Body:      "hello",
 		Timestamp: gotBody.Timestamp,
@@ -333,7 +320,7 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 	}
 }
 
-func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
+func TestChatSendMessageSignsLocalAliases(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -348,7 +335,7 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
 				Sessions: []ChatSessionItem{
-					{SessionID: "sess-1", Participants: []string{"project-2~ann", "project-2~bob"}, CreatedAt: "2026-02-01T00:00:00Z"},
+					{SessionID: "sess-1", Participants: []string{"ann", "bob"}, CreatedAt: "2026-02-01T00:00:00Z"},
 				},
 			})
 		case "/v1/chat/sessions/sess-1/messages":
@@ -370,7 +357,6 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{Body: "ping"})
 	if err != nil {
@@ -378,9 +364,9 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "project-1~agent",
+		From:      "agent",
 		FromDID:   did,
-		To:        "project-2~ann,project-2~bob",
+		To:        "ann,bob",
 		Type:      "chat",
 		Body:      "ping",
 		Timestamp: gotSend.Timestamp,
@@ -747,52 +733,6 @@ func TestDeregisterAgent(t *testing.T) {
 	}
 }
 
-func TestPatchIdentityAccessMode(t *testing.T) {
-	t.Parallel()
-
-	var gotMethod, gotPath, gotContentType string
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		gotContentType = r.Header.Get("Content-Type")
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"agent_id":    "agent-1",
-			"access_mode": "open",
-		})
-	}))
-	t.Cleanup(server.Close)
-
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := c.PatchIdentity(context.Background(), "agent-1", &PatchIdentityRequest{
-		AccessMode: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotMethod != http.MethodPatch {
-		t.Fatalf("method=%s", gotMethod)
-	}
-	if gotPath != "/v1/agents/agent-1" {
-		t.Fatalf("path=%s", gotPath)
-	}
-	if gotContentType != "application/json" {
-		t.Fatalf("content-type=%s", gotContentType)
-	}
-	if gotBody["access_mode"] != "open" {
-		t.Fatalf("access_mode=%v", gotBody["access_mode"])
-	}
-	if resp.AccessMode != "open" {
-		t.Fatalf("access_mode=%s", resp.AccessMode)
-	}
-}
-
 func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	t.Parallel()
 
@@ -961,7 +901,7 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 	}
 }
 
-func TestSendMessageSignsProjectQualifiedAliasAcrossProjects(t *testing.T) {
+func TestSendMessageSignsLocalAlias(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -986,10 +926,9 @@ func TestSendMessageSignsProjectQualifiedAliasAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
-		ToAlias: "project-2~monitor",
+		ToAlias: "monitor",
 		Subject: "task complete",
 		Body:    "results attached",
 	})
@@ -1784,11 +1723,6 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/v1/agents/resolve/otherco/monitor":
-			_ = json.NewEncoder(w).Encode(serverResolveResponse{
-				DID:     recipientDID,
-				Address: "otherco/monitor",
-			})
 		case r.URL.Path == "/v1/messages":
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -1807,7 +1741,14 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "otherco/monitor" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{DID: recipientDID, Address: identifier}, nil
+		},
+	})
 
 	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
 		ToAlias: "otherco/monitor",
@@ -2755,18 +2696,7 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Mock server returns inbox message and resolve response with lifetime=ephemeral.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":      senderDID,
-				"agent_id": "agent-uuid-1",
-				"address":  "myco/ephemeral-bot",
-				"lifetime": "ephemeral",
-				"custody":  "self",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-eph-1",
@@ -2794,7 +2724,20 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 	ps := NewPinStore()
 	ps.StorePin("did:key:stale", "myco/ephemeral-bot", "", "")
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "myco/ephemeral-bot" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "ephemeral",
+				Custody:     "self",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
@@ -2841,16 +2784,6 @@ func TestCheckTOFUPinCustodialReturnsVerifiedCustodial(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":      senderDID,
-				"agent_id": "agent-uuid-2",
-				"address":  "myco/custodial-bot",
-				"lifetime": "persistent",
-				"custody":  "custodial",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-cust-1",
@@ -2877,7 +2810,20 @@ func TestCheckTOFUPinCustodialReturnsVerifiedCustodial(t *testing.T) {
 	}
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != "myco/custodial-bot" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "persistent",
+				Custody:     "custodial",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
@@ -2915,17 +2861,6 @@ func TestCheckTOFUPinResolverCachesResults(t *testing.T) {
 
 	resolveCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			resolveCount++
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":      senderDID,
-				"agent_id": "agent-uuid-3",
-				"address":  "myco/cached-bot",
-				"lifetime": "persistent",
-				"custody":  "self",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-cache-1",
@@ -2952,7 +2887,21 @@ func TestCheckTOFUPinResolverCachesResults(t *testing.T) {
 	}
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			resolveCount++
+			if identifier != "myco/cached-bot" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "persistent",
+				Custody:     "self",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	// First call: should resolve.
 	resp, err := c.Inbox(context.Background(), InboxParams{})
@@ -3001,21 +2950,6 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 	resolveCount := 0
 	resolverFail := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			resolveCount++
-			if resolverFail {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":      senderDID,
-				"agent_id": "agent-uuid-flaky",
-				"address":  "myco/flaky-bot",
-				"lifetime": "persistent",
-				"custody":  "custodial",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-flaky-1",
@@ -3042,7 +2976,24 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 	}
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			resolveCount++
+			if identifier != "myco/flaky-bot" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			if resolverFail {
+				return nil, context.DeadlineExceeded
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "persistent",
+				Custody:     "custodial",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	// First call: resolver fails → status remains verified, and the failure is not cached.
 	resp, err := c.Inbox(context.Background(), InboxParams{})
@@ -3097,21 +3048,6 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 
 	resolvePaths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			resolvePaths = append(resolvePaths, r.URL.Path)
-			if r.URL.Path != "/v1/agents/resolve/architect" {
-				http.NotFound(w, r)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":         senderDID,
-				"identity_id": "identity-uuid-1",
-				"address":     "myteam/architect",
-				"lifetime":    "ephemeral",
-				"custody":     "self",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-local-1",
@@ -3141,7 +3077,21 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	ps := NewPinStore()
 	ps.StorePin("did:aw:old-architect", "architect", "", "")
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			resolvePaths = append(resolvePaths, identifier)
+			if identifier != "myteam/architect" {
+				return nil, context.Canceled
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "ephemeral",
+				Custody:     "self",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
@@ -3153,8 +3103,8 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	if resp.Messages[0].IsContact != nil {
 		t.Fatalf("ephemeral sender should suppress contact tag, got %v", *resp.Messages[0].IsContact)
 	}
-	if len(resolvePaths) != 1 || resolvePaths[0] != "/v1/agents/resolve/architect" {
-		t.Fatalf("resolvePaths=%v, want [/v1/agents/resolve/architect]", resolvePaths)
+	if len(resolvePaths) != 1 || resolvePaths[0] != "myteam/architect" {
+		t.Fatalf("resolvePaths=%v, want [myteam/architect]", resolvePaths)
 	}
 	if _, ok := ps.Addresses["myteam/architect"]; ok {
 		t.Fatalf("ephemeral sender should not be pinned under canonical address")
@@ -3189,21 +3139,6 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 
 	resolvePaths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			resolvePaths = append(resolvePaths, r.URL.Path)
-			if r.URL.Path != "/v1/agents/resolve/architect" {
-				http.NotFound(w, r)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":         senderDID,
-				"identity_id": "identity-uuid-2",
-				"address":     "myteam/architect",
-				"lifetime":    "ephemeral",
-				"custody":     "self",
-			})
-			return
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]any{{
 				"message_id":     "msg-chat-local-1",
@@ -3229,7 +3164,21 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	ps := NewPinStore()
 	ps.StorePin("did:aw:old-architect", "architect", "", "")
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			resolvePaths = append(resolvePaths, identifier)
+			if identifier != "myteam/architect" {
+				return nil, context.Canceled
+			}
+			return &ResolvedIdentity{
+				DID:         senderDID,
+				Address:     identifier,
+				Lifetime:    "ephemeral",
+				Custody:     "self",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
 
 	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
 	if err != nil {
@@ -3241,8 +3190,8 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	if resp.Messages[0].IsContact != nil {
 		t.Fatalf("ephemeral sender should suppress contact tag, got %v", *resp.Messages[0].IsContact)
 	}
-	if len(resolvePaths) != 1 || resolvePaths[0] != "/v1/agents/resolve/architect" {
-		t.Fatalf("resolvePaths=%v, want [/v1/agents/resolve/architect]", resolvePaths)
+	if len(resolvePaths) != 1 || resolvePaths[0] != "myteam/architect" {
+		t.Fatalf("resolvePaths=%v, want [myteam/architect]", resolvePaths)
 	}
 	if _, ok := ps.Addresses["myteam/architect"]; ok {
 		t.Fatalf("ephemeral sender should not be pinned under canonical address")
@@ -3324,27 +3273,17 @@ func TestCheckTOFUPinAcceptsValidReplacementAnnouncement(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	// Mock resolver that returns the controller_did for this address
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":            newDID,
-				"agent_id":       "agent-new",
-				"address":        address,
-				"controller_did": controllerDID,
-				"lifetime":       "persistent",
-				"custody":        "self",
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != address {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{DID: newDID, Address: address, ControllerDID: controllerDID}, nil
+		},
+	})
 
 	// Pin the old DID
 	status := c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
@@ -3393,27 +3332,17 @@ func TestCheckTOFUPinRejectsReplacementWrongController(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	// Resolver returns the REAL controller_did (not the one in the announcement)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":            newDID,
-				"agent_id":       "agent-new",
-				"address":        address,
-				"controller_did": controllerDID,
-				"lifetime":       "persistent",
-				"custody":        "self",
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != address {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{DID: newDID, Address: address, ControllerDID: controllerDID}, nil
+		},
+	})
 
 	// Pin the old DID
 	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
@@ -3446,26 +3375,17 @@ func TestCheckTOFUPinRejectsReplacementBadSignature(t *testing.T) {
 		ControllerSignature: base64.RawStdEncoding.EncodeToString([]byte("bad-signature-garbage")),
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":            newDID,
-				"agent_id":       "agent-new",
-				"address":        address,
-				"controller_did": controllerDID,
-				"lifetime":       "persistent",
-				"custody":        "self",
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != address {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{DID: newDID, Address: address, ControllerDID: controllerDID}, nil
+		},
+	})
 
 	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
 
@@ -3501,26 +3421,17 @@ func TestCheckTOFUPinRejectsReplacementStaleTimestamp(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/agents/resolve/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":            newDID,
-				"agent_id":       "agent-new",
-				"address":        address,
-				"controller_did": controllerDID,
-				"lifetime":       "persistent",
-				"custody":        "self",
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
-	c.SetResolver(&ServerResolver{Client: c})
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != address {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{DID: newDID, Address: address, ControllerDID: controllerDID}, nil
+		},
+	})
 
 	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
 
@@ -3614,7 +3525,7 @@ func TestLatestClientVersionCapturedFromHeader(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Latest-Client-Version", "v0.99.0")
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": "p1"})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 	t.Cleanup(server.Close)
 
@@ -3628,8 +3539,8 @@ func TestLatestClientVersionCapturedFromHeader(t *testing.T) {
 		t.Fatalf("before request: LatestClientVersion=%q, want empty", v)
 	}
 
-	var resp IntrospectResponse
-	if err := c.Get(context.Background(), "/v1/auth/introspect", &resp); err != nil {
+	var resp map[string]bool
+	if err := c.Get(context.Background(), "/v1/ping", &resp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3642,7 +3553,7 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"project_id": "p1"})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 	t.Cleanup(server.Close)
 
@@ -3651,8 +3562,8 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var resp IntrospectResponse
-	if err := c.Get(context.Background(), "/v1/auth/introspect", &resp); err != nil {
+	var resp map[string]bool
+	if err := c.Get(context.Background(), "/v1/ping", &resp); err != nil {
 		t.Fatal(err)
 	}
 

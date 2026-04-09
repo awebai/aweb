@@ -53,7 +53,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		configPath = ""
 	}
-	stampPath := notifyStampPath(sel.IdentityHandle, configPath)
+	stampPath := notifyStampPath(sel.Alias, configPath)
 	if notifyCooldownActive(stampPath, notifyCooldown) {
 		return nil
 	}
@@ -67,7 +67,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	output := formatNotifyOutput(result, sel.IdentityHandle)
+	output := formatNotifyOutput(result, sel.Alias)
 	if output == "" {
 		return nil
 	}

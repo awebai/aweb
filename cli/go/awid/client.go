@@ -54,7 +54,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 
 	// Resolve recipient DID for to_did binding (mail only).
 	if env.Type == "mail" && c.resolver != nil && env.To != "" && env.ToDID == "" {
-		if identity, err := c.resolver.Resolve(ctx, env.To); err == nil && identity.DID != "" {
+		if identity, err := c.resolver.Resolve(ctx, c.canonicalTrustAddress(env.To)); err == nil && identity.DID != "" {
 			env.ToDID = identity.DID
 		}
 	}
@@ -104,7 +104,6 @@ type Client struct {
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	teamAddress         string             // team address from certificate, used in auth signature
 	address             string             // namespace/alias, used in signed envelopes
-	projectSlug         string             // current local project slug, used for project~alias addressing
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
 	resolver            IdentityResolver   // optional; resolves recipient DID for to_did binding
 	pinStore            *PinStore          // optional; TOFU pin store for sender identity verification
@@ -127,7 +126,7 @@ func New(baseURL string) (*Client, error) {
 	}, nil
 }
 
-// NewWithAPIKey creates a new client authenticated with a project API key.
+// NewWithAPIKey creates a new client authenticated with a legacy API key.
 // The client operates in legacy/custodial mode (no signing).
 func NewWithAPIKey(baseURL, apiKey string) (*Client, error) {
 	c, err := New(baseURL)
@@ -218,9 +217,6 @@ func (c *Client) DID() string { return c.did }
 // signed message envelopes.
 func (c *Client) SetAddress(address string) { c.address = address }
 
-// SetProjectSlug sets the current project slug for local project~alias addressing.
-func (c *Client) SetProjectSlug(projectSlug string) { c.projectSlug = strings.TrimSpace(projectSlug) }
-
 // SetStableID sets the client's stable identifier (did:aw:...) for use
 // as from_stable_id in outgoing signed envelopes.
 func (c *Client) SetStableID(id string) { c.stableID = id }
@@ -277,7 +273,7 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 		Resolved: true,
 	}
 	if c.resolver != nil {
-		if identity, err := c.resolver.Resolve(ctx, rawAddress); err == nil {
+		if identity, err := c.resolver.Resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
 				Lifetime: LifetimePersistent,
 				Custody:  CustodySelf,

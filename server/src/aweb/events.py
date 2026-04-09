@@ -34,7 +34,6 @@ class Event:
     workspace_id: str
     type: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    project_slug: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -138,7 +138,7 @@ async def create_task(
                     ref=parent_task_id,
                 )
             except NotFoundError as exc:
-                raise ValidationError("Parent task not found in this project") from exc
+                raise ValidationError("Parent task not found in this team") from exc
 
             parent_row = await tx.fetch_one(
                 """
@@ -151,7 +151,7 @@ async def create_task(
                 team_address,
             )
             if not parent_row:
-                raise ValidationError("Parent task not found in this project")
+                raise ValidationError("Parent task not found in this team")
 
             max_sibling_index = await tx.fetch_value(
                 """
@@ -228,7 +228,7 @@ async def _resolve_assignee_alias(
             team_address,
         )
         if not agent_row:
-            raise ValidationError("Assignee agent not found in this project")
+            raise ValidationError("Assignee agent not found in this team")
         return agent_row["alias"]
     except ValueError:
         pass
@@ -239,7 +239,7 @@ async def _resolve_assignee_alias(
         team_address,
     )
     if not agent_row:
-        raise ValidationError("Assignee agent not found in this project")
+        raise ValidationError("Assignee agent not found in this team")
     return agent_row["alias"]
 
 

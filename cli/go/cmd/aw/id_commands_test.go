@@ -40,17 +40,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/myteam.aweb.ai/alice":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":        did,
-				"stable_id":  stableID,
-				"address":    address,
-				"handle":     "alice",
-				"server":     serverURL,
-				"custody":    "self",
-				"lifetime":   "persistent",
-				"public_key": base64.RawStdEncoding.EncodeToString(pub),
-			})
 		case "/v1/did":
 			registerCalls.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
@@ -1040,17 +1029,10 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:        serverURL,
-		TeamAddress:    "myteam/backend",
-		ProjectSlug:    "myteam",
-		NamespaceSlug:  namespaceSlug,
-		IdentityID:     "agent-1",
-		IdentityHandle: handle,
-		DID:            did,
-		StableID:       stableID,
-		SigningKey:     signingKeyPath,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		AwebURL:     serverURL,
+		TeamAddress: "myteam/backend",
+		Alias:       handle,
+		WorkspaceID: "agent-1",
 	}); err != nil {
 		t.Fatal(err)
 	}

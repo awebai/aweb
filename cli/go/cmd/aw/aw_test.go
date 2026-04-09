@@ -343,13 +343,10 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "eve",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
@@ -492,13 +489,10 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "eve",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
@@ -822,16 +816,6 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/alice":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkalice",
-				"address": "demo/alice",
-			})
-		case "/v1/agents/resolve/@juanre":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkatjuanre",
-				"address": "@juanre",
-			})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -902,13 +886,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 
-	// Generate a recipient key so the resolver can return a DID.
-	recipientPub, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipientDID := awid.ComputeDIDKey(recipientPub)
-
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -920,11 +897,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 				"message_id":   "msg-1",
 				"status":       "delivered",
 				"delivered_at": "2026-02-22T00:00:00Z",
-			})
-		case "/v1/agents/resolve/monitor", "/v1/agents/resolve/myco/monitor":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"did":     recipientDID,
-				"address": "myco/monitor",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -953,17 +925,15 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	address := "myco/agent"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:        server.URL,
-		IdentityID:     "agent-1",
-		IdentityHandle: "agent",
-		NamespaceSlug:  "myco",
-		ProjectSlug:    "myco",
-		WorkspaceID:    "workspace-1",
-		DID:            did,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		SigningKey:     priv,
+		AwebURL:     server.URL,
+		TeamAddress: "myco/backend",
+		Alias:       "agent",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Address:     address,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
@@ -991,7 +961,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 		t.Fatal("message_id missing or empty")
 	}
 
-	_ = recipientDID
 	_ = msgID
 }
 
@@ -1004,13 +973,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 
-	// Generate a recipient key so the resolver can return a DID.
-	recipientPub, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipientDID := awid.ComputeDIDKey(recipientPub)
-
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1022,11 +984,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 				"message_id":   "msg-1",
 				"status":       "delivered",
 				"delivered_at": "2026-02-22T00:00:00Z",
-			})
-		case "/v1/agents/resolve/monitor", "/v1/agents/resolve/acme/monitor":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"did":     recipientDID,
-				"address": "acme/monitor",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1055,17 +1012,15 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	address := "acme/bot"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:        server.URL,
-		IdentityID:     "agent-1",
-		IdentityHandle: "bot",
-		NamespaceSlug:  "acme",
-		ProjectSlug:    "fallback",
-		WorkspaceID:    "workspace-1",
-		DID:            did,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		SigningKey:     priv,
+		AwebURL:     server.URL,
+		TeamAddress: "acme/backend",
+		Alias:       "bot",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Address:     address,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
@@ -1079,7 +1034,7 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 
-	// Verify local same-project signing still works when namespace_slug is present.
+	// Verify local signing still works when the derived team domain is present.
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
@@ -1155,11 +1110,6 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/eve":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkeve",
-				"address": "demo/eve",
-			})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-log-1",
@@ -1238,10 +1188,10 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	}
 }
 
-func TestDefaultServerURL(t *testing.T) {
+func TestDefaultAwebURL(t *testing.T) {
 	t.Parallel()
-	if DefaultServerURL != "https://app.aweb.ai" {
-		t.Fatalf("DefaultServerURL=%q, want https://app.aweb.ai", DefaultServerURL)
+	if DefaultAwebURL != "https://app.aweb.ai" {
+		t.Fatalf("DefaultAwebURL=%q, want https://app.aweb.ai", DefaultAwebURL)
 	}
 }
 
@@ -1289,13 +1239,10 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        "https://app.aweb.ai",
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     "https://app.aweb.ai",
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
 	})
 
 	buildAwBinary(t, ctx, bin)

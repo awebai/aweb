@@ -49,6 +49,17 @@ func mustClient(t *testing.T, url string) *awid.Client {
 	return c
 }
 
+type stubIdentityResolver struct {
+	resolve func(context.Context, string) (*awid.ResolvedIdentity, error)
+}
+
+func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+	if r.resolve == nil {
+		return nil, errors.New("no resolver configured")
+	}
+	return r.resolve(ctx, identifier)
+}
+
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
@@ -559,15 +570,6 @@ func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
 				SSEURL:    "/v1/chat/sessions/s1/stream",
 			})
 		},
-		"GET /v1/agents/resolve/architect": func(w http.ResponseWriter, _ *http.Request) {
-			jsonResponse(w, map[string]any{
-				"did":         "did:key:z6MkSender",
-				"identity_id": "identity-uuid-1",
-				"address":     "myteam/architect",
-				"lifetime":    "ephemeral",
-				"custody":     "self",
-			})
-		},
 		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -598,7 +600,31 @@ func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
 
 	client := mustClient(t, server.URL)
 	client.SetAddress("myteam/implementer")
-	client.SetResolver(&awid.ServerResolver{Client: client})
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case "myteam/architect":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkSender",
+					Address:     identifier,
+					Lifetime:    awid.LifetimeEphemeral,
+					Custody:     awid.CustodySelf,
+					ResolvedVia: "registry",
+				}, nil
+			case "myteam/implementer":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkSelf",
+					Address:     identifier,
+					Lifetime:    awid.LifetimePersistent,
+					Custody:     awid.CustodySelf,
+					ResolvedVia: "registry",
+				}, nil
+			default:
+				t.Fatalf("identifier=%q", identifier)
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+	})
 
 	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
 	if err != nil {

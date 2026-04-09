@@ -139,7 +139,7 @@ func printManualChannelInstructions() {
       "aweb": {
         "command": "npx",
         "args": ["@awebai/claude-channel"],
-        "cwd": "<project directory>"
+        "cwd": "<workspace directory>"
       }
     }
   }`)

@@ -22,7 +22,7 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 					"reviewer":  map[string]any{"title": "Reviewer"},
@@ -67,14 +67,11 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
-		RoleName:       "developer",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		RoleName:    "developer",
 	})
 
 	run := exec.CommandContext(ctx, bin, "role-name", "set", "reviewer")

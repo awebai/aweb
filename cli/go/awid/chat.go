@@ -29,10 +29,6 @@ func (c *Client) alias() string {
 	return ""
 }
 
-func (c *Client) defaultProjectSlug() string {
-	return strings.TrimSpace(c.projectSlug)
-}
-
 func (c *Client) toAddressForAliases(aliases []string) string {
 	if len(aliases) == 0 {
 		return ""
@@ -125,20 +121,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		if toAddr := c.toAddressForAliases(payload.ToAliases); toAddr != "" {
 			to = toAddr
 		}
-		crossProject := false
-		for _, alias := range payload.ToAliases {
-			if strings.Contains(alias, "~") {
-				crossProject = true
-				break
-			}
-		}
-		if crossProject {
-			if project := c.defaultProjectSlug(); project != "" {
-				from = project + "~" + c.alias()
-			}
-		} else {
-			from = c.alias()
-		}
+		from = c.alias()
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From: from,
@@ -365,13 +348,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		if toAddr, err := c.toAddressForSession(ctx, sessionID); err == nil {
 			to = toAddr
 		}
-		if strings.Contains(to, "~") {
-			if project := c.defaultProjectSlug(); project != "" {
-				from = project + "~" + c.alias()
-			}
-		} else {
-			from = c.alias()
-		}
+		from = c.alias()
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From: from,

@@ -21,12 +21,10 @@ import (
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
 	t.Helper()
 	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		AwebURL:        serverURL,
-		TeamAddress:    namespace + "/backend",
-		IdentityHandle: handle,
-		NamespaceSlug:  namespace,
-		ProjectSlug:    namespace,
-		WorkspaceID:    "workspace-1",
+		AwebURL:     serverURL,
+		TeamAddress: namespace + "/backend",
+		Alias:       handle,
+		WorkspaceID: "workspace-1",
 	})
 }
 
@@ -54,7 +52,7 @@ func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T
 				w.WriteHeader(http.StatusOK)
 			case "/api/v1/events/stream":
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"ag_123\",\"project_id\":\"proj_123\"}\n\n"))
+				_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"ag_123\",\"team_address\":\"demo/backend\"}\n\n"))
 			default:
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}
@@ -213,11 +211,6 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	var gotPath string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/bob":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkbob",
-				"address": "demo/bob",
-			})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			_ = json.NewEncoder(w).Encode(map[string]any{

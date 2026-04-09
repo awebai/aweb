@@ -13,8 +13,6 @@ import (
 type goneWorkspace struct {
 	WorkspaceID      string
 	Alias            string
-	ProjectSlug      string
-	NamespaceSlug    string
 	WorkspacePath    string
 	IdentityDeleted  bool
 	WorkspaceDeleted bool
@@ -59,8 +57,6 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 		g := goneWorkspace{
 			WorkspaceID:   ws.WorkspaceID,
 			Alias:         ws.Alias,
-			ProjectSlug:   derefString(ws.ProjectSlug),
-			NamespaceSlug: derefString(ws.NamespaceSlug),
 			WorkspacePath: path,
 		}
 
