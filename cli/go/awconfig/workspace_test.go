@@ -162,7 +162,7 @@ func TestLoadWorktreeWorkspaceFromRejectsLegacyAPIKeyAuth(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-api_key: aw_sk_test
+api_key: removed-token
 workspace_id: ws-1
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
@@ -174,5 +174,34 @@ workspace_id: ws-1
 	}
 	if !strings.Contains(err.Error(), legacyWorkspaceAPIKeyError) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsUnsupportedFields(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+team_address: acme.com/backend
+workspace_id: ws-1
+future_key: value
+weird_mode: true
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected unsupported workspace fields to fail")
+	}
+	if !strings.Contains(err.Error(), workspaceUnsupportedFieldsErrorPrefix) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, field := range []string{"future_key", "weird_mode"} {
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("missing field %q in error: %v", field, err)
+		}
 	}
 }

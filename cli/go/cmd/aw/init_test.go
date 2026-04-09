@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
+func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -28,7 +28,6 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 	defer os.Chdir(origWd)
 
-	t.Setenv("AWEB_API_KEY", "")
 	initURL = "https://app.aweb.ai"
 	initRole = "reviewer"
 	initPersistent = false
@@ -85,7 +84,7 @@ func TestInitWithoutAPIKeyUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 }
 
-func TestInitWithoutAPIKeyFailsNonInteractiveWhenWorkspaceMissing(t *testing.T) {
+func TestInitFailsNonInteractiveWhenWorkspaceMissing(t *testing.T) {
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldIsTTY := initIsTTY
@@ -100,7 +99,6 @@ func TestInitWithoutAPIKeyFailsNonInteractiveWhenWorkspaceMissing(t *testing.T) 
 	}
 	defer os.Chdir(origWd)
 
-	t.Setenv("AWEB_API_KEY", "")
 	initInjectDocs = false
 	initSetupHooks = false
 	initIsTTY = func() bool { return false }

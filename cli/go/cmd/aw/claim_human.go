@@ -107,7 +107,7 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to load signing key: %w", err)
 	}
-	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), "", signingKey, didKey)
+	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), signingKey, didKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid identity configuration: %w", err)
 	}

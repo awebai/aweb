@@ -107,7 +107,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		redeemReq.DIDAW = stableID
 	}
 
-	client, err := awid.NewWithIdentity(serviceURLs.OnboardingURL, "", signingKey, didKey)
+	client, err := awid.NewWithIdentity(serviceURLs.OnboardingURL, signingKey, didKey)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("invalid bootstrap identity: %w", err)
 	}

@@ -613,27 +613,22 @@ assert_eq "alice still connected" "alice" "$alice_alias_check"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 20: Bob's requests should eventually fail
+# Phase 20: Bob's requests fail after cache flush
 # ---------------------------------------------------------------------------
 echo "=== Phase 20: Bob's requests fail after revocation ==="
 
-# The revocation cache TTL is 5-15 minutes in production.
-# In the E2E test, aweb refreshes on next request cycle.
-# Try bob's request — it should fail with 401/403.
-echo "  Waiting for revocation cache to refresh..."
-sleep 5
+echo "  Flushing cached team revocations from Redis..."
+cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T redis redis-cli DEL 'awid:registry_cache:v2:team_revocations:*'
 
 bob_mail_out="$(run_aw_in "$BOB_DIR" mail send \
-  --to alice --body "should fail" 2>&1 || true)"
+  --to alice --body "should fail" 2>&1)"
+bob_mail_exit=$?
 
 if echo "$bob_mail_out" | grep -qi "revoked\|unauthorized\|forbidden\|401\|403\|certificate"; then
   echo "  PASS: bob's request rejected after revocation"
   pass=$((pass + 1))
 else
-  # The revocation cache may not have refreshed yet (TTL 5-15 min in production).
-  # The revocation itself is confirmed at the awid level in Phase 18.
-  echo "  SKIP: bob's request not yet rejected (revocation cache TTL)"
-  echo "  Output: ${bob_mail_out:0:120}"
+  fail "bob request should be rejected after revocation cache flush (exit=$bob_mail_exit output=${bob_mail_out:0:120})"
 fi
 echo ""
 

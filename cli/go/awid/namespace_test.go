@@ -18,7 +18,7 @@ func TestListNamespaces(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("method=%s", r.Method)
 		}
-		if auth := r.Header.Get("Authorization"); auth != "Bearer aw_sk_test" {
+		if auth := r.Header.Get("Authorization"); auth != "" {
 			t.Fatalf("auth=%q", auth)
 		}
 		_ = json.NewEncoder(w).Encode(ListNamespacesResponse{
@@ -30,7 +30,7 @@ func TestListNamespaces(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

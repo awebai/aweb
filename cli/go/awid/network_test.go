@@ -25,7 +25,7 @@ func TestNetworkDirectorySearch(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := New(server.URL)
 	resp, err := c.NetworkDirectorySearch(context.Background(), NetworkDirectoryParams{Capability: "translate"})
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestNetworkDirectoryGet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, _ := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, _ := New(server.URL)
 	resp, err := c.NetworkDirectoryGet(context.Background(), "acme", "researcher")
 	if err != nil {
 		t.Fatal(err)

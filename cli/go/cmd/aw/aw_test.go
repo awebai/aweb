@@ -544,7 +544,7 @@ func TestVersionCommand(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "version")
-	run.Env = append(os.Environ(), "AWEB_URL=", "AWEB_API_KEY=")
+	run.Env = append(os.Environ(), "AWEB_URL=")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))

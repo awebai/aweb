@@ -53,7 +53,7 @@ Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
 
 Three controller keys exist, each with its own scope:
 
-- **Parent controller key** (`*.aweb.ai`): cloud-managed, signs namespace
+- **Parent controller key** (`*.aweb.ai`): managed by the hosted deployment, signs namespace
   registrations under managed domains
 - **Namespace controller key**: signs namespace operations and team
   creation under a specific namespace; held by the namespace owner (BYOD)
@@ -64,7 +64,7 @@ Three controller keys exist, each with its own scope:
   the hosted deployment (managed)
 
 This is the **awid pattern**, distinct from the aweb pattern
-(`{team, timestamp, body_sha256}`) and the cloud pattern
+(`{team, timestamp, body_sha256}`) and the hosted deployment pattern
 (`{body_sha256, method, path, timestamp}`). The three patterns are not
 interchangeable; see the per-endpoint signed payload examples below for
 each operation's exact envelope shape.

@@ -28,7 +28,7 @@ func TestCreateContact(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestListContacts(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestDeleteContact(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

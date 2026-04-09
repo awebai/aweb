@@ -97,8 +97,7 @@ type agentMeta struct {
 type Client struct {
 	baseURL             string
 	httpClient          *http.Client
-	sseClient           *http.Client // No response timeout; SSE connections are long-lived.
-	apiKey              string
+	sseClient           *http.Client       // No response timeout; SSE connections are long-lived.
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
@@ -126,19 +125,8 @@ func New(baseURL string) (*Client, error) {
 	}, nil
 }
 
-// NewWithAPIKey creates a new client authenticated with a legacy API key.
-// The client operates in legacy/custodial mode (no signing).
-func NewWithAPIKey(baseURL, apiKey string) (*Client, error) {
-	c, err := New(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	c.apiKey = apiKey
-	return c, nil
-}
-
 // NewWithIdentity creates an authenticated client with signing capability.
-func NewWithIdentity(baseURL, apiKey string, signingKey ed25519.PrivateKey, did string) (*Client, error) {
+func NewWithIdentity(baseURL string, signingKey ed25519.PrivateKey, did string) (*Client, error) {
 	if signingKey == nil {
 		return nil, fmt.Errorf("signingKey must not be nil")
 	}
@@ -149,7 +137,7 @@ func NewWithIdentity(baseURL, apiKey string, signingKey ed25519.PrivateKey, did 
 	if did != expected {
 		return nil, fmt.Errorf("did does not match signingKey")
 	}
-	c, err := NewWithAPIKey(baseURL, apiKey)
+	c, err := New(baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +277,7 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 			return meta
 		}
 	}
-	// Bare local aliases are ambiguous across projects; fail closed unless the
+	// Bare local aliases are ambiguous across teams; fail closed unless the
 	// resolver resolved them under the current namespace. Fully qualified
 	// addresses keep the historical fallback behavior.
 	if rawAddress != trustAddress {
@@ -669,8 +657,6 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-	} else if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	resp, err := c.httpClient.Do(req)

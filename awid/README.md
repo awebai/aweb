@@ -49,18 +49,3 @@ make release-awid-push
 ```
 
 The version lives in `pyproject.toml`. The release tag must be `awid-vX.Y.Z`, and it must match that version or the GitHub workflow will fail.
-
-## Migration from embedded aweb
-
-To seed a standalone `awid` schema from an existing embedded `aweb` schema:
-
-```bash
-uv run awid migrate-from-aweb
-```
-
-By default the migrator:
-
-- copies the registry-relevant rows from schema `aweb` to schema `awid`
-- skips managed namespaces, because those stay local to `aweb`
-- backfills missing `controller_did` values from the latest replacement
-  announcement when possible

@@ -636,7 +636,15 @@ is available, it returns HTTP 409 with detail `alias_exhausted`.
 | `GET/POST /v1/roles/*` | Versioned roles |
 | `GET/POST /v1/instructions/*` | Versioned instructions |
 | `GET/POST /v1/repos/*` | Git repos |
-| `GET/POST /v1/workspaces/*` | Workspace management |
+| `GET/POST/DELETE /v1/workspaces/*` | Workspace management |
+
+`DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone ephemeral
+workspace and its bound agent row, plus releases any task claims held by
+the workspace. It returns `409` if the bound agent is persistent
+(persistent identities outlive workspaces) or if `last_seen_at` is
+within the 30-minute presence TTL and the workspace is not yet
+considered gone. The caller must present a team certificate for the same
+`team_address` as the target workspace.
 
 ### Dashboard routes
 
@@ -929,7 +937,7 @@ The identity state lives in `identity.yaml`, including `registry_url`
 when the identity needs one. The credential is in `team-cert.pem`.
 `workspace.yaml` is an aweb coordination binding only: it carries the
 aweb server URL, the team/workspace identity, and local repo/workspace
-metadata. It does not carry awid-specific URL fields, cloud-specific
+metadata. It does not carry awid-specific URL fields, hosted-specific
 URL fields, or identity key material.
 
 ---

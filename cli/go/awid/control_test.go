@@ -32,7 +32,7 @@ func TestSendControlSignal(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	client, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestSendControlSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendControlSignal returned error: %v", err)
 	}
-	if gotAuth != "Bearer aw_sk_test" {
+	if gotAuth != "" {
 		t.Fatalf("auth=%q", gotAuth)
 	}
 	if gotPath != "/v1/agents/alice/control" {

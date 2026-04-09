@@ -121,8 +121,6 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-	} else if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	resp, err := c.sseClient.Do(req)
