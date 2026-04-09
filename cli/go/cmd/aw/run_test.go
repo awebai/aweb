@@ -894,9 +894,6 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("method=%s", r.Method)
 			}
-			if r.Header.Get("Authorization") != "Bearer aw_sk_test" {
-				t.Fatalf("auth=%q", r.Header.Get("Authorization"))
-			}
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				t.Fatal("response writer does not support flushing")
@@ -918,7 +915,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := aweb.NewWithAPIKey(server.URL, "aw_sk_test")
+	client, err := aweb.New(server.URL)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -1035,7 +1032,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := aweb.NewWithAPIKey(server.URL, "aw_sk_test")
+	client, err := aweb.New(server.URL)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
