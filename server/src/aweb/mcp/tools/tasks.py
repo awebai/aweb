@@ -1,4 +1,4 @@
-"""MCP tools for project task coordination."""
+"""MCP tools for team task coordination."""
 
 from __future__ import annotations
 
