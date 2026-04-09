@@ -27,7 +27,6 @@ type Selection struct {
 	BaseURL       string
 	AwebURL       string
 
-	DefaultProject string
 	IdentityID     string
 	IdentityHandle string
 	Address        string
@@ -112,7 +111,6 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 
 func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity) *Selection {
 	namespaceSlug := ""
-	defaultProject := ""
 	identityHandle := ""
 	identityID := ""
 	address := ""
@@ -164,7 +162,6 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		ServerName:     serverName,
 		BaseURL:        baseURL,
 		AwebURL:        awebURL,
-		DefaultProject: defaultProject,
 		IdentityID:     identityID,
 		IdentityHandle: identityHandle,
 		Address:        address,

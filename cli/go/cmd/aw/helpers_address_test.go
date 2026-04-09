@@ -11,7 +11,6 @@ func TestSelectionAddressFallsBackForEphemeralIdentity(t *testing.T) {
 
 	sel := &awconfig.Selection{
 		NamespaceSlug:  "demo",
-		DefaultProject: "demo-project",
 		IdentityHandle: "alice",
 		Custody:        "self",
 		Lifetime:       "ephemeral",
@@ -26,7 +25,6 @@ func TestSelectionAddressFallsBackForManagedPersistentIdentity(t *testing.T) {
 
 	sel := &awconfig.Selection{
 		NamespaceSlug:  "myteam.aweb.ai",
-		DefaultProject: "myteam",
 		IdentityHandle: "support",
 		Custody:        "custodial",
 		Lifetime:       "persistent",
@@ -42,7 +40,6 @@ func TestSelectionAddressPrefersExplicitAddress(t *testing.T) {
 	sel := &awconfig.Selection{
 		Address:        "acme.com/support",
 		NamespaceSlug:  "demo",
-		DefaultProject: "demo-project",
 		IdentityHandle: "alice",
 		Custody:        "self",
 		Lifetime:       "persistent",

@@ -72,7 +72,4 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 	if sel.NamespaceSlug != "acme.com" {
 		t.Fatalf("namespace_slug=%q", sel.NamespaceSlug)
 	}
-	if sel.DefaultProject != "" {
-		t.Fatalf("default_project=%q", sel.DefaultProject)
-	}
 }

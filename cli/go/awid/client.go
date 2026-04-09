@@ -126,7 +126,7 @@ func New(baseURL string) (*Client, error) {
 	}, nil
 }
 
-// NewWithAPIKey creates a new client authenticated with a project API key.
+// NewWithAPIKey creates a new client authenticated with a legacy API key.
 // The client operates in legacy/custodial mode (no signing).
 func NewWithAPIKey(baseURL, apiKey string) (*Client, error) {
 	c, err := New(baseURL)

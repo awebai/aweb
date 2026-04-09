@@ -709,13 +709,10 @@ func sanitizeKeyComponent(s string) string {
 }
 
 // deriveIdentityAddress builds the canonical external identity address from
-// namespace/project context plus the local routing handle or persistent name.
-func deriveIdentityAddress(namespaceSlug, projectSlug, handle string) string {
+// the identity domain plus the local routing handle or persistent name.
+func deriveIdentityAddress(namespaceSlug, handle string) string {
 	if namespaceSlug != "" {
 		return namespaceSlug + "/" + handle
-	}
-	if projectSlug != "" {
-		return projectSlug + "/" + handle
 	}
 	return handle
 }
@@ -727,7 +724,7 @@ func selectionAddress(sel *awconfig.Selection) string {
 	if address := strings.TrimSpace(sel.Address); address != "" {
 		return address
 	}
-	return deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.DefaultProject), strings.TrimSpace(sel.IdentityHandle))
+	return deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.IdentityHandle))
 }
 
 func handleFromAddress(address string) string {
@@ -869,7 +866,7 @@ func checkVerificationRequired(err error) string {
 	if envelope.Error.Details.MaskedEmail != "" {
 		hint += " (" + envelope.Error.Details.MaskedEmail + ")"
 	}
-	hint += ". Verify this account in the dashboard, then re-run `aw init` with a fresh project key."
+	hint += ". Verify this account in the dashboard, then re-run `aw init`."
 	return hint
 }
 

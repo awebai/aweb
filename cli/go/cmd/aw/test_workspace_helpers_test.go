@@ -140,7 +140,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	if idx := strings.IndexByte(teamAddress, '/'); idx >= 0 {
 		teamDomain = teamAddress[:idx]
 	}
-	memberAddress := deriveIdentityAddress(teamDomain, "", alias)
+	memberAddress := deriveIdentityAddress(teamDomain, alias)
 	if fixture != nil && strings.TrimSpace(fixture.Address) != "" {
 		memberAddress = strings.TrimSpace(fixture.Address)
 	}

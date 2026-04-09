@@ -62,7 +62,7 @@ func formatIntrospect(v any) string {
 		sb.WriteString(fmt.Sprintf("Routing:   %s\n", routing))
 	}
 	if out.NamespaceSlug != "" {
-		sb.WriteString(fmt.Sprintf("Project:   %s\n", out.NamespaceSlug))
+		sb.WriteString(fmt.Sprintf("Domain:    %s\n", out.NamespaceSlug))
 	}
 	if address := awid.PublicAddress(out.Address, out.Lifetime); address != "" {
 		sb.WriteString(fmt.Sprintf("Address:   %s\n", address))

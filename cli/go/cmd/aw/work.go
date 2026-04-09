@@ -24,7 +24,7 @@ var workReadyCmd = &cobra.Command{
 
 var workActiveCmd = &cobra.Command{
 	Use:   "active",
-	Short: "List active in-progress work across the project",
+	Short: "List active in-progress work across the team",
 	RunE:  runWorkActive,
 }
 

@@ -39,7 +39,7 @@ var introspectCmd = &cobra.Command{
 			Lifetime:      sel.Lifetime,
 		}
 		if out.Address == "" {
-			out.Address = deriveIdentityAddress(sel.NamespaceSlug, sel.DefaultProject, alias)
+			out.Address = deriveIdentityAddress(sel.NamespaceSlug, alias)
 		}
 		printOutput(out, formatIntrospect)
 		return nil
