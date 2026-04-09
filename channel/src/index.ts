@@ -43,12 +43,22 @@ async function main() {
   const workdir = process.cwd();
   const config = await resolveConfig(workdir);
 
-  const client = new APIClient(config.baseURL, config.apiKey);
+  const client = new APIClient(config.baseURL, {
+    did: config.did,
+    signingKey: config.signingKey,
+    teamAddress: config.teamAddress,
+    teamCertificateHeader: config.teamCertificateHeader,
+  });
   const pinStore = await loadPinStore();
   const registry = new RegistryResolver(fetch, undefined, undefined, {
     fallbackRegistryURL: embeddedRegistryFallbackURL(config.baseURL),
   });
-  const trust = new SenderTrustManager(client, registry, config.address, config.did);
+  const trust = new SenderTrustManager(
+    client,
+    registry,
+    config.teamAddress,
+    config.did,
+  );
 
   const mcp = new Server(
     { name: "aweb", version: "0.1.0" },
@@ -288,9 +298,9 @@ function senderDisplayAddress(alias: string | undefined, address: string | undef
 }
 
 function senderTrustAddress(alias: string | undefined, address: string | undefined): string {
-  const handle = (alias || "").trim();
-  if (handle) return handle;
-  return (address || "").trim();
+  const qualified = (address || "").trim();
+  if (qualified) return qualified;
+  return (alias || "").trim();
 }
 
 export function isDirectExecution(moduleURL: string): boolean {

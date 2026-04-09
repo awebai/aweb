@@ -47,27 +47,15 @@ export interface TrustResult {
   stored: boolean;
 }
 
-interface ResolveAgentResponse {
-  did?: string;
-  stable_id?: string;
-  address?: string;
-  controller_did?: string;
-  custody?: string;
-  lifetime?: string;
-}
-
 export class SenderTrustManager {
-  private readonly namespace: string;
   private readonly metaCache = new Map<string, AgentMeta>();
 
   constructor(
     private readonly client: APIClient,
     private readonly registry: RegistryResolver,
-    selfAddress: string,
+    private readonly teamAddress: string,
     private readonly selfDid: string,
-  ) {
-    this.namespace = parseNamespace(selfAddress);
-  }
+  ) {}
 
   async normalizeTrust(
     store: PinStore,
@@ -350,7 +338,7 @@ export class SenderTrustManager {
     if (trimmed.includes("/") || trimmed.includes("~")) {
       return trimmed;
     }
-    return this.namespace ? `${this.namespace}/${trimmed}` : trimmed;
+    return this.teamAddress ? `${this.teamAddress}/${trimmed}` : trimmed;
   }
 
   private async resolveAgentMeta(address: string): Promise<AgentMeta> {
@@ -385,29 +373,26 @@ export class SenderTrustManager {
     if (trimmed.includes("/")) {
       return this.registry.resolveIdentity(trimmed);
     }
-    if (trimmed.includes("~") || !this.namespace) {
+    if (trimmed.includes("~") || !this.teamAddress) {
       throw new Error(`unsupported local address ${trimmed}`);
     }
 
-    const response = await this.client.get<ResolveAgentResponse>(
-      `/v1/agents/resolve/${encodeURIComponent(this.namespace)}/${encodeURIComponent(trimmed)}`,
+    const response = await this.client.get<{
+      did_key?: string;
+      did_aw?: string;
+      address?: string;
+      lifetime?: string;
+    }>(
+      `/v1/teams/${encodeURIComponent(this.teamAddress)}/agents/${encodeURIComponent(trimmed)}`,
     );
     return {
-      did: response.did || "",
-      stableID: response.stable_id,
-      address: response.address || `${this.namespace}/${trimmed}`,
-      controllerDid: response.controller_did,
-      custody: response.custody || "self",
-      lifetime: response.lifetime || "persistent",
+      did: response.did_key || "",
+      stableID: response.did_aw,
+      address: response.address || `${this.teamAddress}/${trimmed}`,
+      custody: "self",
+      lifetime: response.lifetime || "ephemeral",
     };
   }
-}
-
-function parseNamespace(address: string): string {
-  const trimmed = address.trim();
-  const idx = trimmed.indexOf("/");
-  if (idx <= 0) return "";
-  return trimmed.slice(0, idx).trim();
 }
 
 function isTimestampFresh(value: string): boolean {

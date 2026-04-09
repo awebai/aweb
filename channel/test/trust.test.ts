@@ -37,7 +37,7 @@ describe("SenderTrustManager", () => {
     const trust = new SenderTrustManager(
       { get: async () => ({ did, lifetime: "persistent", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/self",
+      "acme/backend",
       "did:key:zrecipient",
     );
 
@@ -49,32 +49,42 @@ describe("SenderTrustManager", () => {
     const { did } = await didFromSeed(2);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      { get: async () => ({ did, lifetime: "persistent", custody: "custodial" }) } as never,
-      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/self",
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+        resolveIdentity: async () => ({
+          did,
+          stableID: "did:aw:custodial",
+          address: "acme.com/alice",
+          controllerDid: "did:key:zcontroller",
+          custody: "custodial",
+          lifetime: "persistent",
+        }),
+      } as never,
+      "acme/backend",
       "",
     );
 
-    const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
+    const result = await trust.normalizeTrust(store, "verified", "acme.com/alice", did, undefined, undefined);
     expect(result.status).toBe("verified_custodial");
-    expect(store.addresses.get("acme/alice")).toBe(did);
+    expect(store.addresses.get("acme.com/alice")).toBe(did);
   });
 
   test("removes pins for ephemeral senders", async () => {
     const { did } = await didFromSeed(3);
     const store = new PinStore();
-    store.storePin(did, "acme/alice", "", "");
+    store.storePin(did, "acme/backend/alice", "", "");
 
     const trust = new SenderTrustManager(
       { get: async () => ({ did, lifetime: "ephemeral", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/self",
+      "acme/backend",
       "",
     );
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
-    expect(store.addresses.has("acme/alice")).toBe(false);
+    expect(store.addresses.has("acme/backend/alice")).toBe(false);
     expect(store.pins.size).toBe(0);
   });
 
@@ -94,11 +104,11 @@ describe("SenderTrustManager", () => {
     };
 
     const store = new PinStore();
-    store.storePin(oldIdentity.did, "acme/alice", "", "");
+    store.storePin(oldIdentity.did, "acme/backend/alice", "", "");
     const trust = new SenderTrustManager(
       { get: async () => ({ did: newIdentity.did, lifetime: "persistent", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/self",
+      "acme/backend",
       "",
     );
 
@@ -112,7 +122,7 @@ describe("SenderTrustManager", () => {
       announcement,
     );
     expect(result.status).toBe("verified");
-    expect(store.addresses.get("acme/alice")).toBe(newIdentity.did);
+    expect(store.addresses.get("acme/backend/alice")).toBe(newIdentity.did);
   });
 
   test("accepts valid replacement announcements for public addresses", async () => {
@@ -150,7 +160,7 @@ describe("SenderTrustManager", () => {
           lifetime: "persistent",
         }),
       } as never,
-      "acme/self",
+      "acme/backend",
       "",
     );
 
@@ -174,13 +184,12 @@ describe("SenderTrustManager", () => {
     const store = new PinStore();
     const client = {
       get: vi.fn(async (path: string) => {
-        expect(path).toBe("/v1/agents/resolve/myteam/alice");
+        expect(path).toBe("/v1/teams/acme.com%2Fbackend/agents/alice");
         return {
-          did,
-          stable_id: stableID,
-          address: "myteam/alice",
+          did_key: did,
+          did_aw: stableID,
+          address: "acme.com/alice",
           lifetime: "persistent",
-          custody: "self",
         };
       }),
     };
@@ -191,7 +200,7 @@ describe("SenderTrustManager", () => {
         return { outcome: "OK_DEGRADED" };
       }),
     };
-    const trust = new SenderTrustManager(client as never, registry as never, "myteam/self", "");
+    const trust = new SenderTrustManager(client as never, registry as never, "acme.com/backend", "");
 
     const result = await trust.normalizeTrust(
       store,
@@ -206,7 +215,7 @@ describe("SenderTrustManager", () => {
     );
 
     expect(result.status).toBe("verified");
-    expect(store.addresses.get("myteam/alice")).toBe(stableID);
+    expect(store.addresses.get("acme.com/backend/alice")).toBe(stableID);
     expect(store.addresses.has("acme.com/alice")).toBe(false);
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
@@ -223,7 +232,7 @@ describe("SenderTrustManager", () => {
           throw new Error("registry unavailable");
         }),
       } as never,
-      "myteam/self",
+      "acme.com/backend",
       "",
     );
 
