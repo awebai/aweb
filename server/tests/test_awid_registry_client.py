@@ -55,6 +55,15 @@ class _FakeRedis:
             self.values.pop(key, None)
         return deleted
 
+    async def scan_iter(self, *, match: str):
+        if self.fail:
+            raise RedisError("redis unavailable")
+        import fnmatch
+
+        for key in list(self.values.keys()):
+            if fnmatch.fnmatch(key, match):
+                yield key
+
 
 @pytest.mark.asyncio
 async def test_register_did_posts_create_then_fetches_full_mapping():
@@ -780,6 +789,52 @@ async def test_resolve_address_uses_discovered_registry_for_domain():
 
 
 @pytest.mark.asyncio
+async def test_resolve_address_signs_lookup_when_identity_supplied():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/acme.com/addresses/support"
+        auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+        timestamp = request.headers["x-aweb-timestamp"]
+        assert auth_did_key == did_key
+        verify_did_key_signature(
+            did_key=auth_did_key,
+            payload=canonical_json_bytes(
+                {
+                    "domain": "acme.com",
+                    "name": "support",
+                    "operation": "get_address",
+                    "timestamp": timestamp,
+                }
+            ),
+            signature_b64=signature,
+        )
+        return httpx.Response(
+            200,
+            json={
+                "address_id": "addr-1",
+                "domain": "acme.com",
+                "name": "support",
+                "did_aw": "did:aw:z6Mksubject",
+                "current_did_key": "did:key:z6Mksubject",
+                "reachability": "private",
+                "created_at": "2026-04-04T00:00:00Z",
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    address = await client.resolve_address("acme.com", "support", signing_key=signing_key, did_key=did_key)
+    assert address is not None
+    assert address.reachability == "private"
+
+
+@pytest.mark.asyncio
 async def test_update_server_uses_current_key_and_signed_audit_payload():
     signing_key, public_key = generate_keypair()
     did_key = did_from_public_key(public_key)
@@ -1170,6 +1225,129 @@ async def test_cached_registry_client_uses_address_ttl_for_list_addresses(monkey
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_scopes_address_reads_by_caller():
+    owner_signing_key, owner_public_key = generate_keypair()
+    owner_did_key = did_from_public_key(owner_public_key)
+    subject_did_aw = stable_id_from_did_key(owner_did_key)
+    request_counts: dict[str, int] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        request_counts[request.url.path] = request_counts.get(request.url.path, 0) + 1
+        assert request.method == "GET"
+        assert request.url.path == "/v1/namespaces/acme.com/addresses/support"
+        if "authorization" in request.headers:
+            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            timestamp = request.headers["x-aweb-timestamp"]
+            assert auth_did_key == owner_did_key
+            verify_did_key_signature(
+                did_key=auth_did_key,
+                payload=canonical_json_bytes(
+                    {
+                        "domain": "acme.com",
+                        "name": "support",
+                        "operation": "get_address",
+                        "timestamp": timestamp,
+                    }
+                ),
+                signature_b64=signature,
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "support",
+                    "did_aw": subject_did_aw,
+                    "current_did_key": owner_did_key,
+                    "reachability": "private",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        return httpx.Response(404, json={"detail": "Address not found"})
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    anonymous = await client.resolve_address("acme.com", "support")
+    owner_first = await client.resolve_address("acme.com", "support", signing_key=owner_signing_key, did_key=owner_did_key)
+    owner_second = await client.resolve_address("acme.com", "support", signing_key=owner_signing_key, did_key=owner_did_key)
+
+    assert anonymous is None
+    assert owner_first is not None
+    assert owner_second is not None
+    assert request_counts["/v1/namespaces/acme.com/addresses/support"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidate_address_cache_removes_signed_entries():
+    owner_signing_key, owner_public_key = generate_keypair()
+    owner_did_key = did_from_public_key(owner_public_key)
+    subject_did_aw = stable_id_from_did_key(owner_did_key)
+    redis = _FakeRedis()
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+
+    await client._write_cache_entry(
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=owner_did_key),
+        value=registry_module.Address(
+            address_id="addr-1",
+            domain="acme.com",
+            name="support",
+            did_aw=subject_did_aw,
+            current_did_key=owner_did_key,
+            reachability="private",
+            created_at="2026-04-03T00:00:00Z",
+        ),
+        ttl_seconds=300,
+        encode=registry_module._address_to_json,
+    )
+
+    await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
+
+    assert redis.values == {}
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_invalidate_address_cache_removes_signed_list_entries():
+    owner_signing_key, owner_public_key = generate_keypair()
+    owner_did_key = did_from_public_key(owner_public_key)
+    subject_did_aw = stable_id_from_did_key(owner_did_key)
+    redis = _FakeRedis()
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+
+    await client._write_cache_entry(
+        client._domain_addresses_cache_key("acme.com", registry_url="https://api.awid.ai", caller_did_key=owner_did_key),
+        value=[
+            registry_module.Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="support",
+                did_aw=subject_did_aw,
+                current_did_key=owner_did_key,
+                reachability="private",
+                created_at="2026-04-03T00:00:00Z",
+            )
+        ],
+        ttl_seconds=300,
+        encode=lambda value: [registry_module._address_to_json(item) for item in value],
+    )
+
+    await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
+
+    assert redis.values == {}
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_invalidates_address_reads_on_update():
     controller_signing_key, controller_public_key = generate_keypair()
     controller_did = did_from_public_key(controller_public_key)
@@ -1462,7 +1640,7 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
         transport=httpx.MockTransport(handler),
     )
     await client._write_cache_entry(
-        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai"),
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None),
         value=registry_module.Address(
             address_id="addr-1",
             domain="acme.com",
@@ -1670,7 +1848,7 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
         transport=httpx.MockTransport(handler),
     )
     await client._write_cache_entry(
-        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai"),
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None),
         value=registry_module.Address(
             address_id="addr-1",
             domain="acme.com",

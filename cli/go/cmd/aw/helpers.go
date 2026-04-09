@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -341,6 +342,26 @@ func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid
 		return nil, err
 	}
 	return client, nil
+}
+
+func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, error) {
+	workingDir = strings.TrimSpace(workingDir)
+	if workingDir == "" {
+		var err error
+		workingDir, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return signingKey, nil
 }
 
 func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) error) error {

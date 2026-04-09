@@ -720,7 +720,20 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	address, _, err := registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
+	if err != nil {
+		return err
+	}
+	var address *awid.RegistryAddress
+	if lookupSigningKey != nil {
+		address, _, err = registry.GetNamespaceAddressAtSigned(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName, lookupSigningKey)
+	} else {
+		address, _, err = registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+	}
 	if err != nil {
 		return fmt.Errorf("resolve member address %s: %w", member, err)
 	}

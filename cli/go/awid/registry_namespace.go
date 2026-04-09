@@ -35,10 +35,36 @@ func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name s
 	return c.GetNamespaceAddressAt(ctx, registryURL, domain, name)
 }
 
+func (c *RegistryClient) GetNamespaceAddressSigned(
+	ctx context.Context,
+	domain, name string,
+	signingKey ed25519.PrivateKey,
+) (*RegistryAddress, string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.GetNamespaceAddressAtSigned(ctx, registryURL, domain, name, signingKey)
+}
+
 func (c *RegistryClient) GetNamespaceAddressAt(ctx context.Context, registryURL, domain, name string) (*RegistryAddress, string, error) {
 	var out RegistryAddress
 	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/addresses/" + urlPathEscape(strings.TrimSpace(name))
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+		return nil, "", err
+	}
+	return &out, registryURL, nil
+}
+
+func (c *RegistryClient) GetNamespaceAddressAtSigned(
+	ctx context.Context,
+	registryURL, domain, name string,
+	signingKey ed25519.PrivateKey,
+) (*RegistryAddress, string, error) {
+	var out RegistryAddress
+	path := "/v1/namespaces/" + urlPathEscape(canonicalizeDomain(domain)) + "/addresses/" + urlPathEscape(strings.TrimSpace(name))
+	headers := signedAddressLookupHeaders(domain, strings.TrimSpace(name), "get_address", signingKey)
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, headers, nil, &out); err != nil {
 		return nil, "", err
 	}
 	return &out, registryURL, nil
@@ -303,6 +329,24 @@ func signedAddressHeaders(
 		"operation": strings.TrimSpace(operation),
 		"timestamp": timestamp,
 	}, signingKey, timestamp)
+}
+
+func signedAddressLookupHeaders(
+	domain string,
+	name string,
+	operation string,
+	signingKey ed25519.PrivateKey,
+) map[string]string {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	fields := map[string]string{
+		"domain":    canonicalizeDomain(domain),
+		"operation": strings.TrimSpace(operation),
+		"timestamp": timestamp,
+	}
+	if strings.TrimSpace(name) != "" {
+		fields["name"] = strings.TrimSpace(name)
+	}
+	return signedCanonicalHeaders(fields, signingKey, timestamp)
 }
 
 func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {

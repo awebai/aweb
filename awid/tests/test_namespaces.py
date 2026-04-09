@@ -52,6 +52,33 @@ async def _register_address(client, signing_key, controller_did, domain, name):
     return resp.json()
 
 
+async def _register_address_for_identity(
+    client,
+    signing_key,
+    controller_did,
+    domain,
+    name,
+    *,
+    member_did_key: str,
+    reachability: str,
+):
+    headers = _sign(
+        signing_key, controller_did, domain=domain, operation="register_address", name=name,
+    )
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": name,
+            "did_aw": stable_id_from_did_key(member_did_key),
+            "current_did_key": member_did_key,
+            "reachability": reachability,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 async def _register_certificate(client, team_key, team_did, domain, team_name, certificate_id):
     _, member_pub = generate_keypair()
     headers = _sign(
@@ -342,3 +369,170 @@ async def test_delete_address_wrong_operation_returns_401(client, controller_ide
     headers = _sign(ns_key, ns_did, domain=domain, operation="delete", name="alice")
     resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_public_address_get_allows_anonymous(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "public-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    address = await _register_address(client, ns_key, ns_did, domain, "alice")
+
+    resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["address_id"] == address["address_id"]
+
+
+@pytest.mark.asyncio
+async def test_private_address_get_requires_owner_signature(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "private-address.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    address = await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability="private",
+    )
+
+    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
+    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    assert owner_resp.status_code == 200, owner_resp.text
+    assert owner_resp.json()["address_id"] == address["address_id"]
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert anon_resp.status_code == 404
+
+    other_key, other_pub = generate_keypair()
+    other_did_key = did_from_public_key(other_pub)
+    other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
+    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
+    assert other_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_address_get_nonexistent_matches_private_404_shape(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    other_key, other_pub = generate_keypair()
+    other_did_key = did_from_public_key(other_pub)
+    domain = "private-404-shape.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability="private",
+    )
+
+    private_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
+    private_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=private_headers)
+    assert private_resp.status_code == 404
+    assert private_resp.json() == {"detail": "Address not found"}
+
+    missing_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="missing")
+    missing_resp = await client.get(f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers)
+    assert missing_resp.status_code == 404
+    assert missing_resp.json() == private_resp.json()
+
+
+@pytest.mark.asyncio
+async def test_list_addresses_filters_private_to_owner(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "list-private.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "public-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="public",
+    )
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "private-alice",
+        member_did_key=owner_did_key,
+        reachability="private",
+    )
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
+    assert anon_resp.status_code == 200, anon_resp.text
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+
+    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
+    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
+    assert owner_resp.status_code == 200, owner_resp.text
+    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["private-alice", "public-alice"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reachability", ["org_visible", "contacts_only"])
+async def test_non_public_placeholder_reachability_is_owner_only(client, controller_identity, reachability):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = f"{reachability}.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability=reachability,
+    )
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert anon_resp.status_code == 404
+
+    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
+    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    assert owner_resp.status_code == 200, owner_resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reachability", ["org_visible", "contacts_only"])
+async def test_non_public_placeholder_reachability_is_filtered_from_non_owner_lists(client, controller_identity, reachability):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    other_key, other_pub = generate_keypair()
+    other_did_key = did_from_public_key(other_pub)
+    domain = f"list-{reachability}.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability=reachability,
+    )
+
+    other_headers = _sign(other_key, other_did_key, domain=domain, operation="list_addresses")
+    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=other_headers)
+    assert other_resp.status_code == 200, other_resp.text
+    assert other_resp.json()["addresses"] == []
+
+    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
+    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
+    assert owner_resp.status_code == 200, owner_resp.text
+    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["alice"]

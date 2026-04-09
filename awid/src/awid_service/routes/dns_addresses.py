@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -17,7 +18,7 @@ def normalize_address_reachability(value: str | None, *, default: str = "private
     if normalized not in _ADDRESS_REACHABILITY_VALUES:
         raise ValueError(f"address_reachability must be one of {sorted(_ADDRESS_REACHABILITY_VALUES)}")
     return normalized
-from awid.did import validate_stable_id
+from awid.did import stable_id_from_did_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
 from awid_service.deps import get_db, get_domain_verifier
 from awid.dns_verify import DnsVerificationError
@@ -27,6 +28,7 @@ from awid.dns_auth import validate_did_key as _validate_dns_did_key
 from awid.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
+logger = logging.getLogger(__name__)
 
 _STALE_THRESHOLD = timedelta(hours=24)
 
@@ -46,6 +48,26 @@ def _verify_address_signature(
             "operation": operation,
         },
     )
+
+
+def _maybe_verify_address_lookup_signature(
+    request: Request,
+    *,
+    domain: str,
+    name: str | None,
+    operation: str,
+) -> str | None:
+    auth = request.headers.get("Authorization")
+    timestamp = request.headers.get("X-AWEB-Timestamp")
+    if auth is None and timestamp is None:
+        return None
+    payload_dict = {
+        "domain": domain,
+        "operation": operation,
+    }
+    if name is not None:
+        payload_dict["name"] = name
+    return verify_signed_json_request(request, payload_dict=payload_dict)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +259,38 @@ def _address_response(row, domain: str) -> AddressResponse:
     )
 
 
+async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
+    caller_did_key = (caller_did_key or "").strip()
+    if not caller_did_key:
+        return None
+    row = await db.fetch_one(
+        """
+        SELECT did_aw
+        FROM {{tables.did_aw_mappings}}
+        WHERE current_did_key = $1
+        """,
+        caller_did_key,
+    )
+    if row is None:
+        try:
+            return stable_id_from_did_key(caller_did_key)
+        except Exception:
+            return None
+    return row["did_aw"]
+
+
+def _is_owner_visible(row, caller_did_aw: str | None) -> bool:
+    reachability = normalize_address_reachability(row.get("reachability"))
+    if reachability == "public":
+        return True
+    if reachability in {"org_visible", "contacts_only"}:
+        logger.warning(
+            "Treating address reachability=%s as owner-only until aago.7 defines broader visibility",
+            reachability,
+        )
+    return bool(caller_did_aw) and row["did_aw"] == caller_did_aw
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -325,6 +379,7 @@ async def register_address(
     dependencies=[Depends(rate_limit_dep("address_get"))],
 )
 async def get_address(
+    request: Request,
     domain: str,
     name: str,
     db_infra=Depends(get_db),
@@ -333,6 +388,13 @@ async def get_address(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await _require_namespace(db, domain)
+    caller_did_key = _maybe_verify_address_lookup_signature(
+        request,
+        domain=domain,
+        name=name,
+        operation="get_address",
+    )
+    caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
 
     row = await db.fetch_one(
         """
@@ -345,6 +407,8 @@ async def get_address(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
+    if not _is_owner_visible(row, caller_did_aw):
+        raise HTTPException(status_code=404, detail="Address not found")
     return _address_response(row, domain)
 
 
@@ -354,6 +418,7 @@ async def get_address(
     dependencies=[Depends(rate_limit_dep("address_list"))],
 )
 async def list_addresses(
+    request: Request,
     domain: str,
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
@@ -363,6 +428,13 @@ async def list_addresses(
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await _require_namespace(db, domain)
+    caller_did_key = _maybe_verify_address_lookup_signature(
+        request,
+        domain=domain,
+        name=None,
+        operation="list_addresses",
+    )
+    caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
 
     try:
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
@@ -371,6 +443,11 @@ async def list_addresses(
 
     params: list[object] = [ns_row["namespace_id"]]
     where_clauses = ["namespace_id = $1", "deleted_at IS NULL"]
+    if caller_did_aw:
+        params.append(caller_did_aw)
+        where_clauses.append(f"(reachability = 'public' OR did_aw = ${len(params)})")
+    else:
+        where_clauses.append("reachability = 'public'")
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
         if not isinstance(cursor_name, str):
