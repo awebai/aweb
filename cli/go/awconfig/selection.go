@@ -8,6 +8,18 @@ import (
 	"strings"
 )
 
+func splitTeamAddress(teamAddress string) (string, string) {
+	teamAddress = strings.TrimSpace(teamAddress)
+	if teamAddress == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(teamAddress, "/", 2)
+	if len(parts) != 2 {
+		return teamAddress, ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
 type Selection struct {
 	WorkingDir    string
 	WorkspacePath string
@@ -112,22 +124,16 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	registryURL := ""
 	awebURL := ""
 	if ws != nil {
+		teamDomain, _ := splitTeamAddress(ws.TeamAddress)
 		awebURL = strings.TrimSpace(ws.AwebURL)
-		namespaceSlug = strings.TrimSpace(ws.NamespaceSlug)
-		defaultProject = strings.TrimSpace(ws.ProjectSlug)
-		identityHandle = strings.TrimSpace(ws.IdentityHandle)
-		identityID = strings.TrimSpace(ws.IdentityID)
+		namespaceSlug = teamDomain
+		identityHandle = strings.TrimSpace(ws.Alias)
+		identityID = strings.TrimSpace(ws.WorkspaceID)
 		did = strings.TrimSpace(ws.DID)
 		stableID = strings.TrimSpace(ws.StableID)
 		signingKey = strings.TrimSpace(ws.SigningKey)
 		custody = strings.TrimSpace(ws.Custody)
 		lifetime = strings.TrimSpace(ws.Lifetime)
-		if namespaceSlug == "" {
-			namespaceSlug = defaultProject
-		}
-		if identityHandle == "" {
-			identityHandle = strings.TrimSpace(ws.Alias)
-		}
 	}
 	if identity != nil {
 		if v := strings.TrimSpace(identity.Address); v != "" {
@@ -147,6 +153,11 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		}
 		if v := strings.TrimSpace(identity.RegistryURL); v != "" {
 			registryURL = v
+		}
+		if identityHandle == "" && strings.TrimSpace(identity.Address) != "" {
+			if _, handle, ok := CutIdentityAddress(identity.Address); ok {
+				identityHandle = handle
+			}
 		}
 		if strings.EqualFold(custody, "self") && strings.TrimSpace(workingDir) != "" {
 			signingKey = WorktreeSigningKeyPath(workingDir)
