@@ -200,6 +200,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
        Auth: none (public).
        Query params: active_only (boolean), since (timestamp)
        Response: { "certificates": [{
+                   "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
                    "member_did_key": "did:key:z6Mk...",
                    "member_did_aw": "did:aw:...",
@@ -210,6 +211,19 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "revoked_at": null }] }
        With active_only=true: only rows where revoked_at IS NULL.
        This is how the dashboard lists team members.
+
+GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
+       Resolve an active team-member reference.
+       Auth: none (public).
+       Response: { "team_id": "backend:acme.com",
+                   "certificate_id": "uuid",
+                   "member_did_key": "did:key:z6Mk...",
+                   "member_did_aw": "did:aw:...",
+                   "member_address": "acme.com/alice",
+                   "alias": "alice",
+                   "lifetime": "persistent",
+                   "issued_at": "..." }
+       This is the canonical `(team_id, alias)` lookup layer.
 
 POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Revoke a certificate.
@@ -408,7 +422,7 @@ CREATE TABLE public_addresses (
 );
 
 CREATE TABLE teams (
-    team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_uuid       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
     display_name    TEXT NOT NULL DEFAULT '',
@@ -428,7 +442,7 @@ CREATE TABLE teams (
 -- Services cache the revoked rows to reject removed members.
 CREATE TABLE team_certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id         UUID NOT NULL REFERENCES teams(team_id),
+    team_uuid       UUID NOT NULL REFERENCES teams(team_uuid),
     certificate_id  TEXT NOT NULL,
     member_did_key  TEXT NOT NULL,
     member_did_aw   TEXT,
@@ -439,14 +453,17 @@ CREATE TABLE team_certificates (
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
-    UNIQUE (team_id, certificate_id)
+    UNIQUE (team_uuid, certificate_id)
 );
 
 CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_id, member_did_key)
+    ON team_certificates (team_uuid, member_did_key)
+    WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX idx_team_certificates_alias_active
+    ON team_certificates (team_uuid, alias)
     WHERE revoked_at IS NULL;
 CREATE INDEX idx_team_certificates_revoked
-    ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
+    ON team_certificates (team_uuid, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
 
 ---

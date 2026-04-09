@@ -393,6 +393,45 @@ func TestListCertificates(t *testing.T) {
 	}
 }
 
+func TestResolveTeamMember(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/members/alice" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "backend:acme.com",
+			"certificate_id": "cert-1",
+			"member_did_key": "did:key:z6MkAlice",
+			"member_did_aw":  "did:aw:alice",
+			"member_address": "acme.com/alice",
+			"alias":          "alice",
+			"lifetime":       "persistent",
+			"issued_at":      "2026-04-06T00:00:00Z",
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	member, err := client.ResolveTeamMember(ctx, server.URL, "acme.com", "backend", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if member.TeamID != "backend:acme.com" {
+		t.Fatalf("team_id=%q", member.TeamID)
+	}
+	if member.CertificateID != "cert-1" {
+		t.Fatalf("certificate_id=%q", member.CertificateID)
+	}
+	if member.MemberAddress != "acme.com/alice" {
+		t.Fatalf("member_address=%q", member.MemberAddress)
+	}
+}
+
 func TestRevokeCertificate(t *testing.T) {
 	t.Parallel()
 

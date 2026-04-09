@@ -435,28 +435,16 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	var gotRevokePayload map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address_id":      "addr-1",
-				"domain":          "acme.com",
-				"name":            "alice",
-				"did_aw":          "did:aw:test123",
-				"current_did_key": "did:key:z6MkAlice",
-				"reachability":    "public",
-				"created_at":      "2026-04-06T00:00:00Z",
-			})
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/certificates"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificates": []map[string]any{
-					{
-						"certificate_id": "cert-42",
-						"team_id":        "backend:acme.com",
-						"member_did_key": "did:key:z6MkAlice",
-						"alias":          "alice",
-						"lifetime":       "persistent",
-						"issued_at":      "2026-04-06T00:00:00Z",
-					},
-				},
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-42",
+				"member_did_key": "did:key:z6MkAlice",
+				"member_did_aw":  "did:aw:test123",
+				"member_address": "acme.com/alice",
+				"alias":          "alice",
+				"lifetime":       "persistent",
+				"issued_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
 			if err := json.NewDecoder(r.Body).Decode(&gotRevokePayload); err != nil {

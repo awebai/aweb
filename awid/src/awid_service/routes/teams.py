@@ -193,6 +193,7 @@ class CertificateRegisterResponse(BaseModel):
 
 
 class CertificateResponse(BaseModel):
+    team_id: str
     certificate_id: str
     member_did_key: str
     member_did_aw: str | None = None
@@ -207,6 +208,17 @@ class CertificateListResponse(BaseModel):
     certificates: list[CertificateResponse]
     has_more: bool
     next_cursor: str | None = None
+
+
+class TeamMemberReferenceResponse(BaseModel):
+    team_id: str
+    certificate_id: str
+    member_did_key: str
+    member_did_aw: str | None = None
+    member_address: str | None = None
+    alias: str
+    lifetime: str
+    issued_at: str
 
 
 class CertificateRevokeRequest(BaseModel):
@@ -513,8 +525,12 @@ async def register_certificate(
             body.lifetime,
         )
     except QueryError as exc:
-        if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+        cause = exc.__cause__
+        if not isinstance(cause, asyncpg.UniqueViolationError):
             raise
+        constraint_name = getattr(cause, "constraint_name", "")
+        if constraint_name == "idx_team_certificates_alias_active":
+            raise HTTPException(status_code=409, detail="Alias already active in team")
         raise HTTPException(status_code=409, detail="Certificate already registered")
 
     return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
@@ -583,11 +599,11 @@ async def list_certificates(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    where_clauses = ["team_uuid = $1"]
+    where_clauses = ["tc.team_uuid = $1"]
     params: list[object] = [team_row["team_uuid"]]
 
     if active_only:
-        where_clauses.append("revoked_at IS NULL")
+        where_clauses.append("tc.revoked_at IS NULL")
 
     if since is not None:
         try:
@@ -595,7 +611,7 @@ async def list_certificates(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid since timestamp") from exc
         params.append(since_ts)
-        where_clauses.append(f"issued_at > ${len(params)}::timestamptz")
+        where_clauses.append(f"tc.issued_at > ${len(params)}::timestamptz")
 
     if decoded_cursor is not None:
         cursor_issued_at = decoded_cursor.get("issued_at")
@@ -608,16 +624,17 @@ async def list_certificates(
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
         params.extend([cursor_ts, cursor_id])
         where_clauses.append(
-            f"(issued_at, id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+            f"(tc.issued_at, tc.id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
         )
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT id, certificate_id, member_did_key, member_did_aw, member_address,"
-        " alias, lifetime, issued_at, revoked_at"
-        " FROM {{tables.team_certificates}}"
+        "SELECT tc.id, tc.certificate_id, tc.member_did_key, tc.member_did_aw, tc.member_address,"
+        " tc.alias, tc.lifetime, tc.issued_at, tc.revoked_at, t.domain, t.name"
+        " FROM {{tables.team_certificates}} tc"
+        " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
         " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY issued_at, id"
+        + f" ORDER BY tc.issued_at, tc.id"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -635,6 +652,51 @@ async def list_certificates(
         certificates=[_cert_response(r) for r in page_rows],
         has_more=has_more,
         next_cursor=next_cursor,
+    )
+
+
+@router.get(
+    "/{name}/members/{alias}",
+    response_model=TeamMemberReferenceResponse,
+    dependencies=[Depends(rate_limit_dep("team_member_get"))],
+)
+async def get_team_member(
+    domain: str,
+    name: str,
+    alias: str,
+    db_infra=Depends(get_db),
+) -> TeamMemberReferenceResponse:
+    db = db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        """
+        SELECT tc.certificate_id, tc.member_did_key, tc.member_did_aw,
+               tc.member_address, tc.alias, tc.lifetime, tc.issued_at,
+               t.domain, t.name
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1
+          AND t.name = $2
+          AND t.deleted_at IS NULL
+          AND tc.alias = $3
+          AND tc.revoked_at IS NULL
+        ORDER BY tc.issued_at DESC, tc.id DESC
+        LIMIT 1
+        """,
+        domain,
+        name,
+        alias,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    return TeamMemberReferenceResponse(
+        team_id=build_team_id(row["domain"], row["name"]),
+        certificate_id=row["certificate_id"],
+        member_did_key=row["member_did_key"],
+        member_did_aw=row["member_did_aw"],
+        member_address=row["member_address"],
+        alias=row["alias"],
+        lifetime=row["lifetime"],
+        issued_at=row["issued_at"].isoformat(),
     )
 
 
@@ -752,6 +814,7 @@ def _team_response(row) -> TeamResponse:
 
 def _cert_response(row) -> CertificateResponse:
     return CertificateResponse(
+        team_id=build_team_id(row["domain"], row["name"]),
         certificate_id=row["certificate_id"],
         member_did_key=row["member_did_key"],
         member_did_aw=row["member_did_aw"],

@@ -133,6 +133,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "team_create": (10, 3600),
     "team_list": (60, 60),
     "team_get": (60, 60),
+    "team_member_get": (60, 60),
     "team_delete": (10, 3600),
     "team_rotate": (10, 3600),
     "team_update": (10, 3600),

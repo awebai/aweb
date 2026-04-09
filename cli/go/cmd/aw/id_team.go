@@ -586,30 +586,19 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// List active certificates to find the member's certificate_id
-	certs, err := registry.ListCertificates(ctx, registryURL, domain, team, true)
-	if err != nil {
-		return fmt.Errorf("list certificates: %w", err)
-	}
-
 	memberDomain, memberName, err := parseAddress(member)
 	if err != nil {
 		return err
 	}
-
-	// Try to resolve the member's did:key for precise matching
-	var memberDIDKey string
-	address, _, addrErr := registry.GetNamespaceAddressAt(ctx, registryURL, memberDomain, memberName)
-	if addrErr == nil {
-		memberDIDKey = address.CurrentDIDKey
+	if memberDomain != domain {
+		return fmt.Errorf("member address %s is outside team namespace %s", member, domain)
 	}
-
-	certID, err := findCertificateForMember(certs, memberName, memberDIDKey)
+	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
 	if err != nil {
-		return fmt.Errorf("in team %s: %w", teamID, err)
+		return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
 	}
 
-	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, certID, teamKey); err != nil {
+	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, memberRef.CertificateID, teamKey); err != nil {
 		return fmt.Errorf("revoke certificate: %w", err)
 	}
 
@@ -824,33 +813,4 @@ func parseAddress(address string) (domain, name string, err error) {
 		return "", "", usageError("invalid address %q (expected domain/name)", address)
 	}
 	return awconfig.NormalizeDomain(parts[0]), strings.ToLower(strings.TrimSpace(parts[1])), nil
-}
-
-// findCertificateForMember finds a certificate by DID key (preferred) or alias.
-// Returns an error if alias-based matching finds multiple certificates.
-func findCertificateForMember(certs []awid.RegistryCertificate, alias, memberDIDKey string) (string, error) {
-	// Prefer exact did:key match
-	if strings.TrimSpace(memberDIDKey) != "" {
-		for _, c := range certs {
-			if c.MemberDIDKey == memberDIDKey {
-				return c.CertificateID, nil
-			}
-		}
-	}
-
-	// Fall back to alias match with ambiguity detection
-	var matches []string
-	for _, c := range certs {
-		if c.Alias == alias {
-			matches = append(matches, c.CertificateID)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("no active certificate found for member %s", alias)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("multiple active certificates found for alias %s; resolve the member's address to disambiguate", alias)
-	}
 }

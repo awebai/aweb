@@ -38,6 +38,11 @@ CREATE INDEX IF NOT EXISTS idx_team_certificates_active
     ON {{tables.team_certificates}} (team_uuid, member_did_key)
     WHERE revoked_at IS NULL;
 
+-- Team-member references are keyed by active (team, alias).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_certificates_alias_active
+    ON {{tables.team_certificates}} (team_uuid, alias)
+    WHERE revoked_at IS NULL;
+
 -- Revoked certificates: lookup for revocation list queries
 CREATE INDEX IF NOT EXISTS idx_team_certificates_revoked
     ON {{tables.team_certificates}} (team_uuid, revoked_at)
