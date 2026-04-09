@@ -158,7 +158,6 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	c.SetResolver(&awid.ChainResolver{
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
-		Server:   &awid.ServerResolver{Client: c.Client},
 		Pin:      &awid.PinResolver{Store: ps},
 	})
 
