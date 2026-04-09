@@ -137,7 +137,6 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		return nil
 	}
 	c.SetAddress(selectionAddress(sel))
-	c.SetProjectSlug(sel.DefaultProject)
 	if sel.StableID != "" {
 		c.SetStableID(sel.StableID)
 	}

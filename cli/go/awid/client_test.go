@@ -139,7 +139,7 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	}
 }
 
-func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
+func TestChatCreateSessionSignsLocalAliases(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -162,10 +162,9 @@ func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
-		ToAliases: []string{"project-2~bob", "project-2~ann"},
+		ToAliases: []string{"bob", "ann"},
 		Message:   "hello",
 	})
 	if err != nil {
@@ -173,9 +172,9 @@ func TestChatCreateSessionSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "project-1~agent",
+		From:      "agent",
 		FromDID:   did,
-		To:        "project-2~ann,project-2~bob",
+		To:        "ann,bob",
 		Type:      "chat",
 		Body:      "hello",
 		Timestamp: gotBody.Timestamp,
@@ -302,7 +301,7 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 	}
 }
 
-func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
+func TestChatSendMessageSignsLocalAliases(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -317,7 +316,7 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
 				Sessions: []ChatSessionItem{
-					{SessionID: "sess-1", Participants: []string{"project-2~ann", "project-2~bob"}, CreatedAt: "2026-02-01T00:00:00Z"},
+					{SessionID: "sess-1", Participants: []string{"ann", "bob"}, CreatedAt: "2026-02-01T00:00:00Z"},
 				},
 			})
 		case "/v1/chat/sessions/sess-1/messages":
@@ -339,7 +338,6 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{Body: "ping"})
 	if err != nil {
@@ -347,9 +345,9 @@ func TestChatSendMessageSignsProjectQualifiedToAcrossProjects(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "project-1~agent",
+		From:      "agent",
 		FromDID:   did,
-		To:        "project-2~ann,project-2~bob",
+		To:        "ann,bob",
 		Type:      "chat",
 		Body:      "ping",
 		Timestamp: gotSend.Timestamp,
@@ -884,7 +882,7 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 	}
 }
 
-func TestSendMessageSignsProjectQualifiedAliasAcrossProjects(t *testing.T) {
+func TestSendMessageSignsLocalAlias(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -909,10 +907,9 @@ func TestSendMessageSignsProjectQualifiedAliasAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetAddress("myco/agent")
-	c.SetProjectSlug("project-1")
 
 	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
-		ToAlias: "project-2~monitor",
+		ToAlias: "monitor",
 		Subject: "task complete",
 		Body:    "results attached",
 	})

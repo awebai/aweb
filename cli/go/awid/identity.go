@@ -150,10 +150,6 @@ func (r *ServerResolver) resolvePath(identifier string) string {
 	if identifier == "" {
 		return "/v1/agents/resolve/"
 	}
-	addr := ParseNetworkAddress(identifier)
-	if addr.IsNetwork && strings.TrimSpace(r.Client.projectSlug) != "" && strings.EqualFold(addr.OrgSlug, r.Client.projectSlug) {
-		return "/v1/agents/resolve/" + urlPathEscape(addr.Alias)
-	}
 	return "/v1/agents/resolve/" + identifier
 }
 

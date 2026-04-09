@@ -124,11 +124,11 @@ func TestServerResolverValidAddress(t *testing.T) {
 	}
 }
 
-func TestServerResolverUsesProjectScopedResolvePath(t *testing.T) {
+func TestServerResolverUsesCanonicalResolvePath(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/agents/resolve/researcher" {
+		if r.URL.Path != "/v1/agents/resolve/demo/researcher" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -144,7 +144,6 @@ func TestServerResolverUsesProjectScopedResolvePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetProjectSlug("demo")
 
 	r := &ServerResolver{Client: c}
 	identity, err := r.Resolve(context.Background(), "demo/researcher")

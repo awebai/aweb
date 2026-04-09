@@ -75,7 +75,7 @@ Flags:
 - `--print-exports         Print shell export lines after JSON output`
 - `--reachability string   Persistent address reachability (private|org-visible|contacts-only|public)`
 - `--role string           Compatibility alias for --role-name`
-- `--role-name string      Workspace role name (must match a role in the active project roles bundle)`
+- `--role-name string      Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel         Set up Claude Code channel MCP server for real-time coordination`
 - `--setup-hooks           Set up Claude Code PostToolUse hook for aw notify`
 - `--username string       Hosted username to create with --hosted`
@@ -539,11 +539,11 @@ Flags:
 ### `instructions`
 
 Subcommands:
-- `activate    Activate an existing shared project instructions version`
-- `history     List shared project instructions history`
-- `reset       Reset shared project instructions to the server default`
-- `set         Create and activate a new shared project instructions version`
-- `show        Show shared project instructions`
+- `activate    Activate an existing shared team instructions version`
+- `history     List shared team instructions history`
+- `reset       Reset shared team instructions to the server default`
+- `set         Create and activate a new shared team instructions version`
+- `show        Show shared team instructions`
 
 Flags:
 - `-h, --help   help for instructions`
@@ -596,13 +596,13 @@ Flags:
 ### `roles`
 
 Subcommands:
-- `activate    Activate an existing project roles bundle version`
-- `deactivate  Deactivate project roles by replacing the active bundle with an empty bundle`
-- `history     List project roles history`
-- `list        List roles defined in the active project roles bundle`
-- `reset       Reset project roles to the server default bundle`
-- `set         Create and activate a new project roles bundle version`
-- `show        Show role guidance from the active project roles bundle`
+- `activate    Activate an existing team roles bundle version`
+- `deactivate  Deactivate team roles by replacing the active bundle with an empty bundle`
+- `history     List team roles history`
+- `list        List roles defined in the active team roles bundle`
+- `reset       Reset team roles to the server default bundle`
+- `set         Create and activate a new team roles bundle version`
+- `show        Show role guidance from the active team roles bundle`
 
 Flags:
 - `-h, --help   help for roles`
@@ -636,7 +636,7 @@ Flags:
 ### `roles set`
 
 Flags:
-- `--bundle-file string   Read project roles bundle JSON from file ('-' for stdin)`
+- `--bundle-file string   Read team roles bundle JSON from file ('-' for stdin)`
 - `--bundle-json string   Project roles bundle JSON`
 - `-h, --help                 help for set`
 
