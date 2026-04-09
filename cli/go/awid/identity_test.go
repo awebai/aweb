@@ -426,7 +426,7 @@ func TestRegistryResolverVerifyStableIdentityRejectsKeyDidAWMismatch(t *testing.
 
 func mustClient(t *testing.T, baseURL string) *Client {
 	t.Helper()
-	c, err := NewWithAPIKey(baseURL, "aw_sk_test")
+	c, err := New(baseURL)
 	if err != nil {
 		t.Fatal(err)
 	}

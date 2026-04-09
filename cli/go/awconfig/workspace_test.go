@@ -162,7 +162,7 @@ func TestLoadWorktreeWorkspaceFromRejectsLegacyAPIKeyAuth(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-api_key: aw_sk_test
+api_key: removed-token
 workspace_id: ws-1
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)

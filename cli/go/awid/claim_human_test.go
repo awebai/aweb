@@ -50,7 +50,7 @@ func TestClaimHuman(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL, "", priv, didKey)
+	c, err := NewWithIdentity(server.URL, priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestClaimHumanHTTPError(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL, "", priv, didKey)
+	c, err := NewWithIdentity(server.URL, priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestClaimHumanWithAPIBaseURLSignsWirePath(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL+"/api", "", priv, didKey)
+	c, err := NewWithIdentity(server.URL+"/api", priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}

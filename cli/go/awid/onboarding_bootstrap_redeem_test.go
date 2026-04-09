@@ -54,7 +54,7 @@ func TestBootstrapRedeem(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL, "", priv, didKey)
+	c, err := NewWithIdentity(server.URL, priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestBootstrapRedeemHTTPError(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL, "", priv, didKey)
+	c, err := NewWithIdentity(server.URL, priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestBootstrapRedeemWithAPIBaseURLSignsWirePath(t *testing.T) {
 	}
 	didKey := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity(server.URL+"/api", "", priv, didKey)
+	c, err := NewWithIdentity(server.URL+"/api", priv, didKey)
 	if err != nil {
 		t.Fatal(err)
 	}

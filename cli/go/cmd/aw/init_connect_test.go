@@ -182,10 +182,10 @@ func TestInitWithCertificateNotTriggeredWithoutCert(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	// With no cert at all, the certificate connect flow should not trigger.
-	// The old flow runs instead — which requires an API key or TTY.
+	// The old flow runs instead — which requires a TTY.
 	// We just verify the command doesn't claim "connected".
 	run := exec.CommandContext(ctx, bin, "init", "--url", "http://localhost:9999", "--json")
-	run.Env = append(idCreateCommandEnv(tmp), "AWEB_API_KEY=aw_sk_test_invalid")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, _ := run.CombinedOutput()
 	// Should NOT say "connected" (certificate flow)
