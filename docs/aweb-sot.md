@@ -319,10 +319,6 @@ CREATE UNIQUE INDEX idx_agents_active_did_key
 
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
 
-Note: the current baseline migration still uses full unique constraints.
-The partial-index shape above is the target contract and the migration
-code half is being aligned separately.
-
 -- Mail
 CREATE TABLE messages (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
