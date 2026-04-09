@@ -4,7 +4,7 @@
 #
 # Simulates a new user who:
 #   1. Starts awid + aweb in Docker
-#   2. Creates a permanent identity (alice)
+#   2. Creates a persistent identity (alice)
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
 #   5. Exercises mail, chat, tasks, locks

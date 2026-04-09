@@ -22,12 +22,12 @@ class ResolvedIdentityContract:
         return self.lifetime == "ephemeral"
 
     @property
-    def is_permanent(self) -> bool:
+    def is_persistent(self) -> bool:
         return self.lifetime == "persistent"
 
     @property
     def can_have_address(self) -> bool:
-        return self.is_permanent
+        return self.is_persistent
 
 
 def resolve_identity_contract(
@@ -61,7 +61,7 @@ def resolve_identity_contract(
         raise ValueError("Custodial identities must not provide did/public_key")
 
     if namespace is not None and namespace.strip() and lifetime != "persistent":
-        raise ValueError("Only permanent identities may own or publish addresses")
+        raise ValueError("Only persistent identities may own or publish addresses")
 
     stable_id = stable_id_from_did_key(did) if did is not None and lifetime == "persistent" else None
     return ResolvedIdentityContract(
@@ -73,6 +73,6 @@ def resolve_identity_contract(
     )
 
 
-def assert_permanent_identity(*, lifetime: str | None) -> None:
+def assert_persistent_identity(*, lifetime: str | None) -> None:
     if (lifetime or "").strip() != "persistent":
-        raise ValueError("Only permanent identities support this operation")
+        raise ValueError("Only persistent identities support this operation")
