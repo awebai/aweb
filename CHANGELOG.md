@@ -11,6 +11,8 @@ server tag, `server-v1.6.2`, and `main` at `dca0464` on 2026-04-09.
 - Replace `aw directory --namespace ...` with `aw directory --domain ...`.
 - Replace `aw project create` with `aw id team create`.
 - Replace `aw spawn accept-invite` with `aw id team accept-invite`.
+- If you self-host awid, replace any `awid serve ...` invocations with
+  `awid ...` or `uv run awid ...`.
 - Re-run `aw init` in any worktree that still has a legacy `.aw/workspace.yaml`.
 - If you query aweb tables or MCP tools directly, update `project_*` names to
   `team_*`.
@@ -31,17 +33,23 @@ server tag, `server-v1.6.2`, and `main` at `dca0464` on 2026-04-09.
   on removed keys instead of silently scrubbing them. Removed keys include
   `server_url`, `api_key`, `did`, `stable_id`, `signing_key`, `custody`,
   `lifetime`, `project_id`, `project_slug`, `namespace_slug`, `identity_id`,
-  `identity_handle`, `cloud_url`, `awid_url`, and other old compatibility
-  fields. The fix is to reinitialize the worktree with `aw init`.
+  `identity_handle`, `cloud_url`, `awid_url`, `role`, and other old
+  compatibility fields. The fix is to reinitialize the worktree with
+  `aw init`.
 - Coordination naming is now team-scoped throughout the live surface.
   Database tables were renamed from `project_roles` and
   `project_instructions` to `team_roles` and `team_instructions`. MCP callers
   must pass `team_instructions_id` instead of `project_instructions_id`.
 - `POST /v1/connect` now rejects alias collisions with HTTP 409 instead of
   silently overwriting the existing workspace row.
-- `aw workspace status` no longer deletes ephemeral identities during cleanup.
-  Stale ephemeral cleanup now belongs to server-side workspace deletion and
-  certificate revocation flows.
+- `aw workspace status` no longer cleans up stale ephemeral identities
+  client-side. Cleanup still happens, but it now goes through
+  `DELETE /v1/workspaces/{workspace_id}` and the server owns the identity
+  removal path.
+- `awid serve` was removed. The awid registry CLI now uses Typer's
+  single-command form, so self-hosted wrappers, Dockerfiles, and service units
+  must invoke `awid --host ... --port ...` or `uv run awid ...` instead of
+  `awid serve ...`.
 
 ### New features and user-visible behavior changes
 
