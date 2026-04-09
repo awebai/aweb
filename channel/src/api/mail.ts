@@ -44,10 +44,26 @@ export async function fetchInbox(
 
   // Verify signatures on received messages
   for (const msg of resp.messages) {
+    hydrateAddressesFromSignedPayload(msg);
     msg.verification_status = await verifyInboxMessage(msg);
   }
 
   return resp.messages;
+}
+
+function hydrateAddressesFromSignedPayload(msg: InboxMessage): void {
+  if (!msg.signed_payload) return;
+  try {
+    const payload = JSON.parse(msg.signed_payload) as { from?: string; to?: string };
+    if (!msg.from_address && typeof payload.from === "string") {
+      msg.from_address = payload.from;
+    }
+    if (!msg.to_address && typeof payload.to === "string") {
+      msg.to_address = payload.to;
+    }
+  } catch {
+    // Signature verification will fail if the payload is malformed.
+  }
 }
 
 export async function ackMessage(

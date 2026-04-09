@@ -77,7 +77,7 @@ export class APIClient {
     const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team":${JSON.stringify(this.auth.teamAddress)},"timestamp":${JSON.stringify(timestamp)}}`;
     const signature = Buffer.from(
       ed.sign(new TextEncoder().encode(payload), this.auth.signingKey),
-    ).toString("base64url");
+    ).toString("base64").replace(/=+$/, "");
     return {
       Authorization: `DIDKey ${this.auth.did} ${signature}`,
       "X-AWEB-Timestamp": timestamp,

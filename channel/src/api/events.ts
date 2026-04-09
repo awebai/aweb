@@ -43,6 +43,7 @@ export async function* streamAgentEvents(
       resp = await client.openSSE(`/v1/events/stream?deadline=${encodeURIComponent(deadline)}`);
     } catch (err) {
       if (signal.aborted) return;
+      console.error(`[aw-channel] events stream connect failed: ${err}`);
       // Back off on connection failure
       await sleep(5000, signal);
       continue;
@@ -52,6 +53,7 @@ export async function* streamAgentEvents(
       yield* parseSSEResponse(resp, signal);
     } catch (err) {
       if (signal.aborted) return;
+      console.error(`[aw-channel] events stream parse failed: ${err}`);
       // Stream ended or errored — reconnect after brief pause
       await sleep(1000, signal);
     } finally {

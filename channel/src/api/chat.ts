@@ -39,10 +39,26 @@ export async function fetchHistory(
   );
 
   for (const msg of resp.messages) {
+    hydrateAddressesFromSignedPayload(msg);
     msg.verification_status = await verifyChatMessage(msg);
   }
 
   return resp.messages;
+}
+
+function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
+  if (!msg.signed_payload) return;
+  try {
+    const payload = JSON.parse(msg.signed_payload) as { from?: string; to?: string };
+    if (!msg.from_address && typeof payload.from === "string") {
+      msg.from_address = payload.from;
+    }
+    if (!msg.to_address && typeof payload.to === "string") {
+      msg.to_address = payload.to;
+    }
+  } catch {
+    // Signature verification will fail if the payload is malformed.
+  }
 }
 
 export async function markRead(
