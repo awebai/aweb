@@ -24,7 +24,7 @@
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
 
-set -uo pipefail
+set -euo pipefail
 
 canonicalize_dir() {
   local dir="$1"
@@ -278,8 +278,8 @@ EOF
 
 cd "$SERVER_DIR"
 docker compose --env-file .env.e2e down -v 2>/dev/null || true
-docker compose --env-file .env.e2e build --no-cache 2>&1 | tail -3
-docker compose --env-file .env.e2e up -d 2>&1 | tail -5
+docker compose --env-file .env.e2e build --no-cache
+docker compose --env-file .env.e2e up -d
 
 echo "Waiting for awid health..."
 for i in $(seq 1 60); do
@@ -398,7 +398,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 6: Alice connects to aweb (POST /v1/connect) ==="
 
-run_aw_in "$ALICE_DIR" init --server "$AWEB_URL" 2>/dev/null
+run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" 2>/dev/null
 init_exit=$?
 assert_eq "alice init exit" "0" "$init_exit"
 
@@ -465,7 +465,7 @@ BOB_ACCEPT_STATUS="$(echo "$bob_accept" | jq_field status)"
 assert_eq "bob accepted" "accepted" "$BOB_ACCEPT_STATUS"
 
 # Bob connects to aweb
-run_aw_in "$BOB_DIR" init --server "$AWEB_URL" 2>/dev/null
+run_aw_in "$BOB_DIR" init --url "$AWEB_URL" 2>/dev/null
 bob_init_exit=$?
 assert_eq "bob init exit" "0" "$bob_init_exit"
 echo ""
@@ -647,7 +647,7 @@ phase_aw_init_reconnect() {
   cp "$ALICE_DIR/.aw/team-cert.pem" "$RECONNECT_DIR/.aw/team-cert.pem"
   RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 
-  reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --server "$AWEB_URL" </dev/null 2>&1)"
+  reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --url "$AWEB_URL" </dev/null 2>&1)"
   reconnect_exit=$?
   assert_eq "reconnect init exit" "0" "$reconnect_exit"
   assert_not_contains "reconnect skipped onboarding path prompt" "$reconnect_out" "How should this agent get its identity?"
@@ -680,7 +680,7 @@ phase_aw_init_byod_wizard() {
   local wizard_input
   wizard_input=$'2\n'"$wizard_name"$'\n'"$wizard_domain"$'\nn\nn\nn\n'
 
-  wizard_out="$(run_aw_tty_in "$WIZARD_BYOD_DIR" "$wizard_input" init --server "$AWEB_URL" 2>&1)"
+  wizard_out="$(run_aw_tty_in "$WIZARD_BYOD_DIR" "$wizard_input" init --url "$AWEB_URL" 2>&1)"
   wizard_exit=$?
   assert_eq "wizard init exit" "0" "$wizard_exit"
   assert_file_exists "wizard identity.yaml written" "$WIZARD_BYOD_DIR/.aw/identity.yaml"

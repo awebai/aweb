@@ -55,7 +55,8 @@ services:
 
   aweb:
     build:
-      context: .
+      context: ..
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     ports:
       - "${AWEB_PORT:-8000}:8000"

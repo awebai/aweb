@@ -10,10 +10,12 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY server/pyproject.toml server/README.md ./
+COPY awid/pyproject.toml awid/README.md /awid/
 RUN uv sync --no-dev --no-install-project
 
-COPY src/ ./src/
+COPY server/src ./src/
+COPY awid/src /awid/src
 RUN uv sync --no-dev
 
 
@@ -30,6 +32,7 @@ WORKDIR /app
 
 COPY --from=builder --chown=aweb:aweb /app/.venv /app/.venv
 COPY --from=builder --chown=aweb:aweb /app/src /app/src
+COPY --from=builder --chown=aweb:aweb /awid /awid
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1

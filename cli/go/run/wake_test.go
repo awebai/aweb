@@ -115,7 +115,7 @@ func TestEventBusFailsFastOnClientError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := awid.NewWithAPIKey(server.URL, "aw_sk_test")
+	client, err := awid.New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
