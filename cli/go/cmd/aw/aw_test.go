@@ -816,16 +816,6 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/alice":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkalice",
-				"address": "demo/alice",
-			})
-		case "/v1/agents/resolve/@juanre":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkatjuanre",
-				"address": "@juanre",
-			})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -896,13 +886,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 
-	// Generate a recipient key so the resolver can return a DID.
-	recipientPub, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipientDID := awid.ComputeDIDKey(recipientPub)
-
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -914,11 +897,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 				"message_id":   "msg-1",
 				"status":       "delivered",
 				"delivered_at": "2026-02-22T00:00:00Z",
-			})
-		case "/v1/agents/resolve/monitor", "/v1/agents/resolve/myco/monitor":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"did":     recipientDID,
-				"address": "myco/monitor",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -983,7 +961,6 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 		t.Fatal("message_id missing or empty")
 	}
 
-	_ = recipientDID
 	_ = msgID
 }
 
@@ -996,13 +973,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 
-	// Generate a recipient key so the resolver can return a DID.
-	recipientPub, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipientDID := awid.ComputeDIDKey(recipientPub)
-
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1014,11 +984,6 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 				"message_id":   "msg-1",
 				"status":       "delivered",
 				"delivered_at": "2026-02-22T00:00:00Z",
-			})
-		case "/v1/agents/resolve/monitor", "/v1/agents/resolve/acme/monitor":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"did":     recipientDID,
-				"address": "acme/monitor",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1145,11 +1110,6 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/eve":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":     "did:key:z6Mkeve",
-				"address": "demo/eve",
-			})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-log-1",

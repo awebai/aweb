@@ -40,17 +40,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/agents/resolve/myteam.aweb.ai/alice":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did":        did,
-				"stable_id":  stableID,
-				"address":    address,
-				"handle":     "alice",
-				"server":     serverURL,
-				"custody":    "self",
-				"lifetime":   "persistent",
-				"public_key": base64.RawStdEncoding.EncodeToString(pub),
-			})
 		case "/v1/did":
 			registerCalls.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
