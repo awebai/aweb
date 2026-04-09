@@ -1187,10 +1187,12 @@ embedded mode — the host process owns the pool's lifecycle.
 ### Environment variables
 
 ```bash
-# Required
+# Required (either name is accepted)
 DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
+# or
+AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 
-# awid registry (required, no embedded mode)
+# awid registry (optional; default https://api.awid.ai)
 AWID_REGISTRY_URL=https://api.awid.ai
 
 # Dashboard JWT validation (shared secret with whichever upstream
@@ -1198,10 +1200,26 @@ AWID_REGISTRY_URL=https://api.awid.ai
 # dashboard service is reading aweb on behalf of human users)
 AWEB_DASHBOARD_JWT_SECRET=
 
-# Server
+# Server defaults
+AWEB_HOST=0.0.0.0
 AWEB_PORT=8000
+AWEB_LOG_LEVEL=info
 AWEB_LOG_JSON=true
+AWEB_RELOAD=false
+
+# Redis (optional; defaults to redis://localhost:6379/0)
+AWEB_REDIS_URL=redis://localhost:6379/0
+
+# Presence / DB tuning
+AWEB_PRESENCE_TTL_SECONDS=1800
+AWEB_DATABASE_USES_TRANSACTION_POOLER=false
+AWEB_DATABASE_STATEMENT_CACHE_SIZE=
 ```
+
+`AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`
+falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
+`AWEB_DATABASE_STATEMENT_CACHE_SIZE` falls back to
+`DATABASE_STATEMENT_CACHE_SIZE`.
 
 ---
 
