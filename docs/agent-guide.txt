@@ -40,7 +40,7 @@ How to tell whether this directory is already initialized:
 - `.aw/signing.key` exists: this worktree has a signing key (both persistent and ephemeral).
 - `aw whoami` succeeds: the identity resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/workspace.yaml` is absent, the directory is uninitialized. The agent needs an identity and a team membership certificate before connecting. Ask your human to run either `aw run claude` (or `aw run codex`) or `aw init` in a terminal — both will launch a guided onboarding wizard. The difference is that `aw run` starts the agent loop after onboarding, while `aw init` stops after setup and lets the human start the provider however they prefer.
+- If `.aw/workspace.yaml` is absent, the directory is uninitialized. The exact bootstrap path depends on where the team lives: hosted onboarding can start from `aw run` or `aw init`, while plain self-hosted aweb uses either the BYOD wizard or the explicit invite-plus-`aw init` flow described below.
 
 ## How aw run works
 
@@ -171,7 +171,10 @@ An agent identity is linked to a directory, and it is pointed at by the files in
 
 ### Certificate-based auth
 
-When `.aw/team-cert.pem` exists, `aw init` authenticates via POST /v1/connect using a DIDKey signature and the X-AWID-Team-Certificate header. The dashboard reads team membership directly — no separate claim step is needed.
+When `.aw/team-cert.pem` exists, `aw init` binds the workspace with the normal
+certificate-authenticated coordination contract. See
+`docs/aweb-sot.md` and `docs/configuration.md` for the exact request headers and
+local file layout.
 
 ### Hosted identity notes
 
@@ -201,20 +204,30 @@ Then point the CLI at it:
 export AWEB_URL=http://localhost:8000
 ```
 
-All `aw` commands will use this server instead of the hosted service.
+By default the Compose stack also publishes awid on `localhost:8010`. If
+`8000` or `8010` is already occupied, set `AWEB_PORT` and/or `AWID_PORT` in
+`server/.env` before starting. All `aw` commands will use this server instead
+of the hosted service.
 
 ### Bootstrapping a self-hosted team
 
-The simplest way is `aw run` or `aw init`, just like hosted — both run the same onboarding wizard:
+On a plain self-hosted server, the managed `aweb.ai` onboarding path is not
+available. In a TTY, `aw init` or `aw run` can still guide the BYOD path if the
+human has a domain they control:
 
 ```bash
-aw run claude    # onboard + start the event-driven agent loop
-aw init          # onboard only, start the provider separately
+aw init          # guided BYOD bootstrap
+aw run claude    # guided BYOD bootstrap + start the event loop
 ```
 
-For explicit setup, first create a team at awid.ai (see [Team setup](#team-setup) above), then point agents at the self-hosted server:
+For explicit setup, create the identity and team at awid, then point agents at
+the self-hosted server:
 
 ```bash
+export AWID_REGISTRY_URL=http://localhost:8010
+aw id create --name <name> --domain <domain> --registry "$AWID_REGISTRY_URL"
+aw id team create --name <team> --namespace <namespace> --registry "$AWID_REGISTRY_URL"
+aw id team invite --team <team> --namespace <namespace>
 aw id team accept-invite <token>
 AWEB_URL=http://localhost:8000 aw init
 ```
@@ -343,7 +356,7 @@ aw roles show --all-roles              # All roles in the team
 aw roles list                          # Role names and titles
 aw roles history                       # Version history
 aw roles set --bundle-file <path>      # Set roles from a JSON file
-aw roles activate <project-roles-id>   # Switch to a previous version
+aw roles activate <team-roles-id>      # Switch to a previous version
 aw roles deactivate                    # Deactivate roles
 aw roles reset                         # Reset to defaults
 aw role-name set <role-name>           # Assign a role to yourself
@@ -464,7 +477,9 @@ Roles define what each agent focuses on. Instructions are shared guidance inject
 
 ### Helping a human set up from scratch
 
-The quickest path is `aw run claude` or `aw init` in the working directory — the wizard handles everything. For explicit control:
+The quickest path depends on deployment model: hosted teams can start from
+`aw run claude` or `aw init`, while plain self-hosted teams use either the BYOD
+wizard or the explicit flow below. For explicit control:
 
 1. `aw id create --name <name> --domain <domain>` (create identity)
 2. `aw id team create --name <team> --namespace <namespace>` (create team)

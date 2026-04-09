@@ -38,7 +38,9 @@ The default compose stack starts:
 - `awid`
 - `aweb`
 
-Only the aweb API port is published to the host by default.
+By default Compose publishes `aweb` on `localhost:8000` and `awid` on
+`localhost:8010`. If either port is already in use, set `AWEB_PORT` and/or
+`AWID_PORT` in `.env` before starting the stack.
 
 ## Direct `uv` Startup
 
@@ -128,37 +130,43 @@ The default compose file does the following:
 - injects `AWID_REGISTRY_URL=http://awid:8010`
 - sets `APP_ENV=development` so the internal HTTP awid origin is allowed
 - publishes `${AWEB_PORT:-8000}:8000`
-- keeps Postgres, Redis, and awid internal to the compose network
+- publishes `${AWID_PORT:-8010}:8010`
+- keeps Postgres and Redis internal to the compose network
 
 ## Bootstrap Flow After Startup
 
-Option A, guided bootstrap (the primary human entrypoint):
+Option A, guided BYOD bootstrap in a TTY:
 
 ```bash
 export AWEB_URL=http://localhost:8000
+aw init --url "$AWEB_URL"
 aw run codex
 ```
 
-`aw run` walks the user through team connection, identity creation, and
-team certificate provisioning when the current directory has no `.aw/`.
+On a self-hosted server, the managed `aweb.ai` onboarding path is not
+available. The guided flow switches to BYOD, asks for a name and a domain you
+control, provisions the default team, writes `.aw/team-cert.pem`, and then
+binds the workspace. After that, `aw run <provider>` starts the provider loop.
 
 Option B, explicit bootstrap primitives:
 
 ```bash
 export AWEB_URL=http://localhost:8000
+export AWID_REGISTRY_URL=http://localhost:8010
 
-# Create a team at awid (requires the namespace controller key locally
-# for self-hosted, or hosted equivalent)
-aw id team create --namespace myteam.example.com --name backend
+aw id create --name alice --domain myteam.example.com --registry "$AWID_REGISTRY_URL"
+
+# Create a team at awid from that identity
+aw id team create --namespace myteam.example.com --name backend --registry "$AWID_REGISTRY_URL"
 
 # Issue a team invite token from an existing team member
 aw id team invite --namespace myteam.example.com --team backend
 
 # On the joining workspace, accept the invite (writes .aw/team-cert.pem)
-aw id team accept-invite <token>
+aw id team accept-invite <token> --alias alice
 
 # Then bind the workspace to the coordination server using the certificate
-AWEB_URL=http://localhost:8000 aw init --alias second-workspace
+aw init --url "$AWEB_URL"
 ```
 
 Important bootstrap rules:
@@ -166,6 +174,7 @@ Important bootstrap rules:
 - The team is created at awid; aweb auto-provisions team and agent rows on
   the first `POST /v1/connect` request that carries a valid certificate
 - Authentication is via team certificate (`.aw/team-cert.pem`)
+- `aw id create` and the guided BYOD path require a domain you control
 - `aw id team invite` requires an existing identity in the team
 - `aw id team accept-invite` requires the invite token; in interactive mode
   it may prompt for alias, name, or role. In non-interactive mode supply
