@@ -62,13 +62,9 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "agent-1",
-		RoleName:    "reviewer",
-	}); err != nil {
+	state := workspaceBinding(server.URL, "backend:demo", "alice", "agent-1")
+	state.Memberships[0].RoleName = "reviewer"
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &state); err != nil {
 		t.Fatalf("save workspace state: %v", err)
 	}
 

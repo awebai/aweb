@@ -178,14 +178,18 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace.yaml missing: %v", err)
 	}
-	if workspace.TeamID != "default:juanre.aweb.ai" {
-		t.Fatalf("team_id=%q", workspace.TeamID)
+	activeMembership := activeMembershipForTest(t, workspace)
+	if workspace.ActiveTeam != "default:juanre.aweb.ai" {
+		t.Fatalf("active_team=%q", workspace.ActiveTeam)
 	}
-	if workspace.Alias != "laptop-agent" {
-		t.Fatalf("alias=%q", workspace.Alias)
+	if activeMembership.TeamID != "default:juanre.aweb.ai" {
+		t.Fatalf("team_id=%q", activeMembership.TeamID)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "team-cert.pem")); err != nil {
-		t.Fatalf("team-cert.pem missing: %v", err)
+	if activeMembership.Alias != "laptop-agent" {
+		t.Fatalf("alias=%q", activeMembership.Alias)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", filepath.FromSlash(activeMembership.CertPath))); err != nil {
+		t.Fatalf("team certificate missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
@@ -282,8 +286,12 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not exist for ephemeral connect: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "team-cert.pem")); err != nil {
-		t.Fatalf("team-cert.pem missing: %v", err)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("workspace.yaml missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", filepath.FromSlash(activeMembershipForTest(t, workspace).CertPath))); err != nil {
+		t.Fatalf("team certificate missing: %v", err)
 	}
 	if !strings.Contains(string(out), "Alias:       ci-runner-01") {
 		t.Fatalf("output=%q", string(out))

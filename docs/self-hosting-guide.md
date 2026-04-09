@@ -145,7 +145,7 @@ aw run codex
 
 On a self-hosted server, the managed `aweb.ai` onboarding path is not
 available. The guided flow switches to BYOD, asks for a name and a domain you
-control, provisions the default team, writes `.aw/team-cert.pem`, and then
+control, provisions the default team, writes a team certificate under `.aw/team-certs/`, and then
 binds the workspace. After that, `aw run <provider>` starts the provider loop.
 
 Option B, explicit bootstrap primitives:
@@ -162,7 +162,7 @@ aw id team create --namespace myteam.example.com --name backend --registry "$AWI
 # Issue a team invite token from an existing team member
 aw id team invite --namespace myteam.example.com --team backend
 
-# On the joining workspace, accept the invite (writes .aw/team-cert.pem)
+# On the joining workspace, accept the invite (writes .aw/team-certs/<team>.pem)
 aw id team accept-invite <token> --alias alice
 
 # Then bind the workspace to the coordination server using the certificate
@@ -179,7 +179,7 @@ Important bootstrap rules:
 
 - The team is created at awid; aweb auto-provisions team and agent rows on
   the first `POST /v1/connect` request that carries a valid certificate
-- Authentication is via team certificate (`.aw/team-cert.pem`)
+- Authentication is via the active team certificate referenced from `.aw/workspace.yaml`
 - `aw id create` and the guided BYOD path require a domain you control
 - `aw id team invite` requires an existing identity in the team
 - `aw id team accept-invite` requires the invite token; in interactive mode

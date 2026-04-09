@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -342,12 +341,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "eve",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -488,12 +482,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "eve",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -1238,12 +1227,7 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     "https://app.aweb.ai",
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding("https://app.aweb.ai", "backend:demo", "alice", "workspace-1"))
 
 	buildAwBinary(t, ctx, bin)
 

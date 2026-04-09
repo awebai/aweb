@@ -64,7 +64,11 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("setting role name: %w", err)
 	}
-	workspace.RoleName = strings.TrimSpace(resp.Role)
+	activeMembership := workspace.ActiveMembership()
+	if activeMembership == nil {
+		return fmt.Errorf("workspace is missing active_team membership")
+	}
+	activeMembership.RoleName = strings.TrimSpace(resp.Role)
 	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
 		return fmt.Errorf("write %s: %w", workspacePath, err)

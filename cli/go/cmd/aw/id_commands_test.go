@@ -1028,12 +1028,8 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 	if err := awid.SaveKeypairAt(signingKeyPath, awid.PublicKeyPath(signingKeyPath), pub, signingKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:     serverURL,
-		TeamID:      "backend:myteam",
-		Alias:       handle,
-		WorkspaceID: "agent-1",
-	}); err != nil {
+	state := workspaceBinding(serverURL, "backend:myteam", handle, "agent-1")
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &state); err != nil {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{

@@ -14,8 +14,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/awebai/aw/awconfig"
 )
 
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
@@ -23,12 +21,7 @@ func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespac
 	if strings.TrimSpace(namespace) == "" {
 		namespace = "demo"
 	}
-	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		AwebURL:     serverURL,
-		TeamID:      "backend:" + namespace,
-		Alias:       handle,
-		WorkspaceID: "workspace-1",
-	})
+	return writeWorkspaceBindingForTest(t, workingDir, workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1"))
 }
 
 func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T) {

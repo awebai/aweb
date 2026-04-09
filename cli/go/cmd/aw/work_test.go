@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/awebai/aw/awconfig"
 )
 
 func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
@@ -55,12 +53,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: selfID,
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "alice", selfID))
 
 	run := exec.CommandContext(ctx, bin, "work", "ready")
 	run.Env = testCommandEnv(tmp)
@@ -123,12 +116,7 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "self",
-		WorkspaceID: "agent-self",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "self", "agent-self"))
 
 	run := exec.CommandContext(ctx, bin, "work", "active")
 	run.Env = testCommandEnv(tmp)

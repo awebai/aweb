@@ -18,7 +18,7 @@ An **identity** is how other agents (and the outside world) know you. There are 
 
 **Persistent identities** survive beyond any single workspace. Create one with `aw id create --name <name> --domain <domain>`. Persistent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the team's managed namespace (e.g., `myteam.aweb.ai/alice`) or under a custom domain verified via DNS. Persistent identities maintain a signed audit log of all key changes for trust continuity.
 
-**Team membership** is proven by a certificate. When you accept a team invite (`aw id team accept-invite <token>`), you receive a certificate signed by the team's key. This certificate is stored at `.aw/team-cert.pem` and used to authenticate with the coordination server. Team keys are stored at `~/.config/aw/team-keys/<domain>/<name>.key`.
+**Team membership** is proven by a certificate. When you accept a team invite (`aw id team accept-invite <token>`), you receive a certificate signed by the team's key. Team certificates are stored under `.aw/team-certs/` and the active one is selected through `.aw/workspace.yaml`. Team keys are stored at `~/.config/aw/team-keys/<domain>/<name>.key`.
 
 **Key storage** depends on custody model. Self-custodial identities (the default from CLI) store their active private signing key locally in `.aw/signing.key` inside the worktree. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
 
@@ -35,7 +35,7 @@ aw mail inbox
 
 How to tell whether this directory is already initialized:
 - `.aw/workspace.yaml` exists: this worktree has a team binding.
-- `.aw/team-cert.pem` exists: this worktree has a team membership certificate.
+- `.aw/team-certs/` exists: this worktree has one or more team membership certificates.
 - `.aw/identity.yaml` exists: this worktree has a persistent identity.
 - `.aw/signing.key` exists: this worktree has a signing key (both persistent and ephemeral).
 - `aw whoami` succeeds: the identity resolves.
@@ -171,7 +171,7 @@ An agent identity is linked to a directory, and it is pointed at by the files in
 
 ### Certificate-based auth
 
-When `.aw/team-cert.pem` exists, `aw init` binds the workspace with the normal
+When a team certificate exists under `.aw/team-certs/`, `aw init` binds the workspace with the normal
 certificate-authenticated coordination contract. See
 `docs/aweb-sot.md` and `docs/configuration.md` for the exact request headers and
 local file layout.
@@ -396,8 +396,8 @@ Everything lives in `.aw/` in the working directory:
 
 - `.aw/identity.yaml` — persistent identity: did:aw, did:key, address, custody mode. Only present for persistent identities.
 - `.aw/signing.key` — Ed25519 private key. Present for both persistent and ephemeral identities.
-- `.aw/team-cert.pem` — team membership certificate used for authentication with the coordination server.
-- `.aw/workspace.yaml` — team binding: server URL, team address, alias, role.
+- `.aw/team-certs/` — team membership certificates used for authentication with the coordination server.
+- `.aw/workspace.yaml` — aweb binding: server URL, `memberships`, and `active_team`.
 - `~/.config/aw/controllers/<domain>.key` — namespace controller key for BYOD domains. Shared across worktrees on the same machine. Created by `aw id create` on first identity for a domain.
 - `~/.config/aw/team-keys/<domain>/<name>.key` — team signing keys. Shared across worktrees on the same machine.
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected team instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Team instructions](#team-instructions) above.

@@ -329,7 +329,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	}
 
 	// Verify certificate was saved to disk
-	certPath := filepath.Join(tmp, ".aw", "team-cert.pem")
+	certPath := awconfig.TeamCertificatePath(tmp, "backend:acme.com")
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
@@ -589,8 +589,7 @@ func TestCertShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath := filepath.Join(tmp, ".aw", "team-cert.pem")
-	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "backend:acme.com", cert); err != nil {
 		t.Fatal(err)
 	}
 

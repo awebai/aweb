@@ -115,7 +115,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
 			}
 			if baseURL == "" {
-				return usageError("--url or AWEB_URL is required when using certificate auth (team certificate found at .aw/team-cert.pem)")
+				return usageError("--url or AWEB_URL is required when using certificate auth (team certificate found under .aw/team-certs/)")
 			}
 			serviceURLs, err := resolveOnboardingServiceURLs(baseURL)
 			if err != nil {

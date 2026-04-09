@@ -29,6 +29,7 @@ type Selection struct {
 	BaseURL       string
 	AwebURL       string
 
+	TeamID      string
 	WorkspaceID string
 	Alias       string
 	Address     string
@@ -92,9 +93,13 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
 	}
-	teamID := strings.TrimSpace(workspace.TeamID)
+	activeMembership := workspace.ActiveMembership()
+	teamID := ""
+	if activeMembership != nil {
+		teamID = strings.TrimSpace(activeMembership.TeamID)
+	}
 	if baseURL == "" || teamID == "" {
-		return nil, errors.New("worktree workspace binding is missing aweb_url or team_id")
+		return nil, errors.New("worktree workspace binding is missing aweb_url or active_team membership")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -115,6 +120,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	domain := ""
 	alias := ""
 	workspaceID := ""
+	teamID := ""
 	address := ""
 	did := ""
 	stableID := ""
@@ -124,11 +130,15 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	registryURL := ""
 	awebURL := ""
 	if ws != nil {
-		teamDomain, _ := splitTeamID(ws.TeamID)
+		activeMembership := ws.ActiveMembership()
+		if activeMembership != nil {
+			teamID = strings.TrimSpace(activeMembership.TeamID)
+			teamDomain, _ := splitTeamID(teamID)
+			domain = teamDomain
+			alias = strings.TrimSpace(activeMembership.Alias)
+			workspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+		}
 		awebURL = strings.TrimSpace(ws.AwebURL)
-		domain = teamDomain
-		alias = strings.TrimSpace(ws.Alias)
-		workspaceID = strings.TrimSpace(ws.WorkspaceID)
 	}
 	if identity != nil {
 		if v := strings.TrimSpace(identity.Address); v != "" {
@@ -169,6 +179,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		ServerName:    serverName,
 		BaseURL:       baseURL,
 		AwebURL:       awebURL,
+		TeamID:        teamID,
 		WorkspaceID:   workspaceID,
 		Alias:         alias,
 		Address:       address,

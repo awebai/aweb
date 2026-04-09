@@ -46,7 +46,7 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("name: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(awDir, "team-cert.pem"), []byte("{}\n"), 0o600); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "default:jack.aweb.ai", &awid.TeamCertificate{Team: "default:jack.aweb.ai"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +109,7 @@ func TestExecuteReconnectPathFailsOnLegacyServerURLWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("did: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(awDir, "team-cert.pem"), []byte("{}\n"), 0o600); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "default:jack.aweb.ai", &awid.TeamCertificate{Team: "default:jack.aweb.ai"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\nteam_id: default:jack.aweb.ai\n"), 0o600); err != nil {
@@ -389,7 +389,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		t.Fatalf("saved signing key did=%q want %q", got, didKey)
 	}
 
-	savedCert, err := awid.LoadTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"))
+	savedCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:acme.com"))
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
@@ -613,8 +613,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
-	if workspace.TeamID != "default:jack.aweb.ai" {
-		t.Fatalf("team_id=%q", workspace.TeamID)
+	activeMembership := activeMembershipForTest(t, workspace)
+	if workspace.ActiveTeam != "default:jack.aweb.ai" {
+		t.Fatalf("active_team=%q", workspace.ActiveTeam)
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
@@ -622,8 +623,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
-	if workspace.Alias != "laptop" {
-		t.Fatalf("alias=%q", workspace.Alias)
+	if activeMembership.TeamID != "default:jack.aweb.ai" {
+		t.Fatalf("team_id=%q", activeMembership.TeamID)
+	}
+	if activeMembership.Alias != "laptop" {
+		t.Fatalf("alias=%q", activeMembership.Alias)
 	}
 	if workspace.HumanName != "Operator Jane" {
 		t.Fatalf("human_name=%q", workspace.HumanName)
@@ -640,7 +644,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		t.Fatalf("saved signing key did=%q want %q", got, identity.DID)
 	}
 
-	cert, err := awid.LoadTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"))
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:jack.aweb.ai"))
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
@@ -1010,8 +1014,9 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if err != nil {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
-	if workspace.TeamID != "default:acme.com" {
-		t.Fatalf("team_id=%q", workspace.TeamID)
+	activeMembership := activeMembershipForTest(t, workspace)
+	if workspace.ActiveTeam != "default:acme.com" {
+		t.Fatalf("active_team=%q", workspace.ActiveTeam)
 	}
 	if workspace.AwebURL != connectServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
@@ -1023,7 +1028,10 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		t.Fatalf("agent_type=%q", workspace.AgentType)
 	}
 
-	cert, err := awid.LoadTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"))
+	if activeMembership.TeamID != "default:acme.com" {
+		t.Fatalf("team_id=%q", activeMembership.TeamID)
+	}
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:acme.com"))
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
@@ -1052,7 +1060,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("did: alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(awDir, "team-cert.pem"), []byte("{}\n"), 0o600); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "default:acme.com", &awid.TeamCertificate{Team: "default:acme.com"}); err != nil {
 		t.Fatal(err)
 	}
 

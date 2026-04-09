@@ -66,13 +66,9 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	}
 	buildAwBinary(t, ctx, bin)
 
-	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		RoleName:    "developer",
-	})
+	binding := workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1")
+	binding.Memberships[0].RoleName = "developer"
+	writeWorkspaceBindingForTest(t, repo, binding)
 
 	run := exec.CommandContext(ctx, bin, "role-name", "set", "reviewer")
 	run.Env = testCommandEnv(tmp)
@@ -89,7 +85,7 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace state: %v", err)
 	}
-	if state.RoleName != "reviewer" {
-		t.Fatalf("role_name=%q", state.RoleName)
+	if activeMembershipForTest(t, state).RoleName != "reviewer" {
+		t.Fatalf("role_name=%q", activeMembershipForTest(t, state).RoleName)
 	}
 }

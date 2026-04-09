@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/awebai/aw/awconfig"
 )
 
 func TestAwLockMutationUnsupportedMessage(t *testing.T) {
@@ -106,12 +104,7 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "lock", "list", "--mine")
 	run.Env = testCommandEnv(tmp)

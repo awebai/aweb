@@ -300,12 +300,7 @@ func writeEphemeralSigningWorkspace(t *testing.T, workingDir, serverURL, address
 		Lifetime:  awid.LifetimeEphemeral,
 		CreatedAt: "2026-04-04T00:00:00Z",
 	})
-	writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		AwebURL:     serverURL,
-		TeamID:      "backend:" + namespace,
-		Alias:       handle,
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, workingDir, workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1"))
 }
 
 func verifySignedPayload(t *testing.T, pub ed25519.PublicKey, payload map[string]any, timestamp, signature string) {

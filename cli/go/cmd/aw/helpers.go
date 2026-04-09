@@ -119,10 +119,18 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
 func resolveCertificateClient(workingDir, baseURL string) (*aweb.Client, error) {
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err != nil {
+		return nil, nil
+	}
+	activeMembership := workspace.ActiveMembership()
+	if activeMembership == nil {
+		return nil, fmt.Errorf("workspace is missing active_team membership")
+	}
+	certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
-		return nil, nil // no certificate → fall through to legacy auth
+		return nil, fmt.Errorf("load team certificate for %s: %w", activeMembership.TeamID, err)
 	}
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
@@ -894,7 +902,11 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 	if err != nil || ws == nil {
 		return nil
 	}
-	wsAlias := strings.TrimSpace(ws.Alias)
+	activeMembership := ws.ActiveMembership()
+	if activeMembership == nil {
+		return nil
+	}
+	wsAlias := strings.TrimSpace(activeMembership.Alias)
 	selAlias := strings.TrimSpace(sel.Alias)
 	if wsAlias == "" || selAlias == "" {
 		return nil

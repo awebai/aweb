@@ -23,7 +23,7 @@ you through onboarding before it launches the provider.
 
 It can route you into:
 
-- `aw init` for an existing team when a `.aw/team-cert.pem` is already present
+- `aw init` for an existing team when a team certificate is already present under `.aw/team-certs/`
 - `aw id team accept-invite <token>` followed by `aw init` when joining a
   team via an invite token
 
@@ -118,4 +118,3 @@ wake on:
 
 If your workspace has an active claim, the claimed task is included in the run
 status line.
-

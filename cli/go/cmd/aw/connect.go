@@ -151,7 +151,7 @@ func ensureConnectTargetClean(workingDir string) error {
 	paths := []string{
 		awconfig.WorktreeSigningKeyPath(workingDir),
 		filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
-		filepath.Join(workingDir, ".aw", "team-cert.pem"),
+		awconfig.TeamCertificatesDir(workingDir),
 		filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()),
 	}
 	for _, path := range paths {
@@ -251,8 +251,7 @@ func persistBootstrapConnectState(
 		return err
 	}
 
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
-	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
 		return err
 	}
 

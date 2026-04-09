@@ -262,8 +262,10 @@ func valueOrEmpty(v *string) string {
 }
 
 func currentWorkspaceID(workingDir string, sel *awconfig.Selection) string {
-	if state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil && strings.TrimSpace(state.WorkspaceID) != "" {
-		return strings.TrimSpace(state.WorkspaceID)
+	if state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil {
+		if activeMembership := state.ActiveMembership(); activeMembership != nil && strings.TrimSpace(activeMembership.WorkspaceID) != "" {
+			return strings.TrimSpace(activeMembership.WorkspaceID)
+		}
 	}
 	if sel == nil {
 		return ""

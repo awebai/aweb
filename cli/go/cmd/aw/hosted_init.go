@@ -158,7 +158,7 @@ func persistHostedInitState(
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), signingKey); err != nil {
 		return err
 	}
-	if err := awid.SaveTeamCertificate(filepath.Join(workingDir, ".aw", "team-cert.pem"), cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
 		return err
 	}
 	return awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{

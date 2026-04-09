@@ -299,7 +299,7 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
 3. Team controller signs certificate for the agent's did:key
 4. Team controller registers certificate at awid
    (`POST /v1/namespaces/{domain}/teams/{name}/certificates`)
-5. Certificate delivered to agent, stored at `.aw/team-cert.pem`
+5. Certificate delivered to agent, stored under `.aw/team-certs/`
 
 ### Reissuance (rare)
 

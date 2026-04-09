@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/chat"
 )
 
@@ -160,12 +159,7 @@ func TestAwNotifySilentOnAPIError(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "notify-api-error",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "notify-api-error", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "notify")
 	run.Env = testCommandEnv(tmp)
@@ -213,12 +207,7 @@ func TestAwNotifyOutputsHookJSONWhenPendingChatsExist(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "notify-pending",
-		WorkspaceID: "workspace-1",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "notify-pending", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "notify")
 	run.Env = testCommandEnv(tmp)

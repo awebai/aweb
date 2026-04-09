@@ -65,10 +65,9 @@ func initCertificateConnect(workingDir, awebURL, role string) (connectOutput, er
 }
 
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
-	cert, err := awid.LoadTeamCertificate(certPath)
+	cert, certPath, err := loadCertificateForConnect(workingDir)
 	if err != nil {
-		return connectOutput{}, fmt.Errorf("load team certificate: %w\n(run `aw id team accept-invite` or `aw id team add-member` first to get a certificate at %s)", err, certPath)
+		return connectOutput{}, fmt.Errorf("load team certificate: %w\n(run `aw id team accept-invite` or `aw id team add-member` first to get a certificate under %s)", err, filepath.Join(workingDir, ".aw", "team-certs"))
 	}
 
 	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
@@ -101,25 +100,40 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		return connectOutput{}, err
 	}
 
-	// Write workspace.yaml
 	workspacePath := filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	if _, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); existingErr != nil && !os.IsNotExist(existingErr) {
+	workspaceState, existingErr := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if existingErr != nil && !os.IsNotExist(existingErr) {
 		return connectOutput{}, existingErr
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &awconfig.WorktreeWorkspace{
-		AwebURL:         awebURL,
-		TeamID:          resp.TeamID,
-		Alias:           resp.Alias,
-		WorkspaceID:     resp.WorkspaceID,
-		RepoID:          resp.RepoID,
-		CanonicalOrigin: canonicalizeGitOrigin(repoOrigin),
-		HumanName:       reqBody.HumanName,
-		AgentType:       reqBody.AgentType,
-		RoleName:        strings.TrimSpace(opts.Role),
-		Hostname:        hostname,
-		WorkspacePath:   workingDir,
-		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
+	if workspaceState == nil {
+		workspaceState = &awconfig.WorktreeWorkspace{}
+	}
+	membership := awconfig.WorktreeMembership{
+		TeamID:      resp.TeamID,
+		Alias:       resp.Alias,
+		RoleName:    strings.TrimSpace(opts.Role),
+		WorkspaceID: resp.WorkspaceID,
+		CertPath:    filepath.ToSlash(certPath),
+		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
+	}
+	if existing := workspaceState.Membership(resp.TeamID); existing != nil {
+		if strings.TrimSpace(existing.JoinedAt) != "" {
+			membership.JoinedAt = existing.JoinedAt
+		}
+		*existing = membership
+	} else {
+		workspaceState.Memberships = append(workspaceState.Memberships, membership)
+	}
+	workspaceState.AwebURL = awebURL
+	workspaceState.ActiveTeam = resp.TeamID
+	workspaceState.RepoID = resp.RepoID
+	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
+	workspaceState.HumanName = reqBody.HumanName
+	workspaceState.AgentType = reqBody.AgentType
+	workspaceState.Hostname = hostname
+	workspaceState.WorkspacePath = workingDir
+	workspaceState.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspaceState); err != nil {
 		return connectOutput{}, err
 	}
 
@@ -135,6 +149,33 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		AwebURL:     awebURL,
 		WorkspaceID: resp.WorkspaceID,
 	}, nil
+}
+
+func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string, error) {
+	if workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil && workspace != nil {
+		activeMembership := workspace.ActiveMembership()
+		if activeMembership == nil {
+			return nil, "", fmt.Errorf("workspace is missing active_team membership")
+		}
+		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
+		cert, err := awid.LoadTeamCertificate(certPath)
+		if err != nil {
+			return nil, "", err
+		}
+		return cert, strings.TrimSpace(activeMembership.CertPath), nil
+	}
+
+	stored, err := awconfig.ListTeamCertificates(workingDir)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(stored) == 0 {
+		return nil, "", os.ErrNotExist
+	}
+	if len(stored) > 1 {
+		return nil, "", fmt.Errorf("multiple team certificates found under .aw/team-certs; connect one team at a time after choosing an active team")
+	}
+	return stored[0].Certificate, stored[0].CertPath, nil
 }
 
 // postConnect sends POST /v1/connect with DIDKey auth + team certificate.
@@ -187,10 +228,10 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	return &result, nil
 }
 
-// hasCertificateForInit checks if .aw/team-cert.pem exists in the working directory.
+// hasCertificateForInit checks if at least one team certificate exists in the working directory.
 func hasCertificateForInit(workingDir string) bool {
-	_, err := os.Stat(filepath.Join(workingDir, ".aw", "team-cert.pem"))
-	return err == nil
+	stored, err := awconfig.ListTeamCertificates(workingDir)
+	return err == nil && len(stored) > 0
 }
 
 // discoverRepoOrigin attempts to find the git remote origin URL.

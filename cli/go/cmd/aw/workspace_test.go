@@ -177,16 +177,11 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	}
 	buildAwBinary(t, ctx, bin)
 
-	state := awconfig.WorktreeWorkspace{
-		AwebURL:         server.URL,
-		TeamID:          "backend:demo",
-		WorkspaceID:     selfID,
-		Alias:           "alice",
-		RoleName:        "developer",
-		Hostname:        "devbox",
-		WorkspacePath:   tmp,
-		CanonicalOrigin: "github.com/acme/repo",
-	}
+	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
+	state.Memberships[0].RoleName = "developer"
+	state.Hostname = "devbox"
+	state.WorkspacePath = tmp
+	state.CanonicalOrigin = "github.com/acme/repo"
 	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -292,12 +287,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "coordinator",
-		WorkspaceID: selfID,
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "coordinator", selfID))
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -394,12 +384,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: selfID,
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "alice", selfID))
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
 	run.Env = testCommandEnv(tmp)
@@ -493,16 +478,11 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	}
 	buildAwBinary(t, ctx, bin)
 
-	state := awconfig.WorktreeWorkspace{
-		AwebURL:         server.URL,
-		TeamID:          "backend:demo",
-		WorkspaceID:     selfID,
-		Alias:           "alice",
-		RoleName:        "developer",
-		Hostname:        "devbox",
-		WorkspacePath:   tmp,
-		CanonicalOrigin: "github.com/acme/repo",
-	}
+	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
+	state.Memberships[0].RoleName = "developer"
+	state.Hostname = "devbox"
+	state.WorkspacePath = tmp
+	state.CanonicalOrigin = "github.com/acme/repo"
 	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -596,16 +576,11 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	}
 	buildAwBinary(t, ctx, bin)
 
-	state := awconfig.WorktreeWorkspace{
-		AwebURL:         server.URL,
-		TeamID:          "backend:demo",
-		WorkspaceID:     selfID,
-		Alias:           "alice",
-		RoleName:        "developer",
-		Hostname:        "devbox",
-		WorkspacePath:   tmp,
-		CanonicalOrigin: "github.com/acme/repo",
-	}
+	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
+	state.Memberships[0].RoleName = "developer"
+	state.Hostname = "devbox"
+	state.WorkspacePath = tmp
+	state.CanonicalOrigin = "github.com/acme/repo"
 	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -702,16 +677,11 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *tes
 	}
 	buildAwBinary(t, ctx, bin)
 
-	state := awconfig.WorktreeWorkspace{
-		AwebURL:         server.URL,
-		TeamID:          "backend:demo",
-		WorkspaceID:     selfID,
-		Alias:           "alice",
-		RoleName:        "developer",
-		Hostname:        "devbox",
-		WorkspacePath:   tmp,
-		CanonicalOrigin: "github.com/acme/repo",
-	}
+	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
+	state.Memberships[0].RoleName = "developer"
+	state.Hostname = "devbox"
+	state.WorkspacePath = tmp
+	state.CanonicalOrigin = "github.com/acme/repo"
 	writeWorkspaceBindingForTest(t, tmp, state)
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -820,14 +790,10 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
-	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      teamID,
-		WorkspaceID: "source-1",
-		Alias:       "alice",
-		HumanName:   "Wendy",
-		AgentType:   "agent",
-	})
+	binding := workspaceBinding(server.URL, teamID, "alice", "source-1")
+	binding.HumanName = "Wendy"
+	binding.AgentType = "agent"
+	writeWorkspaceBindingForTest(t, repo, binding)
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
@@ -860,21 +826,25 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read child workspace binding: %v", err)
 	}
-	var state awconfig.WorktreeWorkspace
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	var childState awconfig.WorktreeWorkspace
+	if err := yaml.Unmarshal(data, &childState); err != nil {
 		t.Fatalf("unmarshal child workspace binding: %v", err)
 	}
-	if state.TeamID != teamID {
-		t.Fatalf("child team_id=%q", state.TeamID)
+	activeMembership := activeMembershipForTest(t, &childState)
+	if childState.ActiveTeam != teamID {
+		t.Fatalf("child active_team=%q", childState.ActiveTeam)
 	}
-	if state.Alias != "charlie" {
-		t.Fatalf("child alias=%q", state.Alias)
+	if activeMembership.TeamID != teamID {
+		t.Fatalf("child team_id=%q", activeMembership.TeamID)
 	}
-	if state.WorkspaceID != "workspace-3" {
-		t.Fatalf("child workspace_id=%q", state.WorkspaceID)
+	if activeMembership.Alias != "charlie" {
+		t.Fatalf("child alias=%q", activeMembership.Alias)
+	}
+	if activeMembership.WorkspaceID != "workspace-3" {
+		t.Fatalf("child workspace_id=%q", activeMembership.WorkspaceID)
 	}
 
-	cert, err := awid.LoadTeamCertificate(filepath.Join(child, ".aw", "team-cert.pem"))
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(child, teamID))
 	if err != nil {
 		t.Fatalf("load child team certificate: %v", err)
 	}
@@ -963,12 +933,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
-	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      teamID,
-		WorkspaceID: "source-1",
-		Alias:       "alice",
-	})
+	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, teamID, "alice", "source-1"))
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
@@ -1038,12 +1003,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
 	buildAwBinary(t, ctx, bin)
 
-	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:     server.URL,
-		TeamID:      "backend:source",
-		WorkspaceID: "source-1",
-		Alias:       "alice",
-	})
+	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, "backend:source", "alice", "source-1"))
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
@@ -1070,12 +1030,7 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:     "https://example.com",
-		TeamID:      "backend:source",
-		WorkspaceID: "source-1",
-		Alias:       "alice",
-	})
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding("https://example.com", "backend:source", "alice", "source-1"))
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
 	run.Env = testCommandEnv(tmp)
@@ -1086,6 +1041,117 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 		t.Fatalf("expected git worktree error, got success:\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "workspace add-worktree requires a git worktree") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwWorkspaceMigrateMultiTeamMigratesLegacyWorkspace(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyWorkspace := strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+team_id: backend:acme.com
+alias: alice
+role_name: developer
+workspace_id: ws-1
+hostname: devbox
+workspace_path: /tmp/repo
+canonical_origin: github.com/acme/repo
+updated_at: "2026-04-09T00:00:00Z"
+`) + "\n"
+	if err := os.WriteFile(filepath.Join(tmp, ".aw", "workspace.yaml"), []byte(legacyWorkspace), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: awid.ComputeDIDKey(memberPub),
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"), cert); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "migrate-multi-team", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("migrate-multi-team failed: %v\n%s", err, string(out))
+	}
+
+	state, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load migrated workspace: %v", err)
+	}
+	activeMembership := activeMembershipForTest(t, state)
+	if state.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", state.ActiveTeam)
+	}
+	if activeMembership.TeamID != "backend:acme.com" {
+		t.Fatalf("team_id=%q", activeMembership.TeamID)
+	}
+	if activeMembership.Alias != "alice" {
+		t.Fatalf("alias=%q", activeMembership.Alias)
+	}
+	if activeMembership.WorkspaceID != "ws-1" {
+		t.Fatalf("workspace_id=%q", activeMembership.WorkspaceID)
+	}
+	if activeMembership.CertPath != "team-certs/backend__acme.com.pem" {
+		t.Fatalf("cert_path=%q", activeMembership.CertPath)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "team-cert.pem")); !os.IsNotExist(err) {
+		t.Fatalf("legacy team-cert.pem should be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "backend:acme.com")); err != nil {
+		t.Fatalf("migrated team certificate missing: %v", err)
+	}
+	if !strings.Contains(string(out), `"status": "migrated"`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwWorkspaceMigrateMultiTeamNoopsOnCanonicalWorkspace(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding("https://app.aweb.ai", "backend:acme.com", "alice", "ws-1"))
+
+	run := exec.CommandContext(ctx, bin, "workspace", "migrate-multi-team", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("migrate-multi-team failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), `"status": "already_multi_team"`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

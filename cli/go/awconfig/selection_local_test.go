@@ -13,10 +13,15 @@ func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:     "https://app.aweb.ai",
-		TeamID:      "backend:myteam.aweb.ai",
-		Alias:       "support",
-		WorkspaceID: "agent-1",
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: "backend:myteam.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:myteam.aweb.ai",
+			Alias:       "support",
+			WorkspaceID: "agent-1",
+			CertPath:    TeamCertificateRelativePath("backend:myteam.aweb.ai"),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,10 +56,15 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:     "https://app.aweb.ai",
-		TeamID:      "backend:acme.com",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			WorkspaceID: "workspace-1",
+			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
 	}); err != nil {
 		t.Fatal(err)
 	}

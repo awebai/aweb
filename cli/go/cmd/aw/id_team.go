@@ -414,8 +414,8 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
-	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
+	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
+	if err != nil {
 		return nil, err
 	}
 
@@ -612,10 +612,9 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
-	cert, err := awid.LoadTeamCertificate(certPath)
+	cert, _, err := loadCurrentTeamCertificate(workingDir)
 	if err != nil {
-		return fmt.Errorf("load certificate: %w (no team certificate at %s)", err, certPath)
+		return fmt.Errorf("load certificate: %w", err)
 	}
 
 	printOutput(certShowOutput{
@@ -630,6 +629,33 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		CertificateID: cert.CertificateID,
 	}, formatCertShow)
 	return nil
+}
+
+func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, string, error) {
+	if workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil && workspace != nil {
+		activeMembership := workspace.ActiveMembership()
+		if activeMembership == nil {
+			return nil, "", fmt.Errorf("workspace is missing active_team membership")
+		}
+		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
+		cert, err := awid.LoadTeamCertificate(certPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("load active team certificate %s: %w", certPath, err)
+		}
+		return cert, certPath, nil
+	}
+
+	stored, err := awconfig.ListTeamCertificates(workingDir)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(stored) == 0 {
+		return nil, "", fmt.Errorf("no team certificate found under %s", awconfig.TeamCertificatesDir(workingDir))
+	}
+	if len(stored) > 1 {
+		return nil, "", fmt.Errorf("multiple team certificates found under %s; set an active team first", awconfig.TeamCertificatesDir(workingDir))
+	}
+	return stored[0].Certificate, filepath.Join(workingDir, ".aw", filepath.FromSlash(stored[0].CertPath)), nil
 }
 
 // --- helpers ---

@@ -22,14 +22,15 @@ func testCommandEnv(home string) []string {
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
 	t.Helper()
-	if strings.TrimSpace(state.AwebURL) != "" && strings.TrimSpace(state.TeamID) != "" {
-		certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	activeMembership := state.ActiveMembership()
+	if strings.TrimSpace(state.AwebURL) != "" && activeMembership != nil {
+		certPath := awconfig.TeamCertificatePath(workingDir, activeMembership.TeamID)
 		signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 		if _, err := os.Stat(certPath); os.IsNotExist(err) {
 			fixture := testSelectionFixture{
-				TeamID:      state.TeamID,
-				Alias:       state.Alias,
-				WorkspaceID: state.WorkspaceID,
+				TeamID:      activeMembership.TeamID,
+				Alias:       activeMembership.Alias,
+				WorkspaceID: activeMembership.WorkspaceID,
 				CreatedAt:   "2026-04-04T00:00:00Z",
 			}
 			if signingKey, err := awid.LoadSigningKey(signingKeyPath); err == nil {
@@ -66,17 +67,39 @@ func writeIdentityForTest(t *testing.T, workingDir string, state awconfig.Worktr
 }
 
 func defaultWorkspaceBinding(serverURL string) awconfig.WorktreeWorkspace {
-	return awconfig.WorktreeWorkspace{
-		AwebURL:     serverURL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-	}
+	return workspaceBinding(serverURL, "backend:demo", "alice", "workspace-1")
 }
 
 func writeDefaultWorkspaceBindingForTest(t *testing.T, workingDir, serverURL string) string {
 	t.Helper()
 	return writeWorkspaceBindingForTest(t, workingDir, defaultWorkspaceBinding(serverURL))
+}
+
+func workspaceBinding(serverURL, teamID, alias, workspaceID string) awconfig.WorktreeWorkspace {
+	teamID = resolvedTeamIDForTest(teamID)
+	return awconfig.WorktreeWorkspace{
+		AwebURL:    strings.TrimSpace(serverURL),
+		ActiveTeam: teamID,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       strings.TrimSpace(alias),
+			WorkspaceID: strings.TrimSpace(workspaceID),
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-04T00:00:00Z",
+		}},
+	}
+}
+
+func activeMembershipForTest(t *testing.T, state *awconfig.WorktreeWorkspace) *awconfig.WorktreeMembership {
+	t.Helper()
+	if state == nil {
+		t.Fatal("workspace state is nil")
+	}
+	activeMembership := state.ActiveMembership()
+	if activeMembership == nil {
+		t.Fatal("workspace missing active membership")
+	}
+	return activeMembership
 }
 
 type testSelectionFixture struct {
@@ -96,10 +119,15 @@ type testSelectionFixture struct {
 func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testSelectionFixture) {
 	t.Helper()
 	workspace := awconfig.WorktreeWorkspace{
-		AwebURL:     fixture.AwebURL,
-		TeamID:      resolvedTeamIDForTest(fixture.TeamID),
-		Alias:       fixture.Alias,
-		WorkspaceID: fixture.WorkspaceID,
+		AwebURL:    fixture.AwebURL,
+		ActiveTeam: resolvedTeamIDForTest(fixture.TeamID),
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      resolvedTeamIDForTest(fixture.TeamID),
+			Alias:       fixture.Alias,
+			WorkspaceID: fixture.WorkspaceID,
+			CertPath:    awconfig.TeamCertificateRelativePath(resolvedTeamIDForTest(fixture.TeamID)),
+			JoinedAt:    fixture.CreatedAt,
+		}},
 	}
 	writeTeamCertificateWorkspaceForTest(t, workingDir, workspace, &fixture)
 	if fixture.SigningKey != nil {
@@ -131,11 +159,16 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, workspace awconfig.WorktreeWorkspace, fixture *testSelectionFixture) {
 	t.Helper()
 
-	alias := strings.TrimSpace(workspace.Alias)
+	activeMembership := workspace.ActiveMembership()
+	if activeMembership == nil {
+		t.Fatal("workspace missing active membership")
+	}
+
+	alias := strings.TrimSpace(activeMembership.Alias)
 	if alias == "" {
 		alias = "alice"
 	}
-	teamID := resolvedTeamIDForTest(strings.TrimSpace(workspace.TeamID))
+	teamID := resolvedTeamIDForTest(strings.TrimSpace(activeMembership.TeamID))
 	teamDomain, _, err := awid.ParseTeamID(teamID)
 	if err != nil {
 		t.Fatalf("parse team_id %q: %v", teamID, err)
@@ -190,7 +223,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
 	}
-	if err := awid.SaveTeamCertificate(filepath.Join(workingDir, ".aw", "team-cert.pem"), cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert); err != nil {
 		t.Fatalf("write team certificate: %v", err)
 	}
 	if fixture == nil || fixture.SigningKey == nil {

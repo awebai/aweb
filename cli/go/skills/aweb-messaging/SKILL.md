@@ -26,7 +26,7 @@ If that succeeds, the workspace is connected.
 
 If it fails:
 
-- Check whether `.aw/workspace.yaml` and `.aw/team-cert.pem` exist
+- Check whether `.aw/workspace.yaml` and `.aw/team-certs/` exist
 - If the workspace is uninitialized, ask the user to run `aw run <provider>`
   or the explicit invite flow:
 
@@ -86,4 +86,4 @@ aw contacts remove <address>
 - Persistent addresses use the canonical `namespace/name` form
 - Mail is durable; the recipient can read it later
 - Chat is real time; both sides must be online
-- Team membership and coordination auth come from `.aw/team-cert.pem`
+- Team membership and coordination auth come from the active team certificate referenced from `.aw/workspace.yaml`

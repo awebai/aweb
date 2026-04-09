@@ -84,7 +84,7 @@ aw mail inbox
 aw id team invite --namespace myteam.aweb.ai --team backend
 
 # On the joining workspace (any directory, any machine), accept it.
-# This writes the team membership certificate to .aw/team-cert.pem.
+# This writes the team membership certificate under .aw/team-certs/.
 aw id team accept-invite <token>
 
 # Bind the workspace to the coordination server using the certificate
@@ -108,7 +108,7 @@ One directory = one workspace = one agent identity. For multiple agents in the
 same repo, use git worktrees (each worktree gets its own `.aw/`).
 
 Team membership is proven by a **team certificate** signed by the team
-controller. The certificate is stored at `.aw/team-cert.pem` after running
+controller. The certificate is stored under `.aw/team-certs/` after running
 `aw id team accept-invite <token>`. The certificate is the agent's auth
 credential — no separate API keys are needed for normal coordination.
 
@@ -145,8 +145,8 @@ The local files that bind a workspace to a team and identity:
 
 | File | Purpose |
 | --- | --- |
-| `.aw/team-cert.pem` | Team membership certificate (auth credential) |
-| `.aw/workspace.yaml` | Repo/worktree-local team binding and coordination state |
+| `.aw/team-certs/` | Team membership certificates (auth credentials) |
+| `.aw/workspace.yaml` | Repo/worktree-local aweb binding, including `memberships` and `active_team` |
 | `.aw/identity.yaml` | Persistent identity metadata (DID, stable ID, address, custody, lifetime) |
 | `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
 | `.aw/context` | Small non-secret local coordination pointer |
@@ -166,7 +166,7 @@ For the full schema and resolution rules see
 ### Resolution order
 
 CLI flags (`--server-name`, or `aw init --url`) > environment variables > local
-`.aw/team-cert.pem` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
+active team certificate in `.aw/team-certs/` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
 (for persistent identity fields) > local `.aw/context`.
 
 ## CLI Reference
@@ -175,7 +175,7 @@ CLI flags (`--server-name`, or `aw init --url`) > environment variables > local
 
 ```bash
 aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
-aw init                               # Bind the current workspace using .aw/team-cert.pem
+aw init                               # Bind the current workspace using the active cert from .aw/team-certs/
 aw init --persistent --name <name>     # Bind with a durable self-custodial persistent identity
 aw whoami                             # Show current identity
 aw identities                         # List identities in the current team
@@ -183,7 +183,7 @@ aw workspace status                   # Show coordination state for current work
 aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
 aw id team create                     # Create a team at awid
 aw id team invite                     # Issue a team invite token
-aw id team accept-invite <token>      # Accept an invite (writes .aw/team-cert.pem)
+aw id team accept-invite <token>      # Accept an invite (writes .aw/team-certs/<team>.pem)
 aw id team add-member                 # Add a member to a team
 aw id team remove-member              # Remove a member from a team
 aw id access-mode [open|contacts_only] # Get/set identity access mode

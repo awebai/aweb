@@ -201,9 +201,9 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
 	}
-	cert, err := awid.LoadTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"))
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:juanre.aweb.ai"))
 	if err != nil {
-		t.Fatalf("team-cert.pem missing: %v", err)
+		t.Fatalf("team certificate missing: %v", err)
 	}
 	if cert.MemberDIDKey != didKey {
 		t.Fatalf("cert did_key=%q want %q", cert.MemberDIDKey, didKey)

@@ -218,8 +218,8 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(filepath.Join(workingDir, ".aw", "team-cert.pem"))
-	return err == nil
+	stored, err := awconfig.ListTeamCertificates(workingDir)
+	return err == nil && len(stored) > 0
 }
 
 func promptGuidedOnboardingPath(in io.Reader, out io.Writer) (guidedOnboardingPath, error) {
@@ -395,8 +395,7 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	if err := awid.SaveSigningKey(plan.SigningKeyPath, provisioned.Identity.IdentityKey); err != nil {
 		return err
 	}
-	certPath := filepath.Join(filepath.Dir(plan.IdentityPath), "team-cert.pem")
-	if err := awid.SaveTeamCertificate(certPath, provisioned.Certificate); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(filepath.Dir(filepath.Dir(plan.IdentityPath)), provisioned.Certificate.Team, provisioned.Certificate); err != nil {
 		return err
 	}
 	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -596,8 +595,7 @@ func persistGuidedHostedIdentity(
 	if err := awid.SaveSigningKey(signingKeyPath, signingKey); err != nil {
 		return err
 	}
-	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
-	if err := awid.SaveTeamCertificate(certPath, cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
 		return err
 	}
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())

@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+func canonicalWorkspaceState() *WorktreeWorkspace {
+	return &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			RoleName:    "developer",
+			WorkspaceID: "ws-1",
+			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
+	}
+}
+
 func TestLoadWorktreeWorkspaceFromRejectsLegacyRoleKey(t *testing.T) {
 	t.Parallel()
 
@@ -34,11 +49,7 @@ func TestSaveWorktreeWorkspaceToWritesCanonicalRoleNameKey(t *testing.T) {
 
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "workspace.yaml")
-	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
-		WorkspaceID: "ws-1",
-		Alias:       "alice",
-		RoleName:    "developer",
-	}); err != nil {
+	if err := SaveWorktreeWorkspaceTo(path, canonicalWorkspaceState()); err != nil {
 		t.Fatalf("save workspace: %v", err)
 	}
 
@@ -60,11 +71,7 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "workspace.yaml")
-	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
-		AwebURL:     "https://app.aweb.ai",
-		TeamID:      "backend:acme.com",
-		WorkspaceID: "ws-1",
-	}); err != nil {
+	if err := SaveWorktreeWorkspaceTo(path, canonicalWorkspaceState()); err != nil {
 		t.Fatalf("save workspace: %v", err)
 	}
 
@@ -99,7 +106,7 @@ workspace_id: ws-1
 	}
 }
 
-func TestLoadWorktreeWorkspaceFromRejectsRemovedIdentityAndProjectFields(t *testing.T) {
+func TestLoadWorktreeWorkspaceFromRejectsLegacySingleTeamShape(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -107,6 +114,29 @@ func TestLoadWorktreeWorkspaceFromRejectsRemovedIdentityAndProjectFields(t *test
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
 team_id: backend:acme.com
+alias: alice
+workspace_id: ws-1
+role_name: developer
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected legacy single-team workspace load to fail")
+	}
+	if !strings.Contains(err.Error(), legacyWorkspaceSingleTeamError) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsRemovedIdentityAndProjectFields(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
 identity_handle: alice
 did: did:key:z6MkWorkspace
 stable_id: did:aw:workspace
@@ -114,7 +144,12 @@ signing_key: .aw/signing.key
 custody: self
 lifetime: persistent
 project_slug: acme
-workspace_id: ws-1
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
 	}
@@ -139,7 +174,12 @@ func TestLoadWorktreeWorkspaceFromRejectsRemovedRegistryAndHostedURLFields(t *te
 aweb_url: https://app.aweb.ai
 awid_url: https://registry.example
 cloud_url: https://hosted.example
-workspace_id: ws-1
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
 	}
@@ -163,7 +203,12 @@ func TestLoadWorktreeWorkspaceFromRejectsLegacyAPIKeyAuth(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
 api_key: removed-token
-workspace_id: ws-1
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
 	}
@@ -184,8 +229,12 @@ func TestLoadWorktreeWorkspaceFromRejectsUnsupportedFields(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-team_id: backend:acme.com
-workspace_id: ws-1
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
 future_key: value
 weird_mode: true
 `)+"\n"), 0o600); err != nil {
@@ -214,7 +263,12 @@ func TestLoadWorktreeWorkspaceFromRejectsLegacyTeamAddressKey(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
 team_address: acme.com/backend
-workspace_id: ws-1
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
 	}
@@ -224,6 +278,28 @@ workspace_id: ws-1
 		t.Fatal("expected legacy team_address workspace load to fail")
 	}
 	if !strings.Contains(err.Error(), legacyWorkspaceTeamAddressError) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsEmptyMemberships(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+active_team: backend:acme.com
+memberships: []
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected empty memberships to fail")
+	}
+	if !strings.Contains(err.Error(), "at least one membership") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

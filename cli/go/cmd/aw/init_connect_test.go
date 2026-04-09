@@ -93,7 +93,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	}
 
 	// Write team certificate
-	if err := awid.SaveTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"), cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, cert.Team, cert); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,11 +150,15 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.TeamID != "backend:acme.com" {
-		t.Fatalf("workspace team_id=%q", ws.TeamID)
+	activeMembership := activeMembershipForTest(t, ws)
+	if ws.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("workspace active_team=%q", ws.ActiveTeam)
 	}
-	if ws.Alias != "alice" {
-		t.Fatalf("workspace alias=%q", ws.Alias)
+	if activeMembership.TeamID != "backend:acme.com" {
+		t.Fatalf("workspace team_id=%q", activeMembership.TeamID)
+	}
+	if activeMembership.Alias != "alice" {
+		t.Fatalf("workspace alias=%q", activeMembership.Alias)
 	}
 	if ws.AwebURL != server.URL {
 		t.Fatalf("workspace aweb_url=%q want %q", ws.AwebURL, server.URL)
@@ -247,7 +251,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := awid.SaveTeamCertificate(filepath.Join(tmp, ".aw", "team-cert.pem"), cert); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, cert.Team, cert); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,11 +267,15 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.TeamID != "backend:acme.com" {
-		t.Fatalf("team_id=%q", ws.TeamID)
+	activeMembership := activeMembershipForTest(t, ws)
+	if ws.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", ws.ActiveTeam)
 	}
-	if ws.Alias != "bob" {
-		t.Fatalf("alias=%q", ws.Alias)
+	if activeMembership.TeamID != "backend:acme.com" {
+		t.Fatalf("team_id=%q", activeMembership.TeamID)
+	}
+	if activeMembership.Alias != "bob" {
+		t.Fatalf("alias=%q", activeMembership.Alias)
 	}
 	if ws.RepoID != "repo-uuid-1" {
 		t.Fatalf("repo_id=%q", ws.RepoID)

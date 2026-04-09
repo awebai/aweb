@@ -30,7 +30,7 @@ The repo/worktree-local state lives under:
   identity.yaml
   signing.key
   workspace.yaml
-  team-cert.pem
+  team-certs/
   context
 ```
 
@@ -40,18 +40,23 @@ Each worktree gets its own `.aw/` directory.
 
 `.aw/workspace.yaml` is the local aweb coordination binding for the current
 directory. It binds one worktree to one aweb-compatible coordination server URL
-and one active team/workspace identity.
+and one active team/workspace identity while retaining the other team
+memberships held by the same local identity.
 
 Canonical sample:
 
 ```yaml
 aweb_url: https://app.aweb.ai
-team_id: backend:acme.com
-alias: alice
-role_name: developer
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    role_name: developer
+    workspace_id: "550e8400-e29b-41d4-a716-446655440000"
+    cert_path: team-certs/backend__acme.com.pem
+    joined_at: "2026-04-06T..."
 human_name: ""
 agent_type: agent
-workspace_id: "550e8400-e29b-41d4-a716-446655440000"
 hostname: Mac.local
 workspace_path: /Users/alice/project
 canonical_origin: github.com/acme/backend
@@ -62,8 +67,8 @@ updated_at: "2026-04-06T..."
 Key points:
 
 - `aweb_url` is the aweb-compatible coordination server URL; default hosted value is `https://app.aweb.ai`
-- `team_id` is the active team binding for this worktree
-- `alias` is the current team-local alias for this workspace
+- `active_team` points to the membership the CLI uses by default
+- `memberships` holds the per-team alias/workspace/certificate state for this one identity
 - repo/worktree metadata such as `repo_id`, `canonical_origin`, `hostname`, and `workspace_path` are local coordination metadata, not identity data
 
 `workspace.yaml` is an aweb binding only. It does not carry:
@@ -111,13 +116,13 @@ Self-custodial identities store their active Ed25519 private signing key in:
 
 This key is worktree-local.
 
-## Team Certificate: `.aw/team-cert.pem`
+## Team Certificates: `.aw/team-certs/`
 
-`.aw/team-cert.pem` stores the current team membership certificate for this
-workspace. aweb coordination endpoints authenticate the workspace with:
+`.aw/team-certs/` stores one team membership certificate per team for this
+workspace identity. aweb coordination endpoints authenticate the workspace with:
 
 - a DIDKey signature from the local signing key
-- the team certificate in `.aw/team-cert.pem`
+- the active team certificate referenced from `.aw/workspace.yaml`
 
 ## Local Context: `.aw/context`
 
@@ -150,7 +155,7 @@ aw workspace add-worktree <role>
 ```
 
 - `aw init` writes or refreshes `workspace.yaml`, `context`, and related local binding state
-- `aw id team accept-invite` writes `team-cert.pem`
+- `aw id team accept-invite` writes a team certificate under `team-certs/`
 - `aw workspace add-worktree` creates a sibling worktree with its own `.aw/` state
 
 ## Injected Coordination Docs

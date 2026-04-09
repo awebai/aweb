@@ -304,8 +304,10 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 	}
 	wd, _ := os.Getwd()
 	if state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(wd); err == nil {
-		if roleName := strings.TrimSpace(state.RoleName); roleName != "" {
-			return roleName
+		if activeMembership := state.ActiveMembership(); activeMembership != nil {
+			if roleName := strings.TrimSpace(activeMembership.RoleName); roleName != "" {
+				return roleName
+			}
 		}
 	}
 	_ = sel

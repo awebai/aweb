@@ -36,6 +36,12 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	RunE:  runWorkspaceAddWorktree,
 }
 
+var workspaceMigrateMultiTeamCmd = &cobra.Command{
+	Use:   "migrate-multi-team",
+	Short: "Rewrite a legacy single-team workspace into the canonical multi-team shape",
+	RunE:  runWorkspaceMigrateMultiTeam,
+}
+
 var (
 	workspaceStatusLimit int
 	workspaceAddAlias    string
@@ -58,12 +64,21 @@ type workspaceAddWorktreeOutput struct {
 	WorktreePath string `json:"worktree_path"`
 }
 
+type workspaceMigrateMultiTeamOutput struct {
+	Status      string `json:"status"`
+	ActiveTeam  string `json:"active_team"`
+	CertPath    string `json:"cert_path,omitempty"`
+	Workspace   string `json:"workspace_path"`
+	LegacyMoved bool   `json:"legacy_cert_moved"`
+}
+
 func init() {
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
 
 	workspaceCmd.AddCommand(workspaceStatusCmd)
 	workspaceCmd.AddCommand(workspaceAddWorktreeCmd)
+	workspaceCmd.AddCommand(workspaceMigrateMultiTeamCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
@@ -89,8 +104,10 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	workspaceID := strings.TrimSpace(sel.WorkspaceID)
-	if state != nil && strings.TrimSpace(state.WorkspaceID) != "" {
-		workspaceID = strings.TrimSpace(state.WorkspaceID)
+	if state != nil {
+		if activeMembership := state.ActiveMembership(); activeMembership != nil && strings.TrimSpace(activeMembership.WorkspaceID) != "" {
+			workspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -204,7 +221,11 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing team binding; run `aw init` first")
 	}
 
-	teamID := strings.TrimSpace(state.TeamID)
+	activeMembership := state.ActiveMembership()
+	if activeMembership == nil {
+		return usageError("current worktree is missing active_team membership; run `aw init` first")
+	}
+	teamID := strings.TrimSpace(activeMembership.TeamID)
 	if teamID == "" {
 		return usageError("current worktree is missing team_id; run `aw init` first")
 	}
@@ -220,7 +241,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	}
 
 	if aliasExplicit {
-		teamAliases, err := fetchWorkspaceTeamAliases(client, strings.TrimSpace(state.WorkspaceID))
+		teamAliases, err := fetchWorkspaceTeamAliases(client, strings.TrimSpace(activeMembership.WorkspaceID))
 		if err != nil {
 			return err
 		}
@@ -333,6 +354,88 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	workspacePath, err := awconfig.FindWorktreeWorkspacePath(workingDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return usageError("current worktree is missing .aw/workspace.yaml")
+		}
+		return err
+	}
+
+	if workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil && workspace != nil {
+		output := workspaceMigrateMultiTeamOutput{
+			Status:      "already_multi_team",
+			ActiveTeam:  strings.TrimSpace(workspace.ActiveTeam),
+			Workspace:   workspacePath,
+			LegacyMoved: false,
+		}
+		if activeMembership := workspace.ActiveMembership(); activeMembership != nil {
+			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
+		}
+		printOutput(output, formatWorkspaceMigrateMultiTeam)
+		return nil
+	} else if err != nil && !strings.Contains(err.Error(), awconfig.LegacyWorkspaceSingleTeamError()) {
+		return err
+	}
+
+	legacy, err := awconfig.LoadLegacySingleTeamWorkspaceFrom(workspacePath)
+	if err != nil {
+		return err
+	}
+	legacyCertPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
+	cert, err := awid.LoadTeamCertificate(legacyCertPath)
+	if err != nil {
+		return fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)
+	}
+	if strings.TrimSpace(cert.Team) != strings.TrimSpace(legacy.TeamID) {
+		return fmt.Errorf("legacy team certificate team_id %q does not match workspace.yaml team_id %q", cert.Team, legacy.TeamID)
+	}
+	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, legacy.TeamID, cert)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(legacyCertPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	state := awconfig.WorktreeWorkspace{
+		AwebURL:    legacy.AwebURL,
+		ActiveTeam: legacy.TeamID,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      legacy.TeamID,
+			Alias:       legacy.Alias,
+			RoleName:    legacy.RoleName,
+			WorkspaceID: legacy.WorkspaceID,
+			CertPath:    certPath,
+			JoinedAt:    firstNonEmpty(strings.TrimSpace(cert.IssuedAt), strings.TrimSpace(legacy.UpdatedAt)),
+		}},
+		HumanName:       legacy.HumanName,
+		AgentType:       legacy.AgentType,
+		RepoID:          legacy.RepoID,
+		CanonicalOrigin: legacy.CanonicalOrigin,
+		Hostname:        legacy.Hostname,
+		WorkspacePath:   legacy.WorkspacePath,
+		UpdatedAt:       firstNonEmpty(strings.TrimSpace(legacy.UpdatedAt), time.Now().UTC().Format(time.RFC3339)),
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &state); err != nil {
+		return err
+	}
+
+	printOutput(workspaceMigrateMultiTeamOutput{
+		Status:      "migrated",
+		ActiveTeam:  legacy.TeamID,
+		CertPath:    certPath,
+		Workspace:   workspacePath,
+		LegacyMoved: true,
+	}, formatWorkspaceMigrateMultiTeam)
+	return nil
+}
+
 func currentGitWorktreeRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -379,17 +482,19 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 	if state == nil {
 		return info
 	}
-	if strings.TrimSpace(state.WorkspaceID) != "" {
-		info.WorkspaceID = strings.TrimSpace(state.WorkspaceID)
-	}
-	if strings.TrimSpace(state.Alias) != "" {
-		info.Alias = strings.TrimSpace(state.Alias)
+	if activeMembership := state.ActiveMembership(); activeMembership != nil {
+		if strings.TrimSpace(activeMembership.WorkspaceID) != "" {
+			info.WorkspaceID = strings.TrimSpace(activeMembership.WorkspaceID)
+		}
+		if strings.TrimSpace(activeMembership.Alias) != "" {
+			info.Alias = strings.TrimSpace(activeMembership.Alias)
+		}
+		if strings.TrimSpace(activeMembership.RoleName) != "" {
+			info.Role = stringPtr(strings.TrimSpace(activeMembership.RoleName))
+		}
 	}
 	if strings.TrimSpace(state.HumanName) != "" {
 		info.HumanName = stringPtr(strings.TrimSpace(state.HumanName))
-	}
-	if strings.TrimSpace(state.RoleName) != "" {
-		info.Role = stringPtr(strings.TrimSpace(state.RoleName))
 	}
 	if strings.TrimSpace(state.Hostname) != "" {
 		info.Hostname = stringPtr(strings.TrimSpace(state.Hostname))
@@ -438,6 +543,23 @@ func formatWorkspaceAddWorktree(v any) string {
 	sb.WriteString(fmt.Sprintf("  cd %s\n", abbreviateUserHome(out.WorktreePath)))
 	sb.WriteString("  aw run codex\n")
 	sb.WriteString("  aw run claude\n")
+	return sb.String()
+}
+
+func formatWorkspaceMigrateMultiTeam(v any) string {
+	out := v.(workspaceMigrateMultiTeamOutput)
+	var sb strings.Builder
+	switch out.Status {
+	case "already_multi_team":
+		sb.WriteString("Workspace already uses the canonical multi-team shape.\n")
+	default:
+		sb.WriteString("Workspace migrated to the canonical multi-team shape.\n")
+	}
+	sb.WriteString(fmt.Sprintf("Active team: %s\n", out.ActiveTeam))
+	if strings.TrimSpace(out.CertPath) != "" {
+		sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	}
+	sb.WriteString(fmt.Sprintf("Workspace:   %s\n", abbreviateUserHome(out.Workspace)))
 	return sb.String()
 }
 

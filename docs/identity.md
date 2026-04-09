@@ -57,10 +57,11 @@ Identity and team membership are separate:
 - awid owns namespaces, addresses, teams, and certificate issuance records
 - aweb owns coordination state inside the team
 
-Membership in a team is proven by a team certificate stored at
-`.aw/team-cert.pem`. aweb coordination endpoints authenticate the agent with
-its DIDKey signature plus that certificate; see [aweb-sot.md](aweb-sot.md) for
-the exact request contract.
+Membership in a team is proven by a team certificate stored under
+`.aw/team-certs/`. aweb coordination endpoints authenticate the agent with its
+DIDKey signature plus the active team certificate referenced from
+`.aw/workspace.yaml`; see [aweb-sot.md](aweb-sot.md) for the exact request
+contract.
 
 ## Message Verification
 
@@ -97,8 +98,8 @@ Common identity-related files in `.aw/`:
 
 - `identity.yaml`: persistent identity metadata
 - `signing.key`: local Ed25519 private key for self-custodial identities
-- `team-cert.pem`: team membership certificate
-- `workspace.yaml`: local team/workspace binding
+- `team-certs/`: team membership certificates
+- `workspace.yaml`: local aweb binding, including `memberships` and `active_team`
 
 ## Further Reading
 

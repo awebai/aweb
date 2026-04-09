@@ -737,7 +737,7 @@ whichever upstream service mints the dashboard tokens).
 `aw init` has two main cases depending on whether the current
 directory already has a `.aw/` with an identity.
 
-**Case A — directory already has `.aw/identity.yaml` and `.aw/team-cert.pem`:**
+**Case A — directory already has `.aw/identity.yaml` and a team certificate under `.aw/team-certs/`:**
 The CLI just connects. Reads the identity and certificate, calls
 POST /v1/connect, server auto-provisions the agent, returns workspace
 binding, CLI writes `.aw/workspace.yaml`. No prompts.
@@ -766,7 +766,7 @@ PATH 2 — Hosted (use a managed namespace from a hosted operator):
 - The operator's onboarding service registers the namespace at awid
   using the parent controller key it holds, creates a default team,
   signs a team certificate, and returns the certificate to the CLI.
-- CLI saves the certificate to `.aw/team-cert.pem`.
+- CLI saves the certificate under `.aw/team-certs/<team>.pem`.
 - Proceeds to connect.
 
 After either path, the connect step is the same:
@@ -796,7 +796,7 @@ namespace family.
 3. Alice accepts:
    aw id team accept-invite <token>
    → team controller signs certificate for alice's did:key
-   → certificate saved to .aw/team-cert.pem
+   → certificate saved under .aw/team-certs/<team>.pem
 
 4. AWEB_URL=https://app.aweb.ai aw init
    → presents team certificate to aweb
@@ -818,7 +818,7 @@ own server URL for self-hosted aweb.)
    aw id team accept-invite <token>
    → generates local keypair (.aw/signing.key)
    → team controller signs ephemeral certificate for this did:key
-   → certificate saved to .aw/team-cert.pem
+   → certificate saved under .aw/team-certs/<team>.pem
 
 3. AWEB_URL=https://app.aweb.ai aw init
    → POST /v1/connect to aweb
@@ -850,7 +850,7 @@ needed for two rare administrative events:
   team key. All active members need new certificates signed by the
   new key.
 
-The certificate is stored at `.aw/team-cert.pem` for self-custodial
+Team certificates are stored under `.aw/team-certs/` for self-custodial
 CLI agents. For custodial agents (where a hosted operator holds the
 private key on behalf of the agent), the certificate lives wherever
 that operator stores it; the operator's storage layer is out of scope
@@ -868,7 +868,7 @@ relies on are:
 | Command | Purpose |
 |---------|---------|
 | `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
-| `aw init` | Bind the current workspace using `.aw/team-cert.pem` (`POST /v1/connect`) |
+| `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; persistent when `--address` is supplied, ephemeral otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
@@ -911,20 +911,24 @@ aw mcp-config
 .aw/
   identity.yaml       # Persistent identity (did:aw, did:key, address, registry_url)
   signing.key          # Ed25519 private key
-  workspace.yaml       # aweb server URL + workspace/team binding
-  team-cert.pem        # Current team certificate (auto-renewed)
+  workspace.yaml       # aweb server URL + memberships + active_team
+  team-certs/          # Team certificates keyed by team_id
 ```
 
 ### workspace.yaml (new format)
 
 ```yaml
 aweb_url: https://app.aweb.ai
-team_id: backend:acme.com
-alias: alice
-role_name: developer
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    role_name: developer
+    workspace_id: "550e8400-e29b-41d4-a716-446655440000"
+    cert_path: team-certs/backend__acme.com.pem
+    joined_at: "2026-04-06T..."
 human_name: ""
 agent_type: agent
-workspace_id: "550e8400-e29b-41d4-a716-446655440000"
 hostname: Mac.local
 workspace_path: /Users/alice/project
 canonical_origin: github.com/acme/backend
@@ -933,11 +937,12 @@ updated_at: "2026-04-06T..."
 ```
 
 The identity state lives in `identity.yaml`, including `registry_url`
-when the identity needs one. The credential is in `team-cert.pem`.
+when the identity needs one. The credentials live under `team-certs/`.
 `workspace.yaml` is an aweb coordination binding only: it carries the
-aweb server URL, the team/workspace identity, and local repo/workspace
-metadata. It does not carry awid-specific URL fields, hosted-specific
-URL fields, or identity key material.
+aweb server URL, the active team pointer, the per-team membership
+bindings, and local repo/workspace metadata. It does not carry
+awid-specific URL fields, hosted-specific URL fields, or identity key
+material.
 
 ---
 
