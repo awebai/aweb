@@ -387,12 +387,6 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 	if strings.TrimSpace(state.HumanName) != "" {
 		info.HumanName = stringPtr(strings.TrimSpace(state.HumanName))
 	}
-	if strings.TrimSpace(state.ProjectID) != "" {
-		info.ProjectID = stringPtr(strings.TrimSpace(state.ProjectID))
-	}
-	if strings.TrimSpace(state.ProjectSlug) != "" {
-		info.ProjectSlug = stringPtr(strings.TrimSpace(state.ProjectSlug))
-	}
 	if strings.TrimSpace(state.Role) != "" {
 		info.Role = stringPtr(strings.TrimSpace(state.Role))
 	}

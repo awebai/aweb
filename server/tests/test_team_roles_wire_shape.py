@@ -18,6 +18,7 @@ from aweb.coordination.routes.team_instructions import (
     TeamInstructionsHistoryResponse,
 )
 from aweb.mcp.auth import AuthContext
+from aweb.mcp.tools import team_instructions as team_instructions_tools
 from aweb.mcp.tools import team_roles as team_roles_tools
 
 
@@ -153,7 +154,12 @@ class _FakeTeamRolesVersion:
     id = "roles-123"
     team_address = "acme.com/backend"
     version = 4
-    updated_at = type("FakeTimestamp", (), {"isoformat": lambda self: "2026-01-01T00:00:00Z"})()
+    created_at = type(
+        "FakeCreatedAt",
+        (),
+        {"isoformat": lambda self: "2026-01-01T00:00:00Z"},
+    )()
+    updated_at = None
     bundle = type(
         "FakeBundle",
         (),
@@ -167,6 +173,28 @@ class _FakeTeamRolesVersion:
             "adapters": {},
         },
     )()
+
+
+class _FakeInstructionsDB:
+    async def fetch_one(self, _query: str, *_args):
+        return {
+            "id": "instr-123",
+            "team_address": "acme.com/backend",
+            "version": 2,
+            "document_json": {"body_md": "Use aw", "format": "markdown"},
+            "created_at": type(
+                "FakeCreatedAt",
+                (),
+                {"isoformat": lambda self: "2026-02-01T00:00:00Z"},
+            )(),
+            "updated_at": None,
+        }
+
+
+class _FakeInstructionsDBInfra:
+    def get_manager(self, name: str):
+        assert name == "aweb"
+        return _FakeInstructionsDB()
 
 
 @pytest.mark.asyncio
@@ -195,4 +223,28 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
 
     assert data["team_roles_id"] == "roles-123"
     assert data["active_team_roles_id"] == "roles-123"
+    assert data["updated_at"] == "2026-01-01T00:00:00Z"
     assert data["selected_role"]["role_name"] == "developer"
+
+
+@pytest.mark.asyncio
+async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_missing(monkeypatch):
+    monkeypatch.setattr(
+        team_instructions_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_address="acme.com/backend",
+            agent_id="agent-1",
+            alias="alice",
+            did_key="did:key:z6Mkexample",
+        ),
+    )
+
+    payload = await team_instructions_tools.instructions_show(
+        _FakeInstructionsDBInfra(),
+        team_instructions_id="instr-123",
+    )
+    data = json.loads(payload)
+
+    assert data["team_instructions_id"] == "instr-123"
+    assert data["updated_at"] == "2026-02-01T00:00:00Z"
