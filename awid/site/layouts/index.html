@@ -413,8 +413,8 @@
         awid.ai
       </a>
       <div class="nav-links">
-        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-service.md">Docs</a>
-        <a href="https://github.com/awebai/aweb/tree/main/docs/server-api-reference.md">API</a>
+        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Docs</a>
+        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">API</a>
         <a href="https://github.com/awebai/aweb">GitHub</a>
       </div>
     </nav>
@@ -428,7 +428,8 @@
         and their audit trails survive key rotation and server moves.
       </p>
       <p class="lead">
-        Open protocol, rooted in DNS.
+        Open protocol for namespaces, identities, addresses, and teams,
+        rooted in DNS.
       </p>
 
       <div class="chain">
@@ -527,6 +528,42 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
 }</pre>
     </section>
 
+    <!-- ── Teams ───────────────────────────────── -->
+
+    <section>
+      <h2>Teams are first-class registry objects</h2>
+      <p class="section-text">
+        awid also stores team controllers and member certificates. Team
+        identifiers use the colon form <code>backend:acme.com</code>, distinct
+        from address form like <code>acme.com/alice</code>. Services resolve the
+        team controller key from awid, verify member certificates locally, and
+        refresh revocations from the registry on a bounded cadence.
+      </p>
+      <p class="section-text">
+        Team-scoped member references compose naturally:
+        <code>backend:acme.com/alice</code>. Members can live in another
+        namespace, so a team in <code>acme.com</code> can include
+        <code>partner.com/bob</code> without rehoming that identity.
+      </p>
+
+      <pre>{
+  <span class="key">"team_id"</span>: "backend:acme.com",
+  <span class="key">"alias"</span>: "alice",
+  <span class="key">"member_address"</span>: "partner.com/alice",
+  <span class="key">"member_did_aw"</span>: "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+  <span class="key">"member_did_key"</span>: "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  <span class="key">"team_did_key"</span>: "did:key:z6Mkf9aBnQRj...",
+  <span class="key">"lifetime"</span>: "persistent",
+  <span class="key">"issued_at"</span>: "2026-04-09T12:00:00Z"
+}</pre>
+
+      <p class="section-text">
+        The registry exposes single-member lookup at
+        <code>GET /v1/namespaces/{domain}/teams/{name}/members/{alias}</code>
+        so clients do not need to list and filter every certificate client-side.
+      </p>
+    </section>
+
     <!-- ── API ─────────────────────────────────── -->
 
     <section>
@@ -562,6 +599,30 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
             <span class="endpoint-path">/v1/namespaces/{domain}/addresses/{name}</span>
             <p class="endpoint-desc">Resolve a public address.</p>
           </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">GET</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams</span>
+            <p class="endpoint-desc">List teams under a namespace.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">GET</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}</span>
+            <p class="endpoint-desc">Inspect a team controller and metadata.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">GET</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/members/{alias}</span>
+            <p class="endpoint-desc">Resolve one active team member certificate by alias.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">GET</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/revocations</span>
+            <p class="endpoint-desc">Fetch the team's published revocation list.</p>
+          </div>
         </div>
 
         <div class="api-group">
@@ -590,14 +651,40 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
             <span class="endpoint-path">/v1/namespaces/{domain}/addresses[/{name}]</span>
             <p class="endpoint-desc">Manage addresses under a controlled namespace.</p>
           </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">POST</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams</span>
+            <p class="endpoint-desc">Create a team under a namespace controller.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">POST</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/certificates</span>
+            <p class="endpoint-desc">Issue a signed team certificate for a member.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">POST</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/certificates/revoke</span>
+            <p class="endpoint-desc">Revoke a member certificate and publish the change.</p>
+          </div>
+
+          <div class="endpoint">
+            <span class="endpoint-method">POST</span>
+            <span class="endpoint-path">/v1/namespaces/{domain}/teams/{name}/rotate</span>
+            <p class="endpoint-desc">Rotate the team controller key with namespace authorization.</p>
+          </div>
         </div>
       </div>
 
       <div class="auth-note">
         Signed writes use Ed25519 signature auth:
-        <code>Authorization: DIDKey &lt;did:key&gt; &lt;base64_signature&gt;</code>.
-        Read operations are public and rate-limited.
+        <code>Authorization: DIDKey &lt;did:key&gt; &lt;base64_signature&gt;</code>
+        plus <code>X-AWEB-Timestamp: &lt;RFC3339 UTC&gt;</code>. Read operations
+        are public and rate-limited.
         <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Conformance vectors</a>
+        and the <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">awid source of truth</a>
         define canonical signing, hashing, and identity derivation across implementations.
       </div>
     </section>
@@ -612,7 +699,8 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </p>
       <p class="section-text">
         <strong>awid</strong> &mdash; this identity registry. Resolves
-        addresses, manages namespaces, maintains the key audit log.
+        addresses, manages namespaces, stores team controllers and member
+        certificates, and maintains the key audit log.
       </p>
       <p class="section-text">
         <strong>aw</strong> &mdash; the CLI client. Creates and manages
@@ -679,23 +767,29 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
 <span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
 <span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
 <span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
-<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span></pre>
+<span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span>
+<span class="prompt">$ </span>aw id team create --name backend --namespace acme.com
+<span class="prompt">$ </span>aw id team invite --team backend --namespace acme.com
+<span class="prompt">$ </span>aw id team accept-invite &lt;token&gt; --alias alice</pre>
 
       <p class="section-text">
         The <code>aw id</code> commands work against any registry
         implementing the awid protocol. The authoritative registry for
         a namespace is determined by DNS &mdash;
-        <code>api.awid.ai</code> by default, free to use. To coordinate
-        with a team, connect your identity to
-        <a href="https://aweb.ai">aweb</a>:
+        <code>api.awid.ai</code> by default, free to use. Once you have a team
+        certificate, bind the current repository to a coordination server with
+        <a href="https://app.aweb.ai">aweb</a>:
       </p>
 
-      <pre><span class="prompt">$ </span>aw init --project myteam         <span class="comment"># join a project with your existing identity</span>
-<span class="prompt">$ </span>aw run claude                    <span class="comment"># or let the wizard handle both steps</span></pre>
+      <pre><span class="prompt">$ </span>AWEB_URL=https://app.aweb.ai aw init
+<span class="prompt">$ </span>aw workspace add-worktree reviewer
+<span class="prompt">$ </span>aw run claude</pre>
 
       <p class="section-text">
-        By default this uses the hosted coordination service at
-        <a href="https://aweb.ai">aweb.ai</a> (free tier). You can also
+        For hosted onboarding from the dashboard, use
+        <code>aw connect --bootstrap-token &lt;token&gt;</code>. By default the
+        hosted coordination service is <a href="https://app.aweb.ai">app.aweb.ai</a>.
+        You can also
         <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">run your own aweb server</a>.
       </p>
     </section>
@@ -706,7 +800,7 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
       <span>MIT license &middot; Self-hostable &middot; Ed25519 &middot; <code>did:aw</code> + <code>did:key</code></span>
       <div class="footer-links">
         <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">Self-host</a>
-        <a href="https://github.com/awebai/aweb/tree/main/docs/id-sot.md">Identity model</a>
+        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Identity model</a>
         <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Vectors</a>
         <a href="https://github.com/awebai/aweb">GitHub</a>
       </div>
