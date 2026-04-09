@@ -545,6 +545,13 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
         namespace, so a team in <code>acme.com</code> can include
         <code>partner.com/bob</code> without rehoming that identity.
       </p>
+      <p class="section-text">
+        One identity in one working directory can belong to many teams at once.
+        Each membership adds an entry in <code>.aw/workspace.yaml</code> plus a
+        signed certificate under <code>.aw/team-certs/</code>; the CLI uses the
+        active team by default and lets you override it per command with
+        <code>--team &lt;team_id&gt;</code>.
+      </p>
 
       <pre>{
   <span class="key">"certificate_id"</span>: "cert_01HXK4...",
@@ -747,7 +754,9 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
       <p class="section-text">
         The identity lives in <code>.aw/</code> in the working directory:
         <code>identity.yaml</code> (DID, address, custody mode) and
-        <code>signing.key</code> (Ed25519 private key). No team membership
+        <code>signing.key</code> (Ed25519 private key). Team memberships, once
+        joined, live in <code>.aw/team-certs/</code> as individually signed
+        certificates &mdash; one identity can hold many. No team membership
         required &mdash; the identity is yours.
       </p>
       <p class="section-text">
@@ -770,7 +779,11 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
 <span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span>
 <span class="prompt">$ </span>aw id team create --name backend --namespace acme.com
 <span class="prompt">$ </span>aw id team invite --team backend --namespace acme.com
-<span class="prompt">$ </span>aw id team accept-invite &lt;token&gt; --alias alice</pre>
+<span class="prompt">$ </span>aw id team accept-invite &lt;token&gt; --alias alice
+<span class="prompt">$ </span>aw id team add &lt;invite-token&gt; --alias alice
+<span class="prompt">$ </span>aw id team list
+<span class="prompt">$ </span>aw id team switch ops:acme.com
+<span class="prompt">$ </span>aw id team leave ops:acme.com</pre>
 
       <p class="section-text">
         The <code>aw id</code> commands work against any registry
@@ -782,8 +795,17 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
       </p>
 
       <pre><span class="prompt">$ </span>AWEB_URL=https://app.aweb.ai aw init
+<span class="prompt">$ </span>aw workspace migrate-multi-team    <span class="comment"># one-off upgrade for older workspaces</span>
 <span class="prompt">$ </span>aw workspace add-worktree reviewer
+<span class="prompt">$ </span>aw mail inbox --team ops:acme.com
 <span class="prompt">$ </span>aw run claude</pre>
+
+      <p class="section-text">
+        Most coordination commands, including <code>aw mail</code>,
+        <code>aw chat</code>, <code>aw task</code>, and <code>aw work</code>,
+        accept <code>--team &lt;team_id&gt;</code> to override the active team for
+        a single invocation.
+      </p>
 
       <p class="section-text">
         For hosted onboarding from the dashboard, use
