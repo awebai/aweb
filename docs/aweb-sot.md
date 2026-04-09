@@ -156,17 +156,22 @@ able to distinguish:
 
 ### Request format
 
-Every authenticated request carries two headers:
+Every authenticated request carries three headers:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+X-AWEB-Timestamp: <unix-seconds>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
 The `Authorization` header is an Ed25519 signature over the canonical
-JSON of `{team_address, timestamp, body_sha256}` where `body_sha256`
+JSON of `{team, timestamp, body_sha256}` where `body_sha256`
 is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
+
+The `X-AWEB-Timestamp` header carries the signed request timestamp in
+Unix seconds. Servers reject requests outside the allowed clock-skew
+window.
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid. A base64 team certificate is on
@@ -182,14 +187,15 @@ remains the canonical credential.
 
 1. Parse `Authorization` header → extract did:key and signature.
 2. Compute SHA256 hex digest of the request body. Verify the Ed25519
-   signature over canonical JSON of `{team_address, timestamp,
+   signature over canonical JSON of `{team, timestamp,
    body_sha256}`. Reject if invalid.
 3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
    per the [certificate verification protocol](awid-sot.md#verification-by-a-service)
    defined in the awid SoT (verify signature against the cached team
    public key, verify certificate `member_did_key` matches the request
    did:key, check `certificate_id` against the cached revocation list).
-4. Extract `team_address`, `alias`, `lifetime` from the certificate.
+4. Extract `team` (the coordination `team_address`), `alias`, and `lifetime`
+   from the certificate.
 5. Request is authenticated and authorized for the given team.
 
 Steps 1-3 are local crypto, no network. The revocation-list and team
@@ -274,7 +280,8 @@ CREATE TABLE teams (
 
 -- Agents. One row per agent per team. Created on first connection
 -- with a valid certificate. No identity columns — the certificate
--- IS the identity proof.
+-- IS the identity proof. Soft-deleted rows release both alias and
+-- did_key for reuse; only active rows remain unique within a team.
 CREATE TABLE agents (
     agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL REFERENCES teams(team_address),
@@ -290,12 +297,17 @@ CREATE TABLE agents (
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (team_address, alias)
+    deleted_at      TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agents_did_key ON agents (did_key) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_agents_active_alias
+    ON agents (team_address, alias)
+    WHERE deleted_at IS NULL;
+
+CREATE UNIQUE INDEX idx_agents_active_did_key
+    ON agents (team_address, did_key)
+    WHERE deleted_at IS NULL;
+
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
 
 -- Mail
@@ -585,6 +597,7 @@ CREATE TABLE audit_log (
 | `GET /v1/status` | Team status |
 | `GET /v1/status/stream` | Status SSE |
 | `POST /v1/agents/heartbeat` | Keep-alive |
+| `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
 | `PATCH /v1/agents/me` | Update workspace info |
 | `POST /v1/agents/{alias}/control` | Control signals |
@@ -973,71 +986,6 @@ aweb does NOT call awid for:
 
 ---
 
-## aweb API surface (what a dashboard service depends on)
-
-An external dashboard service reads coordination data from aweb on
-behalf of a human user. These endpoints are authenticated with a
-short-lived dashboard session token (not a team certificate — the
-dashboard caller is a human viewer, not an agent).
-
-### Team status
-
-```
-GET /v1/status?team_address=acme.com/backend
-→ {
-    "team_address": "acme.com/backend",
-    "agents": [
-      {
-        "alias": "alice",
-        "did_key": "...",
-        "did_aw": "...",
-        "role": "developer",
-        "status": "active",
-        "last_seen_at": "...",
-        "hostname": "...",
-        "workspace_path": "...",
-        "claims": [...],
-        "locks": [...]
-      }
-    ]
-  }
-```
-
-### Message history
-
-```
-GET /v1/messages?team_address=acme.com/backend&limit=50
-→ { "messages": [...] }
-```
-
-### Task list
-
-```
-GET /v1/tasks?team_address=acme.com/backend
-→ { "tasks": [...] }
-```
-
-### Agent detail
-
-```
-GET /v1/agents/{alias}?team_address=acme.com/backend
-→ { "alias": "alice", "role": "developer", ... }
-```
-
-### Dashboard auth
-
-The dashboard service authenticates to aweb using a short-lived
-`X-Dashboard-Token` JWT signed with `AWEB_DASHBOARD_JWT_SECRET` (HS256,
-shared between aweb and the issuer). The JWT carries the list of
-`team_addresses` the human has access to (the dashboard service derives
-this from awid team membership before minting the token).
-
-For the full spec — including the public-team anonymous-bypass behavior
-and the fail-closed semantics on visibility lookup error — see
-**Authentication > Dashboard auth** earlier in this document.
-
----
-
 ## MCP server
 
 aweb ships an MCP (Model Context Protocol) server that exposes the
@@ -1086,6 +1034,7 @@ header:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+X-AWEB-Timestamp: <unix-seconds>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
