@@ -21,6 +21,12 @@ For supporting reference material that does not redefine the contract:
   for the OSS stack
 - [`identity-key-verification.md`](identity-key-verification.md) —
   normative rules for verifying `GET /v1/did/{did_aw}/key` responses
+- The aweb server's REST API is documented by the live FastAPI
+  `/docs` OpenAPI viewer, auto-generated from route signatures.
+  There is no hand-maintained `server-api-reference.md` — a previous
+  version was deleted as stale drift and should not be recreated.
+  Any future need for a human-readable API reference should be
+  satisfied by pointing at the `/docs` endpoint.
 
 ---
 
