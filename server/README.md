@@ -35,7 +35,7 @@ Direct `uv` mode is also supported:
 ```bash
 cd ../awid
 uv sync
-uv run awid serve
+uv run awid
 
 cd ../server
 uv sync

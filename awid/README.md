@@ -13,7 +13,7 @@ It is intentionally thin:
 
 ```bash
 uv sync
-uv run awid serve
+uv run awid
 ```
 
 Required environment:

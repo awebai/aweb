@@ -47,7 +47,7 @@ cd awid
 uv sync
 export AWID_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWID_REDIS_URL=redis://localhost:6379/0
-uv run awid serve
+uv run awid
 
 cd ../server
 uv sync
