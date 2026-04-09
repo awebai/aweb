@@ -15,7 +15,6 @@ class WorkspaceConfig:
     workspace_id: str | None = None
     alias: str | None = None
     human_name: str | None = None
-    project_slug: str | None = None
     repo_origin: str | None = None
 
 
@@ -65,7 +64,6 @@ def load_workspace_config(path: Path | None = None) -> WorkspaceConfig | None:
         workspace_id=str(parsed.get("workspace_id") or "") or None,
         alias=str(parsed.get("alias") or "") or None,
         human_name=str(parsed.get("human_name") or "") or None,
-        project_slug=str(parsed.get("project_slug") or "") or None,
         repo_origin=str(parsed.get("canonical_origin") or parsed.get("repo_origin") or "") or None,
     )
 
@@ -85,11 +83,6 @@ def _get_config_field(
 def get_workspace_id(override: str | None = None, path: Path | None = None) -> str | None:
     """Get workspace_id, preferring explicit override over .aw/workspace.yaml."""
     return _get_config_field("workspace_id", override, path)
-
-
-def get_project_slug(override: str | None = None, path: Path | None = None) -> str | None:
-    """Get project_slug, preferring explicit override over .aw/workspace.yaml."""
-    return _get_config_field("project_slug", override, path)
 
 
 def get_human_name(override: str | None = None, path: Path | None = None) -> str | None:

@@ -28,7 +28,7 @@ from .events import (
     publish_chat_session_signal,
     publish_event,
 )
-from .presence import clear_workspace_presence, get_agent_presence, get_workspace_project_slug
+from .presence import clear_workspace_presence, get_agent_presence
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -145,13 +145,11 @@ async def _cascade_agent_deleted(
         )
 
     # Publish unclaim events for each released task claim
-    project_slug = await get_workspace_project_slug(redis, agent_id)
     for row in claimed_rows:
         await publish_event(
             redis,
             TaskUnclaimedEvent(
                 workspace_id=agent_id,
-                project_slug=project_slug,
                 task_ref=row["task_ref"],
                 alias=alias,
             ),
@@ -201,8 +199,6 @@ async def _cascade_task_status_changed(
 
     team_address = str(workspace["team_address"])
     alias = workspace["alias"]
-    project_slug = await get_workspace_project_slug(redis, actor_id)
-
     if new_status == "in_progress":
         if not claim_preacquired:
             conflict = await upsert_claim(
@@ -223,7 +219,6 @@ async def _cascade_task_status_changed(
             redis,
             TaskClaimedEvent(
                 workspace_id=actor_id,
-                project_slug=project_slug,
                 task_ref=task_ref,
                 alias=alias,
                 title=title,
@@ -242,7 +237,6 @@ async def _cascade_task_status_changed(
                     redis,
                     TaskUnclaimedEvent(
                         workspace_id=cid,
-                        project_slug=project_slug,
                         task_ref=task_ref,
                         alias=claimant_aliases.get(cid, ""),
                         title=title,
@@ -253,7 +247,6 @@ async def _cascade_task_status_changed(
         redis,
         TaskStatusChangedEvent(
             workspace_id=actor_id,
-            project_slug=project_slug,
             team_address=team_address,
             task_ref=task_ref,
             old_status=context.get("old_status", "") or "",
@@ -268,8 +261,8 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
     """Release all claims on a deleted task and publish unclaim events.
 
     The task.deleted hook provides {task_id, task_ref}; use task_id as the
-    source of truth for project lookup so colliding project slugs cannot
-    release claims in another project.
+    source of truth for team lookup so colliding task refs cannot release
+    claims in another team.
     """
     task_id = context.get("task_id", "").strip()
     task_ref = context.get("task_ref", "").strip()
@@ -293,12 +286,10 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
     if claimant_ids:
         claimant_aliases = await fetch_workspace_aliases(db_infra, team_address, claimant_ids)
         for cid in claimant_ids:
-            project_slug = await get_workspace_project_slug(redis, cid)
             await publish_event(
                 redis,
                 TaskUnclaimedEvent(
                     workspace_id=cid,
-                    project_slug=project_slug,
                     task_ref=task_ref,
                     alias=claimant_aliases.get(cid, ""),
                     title=context.get("title"),
@@ -320,7 +311,6 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
     if isinstance(event, MessageDeliveredEvent):
         event.from_alias = await _alias_for(redis, event.from_workspace)
         event.to_alias = await _alias_for(redis, event.workspace_id)
-        event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
     elif isinstance(event, MessageAcknowledgedEvent):
         if event.message_id:
@@ -332,7 +322,6 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
             if row:
                 event.from_alias = row["from_alias"]
                 event.subject = row["subject"] or ""
-        event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
     elif isinstance(event, ChatMessageEvent):
         event.from_alias = await _alias_for(redis, event.workspace_id)
@@ -352,7 +341,6 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
             )
             if msg and msg["body"]:
                 event.preview = msg["body"][:80]
-        event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
     elif isinstance(event, TaskCreatedEvent):
         aweb_db = db_infra.get_manager("aweb")
@@ -368,11 +356,9 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
             event.alias = workspace["alias"]
         else:
             event.alias = await _alias_for(redis, event.workspace_id)
-        event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
     elif isinstance(event, (ReservationAcquiredEvent, ReservationReleasedEvent)):
         event.alias = await _alias_for(redis, event.workspace_id)
-        event.project_slug = await get_workspace_project_slug(redis, event.workspace_id)
 
 
 def _translate(event_type: str, ctx: dict):

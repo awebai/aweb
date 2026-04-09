@@ -183,5 +183,6 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     assert resp.status_code == 200
     assert "event: connected" in resp.text
+    assert '"team_address": "acme.com/backend"' in resp.text
     assert "event: actionable_mail" in resp.text
     assert '"from_alias": "alice"' in resp.text

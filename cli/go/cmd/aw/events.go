@@ -98,7 +98,7 @@ var eventsStreamCmd = &cobra.Command{
 func printEventText(ev *awid.AgentEvent) {
 	switch ev.Type {
 	case awid.AgentEventConnected:
-		fmt.Printf("[connected] agent_id=%s project_id=%s\n", ev.AgentID, ev.ProjectID)
+		fmt.Printf("[connected] agent_id=%s team_address=%s\n", ev.AgentID, ev.TeamAddress)
 	case awid.AgentEventActionableMail:
 		fmt.Printf(
 			"[actionable_mail] from=%s wake_mode=%s unread=%d message_id=%s subject=%q\n",
