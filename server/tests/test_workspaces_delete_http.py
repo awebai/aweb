@@ -367,3 +367,100 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
     )
     assert workspace_row["deleted_at"] is None
     assert agent_row["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
+    team_a_sk, _, team_a_did_key = _make_keypair()
+    team_b_sk, _, team_b_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    team_a_address = "acme.com/backend"
+    team_b_address = "other.example/dev"
+    workspace_id = uuid4()
+    agent_id = uuid4()
+
+    cert = _make_certificate(
+        team_b_sk,
+        team_b_did_key,
+        agent_did_key,
+        team_address=team_b_address,
+        alias="eve",
+        lifetime="ephemeral",
+    )
+    headers = _signed_request(agent_sk, agent_did_key, team_b_address)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)
+        """,
+        team_a_address,
+        "acme.com",
+        "backend",
+        team_a_did_key,
+        team_b_address,
+        "other.example",
+        "dev",
+        team_b_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_address, did_key, alias, lifetime, role)
+        VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
+        """,
+        agent_id,
+        team_a_address,
+        agent_did_key,
+        "alice",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_address, did_key, alias, lifetime, role)
+        VALUES ($1, $2, $3, 'ephemeral', 'developer')
+        """,
+        team_b_address,
+        agent_did_key,
+        "eve",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        workspace_id,
+        team_a_address,
+        agent_id,
+        "alice",
+        "/tmp/team-a-worktree",
+        datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_b_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
+
+    assert resp.status_code == 404
+
+    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.agents}}
+        WHERE agent_id = $1
+        """,
+        agent_id,
+    )
+    assert workspace_row["deleted_at"] is None
+    assert agent_row["deleted_at"] is None
