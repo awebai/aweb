@@ -22,6 +22,12 @@ func testCommandEnv(home string) []string {
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
 	t.Helper()
+	if strings.TrimSpace(state.WorkspaceID) == "" {
+		state.WorkspaceID = strings.TrimSpace(state.IdentityID)
+	}
+	if strings.TrimSpace(state.Alias) == "" {
+		state.Alias = strings.TrimSpace(state.IdentityHandle)
+	}
 	if strings.TrimSpace(state.AwebURL) != "" && strings.TrimSpace(state.TeamAddress) != "" {
 		certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 		signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)

@@ -74,7 +74,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Cert-auth workspaces have alias/did but no IdentityID. Either form is valid.
+	// Team-bound workspaces need a local alias/workspace identity to function.
 	hasIdentity := strings.TrimSpace(sel.IdentityID) != "" ||
 		strings.TrimSpace(sel.DID) != "" ||
 		strings.TrimSpace(sel.IdentityHandle) != ""
