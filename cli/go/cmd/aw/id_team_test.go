@@ -494,6 +494,73 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	}
 }
 
+func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
+	t.Parallel()
+
+	var gotRevokePayload map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/bob":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-cross",
+				"member_did_key": "did:key:z6MkBob",
+				"member_did_aw":  "did:aw:bob",
+				"member_address": "partner.com/bob",
+				"alias":          "bob",
+				"lifetime":       "persistent",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
+			if err := json.NewDecoder(r.Body).Decode(&gotRevokePayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "remove-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--member", "partner.com/bob",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remove-member failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "removed" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["member_address"] != "partner.com/bob" {
+		t.Fatalf("member_address=%v", got["member_address"])
+	}
+	if gotRevokePayload["certificate_id"] != "cert-cross" {
+		t.Fatalf("revoke certificate_id=%v", gotRevokePayload["certificate_id"])
+	}
+}
+
 func TestCertShow(t *testing.T) {
 	t.Parallel()
 

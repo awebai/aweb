@@ -586,12 +586,9 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	memberDomain, memberName, err := parseAddress(member)
+	_, memberName, err := parseAddress(member)
 	if err != nil {
 		return err
-	}
-	if memberDomain != domain {
-		return fmt.Errorf("member address %s is outside team namespace %s", member, domain)
 	}
 	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
 	if err != nil {
