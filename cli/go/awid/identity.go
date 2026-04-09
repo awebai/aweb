@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// ResolvedIdentity holds resolved identity information for an identity address.
+// ResolvedIdentity holds resolved identity information for an identity reference.
 type ResolvedIdentity struct {
 	DID           string
 	StableID      string
-	Address       string // domain/handle
+	Address       string // address when known; may be empty for addressless references
 	ControllerDID string
 	Handle        string
 	PublicKey     ed25519.PublicKey
@@ -99,7 +99,7 @@ func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedId
 }
 
 // ChainResolver dispatches resolution by identifier format.
-// did:key identifiers use DIDKeyResolver; registry addresses use RegistryResolver.
+// did:key identifiers use DIDKeyResolver; registry identifiers use RegistryResolver.
 type ChainResolver struct {
 	DIDKey   *DIDKeyResolver
 	Registry *RegistryResolver
