@@ -33,10 +33,10 @@ from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
-from aweb.mcp.tools.project_instructions import instructions_history as _instructions_history_impl
-from aweb.mcp.tools.project_instructions import instructions_show as _instructions_show_impl
-from aweb.mcp.tools.project_roles import roles_show as _roles_show_impl
-from aweb.mcp.tools.project_roles import roles_list as _roles_list_impl
+from aweb.mcp.tools.team_instructions import instructions_history as _instructions_history_impl
+from aweb.mcp.tools.team_instructions import instructions_show as _instructions_show_impl
+from aweb.mcp.tools.team_roles import roles_show as _roles_show_impl
+from aweb.mcp.tools.team_roles import roles_list as _roles_list_impl
 from aweb.mcp.tools.tasks import task_claim as _task_claim_impl
 from aweb.mcp.tools.tasks import task_close as _task_close_impl
 from aweb.mcp.tools.tasks import task_comment_add as _task_comment_add_impl
@@ -191,7 +191,7 @@ def register_tools(
 
     @mcp.tool(
         name="list_agents",
-        description="List all agents in the current project with online status.",
+        description="List all agents in the current team with online status.",
     )
     async def list_agents() -> str:
         return await _list_agents_impl(db_infra, redis)
@@ -267,7 +267,7 @@ def register_tools(
 
     @mcp.tool(
         name="task_create",
-        description="Create a task in the current project.",
+        description="Create a task in the current team.",
     )
     async def task_create(
         title: str,
@@ -293,7 +293,7 @@ def register_tools(
 
     @mcp.tool(
         name="task_list",
-        description="List tasks in the current project.",
+        description="List tasks in the current team.",
     )
     async def task_list(
         status: str = "",
@@ -313,7 +313,7 @@ def register_tools(
 
     @mcp.tool(
         name="task_ready",
-        description="List ready tasks in the current project.",
+        description="List ready tasks in the current team.",
     )
     async def task_ready(unclaimed_only: bool = True) -> str:
         return await _task_ready_impl(db_infra, unclaimed_only=unclaimed_only)
@@ -392,30 +392,30 @@ def register_tools(
 
     @mcp.tool(
         name="instructions_show",
-        description="Show the active shared project instructions or a requested instructions version.",
+        description="Show the active shared team instructions or a requested instructions version.",
     )
-    async def instructions_show(project_instructions_id: str = "") -> str:
+    async def instructions_show(team_instructions_id: str = "") -> str:
         return await _instructions_show_impl(
-            db_infra, project_instructions_id=project_instructions_id
+            db_infra, team_instructions_id=team_instructions_id
         )
 
     @mcp.tool(
         name="instructions_history",
-        description="List recent shared project instructions versions.",
+        description="List recent shared team instructions versions.",
     )
     async def instructions_history(limit: int = 20) -> str:
         return await _instructions_history_impl(db_infra, limit=limit)
 
     @mcp.tool(
         name="roles_show",
-        description="Show the active project roles bundle and the current agent's selected role.",
+        description="Show the active team roles bundle and the current agent's selected role.",
     )
     async def roles_show(only_selected: bool = False) -> str:
         return await _roles_show_impl(db_infra, only_selected=only_selected)
 
     @mcp.tool(
         name="roles_list",
-        description="List available roles from the active project roles bundle.",
+        description="List available roles from the active team roles bundle.",
     )
     async def roles_list() -> str:
         return await _roles_list_impl(db_infra)
@@ -438,7 +438,7 @@ def register_tools(
 
     @mcp.tool(
         name="work_blocked",
-        description="List blocked tasks in the current project.",
+        description="List blocked tasks in the current team.",
     )
     async def work_blocked() -> str:
         return await _work_blocked_impl(db_infra)

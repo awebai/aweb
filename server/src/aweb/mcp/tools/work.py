@@ -70,7 +70,7 @@ async def work_active(db_infra) -> str:
 
 
 async def work_blocked(db_infra) -> str:
-    """List blocked tasks in the authenticated project."""
+    """List blocked tasks in the authenticated team."""
     auth = get_auth()
     tasks = await list_blocked_tasks(db_infra, team_address=auth.team_address)
     return json.dumps({"kind": "blocked", "tasks": tasks})

@@ -1,4 +1,4 @@
-"""Load default project roles and project instructions from disk."""
+"""Load default team roles and team instructions from disk."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BUNDLE_CACHE: Dict[str, Any] | None = None
-_DEFAULT_PROJECT_INSTRUCTIONS_CACHE: Dict[str, Any] | None = None
+_DEFAULT_TEAM_INSTRUCTIONS_CACHE: Dict[str, Any] | None = None
 _CACHE_LOCK = threading.Lock()
 
 
@@ -74,7 +74,7 @@ def load_role(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
 
 def load_default_bundle(defaults_dir: Path) -> Dict[str, Any]:
-    """Load the default project-roles bundle from disk."""
+    """Load the default team roles bundle from disk."""
     roles_dir = defaults_dir / "roles"
     if not roles_dir.is_dir():
         raise ValueError(
@@ -90,19 +90,19 @@ def load_default_bundle(defaults_dir: Path) -> Dict[str, Any]:
             raise ValueError(f"Duplicate role ID '{role_id}' found in '{file_path}'")
         roles[role_id] = role_data
 
-    logger.info("Loaded default project roles bundle: %d roles", len(roles))
+    logger.info("Loaded default team roles bundle: %d roles", len(roles))
     return {
         "roles": roles,
         "adapters": {},
     }
 
 
-def load_default_project_instructions(defaults_dir: Path) -> Dict[str, Any]:
-    """Load the default shared project instructions from disk."""
-    file_path = defaults_dir / "project_instructions.md"
+def load_default_team_instructions(defaults_dir: Path) -> Dict[str, Any]:
+    """Load the default shared team instructions from disk."""
+    file_path = defaults_dir / "team_instructions.md"
     if not file_path.is_file():
         raise ValueError(
-            f"Defaults directory '{defaults_dir}' is missing required 'project_instructions.md'"
+            f"Defaults directory '{defaults_dir}' is missing required 'team_instructions.md'"
         )
 
     return {
@@ -112,7 +112,7 @@ def load_default_project_instructions(defaults_dir: Path) -> Dict[str, Any]:
 
 
 def get_default_bundle(force_reload: bool = False) -> Dict[str, Any]:
-    """Get the default project-roles bundle, loading from disk if needed."""
+    """Get the default team roles bundle, loading from disk if needed."""
     global _DEFAULT_BUNDLE_CACHE
 
     if force_reload or _DEFAULT_BUNDLE_CACHE is None:
@@ -124,25 +124,25 @@ def get_default_bundle(force_reload: bool = False) -> Dict[str, Any]:
     return copy.deepcopy(_DEFAULT_BUNDLE_CACHE)
 
 
-def get_default_project_instructions(force_reload: bool = False) -> Dict[str, Any]:
-    """Get the default shared project instructions, loading from disk if needed."""
-    global _DEFAULT_PROJECT_INSTRUCTIONS_CACHE
+def get_default_team_instructions(force_reload: bool = False) -> Dict[str, Any]:
+    """Get the default shared team instructions, loading from disk if needed."""
+    global _DEFAULT_TEAM_INSTRUCTIONS_CACHE
 
-    if force_reload or _DEFAULT_PROJECT_INSTRUCTIONS_CACHE is None:
+    if force_reload or _DEFAULT_TEAM_INSTRUCTIONS_CACHE is None:
         with _CACHE_LOCK:
-            if force_reload or _DEFAULT_PROJECT_INSTRUCTIONS_CACHE is None:
+            if force_reload or _DEFAULT_TEAM_INSTRUCTIONS_CACHE is None:
                 defaults_dir = Path(__file__).parents[1] / "defaults"
-                _DEFAULT_PROJECT_INSTRUCTIONS_CACHE = load_default_project_instructions(
+                _DEFAULT_TEAM_INSTRUCTIONS_CACHE = load_default_team_instructions(
                     defaults_dir
                 )
 
-    return copy.deepcopy(_DEFAULT_PROJECT_INSTRUCTIONS_CACHE)
+    return copy.deepcopy(_DEFAULT_TEAM_INSTRUCTIONS_CACHE)
 
 
 def clear_default_bundle_cache() -> None:
     """Clear cached defaults (for testing)."""
     global _DEFAULT_BUNDLE_CACHE
-    global _DEFAULT_PROJECT_INSTRUCTIONS_CACHE
+    global _DEFAULT_TEAM_INSTRUCTIONS_CACHE
     with _CACHE_LOCK:
         _DEFAULT_BUNDLE_CACHE = None
-        _DEFAULT_PROJECT_INSTRUCTIONS_CACHE = None
+        _DEFAULT_TEAM_INSTRUCTIONS_CACHE = None

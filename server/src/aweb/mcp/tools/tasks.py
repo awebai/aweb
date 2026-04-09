@@ -29,7 +29,7 @@ async def task_create(
     parent_task_id: str = "",
     assignee: str = "",
 ) -> str:
-    """Create a task in the authenticated project."""
+    """Create a task in the authenticated team."""
     auth = get_auth()
     try:
         result = await create_task(
@@ -59,7 +59,7 @@ async def task_list(
     priority: int = -1,
     labels: list[str] | None = None,
 ) -> str:
-    """List tasks in the authenticated project."""
+    """List tasks in the authenticated team."""
     auth = get_auth()
     try:
         tasks = await list_tasks(
@@ -77,7 +77,7 @@ async def task_list(
 
 
 async def task_ready(db_infra, *, unclaimed_only: bool = True) -> str:
-    """List ready tasks in the authenticated project."""
+    """List ready tasks in the authenticated team."""
     auth = get_auth()
     tasks = await list_ready_tasks(
         db_infra,
@@ -128,7 +128,7 @@ async def task_update(
     labels: list[str] | None = None,
     assignee: str = "",
 ) -> str:
-    """Update a task in the authenticated project."""
+    """Update a task in the authenticated team."""
     auth = get_auth()
 
     kwargs = {}
