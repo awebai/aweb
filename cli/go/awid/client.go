@@ -277,7 +277,7 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 			return meta
 		}
 	}
-	// Bare local aliases are ambiguous across projects; fail closed unless the
+	// Bare local aliases are ambiguous across teams; fail closed unless the
 	// resolver resolved them under the current namespace. Fully qualified
 	// addresses keep the historical fallback behavior.
 	if rawAddress != trustAddress {

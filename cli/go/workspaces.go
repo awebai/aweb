@@ -51,6 +51,13 @@ type WorkspaceListResponse struct {
 	NextCursor *string         `json:"next_cursor,omitempty"`
 }
 
+type DeleteWorkspaceResponse struct {
+	WorkspaceID     string `json:"workspace_id"`
+	Alias           string `json:"alias"`
+	DeletedAt       string `json:"deleted_at"`
+	IdentityDeleted bool   `json:"identity_deleted"`
+}
+
 type WorkspaceTeamParams struct {
 	HumanName                string
 	Repo                     string
@@ -114,15 +121,17 @@ func (c *Client) WorkspaceTeam(ctx context.Context, params WorkspaceTeamParams) 
 }
 
 // WorkspaceDelete soft-deletes a workspace by its ID.
-// Returns nil if the workspace was already deleted (404).
-func (c *Client) WorkspaceDelete(ctx context.Context, workspaceID string) error {
-	err := c.Delete(ctx, "/v1/workspaces/"+urlPathEscape(workspaceID))
+// Returns nil, nil if the workspace was already deleted (404).
+func (c *Client) WorkspaceDelete(ctx context.Context, workspaceID string) (*DeleteWorkspaceResponse, error) {
+	var out DeleteWorkspaceResponse
+	err := c.Do(ctx, "DELETE", "/v1/workspaces/"+urlPathEscape(workspaceID), nil, &out)
 	if err != nil {
 		if code, ok := awid.HTTPStatusCode(err); ok && code == 404 {
-			return nil
+			return nil, nil
 		}
+		return nil, err
 	}
-	return err
+	return &out, nil
 }
 
 type WorkspaceListParams struct {

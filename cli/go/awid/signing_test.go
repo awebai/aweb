@@ -430,11 +430,11 @@ func TestCanonicalJSONValuePreservesUnicode(t *testing.T) {
 // Go's json.Marshal HTML-escapes these three characters by default
 // (\u003c, \u003e, \u0026) to be safe in script tags. Python's
 // canonical_json_bytes (json.dumps with ensure_ascii=False) does NOT.
-// For signatures to verify across the Go CLI and the Python awid/cloud
+// For signatures to verify across the Go CLI and the Python awid/hosted
 // verifiers, we must disable HTML escaping in the Go encoder so both
 // sides produce byte-identical canonical JSON.
 //
-// This is the same latent bug that bit the cloud onboarding signing
+// This is the same latent bug that bit the hosted onboarding signing
 // family (cli-signup, claim-human, bootstrap-redeem); fixed there in
 // the shared onboardingDIDKeySignPayload helper. aweb-aafx.10 carries the
 // fix into this sibling code path (aw id sign / aw id request).

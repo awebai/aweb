@@ -424,7 +424,6 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	const goneID = "44444444-4444-4444-4444-444444444444"
 
 	missingPath := filepath.Join(t.TempDir(), "gone-worktree")
-	var deletedIdentity atomic.Bool
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -469,12 +468,14 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 				},
 				"has_more": false,
 			})
-		case r.URL.Path == "/v1/agents/demo/bob" && r.Method == http.MethodDelete:
-			deletedIdentity.Store(true)
-			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     goneID,
+				"alias":            "bob",
+				"deleted_at":       "2026-04-09T00:00:00Z",
+				"identity_deleted": true,
+			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -511,13 +512,10 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if deletedIdentity.Load() {
-		t.Fatal("identity deletion should be skipped; lifecycle managed by team membership")
-	}
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
-	if !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }
@@ -529,7 +527,6 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	const goneID = "44444444-4444-4444-4444-444444444444"
 
 	missingPath := filepath.Join(t.TempDir(), "gone-worktree")
-	var deletedIdentity atomic.Bool
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -574,12 +571,14 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 				},
 				"has_more": false,
 			})
-		case r.URL.Path == "/v1/agents/demo/maintainer" && r.Method == http.MethodDelete:
-			deletedIdentity.Store(true)
-			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     goneID,
+				"alias":            "maintainer",
+				"deleted_at":       "2026-04-09T00:00:00Z",
+				"identity_deleted": false,
+			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -616,25 +615,24 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if deletedIdentity.Load() {
-		t.Fatal("did not expect persistent identity deletion")
-	}
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
 	if !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
+	if strings.Contains(string(out), "deleted ephemeral identity") {
+		t.Fatalf("did not expect ephemeral identity cleanup output, got:\n%s", string(out))
+	}
 }
 
-func TestAwWorkspaceStatusSkipsGoneIdentityDeletionWithoutLegacyFields(t *testing.T) {
+func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
 	const goneID = "44444444-4444-4444-4444-444444444444"
 
 	missingPath := filepath.Join(t.TempDir(), "gone-worktree")
-	var deletedIdentity atomic.Bool
 	var deletedWorkspace atomic.Bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -679,12 +677,14 @@ func TestAwWorkspaceStatusSkipsGoneIdentityDeletionWithoutLegacyFields(t *testin
 				},
 				"has_more": false,
 			})
-		case r.URL.Path == "/v1/agents/demo.example.com/bot" && r.Method == http.MethodDelete:
-			deletedIdentity.Store(true)
-			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id":     goneID,
+				"alias":            "bot",
+				"deleted_at":       "2026-04-09T00:00:00Z",
+				"identity_deleted": true,
+			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -721,13 +721,10 @@ func TestAwWorkspaceStatusSkipsGoneIdentityDeletionWithoutLegacyFields(t *testin
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if deletedIdentity.Load() {
-		t.Fatal("identity deletion should be skipped; lifecycle managed by team membership")
-	}
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
-	if !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }

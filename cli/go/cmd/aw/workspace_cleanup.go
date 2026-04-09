@@ -20,8 +20,8 @@ type goneWorkspace struct {
 }
 
 // detectGoneWorkspaces checks for workspaces on this hostname whose paths
-// no longer exist. Ephemeral identities are deleted; persistent identities
-// keep their identity but lose the gone workspace record.
+// no longer exist. The server owns cleanup policy and deletes the bound
+// ephemeral identity when the stale workspace is removed.
 func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWorkspace {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
@@ -60,16 +60,15 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 			WorkspacePath: path,
 		}
 
-		// Identity lifecycle is managed by team membership (certificate revocation),
-		// not by workspace cleanup. Skip identity deletion.
-		g.IdentityDeleted = false
-
 		deleteWorkspaceCtx, deleteWorkspaceCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		deleteWorkspaceErr := client.WorkspaceDelete(deleteWorkspaceCtx, ws.WorkspaceID)
+		deleteResp, deleteWorkspaceErr := client.WorkspaceDelete(deleteWorkspaceCtx, ws.WorkspaceID)
 		deleteWorkspaceCancel()
 		if deleteWorkspaceErr != nil {
 			g.CleanupBlocked = deleteWorkspaceErr.Error()
 		} else {
+			if deleteResp != nil {
+				g.IdentityDeleted = deleteResp.IdentityDeleted
+			}
 			g.WorkspaceDeleted = true
 		}
 

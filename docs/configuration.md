@@ -69,12 +69,12 @@ Key points:
 `workspace.yaml` is an aweb binding only. It does not carry:
 
 - `registry_url`
-- `cloud_url`
-- `awid_url`
+- registry-specific URL fields
+- hosted-bootstrap URL fields
 - key material
 - identity continuity fields such as `did`, `stable_id`, `custody`, or `lifetime`
 
-If your file still uses legacy fields such as `server_url` or `api_key`,
+If your file still uses removed legacy bootstrap/auth fields,
 reinitialize the worktree with `aw init`.
 
 ## Persistent Identity State: `.aw/identity.yaml`

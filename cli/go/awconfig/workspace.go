@@ -62,7 +62,6 @@ var canonicalWorkspaceYAMLKeys = map[string]struct{}{
 }
 
 var removedWorkspaceYAMLKeys = map[string]struct{}{
-	"api_key":         {},
 	"awid_url":        {},
 	"cloud_url":       {},
 	"custody":         {},
@@ -74,7 +73,6 @@ var removedWorkspaceYAMLKeys = map[string]struct{}{
 	"project_id":      {},
 	"project_slug":    {},
 	"role":            {},
-	"server_url":      {},
 	"signing_key":     {},
 	"stable_id":       {},
 }
