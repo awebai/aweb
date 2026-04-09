@@ -35,6 +35,8 @@ awid/build/
 awid/dist/
 awid/.pytest_cache/
 awid/src/*.egg-info/
+awid/site/public/
+awid/site/.hugo_build.lock
 
 # channel/
 channel/node_modules/
