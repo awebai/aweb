@@ -132,7 +132,6 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"reservations": []map[string]any{
 					{
-						"project_id":      "proj-1",
 						"resource_key":    "src/main.go",
 						"holder_agent_id": selfID,
 						"holder_alias":    "alice",
@@ -141,7 +140,6 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"metadata":        map[string]any{},
 					},
 					{
-						"project_id":      "proj-1",
 						"resource_key":    "src/review.go",
 						"holder_agent_id": peerID,
 						"holder_alias":    "bob",
@@ -153,7 +151,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 			})
 		case "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"workspace":           map[string]any{"workspace_count": 2},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
 				"conflicts":           []map[string]any{{"bead_id": "TASK-002", "claimants": []map[string]any{{"alias": "bob", "workspace_id": peerID}}}},
@@ -277,7 +275,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 			})
 		case "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 1},
+				"workspace":           map[string]any{"workspace_count": 1},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
 				"conflicts":           []map[string]any{},
@@ -374,15 +372,15 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 		case "/v1/reservations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"reservations": []map[string]any{
-					{"project_id": "proj-1", "resource_key": "src/1.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
-					{"project_id": "proj-1", "resource_key": "src/2.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
-					{"project_id": "proj-1", "resource_key": "src/3.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
-					{"project_id": "proj-1", "resource_key": "src/4.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"resource_key": "src/1.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"resource_key": "src/2.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"resource_key": "src/3.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
+					{"resource_key": "src/4.go", "holder_agent_id": peerID, "holder_alias": "bob", "acquired_at": "2026-03-10T10:00:00Z", "expires_at": "2099-03-10T10:00:00Z", "metadata": map[string]any{}},
 				},
 			})
 		case "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace": map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"workspace": map[string]any{"workspace_count": 2},
 				"agents":    []map[string]any{},
 				"claims":    []map[string]any{},
 				"conflicts": []map[string]any{},
@@ -461,7 +459,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"reservations": []map[string]any{}})
 		case r.URL.Path == "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"workspace":           map[string]any{"workspace_count": 2},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
 				"conflicts":           []map[string]any{},
@@ -581,7 +579,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"reservations": []map[string]any{}})
 		case r.URL.Path == "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"workspace":           map[string]any{"workspace_count": 2},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
 				"conflicts":           []map[string]any{},
@@ -700,7 +698,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 			_ = json.NewEncoder(w).Encode(map[string]any{"reservations": []map[string]any{}})
 		case r.URL.Path == "/v1/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace":           map[string]any{"project_id": "proj-1", "project_slug": "demo", "workspace_count": 2},
+				"workspace":           map[string]any{"workspace_count": 2},
 				"agents":              []map[string]any{},
 				"claims":              []map[string]any{},
 				"conflicts":           []map[string]any{},

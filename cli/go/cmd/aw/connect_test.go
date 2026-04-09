@@ -453,9 +453,6 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
-	if workspace.AwebURL != awebServer.URL {
-		t.Fatalf("aweb_url=%q", workspace.AwebURL)
-	}
 }
 
 func mustExtractPublicKey(t *testing.T, didKey string) ed25519.PublicKey {

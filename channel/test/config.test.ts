@@ -2,66 +2,115 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as ed from "@noble/ed25519";
+import { sha512 } from "@noble/hashes/sha2.js";
 import { resolveConfig } from "../src/config.js";
+import { computeDIDKey } from "../src/identity/did.js";
+
+ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+
+function writeSigningKey(path: string, seed: Uint8Array): void {
+  const pem = [
+    "-----BEGIN ED25519 PRIVATE KEY-----",
+    Buffer.from(seed).toString("base64"),
+    "-----END ED25519 PRIVATE KEY-----",
+    "",
+  ].join("\n");
+  writeFileSync(path, pem);
+}
+
+async function writeTeamCertificate(
+  path: string,
+  seed: Uint8Array,
+  fields: {
+    team: string;
+    alias: string;
+    member_did_aw?: string;
+    member_address?: string;
+  },
+): Promise<{ did: string }> {
+  const publicKey = ed.getPublicKey(seed);
+  const did = computeDIDKey(publicKey);
+  writeFileSync(path, JSON.stringify({
+    version: 1,
+    certificate_id: "cert-test",
+    team: fields.team,
+    team_did_key: "did:key:z6Mktestteam",
+    member_did_key: did,
+    member_did_aw: fields.member_did_aw,
+    member_address: fields.member_address,
+    alias: fields.alias,
+    lifetime: "ephemeral",
+    issued_at: "2026-04-09T00:00:00Z",
+    signature: "sig",
+  }, null, 2) + "\n");
+  return { did };
+}
 
 describe("resolveConfig", () => {
-  test("loads channel config from .aw workspace and identity state", async () => {
+  test("loads channel config from aweb workspace binding and team certificate", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
     mkdirSync(awDir, { recursive: true });
+    const seed = new Uint8Array(32).fill(7);
+    const stableID = "did:aw:test";
+    const address = "acme.com/support";
+    const { did } = await writeTeamCertificate(join(awDir, "team-cert.pem"), seed, {
+      team: "acme.com/backend",
+      alias: "support",
+      member_did_aw: stableID,
+      member_address: address,
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
 
     writeFileSync(join(awDir, "workspace.yaml"), [
-      "server_url: https://app.aweb.ai",
-      "api_key: aw_sk_test",
-      "identity_handle: support",
-      "namespace_slug: acme.com",
-      "project_slug: acme",
+      "aweb_url: https://app.aweb.ai",
+      "team_address: acme.com/backend",
+      "alias: support",
       "",
     ].join("\n"));
     writeFileSync(join(awDir, "identity.yaml"), [
-      "did: did:key:z6Mktest",
-      "stable_id: did:aw:test",
-      "address: acme.com/support",
+      `did: ${did}`,
+      `stable_id: ${stableID}`,
+      `address: ${address}`,
       "",
     ].join("\n"));
 
     const config = await resolveConfig(dir);
-    expect(config).toEqual({
-      baseURL: "https://app.aweb.ai",
-      apiKey: "aw_sk_test",
-      did: "did:key:z6Mktest",
-      stableID: "did:aw:test",
-      address: "acme.com/support",
-      alias: "support",
-      projectSlug: "acme",
-    });
+    expect(config.baseURL).toBe("https://app.aweb.ai");
+    expect(config.teamAddress).toBe("acme.com/backend");
+    expect(config.alias).toBe("support");
+    expect(config.did).toBe(did);
+    expect(config.stableID).toBe(stableID);
+    expect(config.address).toBe(address);
+    expect(config.signingKey).toEqual(seed);
+    expect(config.teamCertificateHeader).toBeTruthy();
   });
 
-  test("falls back to workspace identity fields when identity.yaml is absent", async () => {
+  test("derives identity from team certificate when identity.yaml is absent", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
     mkdirSync(awDir, { recursive: true });
+    const seed = new Uint8Array(32).fill(9);
+    const { did } = await writeTeamCertificate(join(awDir, "team-cert.pem"), seed, {
+      team: "acme.com/backend",
+      alias: "alice",
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
 
     writeFileSync(join(awDir, "workspace.yaml"), [
-      "server_url: https://app.aweb.ai",
-      "api_key: aw_sk_test",
-      "identity_handle: alice",
-      "namespace_slug: myteam",
-      "project_slug: myteam",
-      "did: did:key:z6Mkworkspace",
-      "stable_id: did:aw:workspace",
+      "aweb_url: https://app.aweb.ai",
+      "team_address: acme.com/backend",
+      "alias: alice",
       "",
     ].join("\n"));
 
     const config = await resolveConfig(dir);
-    expect(config).toEqual({
-      baseURL: "https://app.aweb.ai",
-      apiKey: "aw_sk_test",
-      did: "did:key:z6Mkworkspace",
-      stableID: "did:aw:workspace",
-      address: "myteam/alice",
-      alias: "alice",
-      projectSlug: "myteam",
-    });
+    expect(config.baseURL).toBe("https://app.aweb.ai");
+    expect(config.teamAddress).toBe("acme.com/backend");
+    expect(config.alias).toBe("alice");
+    expect(config.did).toBe(did);
+    expect(config.stableID).toBe("");
+    expect(config.address).toBe("");
   });
 });

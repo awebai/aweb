@@ -33,7 +33,7 @@ func TestTaskCreate(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestTaskList(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestTaskListReady(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestTaskListBlocked(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestTaskListActive(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestTaskGet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestTaskUpdate(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestTaskUpdateCascadeClose(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestTaskUpdate409ReturnsHeldError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestTaskDelete(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestTaskAddDep(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestTaskAddDepCycleReturns422(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestTaskRemoveDep(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestTaskListQueryParams(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestTaskCommentCreate(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestTaskCommentList(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

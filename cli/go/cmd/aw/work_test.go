@@ -31,7 +31,6 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 						"alias":        "bob",
 						"human_name":   "Bob",
 						"claimed_at":   "2026-03-10T10:00:00Z",
-						"project_id":   "proj-1",
 					},
 				},
 				"has_more": false,

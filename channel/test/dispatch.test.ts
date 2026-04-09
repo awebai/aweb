@@ -115,7 +115,7 @@ describe("dispatchEvent", () => {
     });
   });
 
-  test("falls back to TOFU when registry verification is degraded", async () => {
+  test("falls back to TOFU on the public sender address when registry verification is degraded", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
     const pinStore = new PinStore();
@@ -157,11 +157,11 @@ describe("dispatchEvent", () => {
         },
       },
     });
-    expect(pinStore.addresses.get("alice")).toBe(vectors.stableID);
+    expect(pinStore.addresses.get("acme.com/alice")).toBe(vectors.stableID);
     expect(pinStore.pins.get(vectors.stableID)?.did_key).toBe(vectors.did);
   });
 
-  test("passes local alias to trust while preserving public sender address in notifications", async () => {
+  test("passes the public sender address to trust and notifications when it is present", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
     const pinStore = new PinStore();
@@ -185,7 +185,7 @@ describe("dispatchEvent", () => {
     expect(normalizeTrust).toHaveBeenCalledWith(
       pinStore,
       "verified",
-      "alice",
+      "acme.com/alice",
       vectors.did,
       vectors.stableID,
       undefined,
