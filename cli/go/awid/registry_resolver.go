@@ -257,11 +257,18 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 	cachedHead := r.headCache[stableID]
 	r.mu.Unlock()
 
+	if cachedHead == nil {
+		return r.verifyStableIdentityViaFullLog(ctx, addr.authority.RegistryURL, stableID, keyRes.CurrentDIDKey)
+	}
+
 	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
 	if outcome == StableIdentityVerified && nextHead != nil {
 		r.mu.Lock()
 		r.headCache[stableID] = nextHead
 		r.mu.Unlock()
+	}
+	if outcome == StableIdentityDegraded && verifyErr == nil {
+		return r.verifyStableIdentityViaFullLog(ctx, addr.authority.RegistryURL, stableID, keyRes.CurrentDIDKey)
 	}
 	if verifyErr != nil {
 		return &StableIdentityVerification{
@@ -273,6 +280,46 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 	return &StableIdentityVerification{
 		Outcome:       outcome,
 		CurrentDIDKey: keyRes.CurrentDIDKey,
+	}
+}
+
+func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, registryURL, stableID, currentDIDKey string) *StableIdentityVerification {
+	entries, err := r.fetchDIDLog(ctx, registryURL, stableID)
+	if err != nil {
+		return &StableIdentityVerification{
+			Outcome:       StableIdentityDegraded,
+			CurrentDIDKey: currentDIDKey,
+			Error:         err.Error(),
+		}
+	}
+	head, err := VerifyDidLogEntries(stableID, entries, r.now())
+	if err != nil {
+		return &StableIdentityVerification{
+			Outcome:       StableIdentityHardError,
+			CurrentDIDKey: currentDIDKey,
+			Error:         err.Error(),
+		}
+	}
+	if head == nil {
+		return &StableIdentityVerification{
+			Outcome:       StableIdentityDegraded,
+			CurrentDIDKey: currentDIDKey,
+			Error:         "missing verified audit log head",
+		}
+	}
+	if strings.TrimSpace(head.CurrentDIDKey) != strings.TrimSpace(currentDIDKey) {
+		return &StableIdentityVerification{
+			Outcome:       StableIdentityHardError,
+			CurrentDIDKey: currentDIDKey,
+			Error:         "audit log current did:key mismatch",
+		}
+	}
+	r.mu.Lock()
+	r.headCache[stableID] = head
+	r.mu.Unlock()
+	return &StableIdentityVerification{
+		Outcome:       StableIdentityVerified,
+		CurrentDIDKey: currentDIDKey,
 	}
 }
 
@@ -355,6 +402,14 @@ func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW st
 	}
 	r.storeKeyCache(didAW, res, registryKeyTTL)
 	return res, nil
+}
+
+func (r *RegistryResolver) fetchDIDLog(ctx context.Context, registryURL, didAW string) ([]DidKeyEvidence, error) {
+	var out []DidKeyEvidence
+	if err := r.getJSON(ctx, registryURL, "/v1/did/"+urlPathEscape(strings.TrimSpace(didAW))+"/log", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) (string, error) {

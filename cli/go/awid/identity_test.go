@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -558,6 +559,197 @@ func TestRegistryResolverVerifyStableIdentityRejectsKeyDidAWMismatch(t *testing.
 	}
 	if !strings.Contains(result.Error, "key did:aw mismatch") {
 		t.Fatalf("error=%q, want key did:aw mismatch", result.Error)
+	}
+}
+
+func TestRegistryResolverVerifyStableIdentityWalksFullLogOnFirstContact(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(oldPub)
+	newDID := ComputeDIDKey(newPub)
+	stableID := ComputeStableID(oldPub)
+
+	createEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW:         stableID,
+		CurrentDIDKey: oldDID,
+		LogHead: &DidKeyEvidence{
+			Seq:          1,
+			Operation:    "create",
+			NewDIDKey:    oldDID,
+			StateHash:    strings.Repeat("1", 64),
+			AuthorizedBy: oldDID,
+			Timestamp:    "2026-04-09T00:00:00Z",
+		},
+	}).LogHead
+	prevHash := createEntry.EntryHash
+	rotateEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW:         stableID,
+		CurrentDIDKey: newDID,
+		LogHead: &DidKeyEvidence{
+			Seq:            2,
+			Operation:      "rotate_key",
+			PreviousDIDKey: &oldDID,
+			NewDIDKey:      newDID,
+			PrevEntryHash:  &prevHash,
+			StateHash:      strings.Repeat("2", 64),
+			AuthorizedBy:   oldDID,
+			Timestamp:      "2026-04-10T00:00:00Z",
+		},
+	}).LogHead
+
+	var logCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": newDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": newDID,
+				"log_head":        rotateEntry,
+			})
+		case "/v1/did/" + stableID + "/log":
+			logCalls.Add(1)
+			_ = json.NewEncoder(w).Encode([]DidKeyEvidence{*createEntry, *rotateEntry})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	result := resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+	if result == nil || result.Outcome != StableIdentityVerified {
+		t.Fatalf("result=%+v, want verified", result)
+	}
+	if result.CurrentDIDKey != newDID {
+		t.Fatalf("current_did_key=%q", result.CurrentDIDKey)
+	}
+	if logCalls.Load() != 1 {
+		t.Fatalf("log_calls=%d, want 1", logCalls.Load())
+	}
+
+	result = resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+	if result == nil || result.Outcome != StableIdentityVerified {
+		t.Fatalf("second result=%+v, want verified", result)
+	}
+	if logCalls.Load() != 1 {
+		t.Fatalf("second log_calls=%d, want cached head reuse", logCalls.Load())
+	}
+}
+
+func TestRegistryResolverVerifyStableIdentityWalksFullLogRejectsTailMismatch(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := ComputeDIDKey(oldPub)
+	keyDID := ComputeDIDKey(keyPub)
+	logDID := ComputeDIDKey(logPub)
+	stableID := ComputeStableID(oldPub)
+
+	createEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW:         stableID,
+		CurrentDIDKey: oldDID,
+		LogHead: &DidKeyEvidence{
+			Seq:          1,
+			Operation:    "create",
+			NewDIDKey:    oldDID,
+			StateHash:    strings.Repeat("3", 64),
+			AuthorizedBy: oldDID,
+			Timestamp:    "2026-04-09T00:00:00Z",
+		},
+	}).LogHead
+	prevHash := createEntry.EntryHash
+	rotateEntry := signedDidKeyResolution(t, oldPriv, &DidKeyResolution{
+		DIDAW:         stableID,
+		CurrentDIDKey: logDID,
+		LogHead: &DidKeyEvidence{
+			Seq:            2,
+			Operation:      "rotate_key",
+			PreviousDIDKey: &oldDID,
+			NewDIDKey:      logDID,
+			PrevEntryHash:  &prevHash,
+			StateHash:      strings.Repeat("4", 64),
+			AuthorizedBy:   oldDID,
+			Timestamp:      "2026-04-10T00:00:00Z",
+		},
+	}).LogHead
+
+	var logCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": keyDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": keyDID,
+				"log_head":        rotateEntry,
+			})
+		case "/v1/did/" + stableID + "/log":
+			logCalls.Add(1)
+			_ = json.NewEncoder(w).Encode([]DidKeyEvidence{*createEntry, *rotateEntry})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	result := resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
+	if result == nil || result.Outcome != StableIdentityHardError {
+		t.Fatalf("result=%+v, want hard error", result)
+	}
+	if !strings.Contains(result.Error, "audit log current did:key mismatch") {
+		t.Fatalf("error=%q", result.Error)
+	}
+	if logCalls.Load() != 1 {
+		t.Fatalf("log_calls=%d, want 1", logCalls.Load())
 	}
 }
 
