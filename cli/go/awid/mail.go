@@ -44,17 +44,8 @@ func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*Sen
 		to = payload.ToAgentID
 	}
 	from := c.address
-	// Local delivery keeps project-layer addressing in the signed envelope:
-	// plain alias within the same project, project~alias across projects under
-	// the same owner, and namespace/name only on the network path.
 	if c.signingKey != nil && payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/") {
-		if strings.Contains(payload.ToAlias, "~") {
-			if project := c.defaultProjectSlug(); project != "" {
-				from = project + "~" + c.alias()
-			}
-		} else {
-			from = c.alias()
-		}
+		from = c.alias()
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:    from,
