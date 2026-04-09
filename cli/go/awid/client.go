@@ -54,7 +54,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 
 	// Resolve recipient DID for to_did binding (mail only).
 	if env.Type == "mail" && c.resolver != nil && env.To != "" && env.ToDID == "" {
-		if identity, err := c.resolver.Resolve(ctx, env.To); err == nil && identity.DID != "" {
+		if identity, err := c.resolver.Resolve(ctx, c.canonicalTrustAddress(env.To)); err == nil && identity.DID != "" {
 			env.ToDID = identity.DID
 		}
 	}
@@ -273,7 +273,7 @@ func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMet
 		Resolved: true,
 	}
 	if c.resolver != nil {
-		if identity, err := c.resolver.Resolve(ctx, rawAddress); err == nil {
+		if identity, err := c.resolver.Resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
 				Lifetime: LifetimePersistent,
 				Custody:  CustodySelf,
