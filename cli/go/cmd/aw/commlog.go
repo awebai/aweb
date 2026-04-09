@@ -42,8 +42,8 @@ func commLogNameForSelection(sel *awconfig.Selection) string {
 		strings.TrimSpace(sel.StableID),
 		strings.TrimSpace(sel.DID),
 		selectionAddress(sel),
-		strings.TrimSpace(sel.IdentityHandle),
-		strings.TrimSpace(sel.IdentityID),
+		strings.TrimSpace(sel.Alias),
+		strings.TrimSpace(sel.WorkspaceID),
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {

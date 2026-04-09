@@ -2,16 +2,16 @@ package awid
 
 import "strings"
 
-// NetworkAddress represents either a network address (org-slug/alias)
+// NetworkAddress represents either a network address (domain/alias)
 // or a plain local alias.
 type NetworkAddress struct {
-	OrgSlug   string
+	Domain    string
 	Alias     string
 	IsNetwork bool
 }
 
 // ParseNetworkAddress parses a target string into a NetworkAddress.
-// If the string contains a '/', it is treated as a network address (org-slug/alias).
+// If the string contains a '/', it is treated as a network address (domain/alias).
 // Otherwise it is a plain local alias.
 func ParseNetworkAddress(target string) NetworkAddress {
 	target = strings.TrimSpace(target)
@@ -24,14 +24,14 @@ func ParseNetworkAddress(target string) NetworkAddress {
 		return NetworkAddress{Alias: target}
 	}
 
-	orgSlug := strings.TrimSpace(target[:idx])
+	domain := strings.TrimSpace(target[:idx])
 	alias := strings.TrimSpace(target[idx+1:])
-	if orgSlug == "" || alias == "" || strings.ContainsRune(alias, '/') {
+	if domain == "" || alias == "" || strings.ContainsRune(alias, '/') {
 		return NetworkAddress{}
 	}
 
 	return NetworkAddress{
-		OrgSlug:   orgSlug,
+		Domain:    domain,
 		Alias:     alias,
 		IsNetwork: true,
 	}
@@ -40,7 +40,7 @@ func ParseNetworkAddress(target string) NetworkAddress {
 // String returns the canonical string form of the address.
 func (a NetworkAddress) String() string {
 	if a.IsNetwork {
-		return a.OrgSlug + "/" + a.Alias
+		return a.Domain + "/" + a.Alias
 	}
 	return a.Alias
 }

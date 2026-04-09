@@ -155,9 +155,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	repoSlug := runDetectRepoSlug(workingDir)
-	statusIdentity := awrun.StatusIdentity(providerName, sel.NamespaceSlug, repoSlug, sel.IdentityHandle)
+	statusIdentity := awrun.StatusIdentity(providerName, sel.Domain, repoSlug, sel.Alias)
 	claimedTaskRef := ""
-	if taskRef, taskErr := runResolveClaimedTaskRef(cmd.Context(), client, sel.IdentityID); taskErr == nil {
+	if taskRef, taskErr := runResolveClaimedTaskRef(cmd.Context(), client, sel.WorkspaceID); taskErr == nil {
 		claimedTaskRef = taskRef
 	}
 
@@ -169,7 +169,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	var lastBuildOptions awrun.BuildOptions
 	loop.EventBus = runNewEventBus(client)
 	loop.Control = screen
-	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, sel.IdentityHandle))
+	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, sel.Alias))
 	loop.StatusIdentity = statusIdentity
 	loop.OnSessionID = func(sessionID string) {
 		lastSessionID = strings.TrimSpace(sessionID)

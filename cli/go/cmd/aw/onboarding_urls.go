@@ -20,7 +20,7 @@ func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		if err == nil {
 			return urls, nil
 		}
-		fallbackURL, ferr := resolveGuidedOnboardingServerURL(v)
+		fallbackURL, ferr := resolveGuidedOnboardingAwebURL(v)
 		if ferr != nil {
 			return onboardingServiceURLs{}, ferr
 		}
@@ -46,11 +46,11 @@ func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		}
 	}
 
-	urls, err := discoverOnboardingServiceURLs(DefaultServerURL)
+	urls, err := discoverOnboardingServiceURLs(DefaultAwebURL)
 	if err == nil {
 		return urls, nil
 	}
-	fallbackURL, ferr := resolveGuidedOnboardingServerURL(DefaultServerURL)
+	fallbackURL, ferr := resolveGuidedOnboardingAwebURL(DefaultAwebURL)
 	if ferr != nil {
 		return onboardingServiceURLs{}, ferr
 	}
@@ -61,7 +61,7 @@ func resolveOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 }
 
 func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
-	baseURL, err := resolveGuidedOnboardingServerURL(raw)
+	baseURL, err := resolveGuidedOnboardingAwebURL(raw)
 	if err != nil {
 		return onboardingServiceURLs{}, err
 	}

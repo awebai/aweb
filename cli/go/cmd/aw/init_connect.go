@@ -58,13 +58,13 @@ type certificateConnectOptions struct {
 
 // initCertificateConnect implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
-func initCertificateConnect(workingDir, serverURL, role string) (connectOutput, error) {
-	return initCertificateConnectWithOptions(workingDir, serverURL, certificateConnectOptions{
+func initCertificateConnect(workingDir, awebURL, role string) (connectOutput, error) {
+	return initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
 		Role: strings.TrimSpace(role),
 	})
 }
 
-func initCertificateConnectWithOptions(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
+func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
 	certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
@@ -96,7 +96,7 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resp, err := postConnect(ctx, serverURL, signingKey, cert, reqBody)
+	resp, err := postConnect(ctx, awebURL, signingKey, cert, reqBody)
 	if err != nil {
 		return connectOutput{}, err
 	}
@@ -107,7 +107,7 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 		return connectOutput{}, existingErr
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &awconfig.WorktreeWorkspace{
-		AwebURL:         serverURL,
+		AwebURL:         awebURL,
 		TeamAddress:     resp.TeamAddress,
 		Alias:           resp.Alias,
 		WorkspaceID:     resp.WorkspaceID,
@@ -132,19 +132,19 @@ func initCertificateConnectWithOptions(workingDir, serverURL string, opts certif
 		Status:      "connected",
 		TeamAddress: resp.TeamAddress,
 		Alias:       resp.Alias,
-		AwebURL:     serverURL,
+		AwebURL:     awebURL,
 		WorkspaceID: resp.WorkspaceID,
 	}, nil
 }
 
 // postConnect sends POST /v1/connect with DIDKey auth + team certificate.
-func postConnect(ctx context.Context, serverURL string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
+func postConnect(ctx context.Context, awebURL string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	url := strings.TrimRight(serverURL, "/") + "/v1/connect"
+	url := strings.TrimRight(awebURL, "/") + "/v1/connect"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyJSON))
 	if err != nil {
 		return nil, err

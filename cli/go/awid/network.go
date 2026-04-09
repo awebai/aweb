@@ -6,7 +6,7 @@ import "context"
 
 type NetworkDirectoryAgent struct {
 	OrgName      string   `json:"org_name"`
-	OrgSlug      string   `json:"org_slug"`
+	Domain       string   `json:"org_slug"`
 	Alias        string   `json:"alias"`
 	Name         string   `json:"name,omitempty"`
 	Capabilities []string `json:"capabilities"`
@@ -20,7 +20,7 @@ type NetworkDirectoryResponse struct {
 
 type NetworkDirectoryParams struct {
 	Capability string
-	NamespaceSlug string
+	Domain     string
 	Query      string
 	Limit      int
 }
@@ -32,8 +32,8 @@ func (c *Client) NetworkDirectorySearch(ctx context.Context, p NetworkDirectoryP
 		path += sep + "capability=" + urlQueryEscape(p.Capability)
 		sep = "&"
 	}
-	if p.NamespaceSlug != "" {
-		path += sep + "org_slug=" + urlQueryEscape(p.NamespaceSlug)
+	if p.Domain != "" {
+		path += sep + "org_slug=" + urlQueryEscape(p.Domain)
 		sep = "&"
 	}
 	if p.Query != "" {
@@ -50,9 +50,9 @@ func (c *Client) NetworkDirectorySearch(ctx context.Context, p NetworkDirectoryP
 	return &out, nil
 }
 
-func (c *Client) NetworkDirectoryGet(ctx context.Context, namespaceSlug, handle string) (*NetworkDirectoryAgent, error) {
+func (c *Client) NetworkDirectoryGet(ctx context.Context, domain, handle string) (*NetworkDirectoryAgent, error) {
 	var out NetworkDirectoryAgent
-	if err := c.Get(ctx, "/v1/network/directory/"+urlPathEscape(namespaceSlug)+"/"+urlPathEscape(handle), &out); err != nil {
+	if err := c.Get(ctx, "/v1/network/directory/"+urlPathEscape(domain)+"/"+urlPathEscape(handle), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -37,7 +37,7 @@ func TestSaveWorktreeWorkspaceToWritesCanonicalRoleNameKey(t *testing.T) {
 	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
 		WorkspaceID: "ws-1",
 		Alias:       "alice",
-		Role:        "developer",
+		RoleName:    "developer",
 	}); err != nil {
 		t.Fatalf("save workspace: %v", err)
 	}
@@ -124,6 +124,31 @@ workspace_id: ws-1
 		t.Fatal("expected removed workspace fields to fail")
 	}
 	for _, field := range []string{"identity_handle", "did", "stable_id", "signing_key", "custody", "lifetime", "project_slug"} {
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("missing field %q in error: %v", field, err)
+		}
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsRemovedRegistryAndHostedURLFields(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+awid_url: https://registry.example
+cloud_url: https://hosted.example
+workspace_id: ws-1
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected removed workspace fields to fail")
+	}
+	for _, field := range []string{"awid_url", "cloud_url"} {
 		if !strings.Contains(err.Error(), field) {
 			t.Fatalf("missing field %q in error: %v", field, err)
 		}

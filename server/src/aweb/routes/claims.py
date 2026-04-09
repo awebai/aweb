@@ -45,11 +45,11 @@ async def list_claims(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> ClaimsResponse:
     """
-    List active task claims for a project.
+    List active task claims for a team.
 
     Claims indicate which workspaces are actively working on which tasks.
     When an agent claims work and marks it in progress, they
-    claim that task within the project.
+    claim that task within the team.
 
     Args:
         workspace_id: Optional. Filter to claims by a specific workspace.

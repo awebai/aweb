@@ -272,8 +272,8 @@ func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.ServerURL != server.URL {
-		t.Fatalf("ServerURL=%q", identity.ServerURL)
+	if identity.RegistryURL != server.URL {
+		t.Fatalf("RegistryURL=%q", identity.RegistryURL)
 	}
 	if identity.DID != did {
 		t.Fatalf("DID=%q", identity.DID)

@@ -10,13 +10,13 @@ import (
 
 var (
 	directoryCapability string
-	directoryNamespace  string
+	directoryDomain     string
 	directoryQuery      string
 	directoryLimit      int
 )
 
 var directoryCmd = &cobra.Command{
-	Use:   "directory [namespace/name]",
+	Use:   "directory [domain/name]",
 	Short: "Search or look up persistent identities in the network directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,9 +31,9 @@ var directoryCmd = &cobra.Command{
 		if len(args) == 1 {
 			addr := awid.ParseNetworkAddress(args[0])
 			if !addr.IsNetwork {
-				return usageError("directory lookup requires namespace/name format, got: %q", args[0])
+				return usageError("directory lookup requires domain/name format, got: %q", args[0])
 			}
-			resp, err := c.NetworkDirectoryGet(ctx, addr.OrgSlug, addr.Alias)
+			resp, err := c.NetworkDirectoryGet(ctx, addr.Domain, addr.Alias)
 			if err != nil {
 				return err
 			}
@@ -42,10 +42,10 @@ var directoryCmd = &cobra.Command{
 		}
 
 		resp, err := c.NetworkDirectorySearch(ctx, awid.NetworkDirectoryParams{
-			Capability:    directoryCapability,
-			NamespaceSlug: directoryNamespace,
-			Query:         directoryQuery,
-			Limit:         directoryLimit,
+			Capability: directoryCapability,
+			Domain:     directoryDomain,
+			Query:      directoryQuery,
+			Limit:      directoryLimit,
 		})
 		if err != nil {
 			return err
@@ -57,7 +57,7 @@ var directoryCmd = &cobra.Command{
 
 func init() {
 	directoryCmd.Flags().StringVar(&directoryCapability, "capability", "", "Filter by capability")
-	directoryCmd.Flags().StringVar(&directoryNamespace, "namespace", "", "Filter by namespace slug")
+	directoryCmd.Flags().StringVar(&directoryDomain, "domain", "", "Filter by domain")
 	directoryCmd.Flags().StringVar(&directoryQuery, "query", "", "Search handle/description")
 	directoryCmd.Flags().IntVar(&directoryLimit, "limit", 100, "Max results")
 

@@ -19,7 +19,7 @@ func TestNetworkDirectorySearch(t *testing.T) {
 			t.Fatalf("capability=%s", r.URL.Query().Get("capability"))
 		}
 		_ = json.NewEncoder(w).Encode(NetworkDirectoryResponse{
-			Agents: []NetworkDirectoryAgent{{OrgSlug: "acme", Alias: "translator", Capabilities: []string{"translate"}}},
+			Agents: []NetworkDirectoryAgent{{Domain: "acme", Alias: "translator", Capabilities: []string{"translate"}}},
 			Total:  1,
 		})
 	}))
@@ -43,7 +43,7 @@ func TestNetworkDirectoryGet(t *testing.T) {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(NetworkDirectoryAgent{
-			OrgSlug:      "acme",
+			Domain:       "acme",
 			OrgName:      "Acme Corp",
 			Alias:        "researcher",
 			Capabilities: []string{"research"},
@@ -57,7 +57,7 @@ func TestNetworkDirectoryGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Alias != "researcher" || resp.OrgSlug != "acme" {
+	if resp.Alias != "researcher" || resp.Domain != "acme" {
 		t.Fatalf("resp=%+v", resp)
 	}
 }

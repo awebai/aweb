@@ -25,7 +25,7 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 	if err != nil {
 		return nil, nil, err
 	}
-	r, err := chat.Send(ctx, c.Client, sel.IdentityHandle, []string{toAlias}, message, opts, chatStderrCallback)
+	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{toAlias}, message, opts, chatStderrCallback)
 	return r, sel, err
 }
 

@@ -181,7 +181,7 @@ var lockListCmd = &cobra.Command{
 		if lockListMine {
 			filtered := make([]aweb.ReservationView, 0, len(resp.Reservations))
 			for _, reservation := range resp.Reservations {
-				if reservation.HolderAlias == sel.IdentityHandle {
+				if reservation.HolderAlias == sel.Alias {
 					filtered = append(filtered, reservation)
 				}
 			}

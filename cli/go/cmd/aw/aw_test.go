@@ -1188,10 +1188,10 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	}
 }
 
-func TestDefaultServerURL(t *testing.T) {
+func TestDefaultAwebURL(t *testing.T) {
 	t.Parallel()
-	if DefaultServerURL != "https://app.aweb.ai" {
-		t.Fatalf("DefaultServerURL=%q, want https://app.aweb.ai", DefaultServerURL)
+	if DefaultAwebURL != "https://app.aweb.ai" {
+		t.Fatalf("DefaultAwebURL=%q, want https://app.aweb.ai", DefaultAwebURL)
 	}
 }
 

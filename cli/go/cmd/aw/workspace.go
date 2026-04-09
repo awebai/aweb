@@ -75,9 +75,9 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// Team-bound workspaces need a local alias/workspace identity to function.
-	hasIdentity := strings.TrimSpace(sel.IdentityID) != "" ||
+	hasIdentity := strings.TrimSpace(sel.WorkspaceID) != "" ||
 		strings.TrimSpace(sel.DID) != "" ||
-		strings.TrimSpace(sel.IdentityHandle) != ""
+		strings.TrimSpace(sel.Alias) != ""
 	if !hasIdentity {
 		return usageError("selected account has no identity; run 'aw init' first")
 	}
@@ -87,7 +87,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load workspace state: %w", err)
 	}
 
-	workspaceID := strings.TrimSpace(sel.IdentityID)
+	workspaceID := strings.TrimSpace(sel.WorkspaceID)
 	if state != nil && strings.TrimSpace(state.WorkspaceID) != "" {
 		workspaceID = strings.TrimSpace(state.WorkspaceID)
 	}
@@ -371,8 +371,8 @@ func resolveWorkspaceRepoOrigin(root, explicit string) (string, error) {
 
 func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWorkspace) aweb.WorkspaceInfo {
 	info := aweb.WorkspaceInfo{
-		WorkspaceID: sel.IdentityID,
-		Alias:       sel.IdentityHandle,
+		WorkspaceID: sel.WorkspaceID,
+		Alias:       sel.Alias,
 		Status:      "offline",
 	}
 	if state == nil {
@@ -387,8 +387,8 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 	if strings.TrimSpace(state.HumanName) != "" {
 		info.HumanName = stringPtr(strings.TrimSpace(state.HumanName))
 	}
-	if strings.TrimSpace(state.Role) != "" {
-		info.Role = stringPtr(strings.TrimSpace(state.Role))
+	if strings.TrimSpace(state.RoleName) != "" {
+		info.Role = stringPtr(strings.TrimSpace(state.RoleName))
 	}
 	if strings.TrimSpace(state.Hostname) != "" {
 		info.Hostname = stringPtr(strings.TrimSpace(state.Hostname))

@@ -606,7 +606,6 @@ func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
 			case "myteam/architect":
 				return &awid.ResolvedIdentity{
 					DID:         "did:key:z6MkSender",
-					IdentityID:  "identity-uuid-1",
 					Address:     identifier,
 					Lifetime:    awid.LifetimeEphemeral,
 					Custody:     awid.CustodySelf,
@@ -615,7 +614,6 @@ func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
 			case "myteam/implementer":
 				return &awid.ResolvedIdentity{
 					DID:         "did:key:z6MkSelf",
-					IdentityID:  "identity-uuid-self",
 					Address:     identifier,
 					Lifetime:    awid.LifetimePersistent,
 					Custody:     awid.CustodySelf,

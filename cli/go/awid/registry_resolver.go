@@ -58,9 +58,9 @@ type registryAddressCacheValue struct {
 }
 
 type RegistryResolver struct {
-	HTTPClient  *http.Client
-	DNSResolver TXTResolver
-	Now         func() time.Time
+	HTTPClient          *http.Client
+	DNSResolver         TXTResolver
+	Now                 func() time.Time
 	fallbackRegistryURL string
 
 	mu            sync.Mutex
@@ -144,7 +144,7 @@ func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*Res
 		Handle:        name,
 		ControllerDID: address.authority.ControllerDID,
 		PublicKey:     ed25519.PublicKey(pub),
-		ServerURL:     address.authority.RegistryURL,
+		RegistryURL:   address.authority.RegistryURL,
 		Custody:       CustodySelf,
 		Lifetime:      LifetimePersistent,
 		ResolvedAt:    r.now().UTC(),
