@@ -34,7 +34,7 @@ async def task_create(
     try:
         result = await create_task(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             created_by_alias=auth.alias,
             title=title,
             description=description,
@@ -64,7 +64,7 @@ async def task_list(
     try:
         tasks = await list_tasks(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             status=status or None,
             assignee_alias=assignee or None,
             task_type=task_type or None,
@@ -81,7 +81,7 @@ async def task_ready(db_infra, *, unclaimed_only: bool = True) -> str:
     auth = get_auth()
     tasks = await list_ready_tasks(
         db_infra,
-        team_address=auth.team_address,
+        team_id=auth.team_id,
         unclaimed=bool(unclaimed_only),
     )
     return json.dumps({"tasks": tasks})
@@ -91,7 +91,7 @@ async def task_get(db_infra, *, ref: str) -> str:
     """Get a task by ref or UUID."""
     auth = get_auth()
     try:
-        task = await get_task(db_infra, team_address=auth.team_address, ref=ref)
+        task = await get_task(db_infra, team_id=auth.team_id, ref=ref)
     except NotFoundError:
         return json.dumps({"error": "Task not found"})
     return json.dumps(task)
@@ -103,7 +103,7 @@ async def task_close(db_infra, *, ref: str) -> str:
     try:
         task = await update_task(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             ref=ref,
             actor_alias=auth.alias,
             status="closed",
@@ -159,7 +159,7 @@ async def task_update(
     try:
         task = await update_task(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             ref=ref,
             actor_alias=auth.alias,
             **kwargs,
@@ -187,7 +187,7 @@ async def task_comment_add(db_infra, *, ref: str, body: str) -> str:
     try:
         comment = await add_comment(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             ref=ref,
             author_alias=auth.alias,
             body=body,
@@ -201,7 +201,7 @@ async def task_comment_list(db_infra, *, ref: str) -> str:
     """List comments on a task."""
     auth = get_auth()
     try:
-        comments = await list_comments(db_infra, team_address=auth.team_address, ref=ref)
+        comments = await list_comments(db_infra, team_id=auth.team_id, ref=ref)
     except NotFoundError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"comments": comments})

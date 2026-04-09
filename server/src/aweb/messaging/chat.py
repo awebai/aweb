@@ -13,31 +13,31 @@ logger = logging.getLogger(__name__)
 HANG_ON_EXTENSION_SECONDS = 300
 
 
-async def get_agent_by_id(db, *, team_address: str, agent_id: str) -> dict[str, Any] | None:
+async def get_agent_by_id(db, *, team_id: str, agent_id: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_address, alias
+        SELECT agent_id, team_id, alias
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         UUID(agent_id),
-        team_address,
+        team_id,
     )
     if not row:
         return None
     return dict(row)
 
 
-async def get_agent_by_alias(db, *, team_address: str, alias: str) -> dict[str, Any] | None:
+async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_address, alias
+        SELECT agent_id, team_id, alias
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         alias,
     )
     if not row:
@@ -45,18 +45,18 @@ async def get_agent_by_alias(db, *, team_address: str, alias: str) -> dict[str, 
     return dict(row)
 
 
-async def get_agents_by_aliases(db, *, team_address: str, aliases: list[str]) -> list[dict[str, Any]]:
+async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list[dict[str, Any]]:
     """Resolve multiple aliases to agents in a single query."""
     if not aliases:
         return []
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_address, alias
+        SELECT agent_id, team_id, alias
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         aliases,
     )
     return [dict(r) for r in rows]
@@ -90,7 +90,7 @@ async def find_session_between(
 async def ensure_session(
     db,
     *,
-    team_address: str,
+    team_id: str,
     agent_rows: list[dict[str, Any]],
     created_by_alias: str,
 ) -> UUID:
@@ -115,11 +115,11 @@ async def ensure_session(
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            INSERT INTO {{tables.chat_sessions}} (team_address, created_by)
+            INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
             VALUES ($1, $2)
             RETURNING session_id
             """,
-            team_address,
+            team_id,
             created_by_alias,
         )
         if not row:

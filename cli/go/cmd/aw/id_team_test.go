@@ -78,7 +78,7 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "team-uuid-1",
+				"team_id":      "backend:acme.com",
 				"domain":       "acme.com",
 				"name":         gotPayload["name"],
 				"team_did_key": gotPayload["team_did_key"],
@@ -123,8 +123,8 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	if got["status"] != "created" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if got["team_did_key"] == "" || got["team_did_key"] == nil {
 		t.Fatal("team_did_key is empty")
@@ -153,7 +153,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "team-uuid-1",
+				"team_id":      "default:acme.com",
 				"domain":       "acme.com",
 				"name":         "default",
 				"team_did_key": gotCreatePayload["team_did_key"],
@@ -194,8 +194,8 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	if err != nil {
 		t.Fatalf("bootstrapFirstLocalTeamMember: %v", err)
 	}
-	if result.TeamAddress != "acme.com/default" {
-		t.Fatalf("team_address=%q", result.TeamAddress)
+	if result.TeamID != "default:acme.com" {
+		t.Fatalf("team_id=%q", result.TeamID)
 	}
 	if result.Certificate == nil {
 		t.Fatal("expected certificate")
@@ -321,8 +321,8 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if acceptGot["status"] != "accepted" {
 		t.Fatalf("accept status=%v", acceptGot["status"])
 	}
-	if acceptGot["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", acceptGot["team_address"])
+	if acceptGot["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", acceptGot["team_id"])
 	}
 	if acceptGot["alias"] != "alice" {
 		t.Fatalf("alias=%v", acceptGot["alias"])
@@ -334,8 +334,8 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.Team != "acme.com/backend" {
-		t.Fatalf("cert team_address=%q", cert.Team)
+	if cert.Team != "backend:acme.com" {
+		t.Fatalf("cert team_id=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
 		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, memberDIDKey)
@@ -421,8 +421,8 @@ func TestTeamAddMemberFlow(t *testing.T) {
 	if got["status"] != "added" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if registeredCert["member_did_key"] != memberDIDKey {
 		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
@@ -450,7 +450,7 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 				"certificates": []map[string]any{
 					{
 						"certificate_id": "cert-42",
-						"team_address":   "acme.com/backend",
+						"team_id":        "backend:acme.com",
 						"member_did_key": "did:key:z6MkAlice",
 						"alias":          "alice",
 						"lifetime":       "persistent",
@@ -526,7 +526,7 @@ func TestCertShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: awid.ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     awid.LifetimePersistent,
@@ -551,8 +551,8 @@ func TestCertShow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if got["alias"] != "alice" {
 		t.Fatalf("alias=%v", got["alias"])

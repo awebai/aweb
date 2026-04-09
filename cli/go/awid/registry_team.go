@@ -22,7 +22,7 @@ type RegistryTeam struct {
 // RegistryCertificate represents a registered team membership certificate.
 type RegistryCertificate struct {
 	CertificateID string `json:"certificate_id"`
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	MemberDIDKey  string `json:"member_did_key"`
 	Alias         string `json:"alias"`
 	Lifetime      string `json:"lifetime"`

@@ -62,7 +62,7 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := SaveWorktreeWorkspaceTo(path, &WorktreeWorkspace{
 		AwebURL:     "https://app.aweb.ai",
-		TeamAddress: "acme.com/backend",
+		TeamID:      "backend:acme.com",
 		WorkspaceID: "ws-1",
 	}); err != nil {
 		t.Fatalf("save workspace: %v", err)
@@ -84,7 +84,7 @@ func TestLoadWorktreeWorkspaceFromRejectsLegacyServerURLOnly(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 server_url: https://coord.example
-team_address: acme.com/default
+team_id: default:acme.com
 workspace_id: ws-1
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
@@ -106,7 +106,7 @@ func TestLoadWorktreeWorkspaceFromRejectsRemovedIdentityAndProjectFields(t *test
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-team_address: acme.com/backend
+team_id: backend:acme.com
 identity_handle: alice
 did: did:key:z6MkWorkspace
 stable_id: did:aw:workspace
@@ -184,7 +184,7 @@ func TestLoadWorktreeWorkspaceFromRejectsUnsupportedFields(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-team_address: acme.com/backend
+team_id: backend:acme.com
 workspace_id: ws-1
 future_key: value
 weird_mode: true
@@ -203,5 +203,27 @@ weird_mode: true
 		if !strings.Contains(err.Error(), field) {
 			t.Fatalf("missing field %q in error: %v", field, err)
 		}
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromRejectsLegacyTeamAddressKey(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+team_address: acme.com/backend
+workspace_id: ws-1
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected legacy team_address workspace load to fail")
+	}
+	if !strings.Contains(err.Error(), legacyWorkspaceTeamAddressError) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

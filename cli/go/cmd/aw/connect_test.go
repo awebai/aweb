@@ -84,7 +84,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			}
 
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "juanre.aweb.ai/default",
+				Team:          "default:juanre.aweb.ai",
 				MemberDIDKey:  persistentDidKey,
 				MemberDIDAW:   persistentDidAW,
 				MemberAddress: "juanre.aweb.ai/laptop-agent",
@@ -100,7 +100,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"certificate":    encoded,
-				"team_address":   "juanre.aweb.ai/default",
+				"team_id":        "default:juanre.aweb.ai",
 				"lifetime":       "persistent",
 				"alias":          "laptop-agent",
 				"did_aw":         persistentDidAW,
@@ -117,7 +117,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				t.Fatal("missing team certificate header")
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "juanre.aweb.ai/default",
+				"team_id":      "default:juanre.aweb.ai",
 				"alias":        "laptop-agent",
 				"agent_id":     "agent-1",
 				"workspace_id": "ws-1",
@@ -178,8 +178,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace.yaml missing: %v", err)
 	}
-	if workspace.TeamAddress != "juanre.aweb.ai/default" {
-		t.Fatalf("team_address=%q", workspace.TeamAddress)
+	if workspace.TeamID != "default:juanre.aweb.ai" {
+		t.Fatalf("team_id=%q", workspace.TeamID)
 	}
 	if workspace.Alias != "laptop-agent" {
 		t.Fatalf("alias=%q", workspace.Alias)
@@ -228,7 +228,7 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 			}
 			didKey, _ := redeemBody["did_key"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "juanre.aweb.ai/default",
+				Team:         "default:juanre.aweb.ai",
 				MemberDIDKey: didKey,
 				Alias:        "ci-runner-01",
 				Lifetime:     awid.LifetimeEphemeral,
@@ -241,14 +241,14 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificate":  encoded,
-				"team_address": "juanre.aweb.ai/default",
-				"lifetime":     "ephemeral",
-				"alias":        "ci-runner-01",
+				"certificate": encoded,
+				"team_id":     "default:juanre.aweb.ai",
+				"lifetime":    "ephemeral",
+				"alias":       "ci-runner-01",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "juanre.aweb.ai/default",
+				"team_id":      "default:juanre.aweb.ai",
 				"alias":        "ci-runner-01",
 				"agent_id":     "agent-2",
 				"workspace_id": "ws-2",
@@ -352,7 +352,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			connectCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "juanre.aweb.ai/default",
+				"team_id":      "default:juanre.aweb.ai",
 				"alias":        "laptop-agent",
 				"agent_id":     "agent-1",
 				"workspace_id": "ws-1",
@@ -398,7 +398,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "juanre.aweb.ai/default",
+				Team:          "default:juanre.aweb.ai",
 				MemberDIDKey:  persistentDidKey,
 				MemberDIDAW:   persistentDidAW,
 				MemberAddress: "juanre.aweb.ai/laptop-agent",
@@ -414,7 +414,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"certificate":    encoded,
-				"team_address":   "juanre.aweb.ai/default",
+				"team_id":        "default:juanre.aweb.ai",
 				"lifetime":       "persistent",
 				"alias":          "laptop-agent",
 				"did_aw":         persistentDidAW,

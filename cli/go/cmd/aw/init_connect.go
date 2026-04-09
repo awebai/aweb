@@ -24,7 +24,7 @@ import (
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
 	Status      string `json:"status"`
-	TeamAddress string `json:"team_address"`
+	TeamID      string `json:"team_id"`
 	Alias       string `json:"alias"`
 	AwebURL     string `json:"aweb_url"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
@@ -32,7 +32,7 @@ type connectOutput struct {
 
 // connectResponse is the server response from POST /v1/connect.
 type connectResponse struct {
-	TeamAddress string `json:"team_address"`
+	TeamID      string `json:"team_id"`
 	Alias       string `json:"alias"`
 	AgentID     string `json:"agent_id"`
 	WorkspaceID string `json:"workspace_id"`
@@ -108,7 +108,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &awconfig.WorktreeWorkspace{
 		AwebURL:         awebURL,
-		TeamAddress:     resp.TeamAddress,
+		TeamID:          resp.TeamID,
 		Alias:           resp.Alias,
 		WorkspaceID:     resp.WorkspaceID,
 		RepoID:          resp.RepoID,
@@ -130,7 +130,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 
 	return connectOutput{
 		Status:      "connected",
-		TeamAddress: resp.TeamAddress,
+		TeamID:      resp.TeamID,
 		Alias:       resp.Alias,
 		AwebURL:     awebURL,
 		WorkspaceID: resp.WorkspaceID,
@@ -150,12 +150,12 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 		return nil, err
 	}
 
-	// DIDKey signature over {body_sha256, team, timestamp}
+	// DIDKey signature over {body_sha256, team_id, timestamp}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	bodyHash := sha256.Sum256(bodyJSON)
 	bodyHashHex := hex.EncodeToString(bodyHash[:])
-	sigPayload := fmt.Sprintf(`{"body_sha256":%q,"team":%q,"timestamp":%q}`, bodyHashHex, cert.Team, timestamp)
+	sigPayload := fmt.Sprintf(`{"body_sha256":%q,"team_id":%q,"timestamp":%q}`, bodyHashHex, cert.Team, timestamp)
 	sig := ed25519.Sign(signingKey, []byte(sigPayload))
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", did, base64.RawStdEncoding.EncodeToString(sig)))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
@@ -229,7 +229,7 @@ func formatConnect(v any) string {
 	out := v.(connectOutput)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
-	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamAddress))
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
 	return sb.String()

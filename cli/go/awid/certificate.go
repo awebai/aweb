@@ -16,7 +16,7 @@ import (
 type TeamCertificate struct {
 	Version       int    `json:"version"`
 	CertificateID string `json:"certificate_id"`
-	Team          string `json:"team"`
+	Team          string `json:"team_id"`
 	TeamDIDKey    string `json:"team_did_key"`
 	MemberDIDKey  string `json:"member_did_key"`
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
@@ -29,7 +29,7 @@ type TeamCertificate struct {
 
 // TeamCertificateFields are the inputs for signing a certificate.
 type TeamCertificateFields struct {
-	Team          string // team address (e.g. "acme.com/backend")
+	Team          string // team identifier (e.g. "backend:acme.com")
 	MemberDIDKey  string
 	MemberDIDAW   string // optional; from identity.yaml, empty for ephemeral
 	MemberAddress string // optional; from identity.yaml, empty for ephemeral
@@ -44,7 +44,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		return nil, fmt.Errorf("team signing key is required")
 	}
 	if strings.TrimSpace(fields.Team) == "" {
-		return nil, fmt.Errorf("team_address is required")
+		return nil, fmt.Errorf("team_id is required")
 	}
 	if strings.TrimSpace(fields.MemberDIDKey) == "" {
 		return nil, fmt.Errorf("member_did_key is required")
@@ -188,7 +188,7 @@ func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberD
 	}
 	entries = append(entries,
 		entry{"member_did_key", jsonString(memberDIDKey)},
-		entry{"team", jsonString(team)},
+		entry{"team_id", jsonString(team)},
 		entry{"team_did_key", jsonString(teamDIDKey)},
 		entry{"version", "1"},
 	)

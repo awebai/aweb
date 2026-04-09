@@ -27,7 +27,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
     cert = {
         "version": 1,
         "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team": kwargs.get("team_address", "acme.com/backend"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": "",
@@ -45,14 +45,14 @@ def _encode_certificate(cert):
     return base64.b64encode(json.dumps(cert).encode()).decode()
 
 
-def _signed_request(agent_sk, agent_did_key, team_address, body_bytes=b""):
+def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
     import hashlib
 
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
     payload_bytes = canonical_json_bytes({
         "body_sha256": body_sha256,
-        "team": team_address,
+        "team_id": team_id,
         "timestamp": timestamp,
     })
     sig = sign_message(agent_sk, payload_bytes)
@@ -122,7 +122,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
         team_sk,
         team_did_key,
         bob_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="bob",
         lifetime="persistent",
     )
@@ -130,10 +130,10 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         "acme.com",
         "backend",
         team_did_key,
@@ -141,30 +141,30 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime, role)
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, 'alice', 'persistent', 'developer')
         RETURNING agent_id
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         alice_did_key,
     )
     bob = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime, role)
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, 'bob', 'persistent', 'developer')
         RETURNING agent_id
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         bob_did_key,
     )
 
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}}
-            (team_address, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
+            (team_id, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         alice["agent_id"],
         bob["agent_id"],
         "alice",
@@ -175,7 +175,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "acme.com/backend")
+    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -183,6 +183,6 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     assert resp.status_code == 200
     assert "event: connected" in resp.text
-    assert '"team_address": "acme.com/backend"' in resp.text
+    assert '"team_id": "backend:acme.com"' in resp.text
     assert "event: actionable_mail" in resp.text
     assert '"from_alias": "alice"' in resp.text

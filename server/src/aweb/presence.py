@@ -17,12 +17,12 @@ def _safe_key_component(value: str) -> str:
 
     Prevents key collision attacks where values containing colons could
     create ambiguous key boundaries. For example, without encoding:
-      team_address="abc", alias="xyz:def" -> "idx:alias:abc:xyz:def"
-      team_address="abc:xyz", alias="def" -> "idx:alias:abc:xyz:def" (COLLISION!)
+      team_id="abc", alias="xyz:def" -> "idx:alias:abc:xyz:def"
+      team_id="abc:xyz", alias="def" -> "idx:alias:abc:xyz:def" (COLLISION!)
 
     With encoding:
-      team_address="abc", alias="xyz:def" -> "idx:alias:abc:xyz%3Adef"
-      team_address="abc:xyz", alias="def" -> "idx:alias:abc%3Axyz:def" (DISTINCT)
+      team_id="abc", alias="xyz:def" -> "idx:alias:abc:xyz%3Adef"
+      team_id="abc:xyz", alias="def" -> "idx:alias:abc%3Axyz:def" (DISTINCT)
     """
     return quote(value, safe="")
 
@@ -32,9 +32,9 @@ def _presence_key(workspace_id: str) -> str:
     return f"presence:{workspace_id}"
 
 
-def _team_workspaces_index_key(team_address: str) -> str:
-    """Secondary index: workspace_ids by team_address."""
-    return f"idx:team_workspaces:{team_address}"
+def _team_workspaces_index_key(team_id: str) -> str:
+    """Secondary index: workspace_ids by team_id."""
+    return f"idx:team_workspaces:{team_id}"
 
 
 def _repo_workspaces_index_key(repo_id: str) -> str:
@@ -52,13 +52,13 @@ def _all_workspaces_index_key() -> str:
     return "idx:all_workspaces"
 
 
-def _alias_index_key(team_address: str, alias: str) -> str:
-    """Secondary index: workspace_id by (team_address, alias).
+def _alias_index_key(team_id: str, alias: str) -> str:
+    """Secondary index: workspace_id by (team_id, alias).
 
     Enables O(1) alias collision checking instead of SCAN.
     Key maps to a single workspace_id (aliases are unique per team).
     """
-    return f"idx:alias:{_safe_key_component(team_address)}:{_safe_key_component(alias)}"
+    return f"idx:alias:{_safe_key_component(team_id)}:{_safe_key_component(alias)}"
 
 
 async def update_agent_presence(
@@ -68,7 +68,7 @@ async def update_agent_presence(
     program: Optional[str] = None,
     model: Optional[str] = None,
     human_name: Optional[str] = None,
-    team_address: Optional[str] = None,
+    team_id: Optional[str] = None,
     repo_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     member_email: str = "",
@@ -86,7 +86,7 @@ async def update_agent_presence(
         workspace_id: UUID identifying the workspace.
         alias: Human-friendly workspace identifier for addressing.
         human_name: Name of the human who owns this workspace.
-        team_address: Team address (for secondary index).
+        team_id: Team address (for secondary index).
         repo_id: UUID of the repo (for secondary index).
         current_branch: Optional branch name.
         role: Brief description of workspace purpose (max 50 chars).
@@ -105,7 +105,7 @@ async def update_agent_presence(
         "workspace_id": workspace_id,
         "alias": alias,
         "human_name": human_name or "",
-        "team_address": team_address or "",
+        "team_id": team_id or "",
         "repo_id": repo_id or "",
         "member_email": member_email,
         "program": program or "",
@@ -127,7 +127,7 @@ async def update_agent_presence(
     # Update secondary indexes
     # Index TTL is 2x presence TTL to ensure index entries outlive presence keys,
     # allowing lazy cleanup to detect stale entries via EXISTS checks.
-    # Note: workspace → team is immutable (see architecture docs), so team_address
+    # Note: workspace → team is immutable (see architecture docs), so team_id
     # doesn't change for a given workspace. Branch and repo indexes may have
     # transient staleness (up to TTL*2) when workspaces switch branches.
 
@@ -136,13 +136,13 @@ async def update_agent_presence(
     await redis.sadd(all_idx_key, workspace_id)
     await redis.expire(all_idx_key, ttl_seconds * 2)
 
-    if team_address:
-        idx_key = _team_workspaces_index_key(team_address)
+    if team_id:
+        idx_key = _team_workspaces_index_key(team_id)
         await redis.sadd(idx_key, workspace_id)
         await redis.expire(idx_key, ttl_seconds * 2)
 
         # Alias index for O(1) collision checking (1:1 mapping, not a set)
-        alias_idx_key = _alias_index_key(team_address, alias)
+        alias_idx_key = _alias_index_key(team_id, alias)
         await redis.set(alias_idx_key, workspace_id, ex=ttl_seconds * 2)
 
     if repo_id:
@@ -308,9 +308,9 @@ async def _filter_valid_workspace_ids(
     return valid_workspace_ids
 
 
-async def get_workspace_ids_by_team_address(
+async def get_workspace_ids_by_team_id(
     redis: Redis,
-    team_address: str,
+    team_id: str,
 ) -> List[str]:
     """
     Get all workspace_ids that belong to a team by address.
@@ -319,12 +319,12 @@ async def get_workspace_ids_by_team_address(
     index entry remains) are filtered out and lazily removed from the index.
 
     Args:
-        team_address: Team address string.
+        team_id: Team address string.
 
     Returns:
         List of workspace_ids in the team.
     """
-    idx_key = _team_workspaces_index_key(team_address)
+    idx_key = _team_workspaces_index_key(team_id)
     return await _filter_valid_workspace_ids(redis, idx_key)
 
 
@@ -388,7 +388,7 @@ async def get_all_workspace_ids(
 
 async def get_workspace_id_by_alias(
     redis: Redis,
-    team_address: str,
+    team_id: str,
     alias: str,
 ) -> Optional[str]:
     """
@@ -401,13 +401,13 @@ async def get_workspace_id_by_alias(
     (workspaces table) is the authoritative source for alias ownership.
 
     Args:
-        team_address: Team address string.
+        team_id: Team address string.
         alias: The alias to look up.
 
     Returns:
         workspace_id if alias is in use with active presence, None otherwise.
     """
-    idx_key = _alias_index_key(team_address, alias)
+    idx_key = _alias_index_key(team_id, alias)
     workspace_id = await redis.get(idx_key)
 
     if not workspace_id:

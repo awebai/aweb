@@ -22,12 +22,12 @@ func testCommandEnv(home string) []string {
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
 	t.Helper()
-	if strings.TrimSpace(state.AwebURL) != "" && strings.TrimSpace(state.TeamAddress) != "" {
+	if strings.TrimSpace(state.AwebURL) != "" && strings.TrimSpace(state.TeamID) != "" {
 		certPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 		signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 		if _, err := os.Stat(certPath); os.IsNotExist(err) {
 			fixture := testSelectionFixture{
-				TeamAddress: state.TeamAddress,
+				TeamID:      state.TeamID,
 				Alias:       state.Alias,
 				WorkspaceID: state.WorkspaceID,
 				CreatedAt:   "2026-04-04T00:00:00Z",
@@ -68,7 +68,7 @@ func writeIdentityForTest(t *testing.T, workingDir string, state awconfig.Worktr
 func defaultWorkspaceBinding(serverURL string) awconfig.WorktreeWorkspace {
 	return awconfig.WorktreeWorkspace{
 		AwebURL:     serverURL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: "workspace-1",
 	}
@@ -81,7 +81,7 @@ func writeDefaultWorkspaceBindingForTest(t *testing.T, workingDir, serverURL str
 
 type testSelectionFixture struct {
 	AwebURL     string
-	TeamAddress string
+	TeamID      string
 	Alias       string
 	WorkspaceID string
 	DID         string
@@ -97,7 +97,7 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 	t.Helper()
 	workspace := awconfig.WorktreeWorkspace{
 		AwebURL:     fixture.AwebURL,
-		TeamAddress: resolvedTeamAddressForTest(fixture.TeamAddress),
+		TeamID:      resolvedTeamIDForTest(fixture.TeamID),
 		Alias:       fixture.Alias,
 		WorkspaceID: fixture.WorkspaceID,
 	}
@@ -135,10 +135,10 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	if alias == "" {
 		alias = "alice"
 	}
-	teamAddress := resolvedTeamAddressForTest(strings.TrimSpace(workspace.TeamAddress))
-	teamDomain := teamAddress
-	if idx := strings.IndexByte(teamAddress, '/'); idx >= 0 {
-		teamDomain = teamAddress[:idx]
+	teamID := resolvedTeamIDForTest(strings.TrimSpace(workspace.TeamID))
+	teamDomain, _, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		t.Fatalf("parse team_id %q: %v", teamID, err)
 	}
 	memberAddress := deriveIdentityAddress(teamDomain, alias)
 	if fixture != nil && strings.TrimSpace(fixture.Address) != "" {
@@ -180,7 +180,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	}
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamAddress,
+		Team:          teamID,
 		MemberDIDKey:  memberDID,
 		MemberDIDAW:   memberStableID,
 		MemberAddress: memberAddress,
@@ -213,11 +213,11 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	}
 }
 
-func resolvedTeamAddressForTest(teamAddress string) string {
-	if strings.TrimSpace(teamAddress) != "" {
-		return strings.TrimSpace(teamAddress)
+func resolvedTeamIDForTest(teamID string) string {
+	if strings.TrimSpace(teamID) != "" {
+		return strings.TrimSpace(teamID)
 	}
-	return "demo/backend"
+	return "backend:demo"
 }
 
 func requireCertificateAuthForTest(t *testing.T, r *http.Request) {

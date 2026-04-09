@@ -48,6 +48,7 @@ async def test_create_team(client, controller_identity):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    assert body["team_id"] == "backend:acme.com"
     assert body["domain"] == "acme.com"
     assert body["name"] == "backend"
     assert body["display_name"] == "Backend Team"
@@ -185,6 +186,7 @@ async def test_get_team(client, controller_identity):
     resp = await client.get("/v1/namespaces/get.com/teams/infra")
     assert resp.status_code == 200
     body = resp.json()
+    assert body["team_id"] == "infra:get.com"
     assert body["name"] == "infra"
     assert body["team_did_key"] == team_did_key
     assert body["visibility"] == "private"

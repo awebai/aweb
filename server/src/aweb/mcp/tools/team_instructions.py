@@ -16,12 +16,12 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
     if team_instructions_id:
         row = await aweb_db.fetch_one(
             """
-            SELECT id, team_address, version, document_json, created_at, updated_at
+            SELECT id, team_id, version, document_json, created_at, updated_at
             FROM {{tables.team_instructions}}
-            WHERE id = $1 AND team_address = $2
+            WHERE id = $1 AND team_id = $2
             """,
             team_instructions_id,
-            auth.team_address,
+            auth.team_id,
         )
         if row is None:
             return json.dumps({"error": "Team instructions not found"})
@@ -33,14 +33,14 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
             {
                 "team_instructions_id": str(row["id"]),
                 "active_team_instructions_id": None,
-                "team_address": str(row["team_address"]),
+                "team_id": str(row["team_id"]),
                 "version": row["version"],
                 "updated_at": updated_at.isoformat(),
                 "document": document_data,
             }
         )
 
-    version = await get_active_team_instructions(aweb_db, auth.team_address, bootstrap_if_missing=True)
+    version = await get_active_team_instructions(aweb_db, auth.team_id, bootstrap_if_missing=True)
     if version is None:
         return json.dumps({"error": "Team instructions not found"})
     updated_at = version.updated_at or version.created_at
@@ -49,7 +49,7 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
         {
             "team_instructions_id": version.id,
             "active_team_instructions_id": version.id,
-            "team_address": version.team_address,
+            "team_id": version.team_id,
             "version": version.version,
             "updated_at": updated_at.isoformat(),
             "document": version.document.model_dump(),
@@ -63,17 +63,17 @@ async def instructions_history(db_infra, *, limit: int = 20) -> str:
     aweb_db = db_infra.get_manager("aweb")
     limit = max(1, min(int(limit), 100))
 
-    await get_active_team_instructions(aweb_db, auth.team_address, bootstrap_if_missing=True)
+    await get_active_team_instructions(aweb_db, auth.team_id, bootstrap_if_missing=True)
 
     rows = await aweb_db.fetch_all(
         """
         SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.team_instructions}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        auth.team_address,
+        auth.team_id,
         limit,
     )
 

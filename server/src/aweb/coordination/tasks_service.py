@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from awid.team_ids import team_slug
 from ..claims import claim_focus_task_ref, resolve_task_claim_apex
 from ..service_errors import ConflictError, NotFoundError, ValidationError
 
@@ -31,51 +32,51 @@ def format_task_ref(team_slug: str, task_ref_suffix: str) -> str:
     return f"{team_slug}-{task_ref_suffix}"
 
 
-async def _allocate_task_number_on(manager, *, team_address: str) -> int:
+async def _allocate_task_number_on(manager, *, team_id: str) -> int:
     row = await manager.fetch_one(
         """
-        INSERT INTO {{tables.task_counters}} (team_address, next_number)
+        INSERT INTO {{tables.task_counters}} (team_id, next_number)
         VALUES ($1, 2)
-        ON CONFLICT (team_address) DO UPDATE SET next_number = {{tables.task_counters}}.next_number + 1
+        ON CONFLICT (team_id) DO UPDATE SET next_number = {{tables.task_counters}}.next_number + 1
         RETURNING next_number - 1 AS task_number
         """,
-        team_address,
+        team_id,
     )
     return row["task_number"]
 
 
-async def _allocate_root_task_seq_on(manager, *, team_address: str) -> int:
+async def _allocate_root_task_seq_on(manager, *, team_id: str) -> int:
     row = await manager.fetch_one(
         """
-        INSERT INTO {{tables.task_root_counters}} (team_address, next_number)
+        INSERT INTO {{tables.task_root_counters}} (team_id, next_number)
         VALUES ($1, 2)
-        ON CONFLICT (team_address) DO UPDATE
+        ON CONFLICT (team_id) DO UPDATE
         SET next_number = {{tables.task_root_counters}}.next_number + 1
         RETURNING next_number - 1 AS root_task_seq
         """,
-        team_address,
+        team_id,
     )
     return row["root_task_seq"]
 
 
-def _get_team_slug(team_address: str) -> str:
-    return team_address.split("/")[-1]
+def _get_team_slug(team_id: str) -> str:
+    return team_slug(team_id)
 
 
-async def allocate_task_number(db, *, team_address: str) -> int:
+async def allocate_task_number(db, *, team_id: str) -> int:
     aweb_db = db.get_manager("aweb")
-    return await _allocate_task_number_on(aweb_db, team_address=team_address)
+    return await _allocate_task_number_on(aweb_db, team_id=team_id)
 
 
-async def resolve_task_ref(db, *, team_address: str, ref: str) -> UUID:
+async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
     aweb_db = db.get_manager("aweb")
 
     try:
         task_uuid = UUID(ref)
         row = await aweb_db.fetch_one(
-            "SELECT task_id FROM {{tables.tasks}} WHERE task_id = $1 AND team_address = $2 AND deleted_at IS NULL",
+            "SELECT task_id FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL",
             task_uuid,
-            team_address,
+            team_id,
         )
         if not row:
             raise NotFoundError("Task not found")
@@ -83,7 +84,7 @@ async def resolve_task_ref(db, *, team_address: str, ref: str) -> UUID:
     except ValueError:
         pass
 
-    slug = _get_team_slug(team_address)
+    slug = _get_team_slug(team_id)
     prefix = slug + "-"
     ref_suffix = ref[len(prefix) :] if ref.startswith(prefix) else ref
     ref_suffix = ref_suffix.strip()
@@ -92,8 +93,8 @@ async def resolve_task_ref(db, *, team_address: str, ref: str) -> UUID:
         raise NotFoundError("Task not found")
 
     row = await aweb_db.fetch_one(
-        "SELECT task_id FROM {{tables.tasks}} WHERE team_address = $1 AND task_ref_suffix = $2 AND deleted_at IS NULL",
-        team_address,
+        "SELECT task_id FROM {{tables.tasks}} WHERE team_id = $1 AND task_ref_suffix = $2 AND deleted_at IS NULL",
+        team_id,
         ref_suffix,
     )
     if row:
@@ -105,7 +106,7 @@ async def resolve_task_ref(db, *, team_address: str, ref: str) -> UUID:
 async def create_task(
     db,
     *,
-    team_address: str,
+    team_id: str,
     created_by_alias: str,
     title: str,
     description: str = "",
@@ -116,25 +117,25 @@ async def create_task(
     parent_task_id: str | None = None,
     assignee_alias: str | None = None,
 ) -> dict[str, Any]:
-    slug = _get_team_slug(team_address)
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     resolved_parent_task_id: UUID | None = None
     task_ref_suffix: str | None = None
 
     if assignee_alias:
         assignee_alias = await _resolve_assignee_alias(
-            db, team_address=team_address, assignee_ref=assignee_alias,
+            db, team_id=team_id, assignee_ref=assignee_alias,
         )
 
     async with aweb_db.transaction() as tx:
-        task_number = await _allocate_task_number_on(tx, team_address=team_address)
+        task_number = await _allocate_task_number_on(tx, team_id=team_id)
         root_task_seq: int
 
         if parent_task_id:
             try:
                 resolved_parent_task_id = await resolve_task_ref(
                     db,
-                    team_address=team_address,
+                    team_id=team_id,
                     ref=parent_task_id,
                 )
             except NotFoundError as exc:
@@ -144,11 +145,11 @@ async def create_task(
                 """
                 SELECT task_id, task_ref_suffix, root_task_seq
                 FROM {{tables.tasks}}
-                WHERE task_id = $1 AND team_address = $2 AND deleted_at IS NULL
+                WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL
                 FOR UPDATE
                 """,
                 resolved_parent_task_id,
-                team_address,
+                team_id,
             )
             if not parent_row:
                 raise ValidationError("Parent task not found in this team")
@@ -164,18 +165,18 @@ async def create_task(
             root_task_seq = parent_row["root_task_seq"]
             task_ref_suffix = f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
         else:
-            root_task_seq = await _allocate_root_task_seq_on(tx, team_address=team_address)
+            root_task_seq = await _allocate_root_task_seq_on(tx, team_id=team_id)
             task_ref_suffix = _encode_alpha_component(root_task_seq)
 
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.tasks}}
-                (team_address, task_number, root_task_seq, task_ref_suffix, title, description, notes, priority, task_type,
+                (team_id, task_number, root_task_seq, task_ref_suffix, title, description, notes, priority, task_type,
                  labels, parent_task_id, assignee_alias, created_by_alias)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING task_id, created_at, updated_at
             """,
-            team_address,
+            team_id,
             task_number,
             root_task_seq,
             task_ref_suffix,
@@ -194,7 +195,7 @@ async def create_task(
         "task_id": str(row["task_id"]),
         "task_ref": format_task_ref(slug, task_ref_suffix),
         "task_number": task_number,
-        "team_address": team_address,
+        "team_id": team_id,
         "title": title,
         "description": description,
         "notes": notes,
@@ -215,7 +216,7 @@ async def create_task(
 async def _resolve_assignee_alias(
     db,
     *,
-    team_address: str,
+    team_id: str,
     assignee_ref: str,
 ) -> str:
     aweb_db = db.get_manager("aweb")
@@ -223,9 +224,9 @@ async def _resolve_assignee_alias(
     try:
         agent_uuid = UUID(assignee_ref)
         agent_row = await aweb_db.fetch_one(
-            "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL",
+            "SELECT alias FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL",
             agent_uuid,
-            team_address,
+            team_id,
         )
         if not agent_row:
             raise ValidationError("Assignee agent not found in this team")
@@ -234,23 +235,23 @@ async def _resolve_assignee_alias(
         pass
 
     agent_row = await aweb_db.fetch_one(
-        "SELECT alias FROM {{tables.agents}} WHERE alias = $1 AND team_address = $2 AND deleted_at IS NULL",
+        "SELECT alias FROM {{tables.agents}} WHERE alias = $1 AND team_id = $2 AND deleted_at IS NULL",
         assignee_ref.strip(),
-        team_address,
+        team_id,
     )
     if not agent_row:
         raise ValidationError("Assignee agent not found in this team")
     return agent_row["alias"]
 
 
-async def get_task(db, *, team_address: str, ref: str) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=ref)
-    slug = _get_team_slug(team_address)
+async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
         """
-        SELECT task_id, team_address, task_number, title, description, notes,
+        SELECT task_id, team_id, task_number, title, description, notes,
                task_ref_suffix, status, priority, task_type, labels, parent_task_id,
                assignee_alias, created_by_alias, closed_by_alias,
                created_at, updated_at, closed_at
@@ -295,7 +296,7 @@ async def get_task(db, *, team_address: str, ref: str) -> dict[str, Any]:
         "task_id": str(row["task_id"]),
         "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
         "task_number": row["task_number"],
-        "team_address": row["team_address"],
+        "team_id": row["team_id"],
         "title": row["title"],
         "description": row["description"],
         "notes": row["notes"],
@@ -318,7 +319,7 @@ async def get_task(db, *, team_address: str, ref: str) -> dict[str, Any]:
 async def list_tasks(
     db,
     *,
-    team_address: str,
+    team_id: str,
     status: str | None = None,
     assignee_alias: str | None = None,
     task_type: str | None = None,
@@ -326,11 +327,11 @@ async def list_tasks(
     labels: list[str] | None = None,
     q: str | None = None,
 ) -> list[dict[str, Any]]:
-    slug = _get_team_slug(team_address)
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
-    conditions = ["team_address = $1", "deleted_at IS NULL"]
-    params: list[Any] = [team_address]
+    conditions = ["team_id = $1", "deleted_at IS NULL"]
+    params: list[Any] = [team_id]
     idx = 2
 
     if status is not None:
@@ -344,7 +345,7 @@ async def list_tasks(
         idx += 1
     if assignee_alias is not None:
         resolved_alias = await _resolve_assignee_alias(
-            db, team_address=team_address, assignee_ref=assignee_alias,
+            db, team_id=team_id, assignee_ref=assignee_alias,
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
@@ -402,8 +403,8 @@ async def list_tasks(
     ]
 
 
-async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
-    slug = _get_team_slug(team_address)
+async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
     task_rows = await aweb_db.fetch_all(
@@ -412,12 +413,12 @@ async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
                assignee_alias, created_by_alias, parent_task_id, labels,
                created_at, updated_at
         FROM {{tables.tasks}}
-        WHERE team_address = $1
+        WHERE team_id = $1
           AND status = 'in_progress'
           AND deleted_at IS NULL
         ORDER BY priority ASC, task_number ASC
         """,
-        team_address,
+        team_id,
     )
     if not task_rows:
         return []
@@ -428,10 +429,10 @@ async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
         """
         SELECT task_ref, workspace_id, alias, claimed_at
         FROM {{tables.task_claims}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY claimed_at DESC
         """,
-        team_address,
+        team_id,
     )
 
     latest_claim_by_ref: dict[str, dict[str, Any]] = {}
@@ -458,7 +459,7 @@ async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
 
     workspace_meta_by_id: dict[str, dict[str, Any]] = {}
     if claim_workspace_ids:
-        workspace_params: list[Any] = [team_address]
+        workspace_params: list[Any] = [team_id]
         workspace_placeholders: list[str] = []
         for raw_id in claim_workspace_ids:
             workspace_params.append(UUID(raw_id))
@@ -468,7 +469,7 @@ async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
             SELECT w.workspace_id, w.alias, w.current_branch, r.canonical_origin
             FROM {{{{tables.workspaces}}}} w
             LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-            WHERE w.team_address = $1
+            WHERE w.team_id = $1
               AND w.deleted_at IS NULL
               AND w.workspace_id IN ({", ".join(workspace_placeholders)})
             """,
@@ -539,8 +540,8 @@ async def list_active_work(db, *, team_address: str) -> list[dict[str, Any]]:
     return items
 
 
-async def list_ready_tasks(db, *, team_address: str, unclaimed: bool = False) -> list[dict[str, Any]]:
-    slug = _get_team_slug(team_address)
+async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     unclaimed_filter = "AND t.assignee_alias IS NULL" if unclaimed else ""
 
@@ -550,7 +551,7 @@ async def list_ready_tasks(db, *, team_address: str, unclaimed: bool = False) ->
                t.assignee_alias, t.created_by_alias, t.parent_task_id, t.labels,
                t.created_at, t.updated_at
         FROM {{{{tables.tasks}}}} t
-        WHERE t.team_address = $1
+        WHERE t.team_id = $1
           AND t.status = 'open'
           AND t.deleted_at IS NULL
           {unclaimed_filter}
@@ -563,7 +564,7 @@ async def list_ready_tasks(db, *, team_address: str, unclaimed: bool = False) ->
           )
         ORDER BY t.priority ASC, t.task_number ASC
         """,
-        team_address,
+        team_id,
     )
     return [
         {
@@ -585,8 +586,8 @@ async def list_ready_tasks(db, *, team_address: str, unclaimed: bool = False) ->
     ]
 
 
-async def list_blocked_tasks(db, *, team_address: str) -> list[dict[str, Any]]:
-    slug = _get_team_slug(team_address)
+async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
@@ -595,7 +596,7 @@ async def list_blocked_tasks(db, *, team_address: str) -> list[dict[str, Any]]:
                t.assignee_alias, t.created_by_alias, t.parent_task_id, t.labels,
                t.created_at, t.updated_at
         FROM {{tables.tasks}} t
-        WHERE t.team_address = $1
+        WHERE t.team_id = $1
           AND t.status IN ('open', 'in_progress')
           AND t.deleted_at IS NULL
           AND EXISTS (
@@ -607,7 +608,7 @@ async def list_blocked_tasks(db, *, team_address: str) -> list[dict[str, Any]]:
           )
         ORDER BY t.priority ASC, t.task_number ASC
         """,
-        team_address,
+        team_id,
     )
     return [
         {
@@ -632,7 +633,7 @@ async def list_blocked_tasks(db, *, team_address: str) -> list[dict[str, Any]]:
 async def update_task(
     db,
     *,
-    team_address: str,
+    team_id: str,
     ref: str,
     actor_alias: str,
     title: str | None = None,
@@ -644,8 +645,8 @@ async def update_task(
     labels: list[str] | None = None,
     assignee_alias: str | None | object = _UNSET,
 ) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=ref)
-    slug = _get_team_slug(team_address)
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     resolved_assignee_alias: str | None | object = _UNSET
@@ -696,7 +697,7 @@ async def update_task(
             resolved_assignee_alias = (
                 await _resolve_assignee_alias(
                     db,
-                    team_address=team_address,
+                    team_id=team_id,
                     assignee_ref=str(assignee_alias),
                 )
                 if assignee_alias
@@ -711,25 +712,25 @@ async def update_task(
         if status is not None:
             if status == "in_progress":
                 task_ref = format_task_ref(slug, current["task_ref_suffix"])
-                apex_task_ref = await resolve_task_claim_apex(db, team_address, task_ref)
+                apex_task_ref = await resolve_task_claim_apex(db, team_id, task_ref)
                 workspace = await tx.fetch_one(
                     """
                     SELECT workspace_id, alias, human_name
                     FROM {{tables.workspaces}}
-                    WHERE alias = $1 AND team_address = $2 AND deleted_at IS NULL
+                    WHERE alias = $1 AND team_id = $2 AND deleted_at IS NULL
                     """,
                     actor_alias,
-                    team_address,
+                    team_id,
                 )
                 if workspace is not None:
                     conflicting_claim = await tx.fetch_one(
                         """
                         SELECT workspace_id, alias
                         FROM {{tables.task_claims}}
-                        WHERE team_address = $1 AND task_ref = $2 AND workspace_id != $3
+                        WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
                         LIMIT 1
                         """,
-                        team_address,
+                        team_id,
                         task_ref,
                         workspace["workspace_id"],
                     )
@@ -739,18 +740,18 @@ async def update_task(
                     await tx.execute(
                         """
                         INSERT INTO {{tables.task_claims}} (
-                            team_address, workspace_id, alias, human_name, task_ref,
+                            team_id, workspace_id, alias, human_name, task_ref,
                             apex_task_ref, claimed_at
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        ON CONFLICT (team_address, task_ref, workspace_id)
+                        ON CONFLICT (team_id, task_ref, workspace_id)
                         DO UPDATE SET
                             alias = EXCLUDED.alias,
                             human_name = EXCLUDED.human_name,
                             apex_task_ref = EXCLUDED.apex_task_ref,
                             claimed_at = EXCLUDED.claimed_at
                         """,
-                        team_address,
+                        team_id,
                         workspace["workspace_id"],
                         workspace["alias"],
                         workspace["human_name"] or "",
@@ -765,11 +766,11 @@ async def update_task(
                         SET focus_task_ref = $1,
                             focus_updated_at = $2,
                             updated_at = $2
-                        WHERE team_address = $3 AND workspace_id = $4
+                        WHERE team_id = $3 AND workspace_id = $4
                         """,
                         claim_focus_task_ref(task_ref, apex_task_ref),
                         now,
-                        team_address,
+                        team_id,
                         workspace["workspace_id"],
                     )
                     claim_preacquired = True
@@ -836,7 +837,7 @@ async def update_task(
         )
 
     old_status = current["status"]
-    result = await get_task(db, team_address=team_address, ref=str(task_id))
+    result = await get_task(db, team_id=team_id, ref=str(task_id))
     if auto_closed:
         result["auto_closed"] = auto_closed
     if status is not None and status != old_status:
@@ -846,9 +847,9 @@ async def update_task(
     return result
 
 
-async def soft_delete_task(db, *, team_address: str, ref: str) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=ref)
-    slug = _get_team_slug(team_address)
+async def soft_delete_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
+    slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
@@ -868,9 +869,9 @@ async def soft_delete_task(db, *, team_address: str, ref: str) -> dict[str, Any]
     return {"status": "deleted", "task_id": str(task_id), "task_ref": format_task_ref(slug, row["task_ref_suffix"])}
 
 
-async def add_dependency(db, *, team_address: str, task_ref: str, depends_on_ref: str) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=task_ref)
-    depends_on_id = await resolve_task_ref(db, team_address=team_address, ref=depends_on_ref)
+async def add_dependency(db, *, team_id: str, task_ref: str, depends_on_ref: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
+    depends_on_id = await resolve_task_ref(db, team_id=team_id, ref=depends_on_ref)
     if task_id == depends_on_id:
         raise ValidationError("A task cannot depend on itself")
 
@@ -897,12 +898,12 @@ async def add_dependency(db, *, team_address: str, task_ref: str, depends_on_ref
     try:
         await aweb_db.execute(
             """
-            INSERT INTO {{tables.task_dependencies}} (task_id, depends_on_id, team_address)
+            INSERT INTO {{tables.task_dependencies}} (task_id, depends_on_id, team_id)
             VALUES ($1, $2, $3)
             """,
             task_id,
             depends_on_id,
-            team_address,
+            team_id,
         )
     except Exception as exc:
         if "duplicate key" not in str(exc).lower():
@@ -911,9 +912,9 @@ async def add_dependency(db, *, team_address: str, task_ref: str, depends_on_ref
     return {"task_id": str(task_id), "depends_on_id": str(depends_on_id)}
 
 
-async def remove_dependency(db, *, team_address: str, task_ref: str, dep_ref: str) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=task_ref)
-    dep_id = await resolve_task_ref(db, team_address=team_address, ref=dep_ref)
+async def remove_dependency(db, *, team_id: str, task_ref: str, dep_ref: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
+    dep_id = await resolve_task_ref(db, team_id=team_id, ref=dep_ref)
     aweb_db = db.get_manager("aweb")
     await aweb_db.execute(
         "DELETE FROM {{tables.task_dependencies}} WHERE task_id = $1 AND depends_on_id = $2",
@@ -923,17 +924,17 @@ async def remove_dependency(db, *, team_address: str, task_ref: str, dep_ref: st
     return {"task_id": str(task_id), "removed_depends_on_id": str(dep_id)}
 
 
-async def add_comment(db, *, team_address: str, ref: str, author_alias: str, body: str) -> dict[str, Any]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=ref)
+async def add_comment(db, *, team_id: str, ref: str, author_alias: str, body: str) -> dict[str, Any]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.task_comments}} (task_id, team_address, author_alias, body)
+        INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
         VALUES ($1, $2, $3, $4)
         RETURNING comment_id, created_at
         """,
         task_id,
-        team_address,
+        team_id,
         author_alias,
         body,
     )
@@ -946,8 +947,8 @@ async def add_comment(db, *, team_address: str, ref: str, author_alias: str, bod
     }
 
 
-async def list_comments(db, *, team_address: str, ref: str) -> list[dict[str, Any]]:
-    task_id = await resolve_task_ref(db, team_address=team_address, ref=ref)
+async def list_comments(db, *, team_id: str, ref: str) -> list[dict[str, Any]]:
+    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """

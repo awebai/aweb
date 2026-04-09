@@ -187,7 +187,7 @@ async def _cascade_task_status_changed(
     aweb_db = db_infra.get_manager("aweb")
     workspace = await aweb_db.fetch_one(
         """
-        SELECT team_address, alias, human_name
+        SELECT team_id, alias, human_name
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND deleted_at IS NULL
         """,
@@ -197,13 +197,13 @@ async def _cascade_task_status_changed(
         logger.warning("task.status_changed: no workspace for actor %s", actor_id)
         return
 
-    team_address = str(workspace["team_address"])
+    team_id = str(workspace["team_id"])
     alias = workspace["alias"]
     if new_status == "in_progress":
         if not claim_preacquired:
             conflict = await upsert_claim(
                 db_infra,
-                team_address=team_address,
+                team_id=team_id,
                 workspace_id=actor_id,
                 alias=alias,
                 human_name=workspace["human_name"] or "",
@@ -227,11 +227,11 @@ async def _cascade_task_status_changed(
     else:
         claimant_ids = await release_task_claims(
             db_infra,
-            team_address=team_address,
+            team_id=team_id,
             task_ref=task_ref,
         )
         if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, team_address, claimant_ids)
+            claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
             for cid in claimant_ids:
                 await publish_event(
                     redis,
@@ -247,7 +247,7 @@ async def _cascade_task_status_changed(
         redis,
         TaskStatusChangedEvent(
             workspace_id=actor_id,
-            team_address=team_address,
+            team_id=team_id,
             task_ref=task_ref,
             old_status=context.get("old_status", "") or "",
             new_status=new_status,
@@ -271,20 +271,20 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
 
     aweb_db = db_infra.get_manager("aweb")
     task_row = await aweb_db.fetch_one(
-        "SELECT team_address FROM {{tables.tasks}} WHERE task_id = $1",
+        "SELECT team_id FROM {{tables.tasks}} WHERE task_id = $1",
         task_id,
     )
     if task_row is None:
         return
 
-    team_address = str(task_row["team_address"])
+    team_id = str(task_row["team_id"])
     claimant_ids = await release_task_claims(
         db_infra,
-        team_address=team_address,
+        team_id=team_id,
         task_ref=task_ref,
     )
     if claimant_ids:
-        claimant_aliases = await fetch_workspace_aliases(db_infra, team_address, claimant_ids)
+        claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
         for cid in claimant_ids:
             await publish_event(
                 redis,
@@ -388,7 +388,7 @@ def _translate(event_type: str, ctx: dict):
     if event_type == "task.created":
         return TaskCreatedEvent(
             workspace_id=ctx.get("actor_agent_id", ""),
-            team_address=ctx.get("team_address", ""),
+            team_id=ctx.get("team_id", ""),
             task_ref=ctx.get("task_ref", ""),
             title=ctx.get("title"),
         )

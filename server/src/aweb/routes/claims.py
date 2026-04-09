@@ -24,7 +24,7 @@ class Claim(BaseModel):
     alias: str
     human_name: Optional[str]
     claimed_at: str
-    team_address: str
+    team_id: str
 
 
 class ClaimsResponse(BaseModel):
@@ -61,7 +61,7 @@ async def list_claims(
         Ordered by most recently claimed first.
         Includes has_more and next_cursor for pagination.
     """
-    team_address = identity.team_address
+    team_id = identity.team_id
     aweb_db = db_infra.get_manager("aweb")
 
     # Validate pagination params
@@ -83,8 +83,8 @@ async def list_claims(
     params: list[object] = []
     param_idx = 1
 
-    conditions.append(f"team_address = ${param_idx}")
-    params.append(team_address)
+    conditions.append(f"team_id = ${param_idx}")
+    params.append(team_id)
     param_idx += 1
 
     if validated_workspace_id:
@@ -107,7 +107,7 @@ async def list_claims(
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"""
-        SELECT task_ref, workspace_id, alias, human_name, claimed_at, team_address
+        SELECT task_ref, workspace_id, alias, human_name, claimed_at, team_id
         FROM {{{{tables.task_claims}}}}
         {where_clause}
         ORDER BY claimed_at DESC
@@ -127,7 +127,7 @@ async def list_claims(
             alias=row["alias"],
             human_name=row["human_name"],
             claimed_at=row["claimed_at"].isoformat(),
-            team_address=row["team_address"],
+            team_id=row["team_id"],
         )
         for row in rows
     ]

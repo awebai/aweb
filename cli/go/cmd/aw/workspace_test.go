@@ -179,7 +179,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		TeamAddress:     "demo/backend",
+		TeamID:          "backend:demo",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
 		RoleName:        "developer",
@@ -294,7 +294,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "coordinator",
 		WorkspaceID: selfID,
 	})
@@ -396,7 +396,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: selfID,
 	})
@@ -495,7 +495,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		TeamAddress:     "demo/backend",
+		TeamID:          "backend:demo",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
 		RoleName:        "developer",
@@ -598,7 +598,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		TeamAddress:     "demo/backend",
+		TeamID:          "backend:demo",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
 		RoleName:        "developer",
@@ -704,7 +704,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *tes
 
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
-		TeamAddress:     "demo/backend",
+		TeamID:          "backend:demo",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
 		RoleName:        "developer",
@@ -733,7 +733,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
-	const teamAddress = "source/backend"
+	const teamID = "backend:source"
 
 	_, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -758,8 +758,8 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		case "/v1/agents/suggest-alias-prefix":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": teamAddress,
-				"name_prefix":  "charlie",
+				"team_id":     teamID,
+				"name_prefix": "charlie",
 			})
 		case "/v1/namespaces/source/teams/backend/certificates":
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
@@ -783,7 +783,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 				t.Fatalf("workspace_path=%q", path)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": teamAddress,
+				"team_id":      teamID,
 				"alias":        "charlie",
 				"agent_id":     "agent-3",
 				"workspace_id": "workspace-3",
@@ -822,7 +822,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: teamAddress,
+		TeamID:      teamID,
 		WorkspaceID: "source-1",
 		Alias:       "alice",
 		HumanName:   "Wendy",
@@ -864,8 +864,8 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		t.Fatalf("unmarshal child workspace binding: %v", err)
 	}
-	if state.TeamAddress != teamAddress {
-		t.Fatalf("child team_address=%q", state.TeamAddress)
+	if state.TeamID != teamID {
+		t.Fatalf("child team_id=%q", state.TeamID)
 	}
 	if state.Alias != "charlie" {
 		t.Fatalf("child alias=%q", state.Alias)
@@ -893,7 +893,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
-	const teamAddress = "source/backend"
+	const teamID = "backend:source"
 
 	_, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -918,8 +918,8 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		case "/v1/agents/suggest-alias-prefix":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": teamAddress,
-				"name_prefix":  "charlie",
+				"team_id":     teamID,
+				"name_prefix": "charlie",
 			})
 		case "/v1/namespaces/source/teams/backend/certificates":
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
@@ -965,7 +965,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: teamAddress,
+		TeamID:      teamID,
 		WorkspaceID: "source-1",
 		Alias:       "alice",
 	})
@@ -1040,7 +1040,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "source/backend",
+		TeamID:      "backend:source",
 		WorkspaceID: "source-1",
 		Alias:       "alice",
 	})
@@ -1072,7 +1072,7 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     "https://example.com",
-		TeamAddress: "source/backend",
+		TeamID:      "backend:source",
 		WorkspaceID: "source-1",
 		Alias:       "alice",
 	})

@@ -173,8 +173,9 @@ async def test_delete_namespace_happy_path_cascades(client, controller_identity,
         namespace["namespace_id"],
     )
     team_row = await db.fetch_one(
-        "SELECT deleted_at FROM {{tables.teams}} WHERE team_id = $1",
-        team["team_id"],
+        "SELECT deleted_at FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
+        domain,
+        "backend",
     )
     address_row = await db.fetch_one(
         "SELECT deleted_at FROM {{tables.public_addresses}} WHERE address_id = $1",

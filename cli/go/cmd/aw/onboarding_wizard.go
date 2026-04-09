@@ -580,8 +580,8 @@ func validateHostedSignupResponse(
 	if cert.Alias != alias {
 		return nil, fmt.Errorf("hosted signup certificate alias %q does not match %q", cert.Alias, alias)
 	}
-	if teamAddress := strings.TrimSpace(resp.TeamAddress); teamAddress != "" && cert.Team != teamAddress {
-		return nil, fmt.Errorf("hosted signup certificate team %q does not match response team_address %q", cert.Team, resp.TeamAddress)
+	if teamID := strings.TrimSpace(resp.TeamID); teamID != "" && cert.Team != teamID {
+		return nil, fmt.Errorf("hosted signup certificate team %q does not match response team_id %q", cert.Team, resp.TeamID)
 	}
 	return cert, nil
 }

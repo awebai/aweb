@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.teams}} (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     namespace       TEXT NOT NULL,
     team_name       TEXT NOT NULL,
     team_did_key    TEXT NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS {{tables.teams}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
     did_key         TEXT NOT NULL,
     did_aw          TEXT,
     address         TEXT,
@@ -37,11 +37,11 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_alias
-    ON {{tables.agents}} (team_address, alias)
+    ON {{tables.agents}} (team_id, alias)
     WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_did_key
-    ON {{tables.agents}} (team_address, did_key)
+    ON {{tables.agents}} (team_id, did_key)
     WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_agents_did_aw
@@ -53,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_did_aw
 
 CREATE TABLE IF NOT EXISTS {{tables.messages}} (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
     from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
     to_agent_id     UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
     from_alias      TEXT NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS {{tables.messages}} (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_inbox
-    ON {{tables.messages}} (team_address, to_agent_id, created_at)
+    ON {{tables.messages}} (team_id, to_agent_id, created_at)
     WHERE read_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_inbox
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_sessions}} (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
     created_by      TEXT NOT NULL,
     wait_seconds    INTEGER,
     wait_started_at TIMESTAMPTZ,
@@ -126,12 +126,12 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.contacts}} (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
     contact_address TEXT NOT NULL,
     label           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_address, contact_address)
+    UNIQUE (team_id, contact_address)
 );
 
 -- ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS {{tables.contacts}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.control_signals}} (
     signal_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES {{tables.teams}}(team_address),
+    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
     target_agent_id UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
     from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
     signal_type     TEXT NOT NULL
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS {{tables.control_signals}} (
 );
 
 CREATE INDEX IF NOT EXISTS idx_control_signals_pending
-    ON {{tables.control_signals}} (team_address, target_agent_id, created_at)
+    ON {{tables.control_signals}} (team_id, target_agent_id, created_at)
     WHERE consumed_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -159,14 +159,14 @@ CREATE INDEX IF NOT EXISTS idx_control_signals_pending
 
 CREATE TABLE IF NOT EXISTS {{tables.repos}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     origin_url      TEXT NOT NULL,
     canonical_origin TEXT NOT NULL,
     name            TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, canonical_origin)
+    UNIQUE (team_id, canonical_origin)
 );
 
 -- ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS {{tables.repos}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
     workspace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     agent_id        UUID NOT NULL,
     repo_id         UUID REFERENCES {{tables.repos}}(id),
     alias           TEXT NOT NULL,
@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS {{tables.workspaces}} (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_active_alias
-    ON {{tables.workspaces}} (team_address, alias)
+    ON {{tables.workspaces}} (team_id, alias)
     WHERE deleted_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_active_alias
 
 CREATE TABLE IF NOT EXISTS {{tables.tasks}} (
     task_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     task_number     INTEGER NOT NULL,
     root_task_seq   INTEGER,
     task_ref_suffix TEXT NOT NULL,
@@ -225,14 +225,14 @@ CREATE TABLE IF NOT EXISTS {{tables.tasks}} (
     closed_at       TIMESTAMPTZ,
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, task_number),
-    UNIQUE (team_address, task_ref_suffix)
+    UNIQUE (team_id, task_number),
+    UNIQUE (team_id, task_ref_suffix)
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.task_comments}} (
     comment_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id         UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     author_alias    TEXT NOT NULL,
     body            TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -241,17 +241,17 @@ CREATE TABLE IF NOT EXISTS {{tables.task_comments}} (
 CREATE TABLE IF NOT EXISTS {{tables.task_dependencies}} (
     task_id         UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
     depends_on_id   UUID NOT NULL REFERENCES {{tables.tasks}}(task_id),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     PRIMARY KEY (task_id, depends_on_id)
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.task_counters}} (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     next_number     INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.task_root_counters}} (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     next_number     INTEGER NOT NULL DEFAULT 1
 );
 
@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS {{tables.task_root_counters}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.task_claims}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     workspace_id    UUID NOT NULL,
     alias           TEXT NOT NULL,
     human_name      TEXT NOT NULL DEFAULT '',
@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS {{tables.task_claims}} (
     apex_task_ref   TEXT,
     claimed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_address, task_ref, workspace_id)
+    UNIQUE (team_id, task_ref, workspace_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS {{tables.task_claims}} (
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     resource_key    TEXT NOT NULL,
     holder_alias    TEXT NOT NULL,
     holder_agent_id UUID NOT NULL,
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
     expires_at      TIMESTAMPTZ,
     metadata_json   JSONB,
 
-    PRIMARY KEY (team_address, resource_key)
+    PRIMARY KEY (team_id, resource_key)
 );
 
 -- ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.team_roles}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
     bundle_json     JSONB NOT NULL DEFAULT '[]',
     is_active       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -302,7 +302,7 @@ CREATE TABLE IF NOT EXISTS {{tables.team_roles}} (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, version)
+    UNIQUE (team_id, version)
 );
 
 -- ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS {{tables.team_roles}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.team_instructions}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
     document_json   JSONB NOT NULL DEFAULT '{}',
     is_active       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS {{tables.team_instructions}} (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, version)
+    UNIQUE (team_id, version)
 );
 
 -- ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS {{tables.team_instructions}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.audit_log}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     alias           TEXT,
     event_type      TEXT NOT NULL,
     resource        TEXT,

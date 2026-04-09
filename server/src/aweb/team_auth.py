@@ -3,7 +3,7 @@
 Team certificates are Ed25519-signed JSON documents that prove an agent
 is a member of a specific team. They replace API key auth.
 
-Dashboard tokens are short-lived JWTs containing allowed team_addresses,
+Dashboard tokens are short-lived JWTs containing allowed team_ids,
 issued by the hosted dashboard for human dashboard access.
 """
 
@@ -64,13 +64,13 @@ def parse_and_verify_certificate(
     Args:
         encoded_certificate: Base64-encoded certificate JSON.
         request_did_key: The did:key from the Authorization header.
-        team_public_key_resolver: Given a team_address, returns team_did_key
+        team_public_key_resolver: Given a team_id, returns team_did_key
             from the awid registry (cached). Must raise on failure.
-        revocation_checker: Given (team_address, certificate_id), returns
+        revocation_checker: Given (team_id, certificate_id), returns
             True if the certificate has been revoked.
 
     Returns:
-        Dict with team_address, alias, did_key, lifetime, certificate_id,
+        Dict with team_id, alias, did_key, lifetime, certificate_id,
         member_did_aw, member_address. The last two are empty strings for
         ephemeral certificates.
 
@@ -87,11 +87,11 @@ def parse_and_verify_certificate(
     if version != _CERTIFICATE_VERSION:
         raise ValueError(f"Unsupported certificate version: {version}")
 
-    team_address = cert.get("team")
+    team_id = cert.get("team_id")
     member_did_key = cert.get("member_did_key")
     certificate_id = cert.get("certificate_id")
 
-    if not team_address or not member_did_key or not certificate_id:
+    if not team_id or not member_did_key or not certificate_id:
         raise ValueError("Certificate missing required fields")
 
     # Verify the requesting agent's did:key matches the certificate
@@ -99,20 +99,20 @@ def parse_and_verify_certificate(
         raise ValueError("Certificate did_key mismatch: agent's did:key does not match certificate")
 
     # Get the team's public key from a trusted source (awid registry)
-    team_did_key = team_public_key_resolver(team_address)
+    team_did_key = team_public_key_resolver(team_id)
     if not team_did_key:
-        raise ValueError(f"Unknown team: {team_address}")
+        raise ValueError(f"Unknown team: {team_id}")
 
     # Verify certificate signature against the registry-resolved team key
     if not _verify_certificate_signature(cert, team_did_key):
         raise ValueError("Certificate signature verification failed")
 
     # Check revocation
-    if revocation_checker(team_address, certificate_id):
+    if revocation_checker(team_id, certificate_id):
         raise ValueError(f"Certificate {certificate_id} has been revoked")
 
     return {
-        "team_address": team_address,
+        "team_id": team_id,
         "alias": cert.get("alias", ""),
         "did_key": member_did_key,
         "lifetime": cert.get("lifetime", "ephemeral"),
@@ -141,7 +141,7 @@ def verify_dashboard_token(
         required_team: If provided, verify the token grants access to this team.
 
     Returns:
-        Dict with user_id, team_addresses.
+        Dict with user_id, team_ids.
 
     Raises:
         ValueError: If the token is invalid, expired, or unauthorized.
@@ -157,15 +157,15 @@ def verify_dashboard_token(
         raise ValueError("Dashboard token invalid")
 
     user_id = payload.get("user_id")
-    team_addresses = payload.get("team_addresses", [])
+    team_ids = payload.get("team_ids", [])
 
     if not user_id:
         raise ValueError("Dashboard token missing user_id")
 
-    if required_team and required_team not in team_addresses:
+    if required_team and required_team not in team_ids:
         raise ValueError(f"User not authorized for team {required_team}")
 
     return {
         "user_id": user_id,
-        "team_addresses": team_addresses,
+        "team_ids": team_ids,
     }

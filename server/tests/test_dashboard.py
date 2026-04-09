@@ -18,9 +18,9 @@ _JWT_SECRET = "test-dashboard-secret-at-least-32bytes!"
 _DEFAULT_REGISTRY = object()
 
 
-def _make_jwt(team_addresses: list[str], user_id: str = "user-123") -> str:
+def _make_jwt(team_ids: list[str], user_id: str = "user-123") -> str:
     return jwt.encode(
-        {"user_id": user_id, "team_addresses": team_addresses, "exp": int(time.time()) + 3600},
+        {"user_id": user_id, "team_ids": team_ids, "exp": int(time.time()) + 3600},
         _JWT_SECRET,
         algorithm="HS256",
     )
@@ -70,8 +70,8 @@ async def _seed(aweb_db):
     """Create a team with agents, messages, tasks for dashboard testing."""
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
-        VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mkteam')
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mkteam')
         ON CONFLICT DO NOTHING
         """,
     )
@@ -81,25 +81,25 @@ async def _seed(aweb_db):
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_address, did_key, alias, lifetime, role, status)
-        VALUES ($1, 'acme.com/backend', 'did:key:z6Mkalice', 'alice', 'persistent', 'developer', 'active'),
-               ($2, 'acme.com/backend', 'did:key:z6Mkbob', 'bob', 'ephemeral', 'reviewer', 'active')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role, status)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'alice', 'persistent', 'developer', 'active'),
+               ($2, 'backend:acme.com', 'did:key:z6Mkbob', 'bob', 'ephemeral', 'reviewer', 'active')
         """,
         alice_id, bob_id,
     )
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.messages}} (team_address, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
-        VALUES ('acme.com/backend', $1, $2, 'alice', 'bob', 'Hello', 'Hi Bob!')
+        INSERT INTO {{tables.messages}} (team_id, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
+        VALUES ('backend:acme.com', $1, $2, 'alice', 'bob', 'Hello', 'Hi Bob!')
         """,
         alice_id, bob_id,
     )
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.tasks}} (team_address, task_number, task_ref_suffix, title, status, priority, task_type)
-        VALUES ('acme.com/backend', 1, 'aaaa', 'Fix bug', 'open', 2, 'task')
+        INSERT INTO {{tables.tasks}} (team_id, task_number, task_ref_suffix, title, status, priority, task_type)
+        VALUES ('backend:acme.com', 1, 'aaaa', 'Fix bug', 'open', 2, 'task')
         """,
     )
 
@@ -113,10 +113,10 @@ async def test_list_agents(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at
+            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
         )
         VALUES (
-            $1, 'acme.com/backend', $2, 'alice', '/Users/alice/project', $3
+            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
         )
         """,
         uuid.uuid4(),
@@ -126,10 +126,10 @@ async def test_list_agents(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at, deleted_at
+            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
         )
         VALUES (
-            $1, 'acme.com/backend', $2, 'bob', '/Users/bob/stale', $3, $4
+            $1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4
         )
         """,
         uuid.uuid4(),
@@ -137,11 +137,11 @@ async def test_list_agents(aweb_cloud_db):
         datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc),
         datetime(2026, 4, 8, 13, 5, 0, tzinfo=timezone.utc),
     )
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -163,10 +163,10 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at
+            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at
         )
         VALUES (
-            $1, 'acme.com/backend', $2, 'alice', '/Users/alice/project', $3
+            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project', $3
         )
         """,
         uuid.uuid4(),
@@ -176,11 +176,11 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at, deleted_at
+            workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at, deleted_at
         )
         VALUES
-            ($1, 'acme.com/backend', $2, 'bob', '/Users/bob/stale', $3, $4),
-            ($5, 'acme.com/backend', $2, 'bob', '/Users/bob/active', $6, NULL)
+            ($1, 'backend:acme.com', $2, 'bob', '/Users/bob/stale', $3, $4),
+            ($5, 'backend:acme.com', $2, 'bob', '/Users/bob/active', $6, NULL)
         """,
         uuid.uuid4(),
         uuid.UUID(bob_id),
@@ -189,11 +189,11 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
         uuid.uuid4(),
         datetime(2026, 4, 8, 11, 0, 0, tzinfo=timezone.utc),
     )
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -207,11 +207,11 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
 async def test_agent_detail(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents/alice",
+            "/v1/teams/backend:acme.com/agents/alice",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -225,11 +225,11 @@ async def test_agent_detail(aweb_cloud_db):
 async def test_messages(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/messages",
+            "/v1/teams/backend:acme.com/messages",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -243,11 +243,11 @@ async def test_messages(aweb_cloud_db):
 async def test_tasks(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/tasks",
+            "/v1/teams/backend:acme.com/tasks",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -260,11 +260,11 @@ async def test_tasks(aweb_cloud_db):
 @pytest.mark.asyncio
 async def test_unauthorized_team_returns_403(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["other.com/team"])
+    token = _make_jwt(["team:other.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -276,7 +276,7 @@ async def test_missing_token_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/acme.com/backend/agents")
+        resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 401
 
@@ -288,7 +288,7 @@ async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
     await _seed(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/acme.com/backend/agents")
+        resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 200
     assert len(resp.json()["agents"]) == 2
@@ -299,11 +299,11 @@ async def test_public_team_allows_anonymous_dashboard_reads(aweb_cloud_db):
 async def test_private_team_with_valid_jwt_does_not_fail_on_registry_lookup_error(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=_FailingRegistryClient())
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -317,7 +317,7 @@ async def test_anonymous_request_fails_closed_when_registry_lookup_errors(aweb_c
     await _seed(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/acme.com/backend/agents")
+        resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 503
 
@@ -328,7 +328,7 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
     await _seed(aweb_cloud_db.aweb_db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/teams/acme.com/backend/agents")
+        resp = await client.get("/v1/teams/backend:acme.com/agents")
 
     assert resp.status_code == 503
 
@@ -337,11 +337,11 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
 async def test_authenticated_request_succeeds_during_partial_init_without_registry_client(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -353,18 +353,18 @@ async def test_authenticated_request_succeeds_during_partial_init_without_regist
 async def test_usage_endpoint(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
             "/v1/usage",
-            params={"team_address": "acme.com/backend"},
+            params={"team_id": "backend:acme.com"},
             headers={"X-Dashboard-Token": token},
         )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["team_address"] == "acme.com/backend"
+    assert data["team_id"] == "backend:acme.com"
     assert data["messages_sent"] >= 1
     assert data["active_agents"] >= 2
 
@@ -373,17 +373,17 @@ async def test_usage_endpoint(aweb_cloud_db):
 async def test_status_endpoint(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/status",
+            "/v1/teams/backend:acme.com/status",
             headers={"X-Dashboard-Token": token},
         )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["team_address"] == "acme.com/backend"
+    assert data["team_id"] == "backend:acme.com"
     assert data["agent_count"] == 2
 
 
@@ -391,11 +391,11 @@ async def test_status_endpoint(aweb_cloud_db):
 async def test_roles_active_empty(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/roles/active",
+            "/v1/teams/backend:acme.com/roles/active",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -407,11 +407,11 @@ async def test_roles_active_empty(aweb_cloud_db):
 async def test_instructions_active_empty(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/instructions/active",
+            "/v1/teams/backend:acme.com/instructions/active",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -423,11 +423,11 @@ async def test_instructions_active_empty(aweb_cloud_db):
 async def test_agent_not_found_returns_404(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
-    token = _make_jwt(["acme.com/backend"])
+    token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents/nonexistent",
+            "/v1/teams/backend:acme.com/agents/nonexistent",
             headers={"X-Dashboard-Token": token},
         )
 
@@ -438,14 +438,14 @@ async def test_agent_not_found_returns_404(aweb_cloud_db):
 async def test_expired_jwt_returns_401(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     token = jwt.encode(
-        {"user_id": "user-123", "team_addresses": ["acme.com/backend"], "exp": int(time.time()) - 3600},
+        {"user_id": "user-123", "team_ids": ["backend:acme.com"], "exp": int(time.time()) - 3600},
         _JWT_SECRET,
         algorithm="HS256",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
-            "/v1/teams/acme.com/backend/agents",
+            "/v1/teams/backend:acme.com/agents",
             headers={"X-Dashboard-Token": token},
         )
 

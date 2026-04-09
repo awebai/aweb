@@ -40,7 +40,7 @@ class AgentView(BaseModel):
 
 
 class ListAgentsResponse(BaseModel):
-    team_address: str
+    team_id: str
     agents: list[AgentView]
 
 
@@ -51,7 +51,7 @@ class HeartbeatResponse(BaseModel):
 
 
 class SuggestAliasPrefixResponse(BaseModel):
-    team_address: str
+    team_id: str
     name_prefix: str
 
 
@@ -98,21 +98,21 @@ async def suggest_alias_prefix(
         FROM (
             SELECT alias
             FROM {{tables.workspaces}}
-            WHERE team_address = $1 AND deleted_at IS NULL
+            WHERE team_id = $1 AND deleted_at IS NULL
             UNION
             SELECT alias
             FROM {{tables.agents}}
-            WHERE team_address = $1 AND deleted_at IS NULL
+            WHERE team_id = $1 AND deleted_at IS NULL
         ) aliases
         ORDER BY alias
         """,
-        identity.team_address,
+        identity.team_id,
     )
     name_prefix = suggest_next_name_prefix([str(r.get("alias") or "") for r in rows])
     if name_prefix is None:
         raise HTTPException(status_code=409, detail="alias_exhausted")
     return SuggestAliasPrefixResponse(
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         name_prefix=name_prefix,
     )
 
@@ -132,10 +132,10 @@ async def list_agents(
         SELECT agent_id, alias, did_key, did_aw, address,
                human_name, agent_type, role, lifetime, status
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        WHERE team_id = $1 AND deleted_at IS NULL
         ORDER BY alias
         """,
-        identity.team_address,
+        identity.team_id,
     )
 
     # Workspace context for each agent
@@ -149,9 +149,9 @@ async def list_agents(
                r.canonical_origin AS repo
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        WHERE w.team_address = $1 AND w.deleted_at IS NULL
+        WHERE w.team_id = $1 AND w.deleted_at IS NULL
         """,
-        identity.team_address,
+        identity.team_id,
     )
     context_by_agent = {str(r["agent_id"]): r for r in context_rows}
 
@@ -198,7 +198,7 @@ async def list_agents(
             )
         )
 
-    return ListAgentsResponse(team_address=identity.team_address, agents=agents)
+    return ListAgentsResponse(team_id=identity.team_id, agents=agents)
 
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
@@ -211,17 +211,17 @@ async def heartbeat(
     """Update workspace last_seen_at and Redis presence."""
     aweb_db = db.get_manager("aweb")
 
-    # Update last_seen_at on the workspace scoped by team_address
+    # Update last_seen_at on the workspace scoped by team_id
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
         SET last_seen_at = NOW(), updated_at = NOW()
-        WHERE team_address = $1 AND agent_id = (
+        WHERE team_id = $1 AND agent_id = (
             SELECT agent_id FROM {{tables.agents}}
-            WHERE agent_id = $2::UUID AND team_address = $1 AND deleted_at IS NULL
+            WHERE agent_id = $2::UUID AND team_id = $1 AND deleted_at IS NULL
         ) AND deleted_at IS NULL
         """,
-        identity.team_address,
+        identity.team_id,
         identity.agent_id,
     )
 
@@ -230,7 +230,7 @@ async def heartbeat(
         redis,
         agent_id=identity.agent_id,
         alias=identity.alias,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         ttl_seconds=ttl_seconds,
     )
 
@@ -257,12 +257,12 @@ async def patch_agent_workspace(
                w.human_name
         FROM {{tables.workspaces}} w
         JOIN {{tables.agents}} a ON a.agent_id = w.agent_id
-        WHERE w.team_address = $1
+        WHERE w.team_id = $1
           AND a.agent_id = $2::UUID
           AND a.deleted_at IS NULL
           AND w.deleted_at IS NULL
         """,
-        identity.team_address,
+        identity.team_id,
         identity.agent_id,
     )
     if row is None:
@@ -311,9 +311,9 @@ async def send_control_signal(
     target = await aweb_db.fetch_one(
         """
         SELECT agent_id FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        identity.team_address,
+        identity.team_id,
         alias,
     )
     if not target:
@@ -321,11 +321,11 @@ async def send_control_signal(
 
     result = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.control_signals}} (team_address, target_agent_id, from_agent_id, signal_type)
+        INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
         VALUES ($1, $2, $3, $4)
         RETURNING signal_id
         """,
-        identity.team_address,
+        identity.team_id,
         target["agent_id"],
         UUID(identity.agent_id),
         payload.signal,

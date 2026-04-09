@@ -101,7 +101,7 @@ async def create_task_route(
 
     result = await create_task(
         db_infra,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         created_by_alias=identity.alias,
         title=payload.title,
         description=payload.description,
@@ -117,7 +117,7 @@ async def create_task_route(
         "task.created",
         {
             "task_id": result["task_id"],
-            "team_address": identity.team_address,
+            "team_id": identity.team_id,
             "task_ref": result["task_ref"],
             "title": result["title"],
             "parent_task_id": result["parent_task_id"],
@@ -144,7 +144,7 @@ async def list_tasks_unified(
 
     tasks = await list_tasks(
         db_infra,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         status=status,
         assignee_alias=assignee_alias,
         task_type=task_type,
@@ -161,7 +161,7 @@ async def list_ready_tasks_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
-    tasks = await list_ready_tasks(db_infra, team_address=identity.team_address)
+    tasks = await list_ready_tasks(db_infra, team_id=identity.team_id)
     unclaimed = [t for t in tasks if t.get("assignee_alias") is None]
     return {"tasks": unclaimed}
 
@@ -171,7 +171,7 @@ async def list_blocked_tasks_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
-    tasks = await list_blocked_tasks(db_infra, team_address=identity.team_address)
+    tasks = await list_blocked_tasks(db_infra, team_id=identity.team_id)
     return {"tasks": tasks}
 
 
@@ -180,7 +180,7 @@ async def list_active_work_route(
     request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> ActiveWorkResponse:
     identity = await get_team_identity(request, db_infra)
-    tasks = await list_active_work(db_infra, team_address=identity.team_address)
+    tasks = await list_active_work(db_infra, team_id=identity.team_id)
     return ActiveWorkResponse(tasks=tasks)
 
 
@@ -191,7 +191,7 @@ async def get_task_unified(
     identity = await get_team_identity(request, db_infra)
 
     try:
-        return await get_task(db_infra, team_address=identity.team_address, ref=ref)
+        return await get_task(db_infra, team_id=identity.team_id, ref=ref)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Task not found") from None
 
@@ -225,7 +225,7 @@ async def update_task_route(
 
     result = await update_task(
         db_infra,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         ref=ref,
         actor_alias=identity.alias,
         **kwargs,
@@ -262,7 +262,7 @@ async def delete_task_route(
     request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
-    result = await soft_delete_task(db_infra, team_address=identity.team_address, ref=ref)
+    result = await soft_delete_task(db_infra, team_id=identity.team_id, ref=ref)
     await fire_mutation_hook(
         request,
         "task.deleted",
@@ -280,7 +280,7 @@ async def add_dependency_route(
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
     result = await add_dependency(
-        db_infra, team_address=identity.team_address, task_ref=ref, depends_on_ref=payload.depends_on
+        db_infra, team_id=identity.team_id, task_ref=ref, depends_on_ref=payload.depends_on
     )
     await fire_mutation_hook(
         request,
@@ -298,7 +298,7 @@ async def remove_dependency_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
-    result = await remove_dependency(db_infra, team_address=identity.team_address, task_ref=ref, dep_ref=dep_ref)
+    result = await remove_dependency(db_infra, team_id=identity.team_id, task_ref=ref, dep_ref=dep_ref)
     await fire_mutation_hook(
         request,
         "task.dependency_removed",
@@ -319,7 +319,7 @@ async def add_comment_route(
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
 
-    result = await add_comment(db_infra, team_address=identity.team_address, ref=ref, author_alias=identity.alias, body=payload.body)
+    result = await add_comment(db_infra, team_id=identity.team_id, ref=ref, author_alias=identity.alias, body=payload.body)
     await fire_mutation_hook(
         request,
         "task.comment_added",
@@ -333,5 +333,5 @@ async def list_comments_route(
     request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
-    comments = await list_comments(db_infra, team_address=identity.team_address, ref=ref)
+    comments = await list_comments(db_infra, team_id=identity.team_id, ref=ref)
     return {"comments": comments}

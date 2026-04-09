@@ -58,10 +58,10 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 		connectServerURL = serverURL
 		connectOpts = opts
 		return connectOutput{
-			Status:      "connected",
-			TeamAddress: "alice.aweb.ai/default",
-			Alias:       "alice",
-			AwebURL:     serverURL,
+			Status:  "connected",
+			TeamID:  "default:alice.aweb.ai",
+			Alias:   "alice",
+			AwebURL: serverURL,
 		}, nil
 	}
 	guidedOnboardingExecuteHostedPath = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -112,7 +112,7 @@ func TestExecuteReconnectPathFailsOnLegacyServerURLWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(awDir, "team-cert.pem"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\nteam_address: jack.aweb.ai/default\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte("server_url: https://app.aweb.ai\nteam_id: default:jack.aweb.ai\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -283,7 +283,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 
 	var gotName, gotDomain string
 	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
-		Team:          "acme.com/default",
+		Team:          "default:acme.com",
 		MemberDIDKey:  didKey,
 		MemberDIDAW:   didAW,
 		MemberAddress: "acme.com/alice",
@@ -324,10 +324,10 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		connectServerURL = serverURL
 		connectOpts = opts
 		return connectOutput{
-			Status:      "connected",
-			TeamAddress: "acme.com/default",
-			Alias:       "alice",
-			AwebURL:     serverURL,
+			Status:  "connected",
+			TeamID:  "default:acme.com",
+			Alias:   "alice",
+			AwebURL: serverURL,
 		}, nil
 	}
 
@@ -393,7 +393,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	if savedCert.Team != "acme.com/default" {
+	if savedCert.Team != "default:acme.com" {
 		t.Fatalf("team=%q", savedCert.Team)
 	}
 	if savedCert.MemberAddress != "acme.com/alice" {
@@ -459,7 +459,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "jack.aweb.ai/default",
+				"team_id":      "default:jack.aweb.ai",
 				"alias":        "laptop",
 				"agent_id":     "agent-1",
 				"workspace_id": "ws-1",
@@ -504,7 +504,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
 			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          username + ".aweb.ai/default",
+				Team:          "default:" + username + ".aweb.ai",
 				MemberDIDKey:  didKey,
 				MemberDIDAW:   didAW,
 				MemberAddress: memberAddress,
@@ -523,7 +523,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"username":         username,
 				"org_id":           "org-1",
 				"namespace_domain": username + ".aweb.ai",
-				"team_address":     username + ".aweb.ai/default",
+				"team_id":          "default:" + username + ".aweb.ai",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
 				"member_address":   memberAddress,
@@ -613,8 +613,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
-	if workspace.TeamAddress != "jack.aweb.ai/default" {
-		t.Fatalf("team_address=%q", workspace.TeamAddress)
+	if workspace.TeamID != "default:jack.aweb.ai" {
+		t.Fatalf("team_id=%q", workspace.TeamID)
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
@@ -644,7 +644,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	if cert.Team != "jack.aweb.ai/default" {
+	if cert.Team != "default:jack.aweb.ai" {
 		t.Fatalf("cert team=%q", cert.Team)
 	}
 	if cert.MemberAddress != "jack.aweb.ai/laptop" {
@@ -747,7 +747,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			didAW := strings.TrimSpace(body["did_aw"].(string))
 			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          username + ".aweb.ai/default",
+				Team:          "default:" + username + ".aweb.ai",
 				MemberDIDKey:  didKey,
 				MemberDIDAW:   didAW,
 				MemberAddress: memberAddress,
@@ -766,7 +766,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"username":         username,
 				"org_id":           "org-1",
 				"namespace_domain": username + ".aweb.ai",
-				"team_address":     username + ".aweb.ai/default",
+				"team_id":          "default:" + username + ".aweb.ai",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
 				"member_address":   memberAddress,
@@ -774,7 +774,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "jack-2.aweb.ai/default",
+				"team_id":      "default:jack-2.aweb.ai",
 				"alias":        "laptop",
 				"agent_id":     "agent-1",
 				"workspace_id": "ws-1",
@@ -942,7 +942,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "acme.com/default",
+				"team_id":      "default:acme.com",
 				"alias":        "alice",
 				"agent_id":     "agent-1",
 				"workspace_id": "ws-1",
@@ -1010,8 +1010,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if err != nil {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
-	if workspace.TeamAddress != "acme.com/default" {
-		t.Fatalf("team_address=%q", workspace.TeamAddress)
+	if workspace.TeamID != "default:acme.com" {
+		t.Fatalf("team_id=%q", workspace.TeamID)
 	}
 	if workspace.AwebURL != connectServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
@@ -1027,7 +1027,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	if cert.Team != "acme.com/default" {
+	if cert.Team != "default:acme.com" {
 		t.Fatalf("cert team=%q", cert.Team)
 	}
 }
@@ -1059,10 +1059,10 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 	var docsCalls, hooksCalls, channelCalls int
 	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
 		return connectOutput{
-			Status:      "connected",
-			TeamAddress: "acme.com/default",
-			Alias:       "alice",
-			AwebURL:     serverURL,
+			Status:  "connected",
+			TeamID:  "default:acme.com",
+			Alias:   "alice",
+			AwebURL: serverURL,
 		}, nil
 	}
 	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {

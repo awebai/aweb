@@ -29,7 +29,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
     cert = {
         "version": 1,
         "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team": kwargs.get("team_address", "acme.com/backend"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": "",
@@ -47,14 +47,14 @@ def _encode_certificate(cert):
     return base64.b64encode(json.dumps(cert).encode()).decode()
 
 
-def _signed_request(agent_sk, agent_did_key, team_address, body_bytes=b""):
+def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
     import hashlib
 
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
     payload_bytes = canonical_json_bytes({
         "body_sha256": body_sha256,
-        "team": team_address,
+        "team_id": team_id,
         "timestamp": timestamp,
     })
     sig = sign_message(agent_sk, payload_bytes)
@@ -115,14 +115,14 @@ def _build_test_app(aweb_db, team_did_key):
     return app
 
 
-async def _insert_team(aweb_db, team_address: str, team_did_key: str) -> None:
-    namespace, team_name = team_address.split("/", 1)
+async def _insert_team(aweb_db, team_id: str, team_did_key: str) -> None:
+    team_name, namespace = team_id.split(":", 1)
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         namespace,
         team_name,
         team_did_key,
@@ -138,11 +138,11 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
     )
     cert_header = _encode_certificate(cert)
-    await _insert_team(aweb_cloud_db.aweb_db, "acme.com/backend", team_did_key)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
 
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -150,14 +150,14 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, lifetime, status)
         VALUES
             ($1, $2, $3, $4, 'ephemeral', 'active'),
             ($5, $2, $6, 'bob', 'ephemeral', 'active'),
             ($7, $2, $8, 'alice-01', 'ephemeral', 'active')
         """,
         alice_agent_id,
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
         "alice",
         bob_agent_id,
@@ -168,14 +168,14 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_type)
+            (workspace_id, team_id, agent_id, alias, workspace_type)
         VALUES
             ($1, $2, $3, 'alice', 'agent'),
             ($4, $2, $5, 'bob', 'agent'),
             ($6, $2, $7, 'alice-01', 'agent')
         """,
         uuid4(),
-        "acme.com/backend",
+        "backend:acme.com",
         alice_agent_id,
         uuid4(),
         bob_agent_id,
@@ -184,7 +184,7 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
     )
 
     body_bytes = b"{}"
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -197,7 +197,7 @@ async def test_suggest_alias_prefix_returns_next_available_name(aweb_cloud_db):
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
-        "team_address": "acme.com/backend",
+        "team_id": "backend:acme.com",
         "name_prefix": "charlie",
     }
 
@@ -211,26 +211,26 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
     )
     cert_header = _encode_certificate(cert)
-    await _insert_team(aweb_cloud_db.aweb_db, "acme.com/backend", team_did_key)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
 
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, lifetime, status)
         VALUES ($1, $2, $3, $4, 'ephemeral', 'active')
         """,
         uuid4(),
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
         "alice",
     )
 
     body_bytes = b"{}"
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -243,6 +243,6 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
-        "team_address": "acme.com/backend",
+        "team_id": "backend:acme.com",
         "name_prefix": "bob",
     }

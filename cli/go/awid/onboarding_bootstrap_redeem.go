@@ -25,7 +25,7 @@ type BootstrapRedeemRequest struct {
 // BootstrapRedeemResponse is returned by POST /api/v1/onboarding/bootstrap-redeem.
 type BootstrapRedeemResponse struct {
 	Certificate   string `json:"certificate"`
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	Lifetime      string `json:"lifetime"`
 	Alias         string `json:"alias"`
 	DIDAW         string `json:"did_aw,omitempty"`

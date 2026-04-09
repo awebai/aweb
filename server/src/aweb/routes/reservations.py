@@ -22,7 +22,7 @@ DEFAULT_RESERVATION_TTL_SECONDS = 3600
 
 
 class ReservationView(BaseModel):
-    team_address: str
+    team_id: str
     resource_key: str
     holder_agent_id: str
     holder_alias: str
@@ -47,7 +47,7 @@ class ReservationAcquireRequest(BaseModel):
 
 class ReservationAcquireResponse(BaseModel):
     status: str
-    team_address: str
+    team_id: str
     resource_key: str
     holder_agent_id: str
     holder_alias: str
@@ -120,7 +120,7 @@ def _reservation_conflict_response(*, holder_agent_id: str, holder_alias: str, e
 def _reservation_view(row, *, now: datetime) -> ReservationView:
     metadata = reservation_metadata(row["metadata_json"])
     return ReservationView(
-        team_address=row["team_address"],
+        team_id=row["team_id"],
         resource_key=row["resource_key"],
         holder_agent_id=str(row["holder_agent_id"]),
         holder_alias=row["holder_alias"],
@@ -142,8 +142,8 @@ async def list_reservations(
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
 
-    conditions = ["team_address = $1", "expires_at > NOW()"]
-    params: list[object] = [identity.team_address]
+    conditions = ["team_id = $1", "expires_at > NOW()"]
+    params: list[object] = [identity.team_id]
 
     if prefix:
         conditions.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
@@ -152,7 +152,7 @@ async def list_reservations(
     where_clause = " AND ".join(conditions)
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT team_address, resource_key, holder_agent_id, holder_alias,
+        SELECT team_id, resource_key, holder_agent_id, holder_alias,
                acquired_at, expires_at, metadata_json
         FROM {{{{tables.reservations}}}}
         WHERE {where_clause}
@@ -185,13 +185,13 @@ async def acquire_reservation(
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT team_address, resource_key, holder_agent_id, holder_alias,
+            SELECT team_id, resource_key, holder_agent_id, holder_alias,
                    acquired_at, expires_at, metadata_json
             FROM {{tables.reservations}}
-            WHERE team_address = $1 AND resource_key = $2
+            WHERE team_id = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            identity.team_address,
+            identity.team_id,
             payload.resource_key,
         )
 
@@ -214,9 +214,9 @@ async def acquire_reservation(
                     acquired_at = $5,
                     expires_at = $6,
                     metadata_json = $7::jsonb
-                WHERE team_address = $1 AND resource_key = $2
+                WHERE team_id = $1 AND resource_key = $2
                 """,
-                identity.team_address,
+                identity.team_id,
                 payload.resource_key,
                 UUID(identity.agent_id),
                 identity.alias,
@@ -228,10 +228,10 @@ async def acquire_reservation(
             await tx.execute(
                 """
                 INSERT INTO {{tables.reservations}}
-                    (team_address, resource_key, holder_agent_id, holder_alias, acquired_at, expires_at, metadata_json)
+                    (team_id, resource_key, holder_agent_id, holder_alias, acquired_at, expires_at, metadata_json)
                 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
                 """,
-                identity.team_address,
+                identity.team_id,
                 payload.resource_key,
                 UUID(identity.agent_id),
                 identity.alias,
@@ -242,7 +242,7 @@ async def acquire_reservation(
 
     return ReservationAcquireResponse(
         status="acquired",
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         resource_key=payload.resource_key,
         holder_agent_id=identity.agent_id,
         holder_alias=identity.alias,
@@ -271,10 +271,10 @@ async def renew_reservation(
             """
             SELECT holder_agent_id, holder_alias, expires_at
             FROM {{tables.reservations}}
-            WHERE team_address = $1 AND resource_key = $2
+            WHERE team_id = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            identity.team_address,
+            identity.team_id,
             payload.resource_key,
         )
         if row is None or row["expires_at"] <= now:
@@ -290,9 +290,9 @@ async def renew_reservation(
             """
             UPDATE {{tables.reservations}}
             SET expires_at = $3
-            WHERE team_address = $1 AND resource_key = $2
+            WHERE team_id = $1 AND resource_key = $2
             """,
-            identity.team_address,
+            identity.team_id,
             payload.resource_key,
             expires_at,
         )
@@ -323,10 +323,10 @@ async def release_reservation(
             """
             SELECT holder_agent_id, holder_alias, expires_at
             FROM {{tables.reservations}}
-            WHERE team_address = $1 AND resource_key = $2
+            WHERE team_id = $1 AND resource_key = $2
             FOR UPDATE
             """,
-            identity.team_address,
+            identity.team_id,
             payload.resource_key,
         )
 
@@ -341,9 +341,9 @@ async def release_reservation(
             await tx.execute(
                 """
                 DELETE FROM {{tables.reservations}}
-                WHERE team_address = $1 AND resource_key = $2
+                WHERE team_id = $1 AND resource_key = $2
                 """,
-                identity.team_address,
+                identity.team_id,
                 payload.resource_key,
             )
 
@@ -359,8 +359,8 @@ async def revoke_reservations(
 ) -> ReservationRevokeResponse:
     aweb_db = db.get_manager("aweb")
 
-    params: list[object] = [identity.team_address]
-    where = ["team_address = $1", "expires_at > NOW()"]
+    params: list[object] = [identity.team_id]
+    where = ["team_id = $1", "expires_at > NOW()"]
     if payload.prefix:
         where.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
         params.append(reservation_prefix_like(payload.prefix))

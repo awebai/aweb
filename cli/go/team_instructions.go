@@ -10,7 +10,7 @@ type TeamInstructionsDocument struct {
 type ActiveTeamInstructionsResponse struct {
 	TeamInstructionsID       string                   `json:"team_instructions_id"`
 	ActiveTeamInstructionsID string                   `json:"active_team_instructions_id,omitempty"`
-	TeamAddress              string                   `json:"team_address"`
+	TeamID                   string                   `json:"team_id"`
 	Version                  int                      `json:"version"`
 	UpdatedAt                string                   `json:"updated_at"`
 	Document                 TeamInstructionsDocument `json:"document"`
@@ -24,7 +24,7 @@ type CreateTeamInstructionsRequest struct {
 
 type CreateTeamInstructionsResponse struct {
 	TeamInstructionsID string `json:"team_instructions_id"`
-	TeamAddress        string `json:"team_address"`
+	TeamID             string `json:"team_id"`
 	Version            int    `json:"version"`
 	Created            bool   `json:"created"`
 }

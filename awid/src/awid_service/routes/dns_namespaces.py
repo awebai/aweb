@@ -470,7 +470,7 @@ async def delete_namespace(
             """
             SELECT tc.certificate_id
             FROM {{tables.teams}} t
-            JOIN {{tables.team_certificates}} tc ON tc.team_id = t.team_id
+            JOIN {{tables.team_certificates}} tc ON tc.team_uuid = t.team_uuid
             WHERE t.domain = $1
               AND t.deleted_at IS NULL
               AND tc.revoked_at IS NULL
@@ -486,7 +486,7 @@ async def delete_namespace(
             """
             DELETE FROM {{tables.team_certificates}} tc
             USING {{tables.teams}} t
-            WHERE tc.team_id = t.team_id
+            WHERE tc.team_uuid = t.team_uuid
               AND t.domain = $1
             """,
             domain,

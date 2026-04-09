@@ -11,7 +11,7 @@ from .routes.repos import canonicalize_git_url, extract_repo_name
 
 async def ensure_repo(
     db: DatabaseInfra,
-    team_address: str,
+    team_id: str,
     origin_url: str,
 ) -> str:
     """Ensure a repo exists for the given team and origin."""
@@ -21,13 +21,13 @@ async def ensure_repo(
     aweb_db = db.get_manager("aweb")
     result = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.repos}} (team_address, origin_url, canonical_origin, name)
+        INSERT INTO {{tables.repos}} (team_id, origin_url, canonical_origin, name)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (team_address, canonical_origin)
+        ON CONFLICT (team_id, canonical_origin)
         DO UPDATE SET origin_url = EXCLUDED.origin_url, deleted_at = NULL
         RETURNING id
         """,
-        team_address,
+        team_id,
         origin_url,
         canonical_origin,
         repo_name,
@@ -38,7 +38,7 @@ async def ensure_repo(
 async def upsert_workspace(
     db: DatabaseInfra,
     workspace_id: str,
-    team_address: str,
+    team_id: str,
     repo_id: str,
     alias: str,
     human_name: str,
@@ -50,7 +50,7 @@ async def upsert_workspace(
     aweb_db = db.get_manager("aweb")
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.workspaces}} (workspace_id, team_address, repo_id, alias, human_name, role, hostname, workspace_path, last_seen_at)
+        INSERT INTO {{tables.workspaces}} (workspace_id, team_id, repo_id, alias, human_name, role, hostname, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         ON CONFLICT (workspace_id) DO UPDATE SET
             repo_id = COALESCE({{tables.workspaces}}.repo_id, EXCLUDED.repo_id),
@@ -68,7 +68,7 @@ async def upsert_workspace(
             updated_at = NOW()
         """,
         workspace_id,
-        team_address,
+        team_id,
         repo_id,
         alias,
         human_name,
@@ -81,7 +81,7 @@ async def upsert_workspace(
 async def check_alias_collision(
     db: DatabaseInfra,
     redis: Redis,
-    team_address: str,
+    team_id: str,
     workspace_id: str,
     alias: str,
 ) -> Optional[str]:
@@ -92,10 +92,10 @@ async def check_alias_collision(
         """
         SELECT workspace_id
         FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND alias = $2 AND workspace_id != $3 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND workspace_id != $3 AND deleted_at IS NULL
         LIMIT 1
         """,
-        team_address,
+        team_id,
         alias,
         workspace_id,
     )
@@ -106,17 +106,17 @@ async def check_alias_collision(
         """
         SELECT DISTINCT workspace_id
         FROM {{tables.task_claims}}
-        WHERE team_address = $1 AND alias = $2 AND workspace_id != $3
+        WHERE team_id = $1 AND alias = $2 AND workspace_id != $3
         LIMIT 1
         """,
-        team_address,
+        team_id,
         alias,
         workspace_id,
     )
     if row:
         return str(row["workspace_id"])
 
-    colliding_workspace = await get_workspace_id_by_alias(redis, team_address, alias)
+    colliding_workspace = await get_workspace_id_by_alias(redis, team_id, alias)
     if colliding_workspace and colliding_workspace != workspace_id:
         return colliding_workspace
 

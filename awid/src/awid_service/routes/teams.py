@@ -17,6 +17,7 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.dns_auth import verify_signed_json_request
+from awid.team_ids import build_team_id
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
 
@@ -70,7 +71,7 @@ async def _require_team_controller(
     )
     row = await db.fetch_one(
         """
-        SELECT team_id, team_did_key
+        SELECT team_uuid, team_did_key
         FROM {{tables.teams}}
         WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
         """,
@@ -267,7 +268,7 @@ async def create_team(
             INSERT INTO {{tables.teams}}
                 (domain, name, display_name, team_did_key, visibility, created_by, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
+            RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
             """,
             domain,
             body.name,
@@ -307,24 +308,24 @@ async def list_teams(
 
     if decoded_cursor is not None:
         cursor_created_at = decoded_cursor.get("created_at")
-        cursor_team_id = decoded_cursor.get("team_id")
-        if not isinstance(cursor_created_at, str) or not isinstance(cursor_team_id, str):
+        cursor_team_uuid = decoded_cursor.get("team_uuid")
+        if not isinstance(cursor_created_at, str) or not isinstance(cursor_team_uuid, str):
             raise HTTPException(status_code=400, detail="Invalid cursor")
         try:
             cursor_ts = datetime.fromisoformat(cursor_created_at.replace("Z", "+00:00"))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
-        params.extend([cursor_ts, cursor_team_id])
+        params.extend([cursor_ts, cursor_team_uuid])
         where_clauses.append(
-            f"(created_at, team_id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+            f"(created_at, team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
         )
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT team_id, domain, name, display_name, team_did_key, visibility, created_at"
+        "SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at"
         " FROM {{tables.teams}}"
         " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY created_at, team_id"
+        + f" ORDER BY created_at, team_uuid"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -335,7 +336,7 @@ async def list_teams(
         last = page_rows[-1]
         next_cursor = encode_cursor({
             "created_at": last["created_at"].isoformat(),
-            "team_id": str(last["team_id"]),
+            "team_uuid": str(last["team_uuid"]),
         })
 
     return TeamListResponse(
@@ -354,7 +355,7 @@ async def get_team(domain: str, name: str, db_infra=Depends(get_db)) -> TeamResp
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT team_id, domain, name, display_name, team_did_key, visibility, created_at
+        SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at
         FROM {{tables.teams}}
         WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
         """,
@@ -385,7 +386,7 @@ async def delete_team(
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT team_id
+            SELECT team_uuid
             FROM {{tables.teams}}
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
@@ -400,30 +401,30 @@ async def delete_team(
             """
             SELECT certificate_id
             FROM {{tables.team_certificates}}
-            WHERE team_id = $1 AND revoked_at IS NULL
+            WHERE team_uuid = $1 AND revoked_at IS NULL
             LIMIT 1
             """,
-            row["team_id"],
+            row["team_uuid"],
         )
         if active_cert is not None:
             raise HTTPException(status_code=409, detail="Team has active certificates")
 
         now = datetime.now(timezone.utc)
         await tx.execute(
-            "DELETE FROM {{tables.team_certificates}} WHERE team_id = $1",
-            row["team_id"],
+            "DELETE FROM {{tables.team_certificates}} WHERE team_uuid = $1",
+            row["team_uuid"],
         )
         await tx.execute(
             """
             UPDATE {{tables.teams}}
             SET deleted_at = $2
-            WHERE team_id = $1 AND deleted_at IS NULL
+            WHERE team_uuid = $1 AND deleted_at IS NULL
             """,
-            row["team_id"],
+            row["team_uuid"],
             now,
         )
 
-    return {"deleted": True, "team_id": str(row["team_id"]), "domain": domain, "name": name}
+    return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
 
 
 @router.post(
@@ -463,7 +464,7 @@ async def rotate_team_key(
             UPDATE {{tables.teams}}
             SET team_did_key = $3
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-            RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
+            RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
             """,
             domain,
             name,
@@ -499,11 +500,11 @@ async def register_certificate(
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
-                (team_id, certificate_id, member_did_key, member_did_aw,
+                (team_uuid, certificate_id, member_did_key, member_did_aw,
                  member_address, alias, lifetime)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
-            team_row["team_id"],
+            team_row["team_uuid"],
             body.certificate_id,
             body.member_did_key,
             body.member_did_aw,
@@ -542,7 +543,7 @@ async def set_team_visibility(
         UPDATE {{tables.teams}}
         SET visibility = $3
         WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-        RETURNING team_id, domain, name, display_name, team_did_key, visibility, created_at
+        RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
         """,
         domain,
         name,
@@ -569,9 +570,9 @@ async def list_certificates(
 ) -> CertificateListResponse:
     db = db_infra.get_manager("aweb")
 
-    # Resolve team_id
+    # Resolve internal team UUID.
     team_row = await db.fetch_one(
-        "SELECT team_id FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
     if team_row is None:
@@ -582,8 +583,8 @@ async def list_certificates(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    where_clauses = ["team_id = $1"]
-    params: list[object] = [team_row["team_id"]]
+    where_clauses = ["team_uuid = $1"]
+    params: list[object] = [team_row["team_uuid"]]
 
     if active_only:
         where_clauses.append("revoked_at IS NULL")
@@ -659,17 +660,17 @@ async def revoke_certificate(
         """
         UPDATE {{tables.team_certificates}}
         SET revoked_at = NOW()
-        WHERE team_id = $1 AND certificate_id = $2 AND revoked_at IS NULL
+        WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
         RETURNING certificate_id
         """,
-        team_row["team_id"],
+        team_row["team_uuid"],
         body.certificate_id,
     )
     if row is None:
         # Distinguish between not found and already revoked
         exists = await db.fetch_one(
-            "SELECT 1 FROM {{tables.team_certificates}} WHERE team_id = $1 AND certificate_id = $2",
-            team_row["team_id"],
+            "SELECT 1 FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND certificate_id = $2",
+            team_row["team_uuid"],
             body.certificate_id,
         )
         if exists is not None:
@@ -693,14 +694,14 @@ async def list_revocations(
     db = db_infra.get_manager("aweb")
 
     team_row = await db.fetch_one(
-        "SELECT team_id FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    where_clauses = ["team_id = $1", "revoked_at IS NOT NULL"]
-    params: list[object] = [team_row["team_id"]]
+    where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
+    params: list[object] = [team_row["team_uuid"]]
 
     if since is not None:
         try:
@@ -739,7 +740,7 @@ async def list_revocations(
 
 def _team_response(row) -> TeamResponse:
     return TeamResponse(
-        team_id=str(row["team_id"]),
+        team_id=build_team_id(row["domain"], row["name"]),
         domain=row["domain"],
         name=row["name"],
         display_name=row["display_name"],

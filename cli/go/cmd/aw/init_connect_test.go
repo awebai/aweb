@@ -31,7 +31,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 
 	// Sign a certificate for the member
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: memberDIDKey,
 		Alias:        "alice",
 		Lifetime:     awid.LifetimePersistent,
@@ -58,7 +58,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "acme.com/backend",
+				"team_id":      "backend:acme.com",
 				"alias":        "alice",
 				"agent_id":     "agent-uuid-1",
 				"workspace_id": "ws-uuid-1",
@@ -115,8 +115,8 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if got["status"] != "connected" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if got["alias"] != "alice" {
 		t.Fatalf("alias=%v", got["alias"])
@@ -145,13 +145,13 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 		t.Fatalf("cert id=%q want %q", decodedCert.CertificateID, cert.CertificateID)
 	}
 
-	// Verify workspace.yaml was written with team_address
+	// Verify workspace.yaml was written with team_id
 	ws, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.TeamAddress != "acme.com/backend" {
-		t.Fatalf("workspace team_address=%q", ws.TeamAddress)
+	if ws.TeamID != "backend:acme.com" {
+		t.Fatalf("workspace team_id=%q", ws.TeamID)
 	}
 	if ws.Alias != "alice" {
 		t.Fatalf("workspace alias=%q", ws.Alias)
@@ -208,7 +208,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	_ = teamPub
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: awid.ComputeDIDKey(memberPub),
 		Alias:        "bob",
 		Lifetime:     awid.LifetimeEphemeral,
@@ -227,7 +227,7 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_address": "acme.com/backend",
+				"team_id":      "backend:acme.com",
 				"alias":        "bob",
 				"agent_id":     "agent-uuid-2",
 				"workspace_id": "ws-uuid-2",
@@ -263,8 +263,8 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.TeamAddress != "acme.com/backend" {
-		t.Fatalf("team_address=%q", ws.TeamAddress)
+	if ws.TeamID != "backend:acme.com" {
+		t.Fatalf("team_id=%q", ws.TeamID)
 	}
 	if ws.Alias != "bob" {
 		t.Fatalf("alias=%q", ws.Alias)

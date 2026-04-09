@@ -21,7 +21,7 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 	memberDIDKey := ComputeDIDKey(memberPub)
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: memberDIDKey,
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -29,8 +29,8 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cert.Team != "acme.com/backend" {
-		t.Fatalf("team_address=%q", cert.Team)
+	if cert.Team != "backend:acme.com" {
+		t.Fatalf("team_id=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
 		t.Fatalf("member_did_key=%q", cert.MemberDIDKey)
@@ -70,7 +70,7 @@ func TestVerifyTeamCertificateRejectsTampered(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -101,7 +101,7 @@ func TestVerifyTeamCertificateRejectsWrongTeamKey(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -126,7 +126,7 @@ func TestSaveAndLoadTeamCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -150,7 +150,7 @@ func TestSaveAndLoadTeamCertificate(t *testing.T) {
 		t.Fatalf("certificate_id=%q want %q", loaded.CertificateID, cert.CertificateID)
 	}
 	if loaded.Team != cert.Team {
-		t.Fatalf("team_address=%q want %q", loaded.Team, cert.Team)
+		t.Fatalf("team_id=%q want %q", loaded.Team, cert.Team)
 	}
 	if loaded.MemberDIDKey != cert.MemberDIDKey {
 		t.Fatalf("member_did_key=%q", loaded.MemberDIDKey)
@@ -171,7 +171,7 @@ func TestSaveTeamCertificatePermissions(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -206,7 +206,7 @@ func TestEncodeTeamCertificateForHeader(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -243,7 +243,7 @@ func TestTeamCertificateJSON(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,

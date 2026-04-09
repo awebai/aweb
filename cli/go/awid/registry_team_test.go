@@ -31,7 +31,7 @@ func TestCreateTeam(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -50,7 +50,7 @@ func TestCreateTeam(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if team.TeamID != "team-uuid-1" {
+	if team.TeamID != "backend:acme.com" {
 		t.Fatalf("team_id=%q", team.TeamID)
 	}
 	if team.Name != "backend" {
@@ -75,7 +75,7 @@ func TestGetTeam(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -122,7 +122,7 @@ func TestSetTeamVisibility(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -191,7 +191,7 @@ func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
 			t.Fatalf("invalid team signature for payload %s", payload)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -316,7 +316,7 @@ func TestRegisterCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -363,7 +363,7 @@ func TestListCertificates(t *testing.T) {
 			"certificates": []map[string]any{
 				{
 					"certificate_id": "cert-1",
-					"team_address":   "acme.com/backend",
+					"team_id":        "backend:acme.com",
 					"member_did_key": "did:key:z6MkAlice",
 					"alias":          "alice",
 					"lifetime":       "persistent",

@@ -44,14 +44,14 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
-async def _current_actionable_mail(aweb_db, *, team_address: str, agent_id: UUID) -> list[dict[str, Any]]:
+async def _current_actionable_mail(aweb_db, *, team_id: str, agent_id: UUID) -> list[dict[str, Any]]:
     """Return the current actionable unread mail state for an agent."""
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
             SELECT message_id, from_alias, subject, priority, created_at
             FROM {{tables.messages}}
-            WHERE team_address = $1
+            WHERE team_id = $1
               AND to_agent_id = $2
               AND read_at IS NULL
         )
@@ -66,7 +66,7 @@ async def _current_actionable_mail(aweb_db, *, team_address: str, agent_id: UUID
         ORDER BY created_at ASC
         LIMIT 50
         """,
-        team_address,
+        team_id,
         agent_id,
     )
     return [
@@ -135,7 +135,7 @@ def _new_or_changed_events(
     return changed
 
 
-async def _poll_control_signals(aweb_db, *, team_address: str, agent_id: UUID) -> list[dict]:
+async def _poll_control_signals(aweb_db, *, team_id: str, agent_id: UUID) -> list[dict]:
     """Consume and return pending control signals for this agent.
 
     At-most-once delivery: signals are marked consumed atomically with the read.
@@ -149,7 +149,7 @@ async def _poll_control_signals(aweb_db, *, team_address: str, agent_id: UUID) -
         SET consumed_at = NOW()
         WHERE signal_id IN (
             SELECT signal_id FROM {{tables.control_signals}}
-            WHERE team_address = $1
+            WHERE team_id = $1
               AND target_agent_id = $2
               AND consumed_at IS NULL
             ORDER BY created_at ASC
@@ -157,7 +157,7 @@ async def _poll_control_signals(aweb_db, *, team_address: str, agent_id: UUID) -
         )
         RETURNING signal_id, signal_type, created_at
         """,
-        team_address,
+        team_id,
         agent_id,
     )
     return [
@@ -174,7 +174,7 @@ async def _sse_agent_events(
     request: Request,
     db,
     redis,
-    team_address: str,
+    team_id: str,
     agent_id: str,
     deadline: datetime,
 ) -> AsyncIterator[str]:
@@ -184,12 +184,12 @@ async def _sse_agent_events(
 
     yield ": keepalive\n\n"
 
-    yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_address': team_address})}\n\n"
+    yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
     # Initial snapshot
-    mail_events = await _current_actionable_mail(aweb_db, team_address=team_address, agent_id=aid)
+    mail_events = await _current_actionable_mail(aweb_db, team_id=team_id, agent_id=aid)
     chat_events = await _current_actionable_chat(db, redis, agent_id=aid)
-    control_events = await _poll_control_signals(aweb_db, team_address=team_address, agent_id=aid)
+    control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
 
@@ -211,9 +211,9 @@ async def _sse_agent_events(
             break
 
         try:
-            current_mail = await _current_actionable_mail(aweb_db, team_address=team_address, agent_id=aid)
+            current_mail = await _current_actionable_mail(aweb_db, team_id=team_id, agent_id=aid)
             current_chat = await _current_actionable_chat(db, redis, agent_id=aid)
-            control_events = await _poll_control_signals(aweb_db, team_address=team_address, agent_id=aid)
+            control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
@@ -267,7 +267,7 @@ async def event_stream(
             request=request,
             db=db,
             redis=redis,
-            team_address=identity.team_address,
+            team_id=identity.team_id,
             agent_id=identity.agent_id,
             deadline=deadline_dt,
         ),

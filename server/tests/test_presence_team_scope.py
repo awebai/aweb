@@ -30,13 +30,13 @@ class _FakeDbInfra:
 
 
 @pytest.mark.asyncio
-async def test_mcp_heartbeat_passes_team_address(monkeypatch):
+async def test_mcp_heartbeat_passes_team_id(monkeypatch):
     seen: dict[str, str] = {}
 
     monkeypatch.setattr(
         mcp_agents,
         "get_auth",
-        lambda: SimpleNamespace(agent_id="agent-1", team_address="acme.com/default"),
+        lambda: SimpleNamespace(agent_id="agent-1", team_id="acme.com/default"),
     )
 
     async def _capture_presence(_redis, **kwargs):
@@ -48,12 +48,12 @@ async def test_mcp_heartbeat_passes_team_address(monkeypatch):
     payload = json.loads(await mcp_agents.heartbeat(db_infra=_FakeDbInfra(), redis=object()))
 
     assert payload["agent_id"] == "agent-1"
-    assert seen["team_address"] == "acme.com/default"
+    assert seen["team_id"] == "acme.com/default"
     assert seen["alias"] == "ivy"
 
 
 @pytest.mark.asyncio
-async def test_route_heartbeat_passes_team_address(monkeypatch):
+async def test_route_heartbeat_passes_team_id(monkeypatch):
     seen: dict[str, str] = {}
 
     async def _capture_presence(_redis, **kwargs):
@@ -63,7 +63,7 @@ async def test_route_heartbeat_passes_team_address(monkeypatch):
     monkeypatch.setattr(agent_routes, "update_agent_presence", _capture_presence)
 
     identity = SimpleNamespace(
-        team_address="acme.com/default",
+        team_id="acme.com/default",
         agent_id="agent-1",
         alias="ivy",
     )
@@ -76,27 +76,27 @@ async def test_route_heartbeat_passes_team_address(monkeypatch):
     )
 
     assert response.agent_id == "agent-1"
-    assert seen["team_address"] == "acme.com/default"
+    assert seen["team_id"] == "acme.com/default"
     assert seen["alias"] == "ivy"
 
 
 @pytest.mark.asyncio
-async def test_list_online_workspaces_filters_by_team_address(monkeypatch):
+async def test_list_online_workspaces_filters_by_team_id(monkeypatch):
     async def _identity(_request, _db_infra):
-        return SimpleNamespace(team_address="acme.com/default")
+        return SimpleNamespace(team_id="acme.com/default")
 
     async def _presences(_redis):
         return [
             {
                 "workspace_id": "ws-1",
                 "alias": "ivy",
-                "team_address": "acme.com/default",
+                "team_id": "acme.com/default",
                 "last_seen": "2026-04-07T00:00:00Z",
             },
             {
                 "workspace_id": "ws-2",
                 "alias": "other",
-                "team_address": "other.com/default",
+                "team_id": "other.com/default",
                 "last_seen": "2026-04-07T00:00:01Z",
             },
         ]
@@ -112,4 +112,4 @@ async def test_list_online_workspaces_filters_by_team_address(monkeypatch):
     )
 
     assert [workspace.alias for workspace in response.workspaces] == ["ivy"]
-    assert response.workspaces[0].team_address == "acme.com/default"
+    assert response.workspaces[0].team_id == "acme.com/default"

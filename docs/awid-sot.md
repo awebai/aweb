@@ -64,7 +64,7 @@ Three controller keys exist, each with its own scope:
   the hosted deployment (managed)
 
 This is the **awid pattern**, distinct from the aweb pattern
-(`{team, timestamp, body_sha256}`) and the hosted deployment pattern
+(`{team_id, timestamp, body_sha256}`) and the hosted deployment pattern
 (`{body_sha256, method, path, timestamp}`). The three patterns are not
 interchangeable; see the per-endpoint signed payload examples below for
 each operation's exact envelope shape.
@@ -244,7 +244,7 @@ any service.
 {
   "version": 1,
   "certificate_id": "uuid",
-  "team": "acme.com/backend",
+  "team_id": "backend:acme.com",
   "team_did_key": "did:key:z6Mk...(team public key)",
   "member_did_key": "did:key:z6Mk...(agent's key)",
   "member_did_aw": "did:aw:...(agent's stable ID, empty for ephemeral)",
@@ -332,9 +332,9 @@ that owns the team, and the certificate's `member_address` field carries
 the cross-namespace address.
 
 Example: a team in `acme.com` namespace adds `partner.com/bob` as a member.
-The certificate is signed by the `acme.com/backend` team controller. The
+The certificate is signed by the `backend:acme.com` team controller. The
 verifying service sees that bob (whose home namespace is `partner.com`) is
-a member of `acme.com/backend`. No special protocol support is needed —
+a member of `backend:acme.com`. No special protocol support is needed —
 the certificate format already accommodates this because `member_address`
 is just a string and is not constrained to match the team's namespace.
 

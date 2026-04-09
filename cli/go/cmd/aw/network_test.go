@@ -20,9 +20,12 @@ import (
 
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
 	t.Helper()
+	if strings.TrimSpace(namespace) == "" {
+		namespace = "demo"
+	}
 	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
 		AwebURL:     serverURL,
-		TeamAddress: namespace + "/backend",
+		TeamID:      "backend:" + namespace,
 		Alias:       handle,
 		WorkspaceID: "workspace-1",
 	})
@@ -52,7 +55,7 @@ func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T
 				w.WriteHeader(http.StatusOK)
 			case "/api/v1/events/stream":
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"ag_123\",\"team_address\":\"demo/backend\"}\n\n"))
+				_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"ag_123\",\"team_id\":\"backend:demo\"}\n\n"))
 			default:
 				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 			}

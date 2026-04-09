@@ -108,7 +108,7 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: "workspace-1",
 	})

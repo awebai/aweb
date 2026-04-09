@@ -15,6 +15,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
+from awid.team_ids import parse_team_id
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
 from aweb.team_auth_deps import verify_request_certificate
@@ -37,7 +38,7 @@ class ConnectRequest(BaseModel):
 
 
 class ConnectResponse(BaseModel):
-    team_address: str
+    team_id: str
     alias: str
     agent_id: str
     workspace_id: str
@@ -49,12 +50,9 @@ class ConnectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _parse_team_address(team_address: str) -> tuple[str, str]:
-    """Split 'acme.com/backend' into ('acme.com', 'backend')."""
-    parts = team_address.split("/", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(f"Invalid team_address format: {team_address}")
-    return parts[0], parts[1]
+def _parse_team_id(team_id: str) -> tuple[str, str]:
+    """Split 'backend:acme.com' into ('acme.com', 'backend')."""
+    return parse_team_id(team_id)
 
 
 class AliasConflictError(ValueError):
@@ -65,18 +63,18 @@ class AliasConflictError(ValueError):
 
 async def _ensure_team(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     team_did_key: str,
 ) -> None:
     """Create the team row if it doesn't exist."""
-    namespace, team_name = _parse_team_address(team_address)
+    namespace, team_name = _parse_team_id(team_id)
     await db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (team_address) DO NOTHING
+        ON CONFLICT (team_id) DO NOTHING
         """,
-        team_address,
+        team_id,
         namespace,
         team_name,
         team_did_key,
@@ -85,7 +83,7 @@ async def _ensure_team(
 
 async def _ensure_agent(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     did_key: str,
     did_aw: str,
     address: str,
@@ -104,16 +102,16 @@ async def _ensure_agent(
     existing_agent = await db.fetch_one(
         """
         SELECT agent_id, alias FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         did_key,
     )
     if existing_agent:
         existing_alias = existing_agent["alias"]
         if existing_alias != alias:
             raise AliasConflictError(
-                f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_address}"
+                f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}"
             )
         await db.execute(
             """
@@ -135,14 +133,14 @@ async def _ensure_agent(
     existing_alias = await db.fetch_one(
         """
         SELECT agent_id, did_key FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         alias,
     )
     if existing_alias and existing_alias["did_key"] != did_key:
         raise AliasConflictError(
-            f"alias {alias!r} is already in use by another active agent in team {team_address}"
+            f"alias {alias!r} is already in use by another active agent in team {team_id}"
         )
 
     agent_id = uuid.uuid4()
@@ -150,13 +148,13 @@ async def _ensure_agent(
         await db.execute(
             """
             INSERT INTO {{tables.agents}}
-                (agent_id, team_address, did_key, did_aw, address,
+                (agent_id, team_id, did_key, did_aw, address,
                  alias, lifetime, human_name, agent_type, role)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (team_address, did_key) WHERE deleted_at IS NULL DO NOTHING
+            ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
             """,
             agent_id,
-            team_address,
+            team_id,
             did_key,
             did_aw or None,
             address or None,
@@ -172,16 +170,16 @@ async def _ensure_agent(
         existing_agent = await db.fetch_one(
             """
             SELECT agent_id, alias FROM {{tables.agents}}
-            WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
-            team_address,
+            team_id,
             did_key,
         )
         if existing_agent:
             existing_alias = existing_agent["alias"]
             if existing_alias != alias:
                 raise AliasConflictError(
-                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_address}"
+                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}"
                 ) from exc
             await db.execute(
                 """
@@ -202,23 +200,23 @@ async def _ensure_agent(
         existing_alias = await db.fetch_one(
             """
             SELECT agent_id, did_key FROM {{tables.agents}}
-            WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+            WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
             """,
-            team_address,
+            team_id,
             alias,
         )
         if existing_alias and existing_alias["did_key"] != did_key:
             raise AliasConflictError(
-                f"alias {alias!r} is already in use by another active agent in team {team_address}"
+                f"alias {alias!r} is already in use by another active agent in team {team_id}"
             ) from exc
         raise
 
     row = await db.fetch_one(
         """
         SELECT agent_id FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         did_key,
     )
     return str(row["agent_id"])
@@ -226,7 +224,7 @@ async def _ensure_agent(
 
 async def _ensure_workspace(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     agent_id: str,
     alias: str,
     hostname: str,
@@ -237,20 +235,20 @@ async def _ensure_workspace(
 ) -> str:
     """Find or create a workspace row. Returns workspace_id as string.
 
-    On reconnect (same team_address + alias), updates the existing workspace
+    On reconnect (same team_id + alias), updates the existing workspace
     with fresh hostname/path/role/agent_id info.
     """
     repo_id = None
     if repo_origin:
-        repo_id = await _ensure_repo(db, team_address, repo_origin)
+        repo_id = await _ensure_repo(db, team_id, repo_origin)
 
     async def _get_existing_workspace():
         return await db.fetch_one(
             """
             SELECT workspace_id, agent_id FROM {{tables.workspaces}}
-            WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+            WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
             """,
-            team_address,
+            team_id,
             alias,
         )
 
@@ -277,7 +275,7 @@ async def _ensure_workspace(
     if existing:
         if str(existing["agent_id"]) != agent_id:
             raise AliasConflictError(
-                f"alias {alias!r} is already in use by another active agent in team {team_address}"
+                f"alias {alias!r} is already in use by another active agent in team {team_id}"
             )
         return await _update_existing_workspace(existing["workspace_id"])
 
@@ -287,13 +285,13 @@ async def _ensure_workspace(
         row = await db.fetch_one(
             """
             INSERT INTO {{tables.workspaces}}
-                (workspace_id, team_address, agent_id, repo_id, alias, human_name,
+                (workspace_id, team_id, agent_id, repo_id, alias, human_name,
                  role, hostname, workspace_path, workspace_type)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING workspace_id
             """,
             workspace_id,
-            team_address,
+            team_id,
             uuid.UUID(agent_id),
             repo_id,
             alias,
@@ -311,13 +309,13 @@ async def _ensure_workspace(
         if existing and str(existing["agent_id"]) == agent_id:
             return await _update_existing_workspace(existing["workspace_id"])
         raise AliasConflictError(
-            f"alias {alias!r} is already in use by another active agent in team {team_address}"
+            f"alias {alias!r} is already in use by another active agent in team {team_id}"
         ) from exc
 
 
 async def _ensure_repo(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     repo_origin: str,
 ) -> uuid.UUID:
     """Find or create a repo row. Returns repo id."""
@@ -327,12 +325,12 @@ async def _ensure_repo(
     repo_id = uuid.uuid4()
     await db.execute(
         """
-        INSERT INTO {{tables.repos}} (id, team_address, origin_url, canonical_origin, name)
+        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (team_address, canonical_origin) DO NOTHING
+        ON CONFLICT (team_id, canonical_origin) DO NOTHING
         """,
         repo_id,
-        team_address,
+        team_id,
         repo_origin,
         canonical,
         name,
@@ -340,9 +338,9 @@ async def _ensure_repo(
     row = await db.fetch_one(
         """
         SELECT id FROM {{tables.repos}}
-        WHERE team_address = $1 AND canonical_origin = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND canonical_origin = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         canonical,
     )
     return row["id"]
@@ -369,7 +367,7 @@ async def connect_agent(
 
     Args:
         db: The aweb database manager.
-        cert_info: Verified certificate fields (team_address, alias, did_key, lifetime).
+        cert_info: Verified certificate fields (team_id, alias, did_key, lifetime).
         team_did_key: The team's public key from awid registry.
         hostname: Agent's hostname.
         workspace_path: Agent's workspace path.
@@ -379,20 +377,20 @@ async def connect_agent(
         agent_type: Agent type (agent, etc).
 
     Returns:
-        Dict with team_address, alias, agent_id, workspace_id, role.
+        Dict with team_id, alias, agent_id, workspace_id, role.
     """
-    team_address = cert_info["team_address"]
+    team_id = cert_info["team_id"]
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
     lifetime = cert_info["lifetime"]
     did_aw = cert_info.get("member_did_aw", "")
     address = cert_info.get("member_address", "")
 
-    await _ensure_team(db, team_address, team_did_key)
+    await _ensure_team(db, team_id, team_did_key)
 
     agent_id = await _ensure_agent(
         db,
-        team_address=team_address,
+        team_id=team_id,
         did_key=did_key,
         did_aw=did_aw,
         address=address,
@@ -405,7 +403,7 @@ async def connect_agent(
 
     workspace_id = await _ensure_workspace(
         db,
-        team_address=team_address,
+        team_id=team_id,
         agent_id=agent_id,
         alias=alias,
         hostname=hostname,
@@ -416,7 +414,7 @@ async def connect_agent(
     )
 
     return {
-        "team_address": team_address,
+        "team_id": team_id,
         "alias": alias,
         "agent_id": agent_id,
         "workspace_id": workspace_id,
@@ -464,7 +462,7 @@ async def connect_endpoint(
 
 
 class TeamInfoResponse(BaseModel):
-    team_address: str
+    team_id: str
     namespace: str
     team_name: str
     team_did_key: str
@@ -482,19 +480,19 @@ async def get_team_info(
     aweb_db = db.get_manager("aweb")
 
     team = await aweb_db.fetch_one(
-        "SELECT * FROM {{tables.teams}} WHERE team_address = $1",
-        identity.team_address,
+        "SELECT * FROM {{tables.teams}} WHERE team_id = $1",
+        identity.team_id,
     )
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
     count = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_address = $1 AND deleted_at IS NULL",
-        identity.team_address,
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        identity.team_id,
     )
 
     return TeamInfoResponse(
-        team_address=team["team_address"],
+        team_id=team["team_id"],
         namespace=team["namespace"],
         team_name=team["team_name"],
         team_did_key=team["team_did_key"],

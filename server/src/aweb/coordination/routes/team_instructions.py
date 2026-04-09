@@ -45,7 +45,7 @@ class TeamInstructionsDocument(BaseModel):
 
 class TeamInstructionsVersion(BaseModel):
     id: str
-    team_address: str
+    team_id: str
     version: int
     document: TeamInstructionsDocument
     created_by_alias: Optional[str]
@@ -56,7 +56,7 @@ class TeamInstructionsVersion(BaseModel):
 class ActiveTeamInstructionsResponse(BaseModel):
     team_instructions_id: str
     active_team_instructions_id: Optional[str] = None
-    team_address: str
+    team_id: str
     version: int
     updated_at: Optional[datetime] = None
     document: TeamInstructionsDocument
@@ -72,7 +72,7 @@ class CreateTeamInstructionsRequest(BaseModel):
 
 class CreateTeamInstructionsResponse(BaseModel):
     team_instructions_id: str
-    team_address: str
+    team_id: str
     version: int
     created: bool = True
 
@@ -134,7 +134,7 @@ def _legacy_invariants_to_markdown(bundle_data: Dict[str, Any]) -> str:
 async def create_team_instructions_version(
     db: AsyncDatabaseManager,
     *,
-    team_address: str,
+    team_id: str,
     base_instructions_id: Optional[str],
     document: Dict[str, Any],
     created_by_alias: Optional[str],
@@ -144,7 +144,7 @@ async def create_team_instructions_version(
         WITH active_check AS (
             SELECT id
             FROM {{tables.team_instructions}}
-            WHERE team_address = $1 AND is_active = true
+            WHERE team_id = $1 AND is_active = true
         ),
         base_check AS (
             SELECT 1 AS ok
@@ -154,20 +154,20 @@ async def create_team_instructions_version(
         next_version AS (
             SELECT COALESCE(MAX(version), 0) + 1 AS version
             FROM {{tables.team_instructions}}
-            WHERE team_address = $1
+            WHERE team_id = $1
         )
         INSERT INTO {{tables.team_instructions}} (
-            team_address,
+            team_id,
             version,
             document_json,
             created_by_alias
         )
         SELECT $1, nv.version, $2::jsonb, $3
         FROM next_version nv, base_check bc
-        RETURNING id, team_address, version, document_json,
+        RETURNING id, team_id, version, document_json,
                   created_by_alias, created_at, updated_at
         """,
-        team_address,
+        team_id,
         json.dumps(document),
         created_by_alias,
         base_instructions_id,
@@ -177,9 +177,9 @@ async def create_team_instructions_version(
         active = await db.fetch_one(
             """
             SELECT id FROM {{tables.team_instructions}}
-            WHERE team_address = $1 AND is_active = true
+            WHERE team_id = $1 AND is_active = true
             """,
-            team_address,
+            team_id,
         )
         active_id = str(active["id"]) if active else "none"
         raise HTTPException(
@@ -197,7 +197,7 @@ async def create_team_instructions_version(
 
     return TeamInstructionsVersion(
         id=str(result["id"]),
-        team_address=result["team_address"],
+        team_id=result["team_id"],
         version=result["version"],
         document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
         created_by_alias=result["created_by_alias"],
@@ -209,12 +209,12 @@ async def create_team_instructions_version(
 async def activate_team_instructions(
     db: AsyncDatabaseManager,
     *,
-    team_address: str,
+    team_id: str,
     instructions_id: str,
 ) -> bool:
     target = await db.fetch_one(
         """
-        SELECT id, team_address
+        SELECT id, team_id
         FROM {{tables.team_instructions}}
         WHERE id = $1
         """,
@@ -223,7 +223,7 @@ async def activate_team_instructions(
     if not target:
         raise HTTPException(status_code=404, detail="Team instructions not found")
 
-    if target["team_address"] != team_address:
+    if target["team_id"] != team_id:
         raise HTTPException(
             status_code=400,
             detail="Team instructions do not belong to this team",
@@ -234,9 +234,9 @@ async def activate_team_instructions(
         """
         UPDATE {{tables.team_instructions}}
         SET is_active = false
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     # Activate the target version
@@ -254,18 +254,18 @@ async def activate_team_instructions(
 
 async def get_active_team_instructions(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     *,
     bootstrap_if_missing: bool = True,
 ) -> Optional[TeamInstructionsVersion]:
     result = await db.fetch_one(
         """
-        SELECT pi.id, pi.team_address, pi.version, pi.document_json,
+        SELECT pi.id, pi.team_id, pi.version, pi.document_json,
                pi.created_by_alias, pi.created_at, pi.updated_at
         FROM {{tables.team_instructions}} pi
-        WHERE pi.team_address = $1 AND pi.is_active = true
+        WHERE pi.team_id = $1 AND pi.is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     if result:
@@ -275,7 +275,7 @@ async def get_active_team_instructions(
 
         return TeamInstructionsVersion(
             id=str(result["id"]),
-            team_address=result["team_address"],
+            team_id=result["team_id"],
             version=result["version"],
             document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
             created_by_alias=result["created_by_alias"],
@@ -288,14 +288,14 @@ async def get_active_team_instructions(
 
     from .team_roles import get_active_team_roles
 
-    await get_active_team_roles(db, team_address, bootstrap_if_missing=True)
+    await get_active_team_roles(db, team_id, bootstrap_if_missing=True)
     raw_roles_result = await db.fetch_one(
         """
         SELECT pr.bundle_json
         FROM {{tables.team_roles}} pr
-        WHERE pr.team_address = $1 AND pr.is_active = true
+        WHERE pr.team_id = $1 AND pr.is_active = true
         """,
-        team_address,
+        team_id,
     )
     default_document = get_default_team_instructions()
     document = dict(default_document)
@@ -310,7 +310,7 @@ async def get_active_team_instructions(
     try:
         instructions_version = await create_team_instructions_version(
             db,
-            team_address=team_address,
+            team_id=team_id,
             base_instructions_id=None,
             document=document,
             created_by_alias=None,
@@ -321,13 +321,13 @@ async def get_active_team_instructions(
         ):
             raise
         # A concurrent bootstrap already created the version -- read it
-        logger.info("Concurrent bootstrap for team %s, retrying read", team_address)
+        logger.info("Concurrent bootstrap for team %s, retrying read", team_id)
         return await get_active_team_instructions(
-            db, team_address, bootstrap_if_missing=False
+            db, team_id, bootstrap_if_missing=False
         )
     await activate_team_instructions(
         db,
-        team_address=team_address,
+        team_id=team_id,
         instructions_id=instructions_version.id,
     )
     return instructions_version
@@ -343,7 +343,7 @@ async def get_active_team_instructions_endpoint(
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    version = await get_active_team_instructions(aweb_db, identity.team_address)
+    version = await get_active_team_instructions(aweb_db, identity.team_id)
     if not version:
         raise HTTPException(status_code=404, detail="No active team instructions found")
 
@@ -355,7 +355,7 @@ async def get_active_team_instructions_endpoint(
     return ActiveTeamInstructionsResponse(
         team_instructions_id=version.id,
         active_team_instructions_id=version.id,
-        team_address=version.team_address,
+        team_id=version.team_id,
         version=version.version,
         updated_at=version.updated_at,
         document=version.document,
@@ -371,17 +371,17 @@ async def list_team_instructions_history(
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    await get_active_team_instructions(aweb_db, identity.team_address, bootstrap_if_missing=True)
+    await get_active_team_instructions(aweb_db, identity.team_id, bootstrap_if_missing=True)
 
     rows = await aweb_db.fetch_all(
         """
         SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.team_instructions}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        identity.team_address,
+        identity.team_id,
         limit,
     )
 
@@ -410,7 +410,7 @@ async def create_team_instructions_endpoint(
 
     version = await create_team_instructions_version(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         base_instructions_id=payload.base_team_instructions_id,
         document=payload.document.model_dump(),
         created_by_alias=identity.alias,
@@ -418,14 +418,14 @@ async def create_team_instructions_endpoint(
 
     logger.info(
         "Team instructions created via API: team=%s id=%s version=%d",
-        identity.team_address,
+        identity.team_id,
         version.id,
         version.version,
     )
 
     return CreateTeamInstructionsResponse(
         team_instructions_id=version.id,
-        team_address=version.team_address,
+        team_id=version.team_id,
         version=version.version,
     )
 
@@ -441,13 +441,13 @@ async def get_team_instructions_by_id_endpoint(
 
     result = await aweb_db.fetch_one(
         """
-        SELECT pi.id, pi.team_address, pi.version, pi.document_json,
+        SELECT pi.id, pi.team_id, pi.version, pi.document_json,
                pi.created_by_alias, pi.created_at, pi.updated_at
         FROM {{tables.team_instructions}} pi
-        WHERE pi.id = $1 AND pi.team_address = $2
+        WHERE pi.id = $1 AND pi.team_id = $2
         """,
         team_instructions_id,
-        identity.team_address,
+        identity.team_id,
     )
     if not result:
         raise HTTPException(
@@ -462,7 +462,7 @@ async def get_team_instructions_by_id_endpoint(
     return ActiveTeamInstructionsResponse(
         team_instructions_id=str(result["id"]),
         active_team_instructions_id=None,
-        team_address=result["team_address"],
+        team_id=result["team_id"],
         version=result["version"],
         updated_at=result["updated_at"],
         document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
@@ -481,21 +481,21 @@ async def activate_team_instructions_endpoint(
     previous_active = await aweb_db.fetch_one(
         """
         SELECT id FROM {{tables.team_instructions}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        identity.team_address,
+        identity.team_id,
     )
     previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
     await activate_team_instructions(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         instructions_id=team_instructions_id,
     )
 
     logger.info(
         "Team instructions activated via API: team=%s id=%s (was: %s)",
-        identity.team_address,
+        identity.team_id,
         team_instructions_id,
         previous_instructions_id,
     )
@@ -517,28 +517,28 @@ async def reset_team_instructions_to_default_endpoint(
     previous_active = await aweb_db.fetch_one(
         """
         SELECT id FROM {{tables.team_instructions}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        identity.team_address,
+        identity.team_id,
     )
     previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
     version = await create_team_instructions_version(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         base_instructions_id=previous_instructions_id,
         document=get_default_team_instructions(),
         created_by_alias=None,
     )
     await activate_team_instructions(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         instructions_id=version.id,
     )
 
     logger.info(
         "Team instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_address,
+        identity.team_id,
         version.id,
         version.version,
         previous_instructions_id,

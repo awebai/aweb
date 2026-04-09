@@ -21,7 +21,7 @@ func TestAwInstructionsShowDisplaysActiveInstructions(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_instructions_id":        "instructions-1",
 				"active_team_instructions_id": "instructions-1",
-				"team_address":                "proj-1",
+				"team_id":                     "backend:proj-1",
 				"version":                     4,
 				"updated_at":                  "2026-03-10T10:00:00Z",
 				"document": map[string]any{
@@ -75,7 +75,7 @@ func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_instructions_id":        "instructions-2",
 				"active_team_instructions_id": "instructions-2",
-				"team_address":                "proj-1",
+				"team_id":                     "backend:proj-1",
 				"version":                     2,
 				"updated_at":                  "2026-03-11T10:00:00Z",
 				"document": map[string]any{
@@ -86,7 +86,7 @@ func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
 		case "/v1/instructions/instructions-2":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_instructions_id": "instructions-2",
-				"team_address":         "proj-1",
+				"team_id":              "backend:proj-1",
 				"version":              2,
 				"updated_at":           "2026-03-11T10:00:00Z",
 				"document": map[string]any{
@@ -142,7 +142,7 @@ func TestAwInstructionsSetCreatesAndActivatesNewVersion(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_instructions_id":        "instructions-1",
 				"active_team_instructions_id": "instructions-1",
-				"team_address":                "proj-1",
+				"team_id":                     "backend:proj-1",
 				"version":                     1,
 				"updated_at":                  "2026-03-10T10:00:00Z",
 				"document": map[string]any{
@@ -159,7 +159,7 @@ func TestAwInstructionsSetCreatesAndActivatesNewVersion(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_instructions_id": "instructions-2",
-				"team_address":         "proj-1",
+				"team_id":              "backend:proj-1",
 				"version":              2,
 				"created":              true,
 			})

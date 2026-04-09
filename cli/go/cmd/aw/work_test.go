@@ -57,7 +57,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: selfID,
 	})
@@ -125,7 +125,7 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "self",
 		WorkspaceID: "agent-self",
 	})

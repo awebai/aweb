@@ -21,7 +21,7 @@ type hostedInitOutput struct {
 	DIDKey          string `json:"did_key"`
 	DIDAW           string `json:"did_aw"`
 	NamespaceDomain string `json:"namespace_domain"`
-	TeamAddress     string `json:"team_address"`
+	TeamID          string `json:"team_id"`
 	MemberAddress   string `json:"member_address"`
 	Certificate     string `json:"certificate"`
 }
@@ -117,7 +117,7 @@ func runHostedInit(cmd *cobra.Command) error {
 		DIDKey:          didKey,
 		DIDAW:           stableID,
 		NamespaceDomain: strings.TrimSpace(resp.NamespaceDomain),
-		TeamAddress:     strings.TrimSpace(resp.TeamAddress),
+		TeamID:          strings.TrimSpace(resp.TeamID),
 		MemberAddress:   strings.TrimSpace(resp.MemberAddress),
 		Certificate:     strings.TrimSpace(resp.Certificate),
 	}

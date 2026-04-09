@@ -97,7 +97,7 @@ async def send_message(
 
     if to_agent_id is not None:
         recipient = await get_agent_by_id(
-            db, team_address=identity.team_address, agent_id=to_agent_id,
+            db, team_id=identity.team_id, agent_id=to_agent_id,
         )
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
@@ -105,7 +105,7 @@ async def send_message(
 
     elif payload.to_alias is not None:
         recipient = await get_agent_by_alias(
-            db, team_address=identity.team_address, alias=payload.to_alias,
+            db, team_id=identity.team_id, alias=payload.to_alias,
         )
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
@@ -119,7 +119,7 @@ async def send_message(
 
     message_id, created_at = await deliver_message(
         db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         from_agent_id=identity.agent_id,
         from_alias=identity.alias,
         to_agent_id=to_agent_id,
@@ -137,7 +137,7 @@ async def send_message(
         request,
         "message_sent",
         {
-            "team_address": identity.team_address,
+            "team_id": identity.team_id,
             "alias": identity.alias,
             "message_id": str(message_id),
             "to_alias": to_alias,
@@ -162,8 +162,8 @@ async def get_inbox(
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
 
-    where_clause = "WHERE m.team_address = $1 AND m.to_agent_id = $2"
-    params: list = [identity.team_address, UUID(identity.agent_id)]
+    where_clause = "WHERE m.team_id = $1 AND m.to_agent_id = $2"
+    params: list = [identity.team_id, UUID(identity.agent_id)]
 
     if unread_only:
         where_clause += " AND m.read_at IS NULL"
@@ -220,13 +220,13 @@ async def ack_message(
         """
         UPDATE {{tables.messages}}
         SET read_at = $1
-        WHERE message_id = $2 AND team_address = $3 AND to_agent_id = $4
+        WHERE message_id = $2 AND team_id = $3 AND to_agent_id = $4
           AND read_at IS NULL
         RETURNING message_id
         """,
         now,
         msg_uuid,
-        identity.team_address,
+        identity.team_id,
         UUID(identity.agent_id),
     )
 
@@ -235,10 +235,10 @@ async def ack_message(
         existing = await aweb_db.fetch_one(
             """
             SELECT message_id, read_at FROM {{tables.messages}}
-            WHERE message_id = $1 AND team_address = $2 AND to_agent_id = $3
+            WHERE message_id = $1 AND team_id = $2 AND to_agent_id = $3
             """,
             msg_uuid,
-            identity.team_address,
+            identity.team_id,
             UUID(identity.agent_id),
         )
         if not existing:

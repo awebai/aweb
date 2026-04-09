@@ -46,7 +46,7 @@ Canonical sample:
 
 ```yaml
 aweb_url: https://app.aweb.ai
-team_address: acme.com/backend
+team_id: backend:acme.com
 alias: alice
 role_name: developer
 human_name: ""
@@ -62,7 +62,7 @@ updated_at: "2026-04-06T..."
 Key points:
 
 - `aweb_url` is the aweb-compatible coordination server URL; default hosted value is `https://app.aweb.ai`
-- `team_address` is the active team binding for this worktree
+- `team_id` is the active team binding for this worktree
 - `alias` is the current team-local alias for this workspace
 - repo/worktree metadata such as `repo_id`, `canonical_origin`, `hostname`, and `workspace_path` are local coordination metadata, not identity data
 
