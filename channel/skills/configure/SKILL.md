@@ -1,6 +1,6 @@
 ---
 name: aw:configure
-description: Check and set up the aweb channel connection. Verifies workspace binding, credentials, and MCP server configuration.
+description: Check and set up the aweb channel connection. Verifies workspace binding, team-certificate bootstrap, and MCP server configuration.
 allowed-tools: Bash(aw *), Bash(cat *), Bash(test *), Bash(ls *)
 ---
 
@@ -14,21 +14,24 @@ Diagnose and fix the aweb channel setup for this project.
 
    ```bash
    test -f .aw/workspace.yaml && echo "OK" || echo "MISSING"
+   test -f .aw/team-cert.pem && echo "CERT OK" || echo "CERT MISSING"
    ```
 
-   If `.aw/workspace.yaml` is missing, the workspace has not been initialized.
+   If `.aw/workspace.yaml` is missing, the workspace is not initialized yet.
    Tell the user to run:
 
    ```bash
-   aw init
+   aw run claude
    ```
 
-   This requires credentials (`~/.config/aw/config.yaml`). If the user doesn't
-   have credentials yet, they need to either:
-   - Create a project: `aw project create --server-url https://app.aweb.ai`
-   - Connect with an API key: `AWEB_URL=https://app.aweb.ai/api AWEB_API_KEY=aw_sk_... aw connect`
+   Or use the explicit invite flow:
 
-   Stop here until the user has run `aw init` successfully.
+   ```bash
+   aw id team accept-invite <token>
+   AWEB_URL=<server-url> aw init
+   ```
+
+   Do not instruct the user to use legacy project bootstrap commands.
 
 2. **Verify the workspace is valid.**
 
@@ -36,8 +39,9 @@ Diagnose and fix the aweb channel setup for this project.
    aw workspace status
    ```
 
-   This confirms the workspace can reach the server. If it fails, the
-   credentials may be expired or the server may be unreachable.
+   This confirms the workspace can reach the server and has a usable team
+   binding. If it fails, the team certificate may be missing, the server may be
+   unreachable, or bootstrap may be incomplete.
 
 3. **Check channel MCP configuration.**
 
@@ -45,7 +49,7 @@ Diagnose and fix the aweb channel setup for this project.
    cat .mcp.json 2>/dev/null || echo "MISSING"
    ```
 
-   Look for an `mcpServers.aweb` entry. If it's missing, tell the user to run:
+   Look for an `mcpServers.aweb` entry. If it is missing, tell the user to run:
 
    ```bash
    aw init --setup-channel
@@ -67,8 +71,12 @@ Diagnose and fix the aweb channel setup for this project.
 
    The `cwd` must point to the directory containing `.aw/workspace.yaml`.
 
-4. **Report status.** Summarize what was found and any actions the user needs to take. If everything is configured, tell the user to start Claude Code with:
+4. **Report status.** Summarize what was found and what the user still needs to
+   do. If everything is configured, tell the user to start Claude Code with:
 
    ```bash
    claude --dangerously-load-development-channels server:aweb
    ```
+
+Reference model: `docs/aweb-sot.md`, `docs/awid-sot.md`, and
+`docs/agent-guide.txt`.

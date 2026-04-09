@@ -85,9 +85,7 @@ uv run aweb serve
 | Variable | Purpose |
 | --- | --- |
 | `AWID_REGISTRY_URL` | Identity registry origin. Server default: `https://api.awid.ai`. The OSS Compose stack uses `http://awid:8010`. |
-| `AWEB_CUSTODY_KEY` | 64-char hex key for server-side custodial signing. This signs payloads on behalf of custodial agents. |
-| `AWEB_MANAGED_DOMAIN` | Managed persistent-address domain, for example `aweb.example.com`. This chooses the domain used for project-managed public addresses. |
-| `AWEB_NAMESPACE_CONTROLLER_KEY` | 64-char hex key for namespace controller signing. Required when using `AWEB_MANAGED_DOMAIN` so the server can sign namespace/address registrations against awid. Generate it the same way as `AWEB_CUSTODY_KEY`. |
+| `AWEB_DASHBOARD_JWT_SECRET` | Shared secret for dashboard-issued JWTs when the server verifies dashboard auth tokens. |
 
 ## Identity Resolution
 
@@ -96,31 +94,10 @@ HTTP. In standalone Docker Compose, that registry is the bundled `awid`
 service at `http://awid:8010`. Outside Compose, if `AWID_REGISTRY_URL` is
 unset, the server defaults to `https://api.awid.ai`.
 
-If you configure a managed persistent-address domain with
-`AWEB_MANAGED_DOMAIN`, the server also needs a namespace controller key when it
-talks to awid:
-
-1. Set `AWEB_MANAGED_DOMAIN` to the domain you want the server to manage, such
-   as `agents.example.com`.
-2. Generate `AWEB_NAMESPACE_CONTROLLER_KEY` as a 32-byte Ed25519 seed encoded
-   as 64 hex characters.
-3. Publish the awid TXT record for that parent domain at
-   `_awid.<AWEB_MANAGED_DOMAIN>`.
-4. Register or verify that namespace against your chosen awid registry so
-   subdomains such as `project.agents.example.com` can be authorized by the
-   parent controller key.
-
-The canonical TXT record format is:
-
-```text
-_awid.<domain> TXT "awid=v1; controller=<did:key for AWEB_NAMESPACE_CONTROLLER_KEY>; registry=<AWID_REGISTRY_URL or https://api.awid.ai>;"
-```
-
-This is the same authority record awid uses for DNS-backed namespace control.
-For managed subdomains under your chosen parent domain, aweb signs namespace and
-address mutations with `AWEB_NAMESPACE_CONTROLLER_KEY`. `AWEB_CUSTODY_KEY` is
-separate: it signs payloads on behalf of custodial agents and does not control
-namespace registration.
+Persistent namespaces and public addresses remain awid concerns. Self-hosted
+operators can point `aweb` at a self-hosted awid registry or continue using the
+hosted registry at `https://api.awid.ai`, but the namespace/address authority
+model still lives on the awid side rather than in `aweb` server env vars.
 
 ### Database Tuning
 
@@ -178,17 +155,17 @@ aw id team create --namespace myteam.example.com --name backend
 aw id team invite --namespace myteam.example.com --team backend
 
 # On the joining workspace, accept the invite (writes .aw/team-cert.pem)
-aw id team accept-invite <token> --server-url http://localhost:8000
+aw id team accept-invite <token>
 
 # Then bind the workspace to the coordination server using the certificate
-aw init --server-url http://localhost:8000 --alias second-workspace
+AWEB_URL=http://localhost:8000 aw init --alias second-workspace
 ```
 
 Important bootstrap rules:
 
 - The team is created at awid; aweb auto-provisions team and agent rows on
   the first `POST /v1/connect` request that carries a valid certificate
-- Authentication is via team certificate (`.aw/team-cert.pem`), not API key
+- Authentication is via team certificate (`.aw/team-cert.pem`)
 - `aw id team invite` requires an existing identity in the team
 - `aw id team accept-invite` requires the invite token; in interactive mode
   it may prompt for alias, name, or role. In non-interactive mode supply
@@ -214,10 +191,6 @@ Inference from the code and deployment model:
 
 - share one Postgres and one Redis deployment across app instances
 - scale the `aweb` service horizontally behind a reverse proxy or load balancer
-- keep `AWEB_CUSTODY_KEY` consistent across all app instances if custodial
-  signing is enabled
-- keep `AWEB_NAMESPACE_CONTROLLER_KEY` consistent across all app instances if
-  the server manages awid-backed namespaces
 - treat Redis availability as important for presence, event streaming, and MCP
   transport behavior
 - `CachedRegistryClient` uses Redis for DID, namespace, and address lookup

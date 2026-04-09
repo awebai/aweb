@@ -1,39 +1,40 @@
 # MCP Tools Reference
 
-This reference is generated from the live MCP registration in
+This reference is maintained against the live MCP registration in
 [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
+For the canonical contract, see the MCP section of
+[`aweb-sot.md`](aweb-sot.md).
 
 ## Transport and Auth
 
 - FastAPI mounts the MCP app at `/mcp`
-- With the default `streamable_http_path="/"`, the external endpoint clients
-  should use `/mcp/`
-- It is created with FastMCP and mounted by the main FastAPI app
-- The transport is Streamable HTTP with `stateless_http=True`
-- Tool auth requires an agent-bound API key (project-scoped authority keys
-  accepted by the REST API are rejected by MCP)
-- All registered tools currently return strings, so callers should treat the
-  result as human-readable tool output rather than a stable JSON contract
+- With the default `streamable_http_path="/"`, clients should use `/mcp/`
+- The transport is Streamable HTTP via FastMCP with `stateless_http=True`
+- OSS aweb MCP auth uses the same team-certificate model as the REST coordination API
+- The middleware verifies the DIDKey request signature, request timestamp, and `X-AWID-Team-Certificate` header; see [`aweb-sot.md`](aweb-sot.md) and [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py)
+- The OSS `/mcp` path accepts only the certificate-based coordination auth contract
+- Tools run in the caller's authenticated team scope
+- All registered tools currently return strings, so callers should treat results as human-readable output rather than a stable JSON contract
 
 ## Identity
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `whoami` | none | Show the current agent identity, alias, stable identity, and project scope. |
+| `whoami` | none | Show the current agent identity, alias, stable identity, and team scope. |
 
 ## Mail
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `send_mail` | `to`, `body`, `subject=""`, `priority="normal"`, `thread_id=""` | Send asynchronous mail to another agent by alias or address. |
+| `send_mail` | `to`, `body`, `subject=""`, `priority="normal"` | Send asynchronous mail to another agent by alias or address. |
 | `check_inbox` | `unread_only=True`, `limit=50`, `include_bodies=True` | Read inbox mail. |
 
-## Presence and Agent Discovery
+## Presence
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `list_agents` | none | List project agents with online state. |
-| `heartbeat` | none | Refresh presence. |
+| `list_agents` | none | List team agents with online state. |
+| `heartbeat` | none | Refresh presence for the current agent. |
 
 ## Chat
 
@@ -48,8 +49,8 @@ This reference is generated from the live MCP registration in
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `task_create` | `title`, `description=""`, `notes=""`, `priority=2`, `task_type="task"`, `labels`, `parent_task_id=""`, `assignee=""` | Create a task. |
-| `task_list` | `status=""`, `assignee=""`, `task_type=""`, `priority=-1`, `labels` | List tasks. |
+| `task_create` | `title`, `description=""`, `notes=""`, `priority=2`, `task_type="task"`, `labels`, `parent_task_id=""`, `assignee=""` | Create a task in the current team. |
+| `task_list` | `status=""`, `assignee=""`, `task_type=""`, `priority=-1`, `labels` | List team tasks. |
 | `task_ready` | `unclaimed_only=True` | List ready tasks. |
 | `task_get` | `ref` | Fetch a task by ref or UUID. |
 | `task_close` | `ref` | Close a task. |
@@ -63,8 +64,8 @@ This reference is generated from the live MCP registration in
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `instructions_show` | `project_instructions_id=""` | Show the active shared project instructions or a requested version. |
-| `instructions_history` | `limit=20` | List recent shared project instructions versions. |
+| `instructions_show` | `team_instructions_id=""` | Show the active shared team instructions or a requested version. Some code paths may still emit the old parameter name until the wire rename lands. |
+| `instructions_history` | `limit=20` | List recent shared team instructions versions. |
 
 ## Roles
 
@@ -78,7 +79,7 @@ This reference is generated from the live MCP registration in
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
 | `work_ready` | none | List ready tasks not already claimed by another workspace. |
-| `work_active` | none | List active in-progress work across the project. |
+| `work_active` | none | List active in-progress work across the team. |
 | `work_blocked` | none | List blocked tasks. |
 
 ## Workspace Coordination
@@ -91,15 +92,12 @@ This reference is generated from the live MCP registration in
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `contacts_list` | none | List project contacts. |
+| `contacts_list` | none | List team contacts. |
 | `contacts_add` | `contact_address`, `label=""` | Add a contact. |
 | `contacts_remove` | `contact_id` | Remove a contact. |
 
 ## Mapping to the REST API
 
-- Tools are thin wrappers over the same coordination primitives exposed by the
-  REST API.
-- If you add a new MCP tool, implement the behavior under
-  [`server/src/aweb/mcp/tools/`](../server/src/aweb/mcp/tools),
-  then register it in
-  [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
+- Tools are thin wrappers over the same coordination primitives exposed by the REST API.
+- Tool auth resolves an `AuthContext` containing `team_address`, `agent_id`, `alias`, and `did_key`; see [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py).
+- If you add a new MCP tool, implement the behavior under [`server/src/aweb/mcp/tools/`](../server/src/aweb/mcp/tools/) and register it in [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).

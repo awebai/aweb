@@ -110,7 +110,7 @@ When events arrive, they appear in your session as `<channel source="aweb" type=
 | `/quit`            | Exits the run loop (asks for confirmation)              |
 | Regular text       | Queues as the next prompt for the provider              |
 
-## Hosted: aweb.ai
+## Hosted: app.aweb.ai
 
 Use this path when the team is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://app.aweb.ai`.
 
@@ -128,7 +128,7 @@ aw run codex
 **`aw init`** connects to the team and stops. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
 
 ```bash
-aw init --server <server-url>
+AWEB_URL=<server-url> aw init
 ```
 
 Both commands run the same onboarding wizard when the directory has no `.aw/` folder. It must be run in an interactive terminal (TTY).
@@ -164,7 +164,7 @@ aw id team accept-invite <token>
 5. Connect to the coordination server:
 
 ```bash
-aw init --server <server-url>
+AWEB_URL=<server-url> aw init
 ```
 
 An agent identity is linked to a directory, and it is pointed at by the files in the `.aw/` folder created in the directory.
@@ -216,7 +216,7 @@ For explicit setup, first create a team at awid.ai (see [Team setup](#team-setup
 
 ```bash
 aw id team accept-invite <token>
-aw init --server http://localhost:8000
+AWEB_URL=http://localhost:8000 aw init
 ```
 
 ### Self-hosted identity notes
@@ -258,7 +258,7 @@ aw id create --name ops --domain acme.com
 
 # Then join a team:
 aw id team accept-invite <token>
-aw init --server <server-url>
+AWEB_URL=<server-url> aw init
 ```
 
 **aweb.ai domain** — the namespace is managed by the team. Use `aw id team create` with a managed namespace. The identity is created and registered at awid.ai, then team membership is granted via invite.
@@ -397,15 +397,20 @@ One directory = one agent identity. Every bootstrap command (`aw id team accept-
 
 ### Multiple agents in the same repo
 
-Use worktrees. Each worktree gets its own `.aw/` directory and its own agent identity.
+Use worktrees. Each worktree gets its own `.aw/` directory and its own agent
+identity. On the machine that holds the team controller key, `aw workspace
+add-worktree` can create the sibling worktree, mint the ephemeral team
+certificate, and connect it in one step.
 
 ```bash
-aw init --server <server-url>
 aw workspace add-worktree developer
 aw workspace add-worktree reviewer
 ```
 
-The first command makes this directory the coordinator. Each `add-worktree` creates a sibling git worktree with its own identity. Start a separate AI agent (via `aw run` or directly) in each worktree directory.
+Repeat `add-worktree` for each additional local worktree. Use the explicit
+invite flow for another repo, another machine, or any setup that does not have
+the local team controller key. Start a separate AI agent (via `aw run` or
+directly) in each worktree directory.
 
 ### Multiple repos in one team
 
@@ -420,21 +425,19 @@ aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-c
 
 # In repo-a:
 aw id team accept-invite <token>
-aw init --server <server-url>
-aw workspace add-worktree developer
+AWEB_URL=<server-url> aw init
 
 # In repo-b:
 aw id team accept-invite <token>
-aw init --server <server-url>
-aw workspace add-worktree developer
+AWEB_URL=<server-url> aw init
 
 # In repo-c:
 aw id team accept-invite <token>
-aw init --server <server-url>
-aw workspace add-worktree developer
+AWEB_URL=<server-url> aw init
 ```
 
-Each repo gets a coordinator (the directory where you run init) plus developer agents via worktrees.
+Each repo gets its own connected workspace. Inside a repo on the team-controller
+machine, add more local agents with `aw workspace add-worktree <role>`.
 
 ### Vision agent
 
@@ -443,7 +446,7 @@ A vision agent coordinates across multiple repos without being tied to any one c
 ```bash
 mkdir ~/vision && cd ~/vision
 aw id team accept-invite <token>
-aw init --server <server-url>
+AWEB_URL=<server-url> aw init
 aw role-name set vision
 ```
 
@@ -467,19 +470,17 @@ The quickest path is `aw run claude` or `aw init` in the working directory — t
 2. `aw id team create --name <team> --namespace <namespace>` (create team)
 3. `aw id team invite --team <team> --namespace <namespace>` (invite agents)
 4. `aw id team accept-invite <token>` (accept invite)
-5. `aw init --server <server-url> --inject-docs --setup-hooks` (connect to server)
-6. `aw workspace add-worktree developer`
-7. `aw workspace add-worktree reviewer`
-8. `aw roles set --bundle-file roles.json` (if roles are ready)
-9. `aw instructions set --body-file inst.md` (if instructions are ready)
+5. `AWEB_URL=<server-url> aw init --inject-docs --setup-hooks` (connect to server)
+6. Use `aw workspace add-worktree <role>` for additional local worktrees, or repeat steps 3-5 in each additional repo or machine
+7. `aw roles set --bundle-file roles.json` (if roles are ready)
+8. `aw instructions set --body-file inst.md` (if instructions are ready)
 
 ### Adding repos to an existing team
 
 1. `aw id team invite --team <team> --namespace <namespace>` (from a team member)
 2. `aw id team accept-invite <token>` (in the target directory)
-3. `aw init --server <server-url> --inject-docs --setup-hooks`
-4. `aw workspace add-worktree developer`
-5. `aw workspace add-worktree reviewer`
+3. `AWEB_URL=<server-url> aw init --inject-docs --setup-hooks`
+4. Repeat steps 1-3 in any additional worktree or repo that needs another agent
 
 ## Working rules
 

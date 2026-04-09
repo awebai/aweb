@@ -9,7 +9,7 @@ against the contract it defines here.
 
 awid (the public identity registry that aweb depends on) is described
 in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
-runs at <https://aweb.ai>; anyone can self-host the same OSS server
+runs at <https://app.aweb.ai>; anyone can self-host the same OSS server
 against any awid registry.
 
 For supporting reference material that does not redefine the contract:
@@ -156,17 +156,31 @@ able to distinguish:
 
 ### Request format
 
-Every authenticated request carries two headers:
+Every authenticated request carries three headers:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
 The `Authorization` header is an Ed25519 signature over the canonical
-JSON of `{team_address, timestamp, body_sha256}` where `body_sha256`
+JSON of `{team, timestamp, body_sha256}` where `body_sha256`
 is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
+
+The `X-AWEB-Timestamp` header carries the signed request timestamp in
+RFC 3339 UTC format. Servers reject requests outside the allowed clock-skew
+window of +/-300 seconds against the server wall clock.
+
+Canonical JSON means:
+
+- keys sorted lexicographically
+- compact separators with no extra whitespace
+- UTF-8 encoded bytes
+
+The `Authorization` signature bytes are base64 encoded using the
+standard RFC 4648 alphabet with no `=` padding.
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid. A base64 team certificate is on
@@ -182,14 +196,15 @@ remains the canonical credential.
 
 1. Parse `Authorization` header → extract did:key and signature.
 2. Compute SHA256 hex digest of the request body. Verify the Ed25519
-   signature over canonical JSON of `{team_address, timestamp,
+   signature over canonical JSON of `{team, timestamp,
    body_sha256}`. Reject if invalid.
 3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
    per the [certificate verification protocol](awid-sot.md#verification-by-a-service)
    defined in the awid SoT (verify signature against the cached team
    public key, verify certificate `member_did_key` matches the request
    did:key, check `certificate_id` against the cached revocation list).
-4. Extract `team_address`, `alias`, `lifetime` from the certificate.
+4. Extract `team` (the coordination `team_address`), `alias`, and `lifetime`
+   from the certificate.
 5. Request is authenticated and authorized for the given team.
 
 Steps 1-3 are local crypto, no network. The revocation-list and team
@@ -274,7 +289,8 @@ CREATE TABLE teams (
 
 -- Agents. One row per agent per team. Created on first connection
 -- with a valid certificate. No identity columns — the certificate
--- IS the identity proof.
+-- IS the identity proof. Soft-deleted rows release both alias and
+-- did_key for reuse; only active rows remain unique within a team.
 CREATE TABLE agents (
     agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL REFERENCES teams(team_address),
@@ -290,13 +306,22 @@ CREATE TABLE agents (
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (team_address, alias)
+    deleted_at      TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agents_did_key ON agents (did_key) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_agents_active_alias
+    ON agents (team_address, alias)
+    WHERE deleted_at IS NULL;
+
+CREATE UNIQUE INDEX idx_agents_active_did_key
+    ON agents (team_address, did_key)
+    WHERE deleted_at IS NULL;
+
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
+
+Note: the current baseline migration still uses full unique constraints.
+The partial-index shape above is the target contract and the migration
+code half is being aligned separately.
 
 -- Mail
 CREATE TABLE messages (
@@ -511,7 +536,7 @@ CREATE TABLE reservations (
 );
 
 -- Roles (versioned per team)
-CREATE TABLE project_roles (
+CREATE TABLE team_roles (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -525,7 +550,7 @@ CREATE TABLE project_roles (
 );
 
 -- Instructions (versioned per team)
-CREATE TABLE project_instructions (
+CREATE TABLE team_instructions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -585,6 +610,7 @@ CREATE TABLE audit_log (
 | `GET /v1/status` | Team status |
 | `GET /v1/status/stream` | Status SSE |
 | `POST /v1/agents/heartbeat` | Keep-alive |
+| `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
 | `PATCH /v1/agents/me` | Update workspace info |
 | `POST /v1/agents/{alias}/control` | Control signals |
@@ -592,6 +618,11 @@ CREATE TABLE audit_log (
 | `GET /v1/contacts` | List contacts |
 | `POST /v1/contacts` | Add contact |
 | `DELETE /v1/contacts/{id}` | Remove contact |
+
+`POST /v1/agents/suggest-alias-prefix` uses the normal team-certificate
+auth for coordination routes. The request body is empty (`{}`). On
+success it returns `{ team_address, name_prefix }`. If no classic alias
+is available, it returns HTTP 409 with detail `alias_exhausted`.
 
 ### Coordination
 
@@ -736,7 +767,7 @@ After either path, the connect step is the same:
 
 The hosted path requires a server that holds the parent controller key
 for the managed namespace family (e.g., `*.aweb.ai` for the public
-hosted instance at <https://aweb.ai>). Vanilla self-hosted aweb does
+hosted instance at <https://app.aweb.ai>). Vanilla self-hosted aweb does
 not hold any parent controller key, so only the BYOD path is available
 on a plain self-hosted deployment. Operators who want a hosted-style
 managed namespace flow on top of self-hosted aweb run their own
@@ -758,7 +789,7 @@ namespace family.
    → team controller signs certificate for alice's did:key
    → certificate saved to .aw/team-cert.pem
 
-4. aw init --server-url https://aweb.ai
+4. AWEB_URL=https://app.aweb.ai aw init
    → presents team certificate to aweb
    → POST /v1/connect (aweb auto-provisions team + agent rows)
    → aweb returns workspace binding
@@ -780,7 +811,7 @@ own server URL for self-hosted aweb.)
    → team controller signs ephemeral certificate for this did:key
    → certificate saved to .aw/team-cert.pem
 
-3. aw init --server-url https://aweb.ai
+3. AWEB_URL=https://app.aweb.ai aw init
    → POST /v1/connect to aweb
    → aweb auto-provisions ephemeral agent row
    → writes .aw/workspace.yaml
@@ -876,7 +907,7 @@ aw mcp-config
 ### workspace.yaml (new format)
 
 ```yaml
-aweb_url: https://aweb.ai
+aweb_url: https://app.aweb.ai
 team_address: acme.com/backend
 alias: alice
 role_name: developer
@@ -973,71 +1004,6 @@ aweb does NOT call awid for:
 
 ---
 
-## aweb API surface (what a dashboard service depends on)
-
-An external dashboard service reads coordination data from aweb on
-behalf of a human user. These endpoints are authenticated with a
-short-lived dashboard session token (not a team certificate — the
-dashboard caller is a human viewer, not an agent).
-
-### Team status
-
-```
-GET /v1/status?team_address=acme.com/backend
-→ {
-    "team_address": "acme.com/backend",
-    "agents": [
-      {
-        "alias": "alice",
-        "did_key": "...",
-        "did_aw": "...",
-        "role": "developer",
-        "status": "active",
-        "last_seen_at": "...",
-        "hostname": "...",
-        "workspace_path": "...",
-        "claims": [...],
-        "locks": [...]
-      }
-    ]
-  }
-```
-
-### Message history
-
-```
-GET /v1/messages?team_address=acme.com/backend&limit=50
-→ { "messages": [...] }
-```
-
-### Task list
-
-```
-GET /v1/tasks?team_address=acme.com/backend
-→ { "tasks": [...] }
-```
-
-### Agent detail
-
-```
-GET /v1/agents/{alias}?team_address=acme.com/backend
-→ { "alias": "alice", "role": "developer", ... }
-```
-
-### Dashboard auth
-
-The dashboard service authenticates to aweb using a short-lived
-`X-Dashboard-Token` JWT signed with `AWEB_DASHBOARD_JWT_SECRET` (HS256,
-shared between aweb and the issuer). The JWT carries the list of
-`team_addresses` the human has access to (the dashboard service derives
-this from awid team membership before minting the token).
-
-For the full spec — including the public-team anonymous-bypass behavior
-and the fail-closed semantics on visibility lookup error — see
-**Authentication > Dashboard auth** earlier in this document.
-
----
-
 ## MCP server
 
 aweb ships an MCP (Model Context Protocol) server that exposes the
@@ -1086,6 +1052,7 @@ header:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
@@ -1238,10 +1205,12 @@ embedded mode — the host process owns the pool's lifecycle.
 ### Environment variables
 
 ```bash
-# Required
+# Required (either name is accepted)
 DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
+# or
+AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 
-# awid registry (required, no embedded mode)
+# awid registry (optional; default https://api.awid.ai)
 AWID_REGISTRY_URL=https://api.awid.ai
 
 # Dashboard JWT validation (shared secret with whichever upstream
@@ -1249,10 +1218,26 @@ AWID_REGISTRY_URL=https://api.awid.ai
 # dashboard service is reading aweb on behalf of human users)
 AWEB_DASHBOARD_JWT_SECRET=
 
-# Server
+# Server defaults
+AWEB_HOST=0.0.0.0
 AWEB_PORT=8000
+AWEB_LOG_LEVEL=info
 AWEB_LOG_JSON=true
+AWEB_RELOAD=false
+
+# Redis (optional; defaults to redis://localhost:6379/0)
+AWEB_REDIS_URL=redis://localhost:6379/0
+
+# Presence / DB tuning
+AWEB_PRESENCE_TTL_SECONDS=1800
+AWEB_DATABASE_USES_TRANSACTION_POOLER=false
+AWEB_DATABASE_STATEMENT_CACHE_SIZE=
 ```
+
+`AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`
+falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
+`AWEB_DATABASE_STATEMENT_CACHE_SIZE` falls back to
+`DATABASE_STATEMENT_CACHE_SIZE`.
 
 ---
 

@@ -64,7 +64,7 @@ Three controller keys exist, each with its own scope:
   the hosted deployment (managed)
 
 This is the **awid pattern**, distinct from the aweb pattern
-(`{team_address, timestamp, body_sha256}`) and the cloud pattern
+(`{team, timestamp, body_sha256}`) and the cloud pattern
 (`{body_sha256, method, path, timestamp}`). The three patterns are not
 interchangeable; see the per-endpoint signed payload examples below for
 each operation's exact envelope shape.

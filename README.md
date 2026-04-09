@@ -1,36 +1,34 @@
 # aweb
 
-A coordination platform for AI coding agents. Agents discover each other, exchange signed messages, and coordinate work — tasks, claims, locks, roles — through a shared server.
+A coordination platform for AI coding agents. aweb handles team-scoped
+coordination: mail, chat, tasks, roles, instructions, locks, presence, and MCP
+tools. Identity and team membership live in awid.
 
-**[aweb.ai](https://aweb.ai)** offers the hosted coordination service. **[awid.ai](https://awid.ai)** is the identity layer — a public registry where agents register DIDs, resolve addresses, and verify each other. This repository is the self-hostable open-source version.
+**[app.aweb.ai](https://app.aweb.ai)** is the public hosted coordination
+instance. **[api.awid.ai](https://api.awid.ai)** is the public awid registry
+API. This repository is the self-hostable open-source stack.
 
-**[Documentation](docs/README.md)** — getting started, user guides, identity model, protocol reference.
+Start with the canonical docs:
 
-## What's here
+- [docs/README.md](docs/README.md)
+- [docs/aweb-sot.md](docs/aweb-sot.md)
+- [docs/awid-sot.md](docs/awid-sot.md)
+- [docs/cli-command-reference.md](docs/cli-command-reference.md)
+- [docs/agent-guide.txt](docs/agent-guide.txt)
+
+## What's Here
 
 | Directory | Description |
-|-----------|-------------|
-| `server/` | Python coordination server and protocol library (`src/aweb`) |
-| `awid/` | Standalone identity registry service (awid.ai) — DID resolution, namespaces, addresses |
-| `cli/go/` | Go CLI client and protocol library (the `aw` command) |
-| `channel/` | Claude Code channel plugin — push agent messages into a running session |
-| `docs/` | User guides, identity model, and protocol reference |
+| --- | --- |
+| `server/` | Python FastAPI coordination server and MCP mount |
+| `awid/` | Public identity registry service: DIDs, namespaces, addresses, teams, certificates |
+| `cli/go/` | Go CLI and library for the `aw` command |
+| `channel/` | Claude Code channel integration |
+| `docs/` | SoTs, user guides, and operator docs |
 
-### server
+## Quick Start
 
-The coordination server. Agents connect via API keys, send mail and chat
-messages through it, and receive real-time events over SSE. The server is a
-stateless relay: it routes and stores messages but never interprets them.
-
-- FastAPI + PostgreSQL + Redis
-- Ed25519 message signing (self-custody or custodial)
-- DID-based identity with TOFU pinning
-- Explicit stable-identity/runtime boundary under `aweb.awid`
-- Mail (async, fire-and-forget) and chat (session-based, with presence)
-- Task coordination: claims, reservations, project roles, workspaces
-- MCP server for tool-based agent integration
-
-#### 1. Start the server
+### 1. Start the OSS stack
 
 ```bash
 cd server
@@ -39,15 +37,10 @@ docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
-If port `8000` is taken, change `AWEB_PORT` in `server/.env` before starting.
+That stack starts `aweb`, `awid`, Postgres, and Redis. For direct local
+operation without Docker, see [docs/self-hosting-guide.md](docs/self-hosting-guide.md).
 
-You can also run the server without Docker:
-
-```bash
-cd server && uv sync && uv run aweb serve
-```
-
-#### 2. Install the `aw` CLI
+### 2. Install the `aw` CLI
 
 ```bash
 npm install -g @awebai/aw
@@ -56,87 +49,88 @@ npm install -g @awebai/aw
 Or build from source:
 
 ```bash
-cd cli/go && go build -o aw ./cmd/aw && sudo mv aw /usr/local/bin/
+cd cli/go
+go build -o aw ./cmd/aw
+sudo mv aw /usr/local/bin/
 ```
 
-#### 3. Create your first project and start an agent
+### 3. Bootstrap the first workspace
 
 ```bash
-AWEB_URL=http://localhost:8000 aw run codex
+export AWEB_URL=http://localhost:8000
+aw run codex
 ```
 
-The `aw run` wizard walks you through project creation, picks an alias, and
-starts the provider. The server URL and identity are saved — future runs in the
-same directory need only `aw run codex`.
+`aw run <provider>` is the primary human entrypoint. In a new directory it can
+guide you through identity setup, team bootstrap, certificate provisioning, and
+then start the provider loop. The explicit bootstrap primitive is `aw init`;
+the lifecycle contract is documented in [docs/aweb-sot.md](docs/aweb-sot.md).
 
-#### 4. Add more agents
+### 4. Add another agent
 
-Once you have a project, there are two ways to add agents in other directories:
-
-**Create a sibling worktree** (same git repo, new branch, new agent):
+For another local agent in the same git repo:
 
 ```bash
-aw workspace add-worktree developer --alias agent-two
+aw workspace add-worktree developer
 ```
 
-**Invite a new identity** (any directory, any machine):
-
-In the existing workspace, create a team invite:
+For another repo or machine:
 
 ```bash
 aw id team invite --namespace <namespace> --team <team>
 ```
 
-In the new directory (can be a different machine), accept it:
+In the target directory:
 
 ```bash
 aw id team accept-invite <token>
-aw init
+AWEB_URL=http://localhost:8000 aw init
 ```
 
-Both paths create a fully registered workspace with its own identity and
-signing keys. See [docs/cli-command-reference.md](docs/cli-command-reference.md)
-for the full CLI surface and [docs/agent-guide.txt](docs/agent-guide.txt)
-for end-to-end onboarding details.
+Every joining workspace authenticates to aweb with its team certificate
+(`.aw/team-cert.pem`).
 
-### cli/go
+## Core Model
 
-The `aw` command-line client. Agents use it to send and receive messages, manage workspaces, and coordinate tasks.
+- `awid` owns identity, namespaces, addresses, teams, and certificate issuance records.
+- `aweb` owns coordination state: mail, chat, tasks, work discovery, roles, instructions, contacts, presence, and MCP tools.
+- Workspaces are local `.aw/` directories. A workspace binds one directory to one team.
+- Persistent identities carry public addresses such as `acme.com/alice`; ephemeral identities use team-local aliases such as `alice`.
+- Team certificates are the coordination credential for OSS aweb. See [docs/aweb-sot.md](docs/aweb-sot.md) and [docs/awid-sot.md](docs/awid-sot.md).
 
-- Single Go binary, cross-platform (macOS, Linux, Windows)
-- Full identity support: key generation, signing, TOFU verification
-- `aw run <provider>` — primary human entrypoint for starting an agent in this directory
-- `aw mail send/inbox` — async messaging
-- `aw chat send-and-wait/send-and-leave/open/pending` — synchronous chat with SSE
-- `aw workspace register/status` — workspace management
-- Also distributed as `@awebai/aw` on npm
+## Components
 
-### channel
+### `server/`
 
-A one-way Claude Code channel that pushes aweb coordination events into a running Claude Code session. Agents use the `aw` CLI for all outbound actions.
+The OSS coordination server:
 
-- TypeScript/Node MCP server with `claude/channel` capability
-- Real-time push: mail, chat, control signals, work items, and claims
-- Inbound Ed25519 signature verification and TOFU pin checking
-- Shares config and pin store with the `aw` CLI
-- See [docs/channel.md](docs/channel.md) for setup and reference
+- FastAPI + PostgreSQL + Redis
+- REST API plus mounted `/mcp/` Streamable HTTP MCP endpoint
+- Team-certificate authentication for coordination requests
+- Mail, chat, tasks, work discovery, roles, instructions, locks, contacts, and presence
 
-## Protocol overview
+See [server/README.md](server/README.md) and [docs/self-hosting-guide.md](docs/self-hosting-guide.md).
 
-Agents identify themselves with Ed25519 keypairs encoded as `did:key` DIDs. Messages are signed, and recipients verify signatures using Trust-on-First-Use (TOFU) pinning.
+### `cli/go/`
 
-Two messaging primitives:
+The `aw` CLI and Go client library:
 
-- **Mail**: async, fire-and-forget. Send a message to an agent by alias. No delivery guarantee beyond storage.
-- **Chat**: session-based with presence tracking. Participants see who's waiting for a reply. Supports `send-and-wait` (block until reply) and `send-and-leave` (fire and disconnect).
+- `aw run <provider>` for guided bootstrap plus provider runtime
+- `aw init` for explicit certificate-based workspace binding
+- `aw mail`, `aw chat`, `aw task`, `aw work`, `aw roles`, `aw instructions`
+- `aw id ...` for awid-backed identity and team operations
 
-The server relays messages and provides SSE event streams for real-time notification. It can optionally sign messages on behalf of agents (custodial mode) or let agents sign their own (self-custody).
+See [cli/go/README.md](cli/go/README.md).
 
-## Status
+### `channel/`
 
-The server, CLI, and protocol are stable and validated by an end-to-end test
-suite covering project creation, workspace management, identity delegation,
-signed messaging, chat, tasks, locks, and roles. See `scripts/e2e-oss-user-journey.sh`.
+Claude Code integration that pushes coordination events into a running session.
+See [docs/channel.md](docs/channel.md).
+
+## Verification
+
+The repo includes end-to-end coverage of the OSS user journey in
+[`scripts/e2e-oss-user-journey.sh`](scripts/e2e-oss-user-journey.sh).
 
 ## License
 
