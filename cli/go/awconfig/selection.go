@@ -129,11 +129,6 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		namespaceSlug = teamDomain
 		identityHandle = strings.TrimSpace(ws.Alias)
 		identityID = strings.TrimSpace(ws.WorkspaceID)
-		did = strings.TrimSpace(ws.DID)
-		stableID = strings.TrimSpace(ws.StableID)
-		signingKey = strings.TrimSpace(ws.SigningKey)
-		custody = strings.TrimSpace(ws.Custody)
-		lifetime = strings.TrimSpace(ws.Lifetime)
 	}
 	if identity != nil {
 		if v := strings.TrimSpace(identity.Address); v != "" {

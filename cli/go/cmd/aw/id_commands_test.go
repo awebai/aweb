@@ -1040,17 +1040,10 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:        serverURL,
-		TeamAddress:    "myteam/backend",
-		ProjectSlug:    "myteam",
-		NamespaceSlug:  namespaceSlug,
-		IdentityID:     "agent-1",
-		IdentityHandle: handle,
-		DID:            did,
-		StableID:       stableID,
-		SigningKey:     signingKeyPath,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		AwebURL:     serverURL,
+		TeamAddress: "myteam/backend",
+		Alias:       handle,
+		WorkspaceID: "agent-1",
 	}); err != nil {
 		t.Fatal(err)
 	}

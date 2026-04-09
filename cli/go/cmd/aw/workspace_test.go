@@ -180,11 +180,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectSlug:     "demo",
 		Alias:           "alice",
 		Role:            "developer",
 		Hostname:        "devbox",
@@ -297,12 +293,10 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     selfID,
-		IdentityHandle: "coordinator",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "coordinator",
+		WorkspaceID: selfID,
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -401,12 +395,10 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     selfID,
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: selfID,
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "status")
@@ -513,11 +505,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectSlug:     "demo",
 		Alias:           "alice",
 		Role:            "developer",
 		Hostname:        "devbox",
@@ -631,11 +619,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectSlug:     "demo",
 		Alias:           "alice",
 		Role:            "developer",
 		Hostname:        "devbox",
@@ -751,11 +735,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:         server.URL,
 		TeamAddress:     "demo/backend",
-		IdentityID:      selfID,
-		IdentityHandle:  "alice",
-		NamespaceSlug:   "demo",
 		WorkspaceID:     selfID,
-		ProjectSlug:     "demo",
 		Alias:           "alice",
 		Role:            "developer",
 		Hostname:        "devbox",
@@ -874,14 +854,12 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    teamAddress,
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
-		HumanName:      "Wendy",
-		AgentType:      "agent",
+		AwebURL:     server.URL,
+		TeamAddress: teamAddress,
+		WorkspaceID: "source-1",
+		Alias:       "alice",
+		HumanName:   "Wendy",
+		AgentType:   "agent",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -1019,12 +997,10 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		t.Fatalf("seed identity.yaml: %v", err)
 	}
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    teamAddress,
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
+		AwebURL:     server.URL,
+		TeamAddress: teamAddress,
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -1096,12 +1072,10 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "source/backend",
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "source",
-		ProjectSlug:    "source",
+		AwebURL:     server.URL,
+		TeamAddress: "source/backend",
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("seed .aw/context: %v", err)
@@ -1130,12 +1104,10 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        "https://example.com",
-		TeamAddress:    "source/backend",
-		IdentityID:     "source-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
+		AwebURL:     "https://example.com",
+		TeamAddress: "source/backend",
+		WorkspaceID: "source-1",
+		Alias:       "alice",
 	})
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")

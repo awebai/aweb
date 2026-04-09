@@ -13,17 +13,7 @@ import (
 type WorktreeWorkspace struct {
 	AwebURL         string `yaml:"aweb_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
-	IdentityID      string `yaml:"identity_id,omitempty"`
-	IdentityHandle  string `yaml:"identity_handle,omitempty"`
-	NamespaceSlug   string `yaml:"namespace_slug,omitempty"`
-	DID             string `yaml:"did,omitempty"`
-	StableID        string `yaml:"stable_id,omitempty"`
-	SigningKey      string `yaml:"signing_key,omitempty"`
-	Custody         string `yaml:"custody,omitempty"`
-	Lifetime        string `yaml:"lifetime,omitempty"`
 	WorkspaceID     string `yaml:"workspace_id"`
-	ProjectID       string `yaml:"project_id,omitempty"`
-	ProjectSlug     string `yaml:"project_slug,omitempty"`
 	RepoID          string `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
 	Alias           string `yaml:"alias,omitempty"`
@@ -41,17 +31,7 @@ type worktreeWorkspaceYAML struct {
 	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
 	APIKey          string `yaml:"api_key,omitempty"`
-	IdentityID      string `yaml:"identity_id,omitempty"`
-	IdentityHandle  string `yaml:"identity_handle,omitempty"`
-	NamespaceSlug   string `yaml:"namespace_slug,omitempty"`
-	DID             string `yaml:"did,omitempty"`
-	StableID        string `yaml:"stable_id,omitempty"`
-	SigningKey      string `yaml:"signing_key,omitempty"`
-	Custody         string `yaml:"custody,omitempty"`
-	Lifetime        string `yaml:"lifetime,omitempty"`
 	WorkspaceID     string `yaml:"workspace_id"`
-	ProjectID       string `yaml:"project_id,omitempty"`
-	ProjectSlug     string `yaml:"project_slug,omitempty"`
 	RepoID          string `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
 	Alias           string `yaml:"alias,omitempty"`
@@ -62,10 +42,21 @@ type worktreeWorkspaceYAML struct {
 	Hostname        string `yaml:"hostname,omitempty"`
 	WorkspacePath   string `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
+	IdentityID      string `yaml:"identity_id,omitempty"`
+	IdentityHandle  string `yaml:"identity_handle,omitempty"`
+	NamespaceSlug   string `yaml:"namespace_slug,omitempty"`
+	DID             string `yaml:"did,omitempty"`
+	StableID        string `yaml:"stable_id,omitempty"`
+	SigningKey      string `yaml:"signing_key,omitempty"`
+	Custody         string `yaml:"custody,omitempty"`
+	Lifetime        string `yaml:"lifetime,omitempty"`
+	ProjectID       string `yaml:"project_id,omitempty"`
+	ProjectSlug     string `yaml:"project_slug,omitempty"`
 }
 
 const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually replace server_url with aweb_url in workspace.yaml."
 const legacyWorkspaceAPIKeyError = "workspace.yaml uses removed api_key auth. Run `aw init` to reinitialize this worktree with team certificate auth."
+const legacyWorkspaceRemovedFieldsErrorPrefix = "workspace.yaml uses removed legacy fields"
 
 func (w *WorktreeWorkspace) syncRoleFields() {
 	if w == nil {
@@ -86,27 +77,12 @@ func (w *WorktreeWorkspace) syncURLFields() {
 	w.AwebURL = strings.TrimSpace(w.AwebURL)
 }
 
-func (w *WorktreeWorkspace) syncHandleFields() {
-	if w == nil {
-		return
-	}
-	resolved := strings.TrimSpace(w.IdentityHandle)
-	if resolved == "" {
-		resolved = strings.TrimSpace(w.Alias)
-	}
-	w.IdentityHandle = resolved
-	if strings.TrimSpace(w.Alias) == "" {
-		w.Alias = resolved
-	}
-}
-
 func (w *WorktreeWorkspace) normalize() {
 	if w == nil {
 		return
 	}
 	w.syncURLFields()
 	w.syncRoleFields()
-	w.syncHandleFields()
 }
 
 func (w *WorktreeWorkspace) HasBinding() bool {
@@ -123,48 +99,42 @@ func (w *WorktreeWorkspace) HasTeamBinding() bool {
 	return strings.TrimSpace(w.AwebURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
-func (w *WorktreeWorkspace) hasIdentityFields() bool {
-	if w == nil {
-		return false
+func (raw worktreeWorkspaceYAML) removedFieldNames() []string {
+	fields := make([]string, 0, 11)
+	if strings.TrimSpace(raw.Role) != "" {
+		fields = append(fields, "role")
 	}
-	return strings.TrimSpace(w.DID) != "" ||
-		strings.TrimSpace(w.StableID) != "" ||
-		strings.TrimSpace(w.SigningKey) != "" ||
-		strings.TrimSpace(w.Custody) != "" ||
-		strings.TrimSpace(w.Lifetime) != ""
-}
-
-func (w *WorktreeWorkspace) clearIdentityFields() {
-	if w == nil {
-		return
+	if strings.TrimSpace(raw.IdentityID) != "" {
+		fields = append(fields, "identity_id")
 	}
-	w.DID = ""
-	w.StableID = ""
-	w.SigningKey = ""
-	w.Custody = ""
-	w.Lifetime = ""
-}
-
-func scrubWorkspaceIdentityFields(path string, state *WorktreeWorkspace, warn bool) error {
-	if state == nil || !state.hasIdentityFields() {
-		return nil
+	if strings.TrimSpace(raw.IdentityHandle) != "" {
+		fields = append(fields, "identity_handle")
 	}
-	root := WorktreeRootFromWorkspacePath(path)
-	if strings.TrimSpace(root) == "" {
-		return nil
+	if strings.TrimSpace(raw.NamespaceSlug) != "" {
+		fields = append(fields, "namespace_slug")
 	}
-	identityPath := filepath.Join(root, DefaultWorktreeIdentityRelativePath())
-	if _, err := os.Stat(identityPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat %s: %w", identityPath, err)
+	if strings.TrimSpace(raw.DID) != "" {
+		fields = append(fields, "did")
 	}
-	if warn {
-		fmt.Fprintf(os.Stderr, "Warning: ignoring identity fields in %s because %s is present\n", path, identityPath)
+	if strings.TrimSpace(raw.StableID) != "" {
+		fields = append(fields, "stable_id")
 	}
-	state.clearIdentityFields()
-	return nil
+	if strings.TrimSpace(raw.SigningKey) != "" {
+		fields = append(fields, "signing_key")
+	}
+	if strings.TrimSpace(raw.Custody) != "" {
+		fields = append(fields, "custody")
+	}
+	if strings.TrimSpace(raw.Lifetime) != "" {
+		fields = append(fields, "lifetime")
+	}
+	if strings.TrimSpace(raw.ProjectID) != "" {
+		fields = append(fields, "project_id")
+	}
+	if strings.TrimSpace(raw.ProjectSlug) != "" {
+		fields = append(fields, "project_slug")
+	}
+	return fields
 }
 
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
@@ -178,21 +148,14 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	if strings.TrimSpace(raw.APIKey) != "" {
 		return errors.New(legacyWorkspaceAPIKeyError)
 	}
+	if removed := raw.removedFieldNames(); len(removed) > 0 {
+		return fmt.Errorf("%s: %s. Run `aw init` to reinitialize this worktree.", legacyWorkspaceRemovedFieldsErrorPrefix, strings.Join(removed, ", "))
+	}
 
 	*w = WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
 		TeamAddress:     raw.TeamAddress,
-		IdentityID:      raw.IdentityID,
-		IdentityHandle:  raw.IdentityHandle,
-		NamespaceSlug:   raw.NamespaceSlug,
-		DID:             raw.DID,
-		StableID:        raw.StableID,
-		SigningKey:      raw.SigningKey,
-		Custody:         raw.Custody,
-		Lifetime:        raw.Lifetime,
 		WorkspaceID:     raw.WorkspaceID,
-		ProjectID:       raw.ProjectID,
-		ProjectSlug:     raw.ProjectSlug,
 		RepoID:          raw.RepoID,
 		CanonicalOrigin: raw.CanonicalOrigin,
 		Alias:           raw.Alias,
@@ -213,17 +176,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	return worktreeWorkspaceYAML{
 		AwebURL:         w.AwebURL,
 		TeamAddress:     w.TeamAddress,
-		IdentityID:      w.IdentityID,
-		IdentityHandle:  w.IdentityHandle,
-		NamespaceSlug:   w.NamespaceSlug,
-		DID:             w.DID,
-		StableID:        w.StableID,
-		SigningKey:      w.SigningKey,
-		Custody:         w.Custody,
-		Lifetime:        w.Lifetime,
 		WorkspaceID:     w.WorkspaceID,
-		ProjectID:       w.ProjectID,
-		ProjectSlug:     w.ProjectSlug,
 		RepoID:          w.RepoID,
 		CanonicalOrigin: w.CanonicalOrigin,
 		Alias:           w.Alias,
@@ -257,9 +210,6 @@ func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
-	if err := scrubWorkspaceIdentityFields(path, &state, true); err != nil {
-		return nil, err
-	}
 	return &state, nil
 }
 
@@ -280,9 +230,6 @@ func SaveWorktreeWorkspaceTo(path string, state *WorktreeWorkspace) error {
 		return errors.New("nil workspace state")
 	}
 	state.normalize()
-	if err := scrubWorkspaceIdentityFields(path, state, false); err != nil {
-		return err
-	}
 
 	data, err := yaml.Marshal(state)
 	if err != nil {

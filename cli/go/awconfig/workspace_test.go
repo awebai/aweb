@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestLoadWorktreeWorkspaceFromReadsLegacyRoleKey(t *testing.T) {
+func TestLoadWorktreeWorkspaceFromRejectsLegacyRoleKey(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -20,15 +20,12 @@ role: reviewer
 		t.Fatalf("write workspace: %v", err)
 	}
 
-	state, err := LoadWorktreeWorkspaceFrom(path)
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected legacy role key to fail")
 	}
-	if state.RoleName != "reviewer" {
-		t.Fatalf("role_name=%q", state.RoleName)
-	}
-	if state.Role != "reviewer" {
-		t.Fatalf("role=%q", state.Role)
+	if !strings.Contains(err.Error(), legacyWorkspaceRemovedFieldsErrorPrefix) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -102,15 +99,12 @@ workspace_id: ws-1
 	}
 }
 
-func TestLoadWorktreeWorkspaceFromIgnoresIdentityFieldsWhenIdentityExists(t *testing.T) {
+func TestLoadWorktreeWorkspaceFromRejectsRemovedIdentityAndProjectFields(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	awDir := filepath.Join(tmp, ".aw")
-	if err := os.MkdirAll(awDir, 0o755); err != nil {
-		t.Fatalf("mkdir .aw: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(awDir, "workspace.yaml"), []byte(strings.TrimSpace(`
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
 team_address: acme.com/backend
 identity_handle: alice
@@ -119,26 +113,20 @@ stable_id: did:aw:workspace
 signing_key: .aw/signing.key
 custody: self
 lifetime: persistent
+project_slug: acme
 workspace_id: ws-1
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)
 	}
-	if err := SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkIdentity",
-		StableID:  "did:aw:identity",
-		Custody:   "self",
-		Lifetime:  "persistent",
-		CreatedAt: "2026-04-04T00:00:00Z",
-	}); err != nil {
-		t.Fatalf("save identity: %v", err)
-	}
 
-	state, err := LoadWorktreeWorkspaceFrom(filepath.Join(awDir, "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
+	_, err := LoadWorktreeWorkspaceFrom(path)
+	if err == nil {
+		t.Fatal("expected removed workspace fields to fail")
 	}
-	if state.DID != "" || state.StableID != "" || state.SigningKey != "" || state.Custody != "" || state.Lifetime != "" {
-		t.Fatalf("workspace identity fields were not scrubbed: %#v", state)
+	for _, field := range []string{"identity_handle", "did", "stable_id", "signing_key", "custody", "lifetime", "project_slug"} {
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("missing field %q in error: %v", field, err)
+		}
 	}
 }
 
@@ -160,39 +148,6 @@ workspace_id: ws-1
 		t.Fatal("expected api_key workspace load to fail")
 	}
 	if !strings.Contains(err.Error(), legacyWorkspaceAPIKeyError) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestScrubWorkspaceIdentityFieldsReturnsStatErrors(t *testing.T) {
-	t.Parallel()
-
-	tmp := t.TempDir()
-	awDir := filepath.Join(tmp, ".aw")
-	if err := os.MkdirAll(awDir, 0o755); err != nil {
-		t.Fatalf("mkdir .aw: %v", err)
-	}
-	workspacePath := filepath.Join(awDir, "workspace.yaml")
-	state := &WorktreeWorkspace{
-		DID:        "did:key:z6MkWorkspace",
-		StableID:   "did:aw:workspace",
-		SigningKey: ".aw/signing.key",
-		Custody:    "self",
-		Lifetime:   "persistent",
-	}
-
-	if err := os.Chmod(awDir, 0o000); err != nil {
-		t.Fatalf("chmod .aw: %v", err)
-	}
-	defer func() {
-		_ = os.Chmod(awDir, 0o755)
-	}()
-
-	err := scrubWorkspaceIdentityFields(workspacePath, state, false)
-	if err == nil {
-		t.Fatal("expected stat error")
-	}
-	if !strings.Contains(err.Error(), "stat ") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

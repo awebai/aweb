@@ -343,13 +343,10 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "eve",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
@@ -492,13 +489,10 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "eve",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "bob", "hello there", "--json")
@@ -953,17 +947,15 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	address := "myco/agent"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:        server.URL,
-		IdentityID:     "agent-1",
-		IdentityHandle: "agent",
-		NamespaceSlug:  "myco",
-		ProjectSlug:    "myco",
-		WorkspaceID:    "workspace-1",
-		DID:            did,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		SigningKey:     priv,
+		AwebURL:     server.URL,
+		TeamAddress: "myco/backend",
+		Alias:       "agent",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Address:     address,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
@@ -1055,17 +1047,15 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	address := "acme/bot"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:        server.URL,
-		IdentityID:     "agent-1",
-		IdentityHandle: "bot",
-		NamespaceSlug:  "acme",
-		ProjectSlug:    "fallback",
-		WorkspaceID:    "workspace-1",
-		DID:            did,
-		Address:        address,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
-		SigningKey:     priv,
+		AwebURL:     server.URL,
+		TeamAddress: "acme/backend",
+		Alias:       "bot",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		Address:     address,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
@@ -1079,7 +1069,7 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 
-	// Verify local same-project signing still works when namespace_slug is present.
+	// Verify local signing still works when the derived team domain is present.
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
@@ -1289,13 +1279,10 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        "https://app.aweb.ai",
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     "https://app.aweb.ai",
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
 	})
 
 	buildAwBinary(t, ctx, bin)

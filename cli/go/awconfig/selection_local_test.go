@@ -13,12 +13,10 @@ func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:        "https://app.aweb.ai",
-		TeamAddress:    "myteam.aweb.ai/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "support",
-		NamespaceSlug:  "myteam.aweb.ai",
-		ProjectSlug:    "myteam",
+		AwebURL:     "https://app.aweb.ai",
+		TeamAddress: "myteam.aweb.ai/backend",
+		Alias:       "support",
+		WorkspaceID: "agent-1",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -107,13 +107,10 @@ func TestAwLockListMineFiltersByCurrentAlias(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
 	})
 
 	run := exec.CommandContext(ctx, bin, "lock", "list", "--mine")

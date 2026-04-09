@@ -56,13 +56,10 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     selfID,
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		WorkspaceID:    selfID,
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: selfID,
 	})
 
 	run := exec.CommandContext(ctx, bin, "work", "ready")
@@ -127,13 +124,10 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-self",
-		IdentityHandle: "self",
-		NamespaceSlug:  "demo",
-		WorkspaceID:    "agent-self",
-		ProjectSlug:    "demo",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "self",
+		WorkspaceID: "agent-self",
 	})
 
 	run := exec.CommandContext(ctx, bin, "work", "active")

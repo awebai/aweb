@@ -67,14 +67,11 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		ProjectSlug:    "demo",
-		WorkspaceID:    "workspace-1",
-		RoleName:       "developer",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		RoleName:    "developer",
 	})
 
 	run := exec.CommandContext(ctx, bin, "role-name", "set", "reviewer")

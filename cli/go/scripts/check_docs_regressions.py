@@ -23,9 +23,9 @@ SKIP_DIRS = {
 FORBIDDEN_SUBSTRINGS: list[tuple[str, str]] = [
     ("api.aweb.ai", "api.aweb.ai has no DNS; use https://app.aweb.ai/api"),
     ("~/.aw/config.yaml", "aw config lives at ~/.config/aw/config.yaml (not ~/.aw/config.yaml)"),
-    ("aw init --project-slug", "aw init does not accept project_slug; project comes from the project-scoped API key"),
-    ("aw init --project ", "aw init does not accept --project; project comes from the project-scoped API key"),
-    ("aw init --namespace", "aw init does not accept --namespace; project comes from the project-scoped API key"),
+    ("aw init --project-slug", "aw init no longer accepts project-scoped flags"),
+    ("aw init --project ", "aw init no longer accepts project-scoped flags"),
+    ("aw init --namespace", "aw init no longer accepts project-scoped flags"),
     ("aw init --" + "cloud-url", "aw init flag is --url"),
     ("aw init --" + "awid-url", "aw init no longer accepts the old registry override flag"),
 ]
