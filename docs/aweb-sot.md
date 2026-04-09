@@ -523,7 +523,7 @@ CREATE TABLE reservations (
 );
 
 -- Roles (versioned per team)
-CREATE TABLE project_roles (
+CREATE TABLE team_roles (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -537,7 +537,7 @@ CREATE TABLE project_roles (
 );
 
 -- Instructions (versioned per team)
-CREATE TABLE project_instructions (
+CREATE TABLE team_instructions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,

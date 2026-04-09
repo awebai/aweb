@@ -64,7 +64,7 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `instructions_show` | `project_instructions_id=""` | Show the active shared team instructions or a requested version. Parameter name matches the current implementation. |
+| `instructions_show` | `team_instructions_id=""` | Show the active shared team instructions or a requested version. Some code paths may still emit the old parameter name until the wire rename lands. |
 | `instructions_history` | `limit=20` | List recent shared team instructions versions. |
 
 ## Roles
