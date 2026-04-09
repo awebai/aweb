@@ -127,22 +127,22 @@ aw roles set --bundle-file roles.json
 Activate an existing role bundle version:
 
 ```bash
-aw roles activate <project-roles-id>
+aw roles activate <team-roles-id>
 ```
 
-Reset project roles to the server default bundle:
+Reset team roles to the server default bundle:
 
 ```bash
 aw roles reset
 ```
 
-Deactivate project roles for the current project:
+Deactivate team roles by replacing the active bundle with an empty bundle:
 
 ```bash
 aw roles deactivate
 ```
 
-Show the shared project instructions:
+Show the shared team instructions:
 
 ```bash
 aw instructions show
