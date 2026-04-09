@@ -322,7 +322,7 @@ async def get_active_roles(
     row = await aweb_db.fetch_one(
         """
         SELECT id, version, bundle_json, updated_at
-        FROM {{tables.project_roles}}
+        FROM {{tables.team_roles}}
         WHERE team_address = $1 AND is_active = true
         """,
         team_address,
@@ -351,7 +351,7 @@ async def get_active_instructions(
     row = await aweb_db.fetch_one(
         """
         SELECT id, version, document_json, updated_at
-        FROM {{tables.project_instructions}}
+        FROM {{tables.team_instructions}}
         WHERE team_address = $1 AND is_active = true
         """,
         team_address,

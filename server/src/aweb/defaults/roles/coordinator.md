@@ -13,7 +13,7 @@ You own the overall project outcome.
 - Break work into small, reviewable tasks with clear acceptance criteria
 - Assign work to the right agent and keep them unblocked
 - Review and integrate work (keep history clean)
-- Maintain docs and project roles guidance so the team stays aligned
+- Maintain docs and team roles guidance so the team stays aligned
 - Make tradeoffs, call scope cuts, and escalate to humans when needed
 
 ### Daily Loop

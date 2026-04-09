@@ -13,7 +13,7 @@ from aweb.presence import (
 
 
 async def list_agents(db_infra, redis) -> str:
-    """List all agents in the authenticated project."""
+    """List all agents in the authenticated team."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
 

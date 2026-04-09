@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS {{tables.reservations}} (
 -- Roles (versioned per team)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
+CREATE TABLE IF NOT EXISTS {{tables.team_roles}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -307,7 +307,7 @@ CREATE TABLE IF NOT EXISTS {{tables.project_roles}} (
 -- Instructions (versioned per team)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS {{tables.project_instructions}} (
+CREATE TABLE IF NOT EXISTS {{tables.team_instructions}} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_address    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,

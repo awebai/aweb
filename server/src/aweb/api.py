@@ -30,8 +30,8 @@ from .routes.events import router as events_router
 from .routes.messages import router as messages_router
 from .routes.reservations import router as reservations_router
 from .routes.status import router as status_router
-from .coordination.routes.project_instructions import instructions_router
-from .coordination.routes.project_roles import roles_router
+from .coordination.routes.team_instructions import instructions_router
+from .coordination.routes.team_roles import roles_router
 from .coordination.routes.repos import router as repos_router
 from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router

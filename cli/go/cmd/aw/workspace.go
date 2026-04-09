@@ -484,15 +484,15 @@ func isValidWorkspaceRole(role string) bool {
 	return true
 }
 
-// fetchAvailableRoles returns the available roles from the project roles bundle.
+// fetchAvailableRoles returns the available roles from the team roles bundle.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectRoles(ctx, aweb.ActiveProjectRolesParams{OnlySelected: false})
+	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
 	if err != nil {
-		return nil, fmt.Errorf("fetching project roles: %w", err)
+		return nil, fmt.Errorf("fetching team roles: %w", err)
 	}
 
 	roles := make([]string, 0, len(resp.Roles))
@@ -503,7 +503,7 @@ func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
 	return roles, nil
 }
 
-// resolveRole fetches available roles from the project roles bundle, validates
+// resolveRole fetches available roles from the team roles bundle, validates
 // the requested role against them, and optionally prompts the user to
 // choose. This is the single entry point for role resolution.
 func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
@@ -520,7 +520,7 @@ func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.
 
 func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
 	if len(roles) == 0 {
-		return "", usageError("no roles defined in the active project roles")
+		return "", usageError("no roles defined in the active team roles")
 	}
 
 	normalizedRoles := make(map[string]string, len(roles))

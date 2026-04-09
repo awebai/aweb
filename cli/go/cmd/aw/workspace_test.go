@@ -807,7 +807,7 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -969,7 +969,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},
@@ -1069,7 +1069,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 		case "/v1/roles/active":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"project_roles_id": "pol-1",
+				"team_roles_id": "pol-1",
 				"roles": map[string]any{
 					"developer": map[string]any{"title": "Developer"},
 				},

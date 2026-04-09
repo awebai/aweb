@@ -1,4 +1,4 @@
-"""Project-wide shared instructions endpoints."""
+"""Team-wide shared instructions endpoints."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from aweb.team_auth_deps import get_team_identity
 
 from ...db import DatabaseInfra, get_db_infra
-from ..defaults import get_default_project_instructions
+from ..defaults import get_default_team_instructions
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def _generate_etag(resource_id: str, updated_at: datetime) -> str:
     return f'"{hashlib.sha256(content.encode()).hexdigest()[:16]}"'
 
 
-class ProjectInstructionsDocument(BaseModel):
+class TeamInstructionsDocument(BaseModel):
     body_md: str = ""
     format: str = "markdown"
 
@@ -39,65 +39,65 @@ class ProjectInstructionsDocument(BaseModel):
     def _validate_format(cls, value: str) -> str:
         normalized = (value or "").strip().lower()
         if normalized != "markdown":
-            raise ValueError("project instructions only support format=markdown")
+            raise ValueError("team instructions only support format=markdown")
         return normalized
 
 
-class ProjectInstructionsVersion(BaseModel):
+class TeamInstructionsVersion(BaseModel):
     id: str
     team_address: str
     version: int
-    document: ProjectInstructionsDocument
+    document: TeamInstructionsDocument
     created_by_alias: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime] = None
 
 
-class ActiveProjectInstructionsResponse(BaseModel):
-    project_instructions_id: str
-    active_project_instructions_id: Optional[str] = None
+class ActiveTeamInstructionsResponse(BaseModel):
+    team_instructions_id: str
+    active_team_instructions_id: Optional[str] = None
     team_address: str
     version: int
     updated_at: Optional[datetime] = None
-    document: ProjectInstructionsDocument
+    document: TeamInstructionsDocument
 
 
-class CreateProjectInstructionsRequest(BaseModel):
-    document: ProjectInstructionsDocument
-    base_project_instructions_id: Optional[str] = Field(
+class CreateTeamInstructionsRequest(BaseModel):
+    document: TeamInstructionsDocument
+    base_team_instructions_id: Optional[str] = Field(
         None,
-        description="Optional project_instructions_id that this version is based on.",
+        description="Optional team_instructions_id that this version is based on.",
     )
 
 
-class CreateProjectInstructionsResponse(BaseModel):
-    project_instructions_id: str
+class CreateTeamInstructionsResponse(BaseModel):
+    team_instructions_id: str
     team_address: str
     version: int
     created: bool = True
 
 
-class ActivateProjectInstructionsResponse(BaseModel):
+class ActivateTeamInstructionsResponse(BaseModel):
     activated: bool
-    active_project_instructions_id: str
+    active_team_instructions_id: str
 
 
-class ResetProjectInstructionsResponse(BaseModel):
+class ResetTeamInstructionsResponse(BaseModel):
     reset: bool
-    active_project_instructions_id: str
+    active_team_instructions_id: str
     version: int
 
 
-class ProjectInstructionsHistoryItem(BaseModel):
-    project_instructions_id: str
+class TeamInstructionsHistoryItem(BaseModel):
+    team_instructions_id: str
     version: int
     created_at: datetime
     created_by_alias: Optional[str]
     is_active: bool
 
 
-class ProjectInstructionsHistoryResponse(BaseModel):
-    project_instructions_versions: List[ProjectInstructionsHistoryItem]
+class TeamInstructionsHistoryResponse(BaseModel):
+    team_instructions_versions: List[TeamInstructionsHistoryItem]
 
 
 def _normalize_document_data(document_data: Any) -> Dict[str, Any]:
@@ -108,7 +108,7 @@ def _normalize_document_data(document_data: Any) -> Dict[str, Any]:
         normalized.setdefault("format", "markdown")
         normalized.setdefault("body_md", "")
         return normalized
-    raise ValueError("project instructions document must be a JSON object or markdown string")
+    raise ValueError("team instructions document must be a JSON object or markdown string")
 
 
 def _legacy_invariants_to_markdown(bundle_data: Dict[str, Any]) -> str:
@@ -131,19 +131,19 @@ def _legacy_invariants_to_markdown(bundle_data: Dict[str, Any]) -> str:
     return "\n\n".join(section for section in sections if section.strip()).strip()
 
 
-async def create_project_instructions_version(
+async def create_team_instructions_version(
     db: AsyncDatabaseManager,
     *,
     team_address: str,
     base_instructions_id: Optional[str],
     document: Dict[str, Any],
     created_by_alias: Optional[str],
-) -> ProjectInstructionsVersion:
+) -> TeamInstructionsVersion:
     result = await db.fetch_one(
         """
         WITH active_check AS (
             SELECT id
-            FROM {{tables.project_instructions}}
+            FROM {{tables.team_instructions}}
             WHERE team_address = $1 AND is_active = true
         ),
         base_check AS (
@@ -153,10 +153,10 @@ async def create_project_instructions_version(
         ),
         next_version AS (
             SELECT COALESCE(MAX(version), 0) + 1 AS version
-            FROM {{tables.project_instructions}}
+            FROM {{tables.team_instructions}}
             WHERE team_address = $1
         )
-        INSERT INTO {{tables.project_instructions}} (
+        INSERT INTO {{tables.team_instructions}} (
             team_address,
             version,
             document_json,
@@ -176,7 +176,7 @@ async def create_project_instructions_version(
     if not result:
         active = await db.fetch_one(
             """
-            SELECT id FROM {{tables.project_instructions}}
+            SELECT id FROM {{tables.team_instructions}}
             WHERE team_address = $1 AND is_active = true
             """,
             team_address,
@@ -185,9 +185,9 @@ async def create_project_instructions_version(
         raise HTTPException(
             status_code=409,
             detail=(
-                "Project instructions conflict: base_instructions_id "
-                f"{base_instructions_id} does not match active project instructions "
-                f"{active_id}. Re-read the active project instructions and retry."
+                "Team instructions conflict: base_instructions_id "
+                f"{base_instructions_id} does not match active team instructions "
+                f"{active_id}. Re-read the active team instructions and retry."
             ),
         )
 
@@ -195,18 +195,18 @@ async def create_project_instructions_version(
     if isinstance(document_data, str):
         document_data = json.loads(document_data)
 
-    return ProjectInstructionsVersion(
+    return TeamInstructionsVersion(
         id=str(result["id"]),
         team_address=result["team_address"],
         version=result["version"],
-        document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
+        document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
         created_by_alias=result["created_by_alias"],
         created_at=result["created_at"],
         updated_at=result["updated_at"],
     )
 
 
-async def activate_project_instructions(
+async def activate_team_instructions(
     db: AsyncDatabaseManager,
     *,
     team_address: str,
@@ -215,24 +215,24 @@ async def activate_project_instructions(
     target = await db.fetch_one(
         """
         SELECT id, team_address
-        FROM {{tables.project_instructions}}
+        FROM {{tables.team_instructions}}
         WHERE id = $1
         """,
         instructions_id,
     )
     if not target:
-        raise HTTPException(status_code=404, detail="Project instructions not found")
+        raise HTTPException(status_code=404, detail="Team instructions not found")
 
     if target["team_address"] != team_address:
         raise HTTPException(
             status_code=400,
-            detail="Project instructions do not belong to this team",
+            detail="Team instructions do not belong to this team",
         )
 
     # Deactivate the currently active version (if any)
     await db.execute(
         """
-        UPDATE {{tables.project_instructions}}
+        UPDATE {{tables.team_instructions}}
         SET is_active = false
         WHERE team_address = $1 AND is_active = true
         """,
@@ -242,7 +242,7 @@ async def activate_project_instructions(
     # Activate the target version
     await db.execute(
         """
-        UPDATE {{tables.project_instructions}}
+        UPDATE {{tables.team_instructions}}
         SET is_active = true
         WHERE id = $1
         """,
@@ -252,17 +252,17 @@ async def activate_project_instructions(
     return True
 
 
-async def get_active_project_instructions(
+async def get_active_team_instructions(
     db: AsyncDatabaseManager,
     team_address: str,
     *,
     bootstrap_if_missing: bool = True,
-) -> Optional[ProjectInstructionsVersion]:
+) -> Optional[TeamInstructionsVersion]:
     result = await db.fetch_one(
         """
         SELECT pi.id, pi.team_address, pi.version, pi.document_json,
                pi.created_by_alias, pi.created_at, pi.updated_at
-        FROM {{tables.project_instructions}} pi
+        FROM {{tables.team_instructions}} pi
         WHERE pi.team_address = $1 AND pi.is_active = true
         """,
         team_address,
@@ -273,11 +273,11 @@ async def get_active_project_instructions(
         if isinstance(document_data, str):
             document_data = json.loads(document_data)
 
-        return ProjectInstructionsVersion(
+        return TeamInstructionsVersion(
             id=str(result["id"]),
             team_address=result["team_address"],
             version=result["version"],
-            document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
+            document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
             created_by_alias=result["created_by_alias"],
             created_at=result["created_at"],
             updated_at=result["updated_at"],
@@ -286,18 +286,18 @@ async def get_active_project_instructions(
     if not bootstrap_if_missing:
         return None
 
-    from .project_roles import get_active_project_roles
+    from .team_roles import get_active_team_roles
 
-    await get_active_project_roles(db, team_address, bootstrap_if_missing=True)
+    await get_active_team_roles(db, team_address, bootstrap_if_missing=True)
     raw_roles_result = await db.fetch_one(
         """
         SELECT pr.bundle_json
-        FROM {{tables.project_roles}} pr
+        FROM {{tables.team_roles}} pr
         WHERE pr.team_address = $1 AND pr.is_active = true
         """,
         team_address,
     )
-    default_document = get_default_project_instructions()
+    default_document = get_default_team_instructions()
     document = dict(default_document)
     if raw_roles_result and raw_roles_result["bundle_json"] is not None:
         bundle_data = raw_roles_result["bundle_json"]
@@ -308,7 +308,7 @@ async def get_active_project_instructions(
             document["body_md"] = legacy_body
 
     try:
-        instructions_version = await create_project_instructions_version(
+        instructions_version = await create_team_instructions_version(
             db,
             team_address=team_address,
             base_instructions_id=None,
@@ -322,10 +322,10 @@ async def get_active_project_instructions(
             raise
         # A concurrent bootstrap already created the version -- read it
         logger.info("Concurrent bootstrap for team %s, retrying read", team_address)
-        return await get_active_project_instructions(
+        return await get_active_team_instructions(
             db, team_address, bootstrap_if_missing=False
         )
-    await activate_project_instructions(
+    await activate_team_instructions(
         db,
         team_address=team_address,
         instructions_id=instructions_version.id,
@@ -334,27 +334,27 @@ async def get_active_project_instructions(
 
 
 @instructions_router.get("/active")
-async def get_active_project_instructions_endpoint(
+async def get_active_team_instructions_endpoint(
     request: Request,
     response: Response,
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActiveProjectInstructionsResponse:
+) -> ActiveTeamInstructionsResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    version = await get_active_project_instructions(aweb_db, identity.team_address)
+    version = await get_active_team_instructions(aweb_db, identity.team_address)
     if not version:
-        raise HTTPException(status_code=404, detail="No active project instructions found")
+        raise HTTPException(status_code=404, detail="No active team instructions found")
 
     etag = _generate_etag(version.id, version.updated_at or version.created_at)
     response.headers["ETag"] = etag
     if if_none_match and if_none_match == etag:
         return Response(status_code=304, headers={"ETag": etag})
 
-    return ActiveProjectInstructionsResponse(
-        project_instructions_id=version.id,
-        active_project_instructions_id=version.id,
+    return ActiveTeamInstructionsResponse(
+        team_instructions_id=version.id,
+        active_team_instructions_id=version.id,
         team_address=version.team_address,
         version=version.version,
         updated_at=version.updated_at,
@@ -363,20 +363,20 @@ async def get_active_project_instructions_endpoint(
 
 
 @instructions_router.get("/history")
-async def list_project_instructions_history(
+async def list_team_instructions_history(
     request: Request,
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ProjectInstructionsHistoryResponse:
+) -> TeamInstructionsHistoryResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    await get_active_project_instructions(aweb_db, identity.team_address, bootstrap_if_missing=True)
+    await get_active_team_instructions(aweb_db, identity.team_address, bootstrap_if_missing=True)
 
     rows = await aweb_db.fetch_all(
         """
         SELECT id, version, created_at, created_by_alias, is_active
-        FROM {{tables.project_instructions}}
+        FROM {{tables.team_instructions}}
         WHERE team_address = $1
         ORDER BY version DESC
         LIMIT $2
@@ -385,10 +385,10 @@ async def list_project_instructions_history(
         limit,
     )
 
-    return ProjectInstructionsHistoryResponse(
-        project_instructions_versions=[
-            ProjectInstructionsHistoryItem(
-                project_instructions_id=str(row["id"]),
+    return TeamInstructionsHistoryResponse(
+        team_instructions_versions=[
+            TeamInstructionsHistoryItem(
+                team_instructions_id=str(row["id"]),
                 version=row["version"],
                 created_at=row["created_at"],
                 created_by_alias=row["created_by_alias"],
@@ -400,42 +400,42 @@ async def list_project_instructions_history(
 
 
 @instructions_router.post("")
-async def create_project_instructions_endpoint(
+async def create_team_instructions_endpoint(
     request: Request,
-    payload: CreateProjectInstructionsRequest,
+    payload: CreateTeamInstructionsRequest,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> CreateProjectInstructionsResponse:
+) -> CreateTeamInstructionsResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    version = await create_project_instructions_version(
+    version = await create_team_instructions_version(
         aweb_db,
         team_address=identity.team_address,
-        base_instructions_id=payload.base_project_instructions_id,
+        base_instructions_id=payload.base_team_instructions_id,
         document=payload.document.model_dump(),
         created_by_alias=identity.alias,
     )
 
     logger.info(
-        "Project instructions created via API: team=%s id=%s version=%d",
+        "Team instructions created via API: team=%s id=%s version=%d",
         identity.team_address,
         version.id,
         version.version,
     )
 
-    return CreateProjectInstructionsResponse(
-        project_instructions_id=version.id,
+    return CreateTeamInstructionsResponse(
+        team_instructions_id=version.id,
         team_address=version.team_address,
         version=version.version,
     )
 
 
-@instructions_router.get("/{project_instructions_id}")
-async def get_project_instructions_by_id_endpoint(
+@instructions_router.get("/{team_instructions_id}")
+async def get_team_instructions_by_id_endpoint(
     request: Request,
-    project_instructions_id: str,
+    team_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActiveProjectInstructionsResponse:
+) -> ActiveTeamInstructionsResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
@@ -443,109 +443,109 @@ async def get_project_instructions_by_id_endpoint(
         """
         SELECT pi.id, pi.team_address, pi.version, pi.document_json,
                pi.created_by_alias, pi.created_at, pi.updated_at
-        FROM {{tables.project_instructions}} pi
+        FROM {{tables.team_instructions}} pi
         WHERE pi.id = $1 AND pi.team_address = $2
         """,
-        project_instructions_id,
+        team_instructions_id,
         identity.team_address,
     )
     if not result:
         raise HTTPException(
             status_code=404,
-            detail="Project instructions not found or do not belong to this team",
+            detail="Team instructions not found or do not belong to this team",
         )
 
     document_data = result["document_json"]
     if isinstance(document_data, str):
         document_data = json.loads(document_data)
 
-    return ActiveProjectInstructionsResponse(
-        project_instructions_id=str(result["id"]),
-        active_project_instructions_id=None,
+    return ActiveTeamInstructionsResponse(
+        team_instructions_id=str(result["id"]),
+        active_team_instructions_id=None,
         team_address=result["team_address"],
         version=result["version"],
         updated_at=result["updated_at"],
-        document=ProjectInstructionsDocument(**_normalize_document_data(document_data)),
+        document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
     )
 
 
-@instructions_router.post("/{project_instructions_id}/activate")
-async def activate_project_instructions_endpoint(
+@instructions_router.post("/{team_instructions_id}/activate")
+async def activate_team_instructions_endpoint(
     request: Request,
-    project_instructions_id: str,
+    team_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ActivateProjectInstructionsResponse:
+) -> ActivateTeamInstructionsResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(
         """
-        SELECT id FROM {{tables.project_instructions}}
+        SELECT id FROM {{tables.team_instructions}}
         WHERE team_address = $1 AND is_active = true
         """,
         identity.team_address,
     )
     previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
-    await activate_project_instructions(
+    await activate_team_instructions(
         aweb_db,
         team_address=identity.team_address,
-        instructions_id=project_instructions_id,
+        instructions_id=team_instructions_id,
     )
 
     logger.info(
-        "Project instructions activated via API: team=%s id=%s (was: %s)",
+        "Team instructions activated via API: team=%s id=%s (was: %s)",
         identity.team_address,
-        project_instructions_id,
+        team_instructions_id,
         previous_instructions_id,
     )
 
-    return ActivateProjectInstructionsResponse(
+    return ActivateTeamInstructionsResponse(
         activated=True,
-        active_project_instructions_id=project_instructions_id,
+        active_team_instructions_id=team_instructions_id,
     )
 
 
 @instructions_router.post("/reset")
-async def reset_project_instructions_to_default_endpoint(
+async def reset_team_instructions_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
-) -> ResetProjectInstructionsResponse:
+) -> ResetTeamInstructionsResponse:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(
         """
-        SELECT id FROM {{tables.project_instructions}}
+        SELECT id FROM {{tables.team_instructions}}
         WHERE team_address = $1 AND is_active = true
         """,
         identity.team_address,
     )
     previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
-    version = await create_project_instructions_version(
+    version = await create_team_instructions_version(
         aweb_db,
         team_address=identity.team_address,
         base_instructions_id=previous_instructions_id,
-        document=get_default_project_instructions(),
+        document=get_default_team_instructions(),
         created_by_alias=None,
     )
-    await activate_project_instructions(
+    await activate_team_instructions(
         aweb_db,
         team_address=identity.team_address,
         instructions_id=version.id,
     )
 
     logger.info(
-        "Project instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
+        "Team instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
         identity.team_address,
         version.id,
         version.version,
         previous_instructions_id,
     )
 
-    return ResetProjectInstructionsResponse(
+    return ResetTeamInstructionsResponse(
         reset=True,
-        active_project_instructions_id=version.id,
+        active_team_instructions_id=version.id,
         version=version.version,
     )

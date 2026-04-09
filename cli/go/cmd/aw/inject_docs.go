@@ -21,7 +21,7 @@ type injectDocsResult struct {
 }
 
 func InjectAgentDocs(repoRoot string) *injectDocsResult {
-	body, err := loadProjectInstructionsBody(repoRoot)
+	body, err := loadTeamInstructionsBody(repoRoot)
 	if err != nil {
 		return &injectDocsResult{Errors: []string{err.Error()}}
 	}
@@ -89,7 +89,7 @@ func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 	return result
 }
 
-func loadProjectInstructionsBody(workingDir string) (string, error) {
+func loadTeamInstructionsBody(workingDir string) (string, error) {
 	client, _, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return "", err
@@ -98,7 +98,7 @@ func loadProjectInstructionsBody(workingDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	resp, err := client.ActiveProjectInstructions(ctx)
+	resp, err := client.ActiveTeamInstructions(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -141,10 +141,10 @@ func printInjectDocsResult(result *injectDocsResult) {
 		return
 	}
 	for _, name := range result.Created {
-		fmt.Printf("Created %s with aw project instructions\n", name)
+		fmt.Printf("Created %s with aw team instructions\n", name)
 	}
 	for _, name := range result.Injected {
-		fmt.Printf("Injected aw project instructions into %s\n", name)
+		fmt.Printf("Injected aw team instructions into %s\n", name)
 	}
 	for _, msg := range result.Errors {
 		fmt.Fprintf(os.Stderr, "Warning: could not inject docs: %s\n", msg)
