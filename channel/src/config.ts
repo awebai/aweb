@@ -33,6 +33,7 @@ interface WorkspaceConfig {
   aweb_url?: string;
   active_team?: string;
   memberships?: WorkspaceMembership[];
+  team_address?: string;
 }
 
 interface IdentityConfig {
@@ -53,6 +54,12 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   }
 
   const baseURL = (workspace.aweb_url || "").trim();
+  const legacyTeamAddress = (workspace.team_address || "").trim();
+  if (legacyTeamAddress && !Array.isArray(workspace.memberships)) {
+    throw new Error(
+      "This workspace is on the legacy single-team shape (.aw/workspace.yaml has team_address but no memberships). Run aw workspace migrate-multi-team to convert, then retry.",
+    );
+  }
   const activeTeam = (workspace.active_team || "").trim();
   const membership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const teamID = activeTeam;
@@ -95,7 +102,17 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
 
 async function loadActiveTeamCertificate(workdir: string, activeTeam: string): Promise<TeamCertificate> {
   const certsDir = join(workdir, ".aw", "team-certs");
-  const files = await readdir(certsDir);
+  let files: string[];
+  try {
+    files = await readdir(certsDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        `No .aw/team-certs directory found at ${certsDir}. Run aw workspace migrate-multi-team to convert a legacy workspace, or aw init to create a new one.`,
+      );
+    }
+    throw new Error(`Failed to read team certificates from ${certsDir}: ${String(error)}`);
+  }
   for (const file of files) {
     if (!file.endsWith(".pem")) continue;
     const cert = await loadTeamCertificate(join(certsDir, file));

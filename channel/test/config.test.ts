@@ -119,4 +119,39 @@ describe("resolveConfig", () => {
     expect(config.stableID).toBe("");
     expect(config.address).toBe("");
   });
+
+  test("errors clearly when the team-certs directory is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(awDir, { recursive: true });
+    const seed = new Uint8Array(32).fill(11);
+    writeSigningKey(join(awDir, "signing.key"), seed);
+
+    writeFileSync(join(awDir, "workspace.yaml"), [
+      "aweb_url: https://app.aweb.ai",
+      "active_team: backend:acme.com",
+      "memberships:",
+      "  - team_id: backend:acme.com",
+      "    alias: alice",
+      "    cert_path: team-certs/backend__acme.com.pem",
+      "",
+    ].join("\n"));
+
+    await expect(resolveConfig(dir)).rejects.toThrow(/migrate-multi-team/);
+  });
+
+  test("errors clearly on the legacy single-team workspace shape", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(awDir, { recursive: true });
+
+    writeFileSync(join(awDir, "workspace.yaml"), [
+      "aweb_url: http://localhost:8000",
+      "team_address: acme.com/backend",
+      "alias: alice",
+      "",
+    ].join("\n"));
+
+    await expect(resolveConfig(dir)).rejects.toThrow(/migrate-multi-team/);
+  });
 });
