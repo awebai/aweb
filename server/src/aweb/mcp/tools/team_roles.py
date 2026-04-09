@@ -44,6 +44,7 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
         if only_selected and selected_role is not None
         else ({} if only_selected else team_roles_version.bundle.roles)
     )
+    updated_at = team_roles_version.updated_at or team_roles_version.created_at
 
     return json.dumps(
         {
@@ -51,7 +52,7 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
             "active_team_roles_id": team_roles_version.id,
             "team_address": team_roles_version.team_address,
             "version": team_roles_version.version,
-            "updated_at": team_roles_version.updated_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
             "agent_id": auth.agent_id,
             "agent_role": agent_role or None,
             "agent_role_name": agent_role or None,

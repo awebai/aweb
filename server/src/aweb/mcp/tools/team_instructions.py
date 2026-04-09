@@ -16,7 +16,7 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
     if team_instructions_id:
         row = await aweb_db.fetch_one(
             """
-            SELECT id, team_address, version, document_json, updated_at
+            SELECT id, team_address, version, document_json, created_at, updated_at
             FROM {{tables.team_instructions}}
             WHERE id = $1 AND team_address = $2
             """,
@@ -28,13 +28,14 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
         document_data = row["document_json"]
         if isinstance(document_data, str):
             document_data = json.loads(document_data)
+        updated_at = row["updated_at"] or row["created_at"]
         return json.dumps(
             {
                 "team_instructions_id": str(row["id"]),
                 "active_team_instructions_id": None,
                 "team_address": str(row["team_address"]),
                 "version": row["version"],
-                "updated_at": row["updated_at"].isoformat(),
+                "updated_at": updated_at.isoformat(),
                 "document": document_data,
             }
         )
@@ -42,6 +43,7 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
     version = await get_active_team_instructions(aweb_db, auth.team_address, bootstrap_if_missing=True)
     if version is None:
         return json.dumps({"error": "Team instructions not found"})
+    updated_at = version.updated_at or version.created_at
 
     return json.dumps(
         {
@@ -49,7 +51,7 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
             "active_team_instructions_id": version.id,
             "team_address": version.team_address,
             "version": version.version,
-            "updated_at": version.updated_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
             "document": version.document.model_dump(),
         }
     )
