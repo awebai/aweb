@@ -63,14 +63,11 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:        server.URL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: "alice",
-		NamespaceSlug:  "demo",
-		WorkspaceID:    "agent-1",
-		ProjectSlug:    "demo",
-		Role:           "reviewer",
+		AwebURL:     server.URL,
+		TeamAddress: "demo/backend",
+		Alias:       "alice",
+		WorkspaceID: "agent-1",
+		RoleName:    "reviewer",
 	}); err != nil {
 		t.Fatalf("save workspace state: %v", err)
 	}

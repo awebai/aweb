@@ -21,12 +21,10 @@ import (
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
 	t.Helper()
 	return writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		AwebURL:        serverURL,
-		TeamAddress:    namespace + "/backend",
-		IdentityHandle: handle,
-		NamespaceSlug:  namespace,
-		ProjectSlug:    namespace,
-		WorkspaceID:    "workspace-1",
+		AwebURL:     serverURL,
+		TeamAddress: namespace + "/backend",
+		Alias:       handle,
+		WorkspaceID: "workspace-1",
 	})
 }
 

@@ -293,18 +293,18 @@ func writeEphemeralSigningWorkspace(t *testing.T, workingDir, serverURL, address
 		namespace = domain
 		handle = derivedHandle
 	}
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:       did,
+		Address:   address,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimeEphemeral,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	})
 	writeWorkspaceBindingForTest(t, workingDir, awconfig.WorktreeWorkspace{
-		AwebURL:        serverURL,
-		TeamAddress:    "demo/backend",
-		IdentityID:     "agent-1",
-		IdentityHandle: handle,
-		NamespaceSlug:  namespace,
-		WorkspaceID:    "workspace-1",
-		ProjectSlug:    namespace,
-		DID:            did,
-		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimeEphemeral,
-		SigningKey:     signingKeyPath,
+		AwebURL:     serverURL,
+		TeamAddress: namespace + "/backend",
+		Alias:       handle,
+		WorkspaceID: "workspace-1",
 	})
 }
 
