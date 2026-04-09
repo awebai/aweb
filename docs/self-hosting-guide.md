@@ -169,6 +169,12 @@ aw id team accept-invite <token> --alias alice
 aw init --url "$AWEB_URL"
 ```
 
+Migration note for existing local worktrees:
+- Team identifiers were renamed from slash-form `team_address: acme.com/backend`
+  to colon-form `team_id: backend:acme.com`. Workspaces using the old shape
+  now hard-fail with a rename error; rerun `aw init` to regenerate
+  `.aw/workspace.yaml`.
+
 Important bootstrap rules:
 
 - The team is created at awid; aweb auto-provisions team and agent rows on

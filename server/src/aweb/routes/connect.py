@@ -49,12 +49,6 @@ class ConnectResponse(BaseModel):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-
-def _parse_team_id(team_id: str) -> tuple[str, str]:
-    """Split 'backend:acme.com' into ('acme.com', 'backend')."""
-    return parse_team_id(team_id)
-
-
 class AliasConflictError(ValueError):
     """Raised when an alias is already owned by another active agent."""
 
@@ -67,7 +61,7 @@ async def _ensure_team(
     team_did_key: str,
 ) -> None:
     """Create the team row if it doesn't exist."""
-    namespace, team_name = _parse_team_id(team_id)
+    namespace, team_name = parse_team_id(team_id)
     await db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)

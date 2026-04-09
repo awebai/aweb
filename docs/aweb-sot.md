@@ -950,7 +950,7 @@ aweb makes these calls to awid. All are cached.
 ```
 GET /v1/namespaces/{domain}/teams/{name}
 → {
-    "team_id": "uuid",
+    "team_id": "backend:acme.com",
     "domain": "acme.com",
     "name": "backend",
     "display_name": "...",

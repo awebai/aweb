@@ -29,7 +29,7 @@ class _DbShim:
         return self._db
 
 
-async def _setup_team_and_agents(aweb_db, team_id="acme.com/backend"):
+async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
     """Insert team + two agents. Returns (alice_agent_id, bob_agent_id, alice_did, bob_did)."""
     await aweb_db.execute(
         """
@@ -38,8 +38,8 @@ async def _setup_team_and_agents(aweb_db, team_id="acme.com/backend"):
         ON CONFLICT DO NOTHING
         """,
         team_id,
-        team_id.split("/")[0],
-        team_id.split("/")[1],
+        "acme.com",
+        "backend",
     )
 
     alice_did = _make_did_key()
@@ -73,7 +73,7 @@ async def test_deliver_message(aweb_cloud_db):
 
     msg_id, created_at = await deliver_message(
         db_shim,
-        team_id="acme.com/backend",
+        team_id="backend:acme.com",
         from_agent_id=alice_id,
         from_alias="alice",
         to_agent_id=bob_id,
@@ -95,7 +95,7 @@ async def test_deliver_message(aweb_cloud_db):
     assert row["to_alias"] == "bob"
     assert row["subject"] == "Hello"
     assert row["body"] == "Hi Bob!"
-    assert row["team_id"] == "acme.com/backend"
+    assert row["team_id"] == "backend:acme.com"
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_deliver_message_sender_not_found(aweb_cloud_db):
     with pytest.raises(NotFoundError, match="Sender"):
         await deliver_message(
             db_shim,
-            team_id="acme.com/backend",
+            team_id="backend:acme.com",
             from_agent_id=str(uuid.uuid4()),
             from_alias="unknown",
             to_agent_id=bob_id,
@@ -123,11 +123,11 @@ async def test_get_agent_by_alias(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice_id, _, _, _ = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
-    agent = await get_agent_by_alias(db_shim, team_id="acme.com/backend", alias="alice")
+    agent = await get_agent_by_alias(db_shim, team_id="backend:acme.com", alias="alice")
     assert agent is not None
     assert str(agent["agent_id"]) == alice_id
 
-    missing = await get_agent_by_alias(db_shim, team_id="acme.com/backend", alias="unknown")
+    missing = await get_agent_by_alias(db_shim, team_id="backend:acme.com", alias="unknown")
     assert missing is None
 
 
@@ -136,6 +136,6 @@ async def test_get_agent_by_id(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice_id, _, _, _ = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
-    agent = await get_agent_by_id(db_shim, team_id="acme.com/backend", agent_id=alice_id)
+    agent = await get_agent_by_id(db_shim, team_id="backend:acme.com", agent_id=alice_id)
     assert agent is not None
     assert agent["alias"] == "alice"

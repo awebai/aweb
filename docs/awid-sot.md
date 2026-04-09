@@ -133,7 +133,7 @@ POST   /v1/namespaces/{domain}/teams
                "visibility": "private" | "public" }
        The caller generates the team keypair and provides the public
        key. awid never sees the private key.
-       Response: { "team_id": "uuid", "domain": "acme.com",
+       Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
                    "visibility": "private",
@@ -152,7 +152,7 @@ GET    /v1/namespaces/{domain}/teams/{name}
        Auth: none (public). Services call this to get the team
        public key and visibility metadata for certificate verification
        and dashboard auth.
-       Response: { "team_id": "uuid", "domain": "acme.com",
+       Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
                    "visibility": "private" | "public",

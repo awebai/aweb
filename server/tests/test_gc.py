@@ -20,8 +20,8 @@ def _db_infra(aweb_db):
 @pytest.mark.asyncio
 async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
-    team_id = "acme.com/backend"
-    active_team_id = "acme.com/active"
+    team_id = "backend:acme.com"
+    active_team_id = "active:acme.com"
     created_at = datetime.now(timezone.utc) - timedelta(days=45)
     agent_id = uuid4()
     active_agent_id = uuid4()

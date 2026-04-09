@@ -24,7 +24,7 @@ def _team(aweb_cloud_db):
         db.execute(
             """
             INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-            VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mktest')
+            VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mktest')
             ON CONFLICT DO NOTHING
             """,
         )
@@ -50,14 +50,14 @@ async def test_add_and_list_contacts(aweb_cloud_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mktest')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mktest')
         ON CONFLICT DO NOTHING
         """,
     )
 
     result = await add_contact(
         db_shim,
-        team_id="acme.com/backend",
+        team_id="backend:acme.com",
         contact_address="example.com/alice",
         label="Alice at Example",
     )
@@ -66,7 +66,7 @@ async def test_add_and_list_contacts(aweb_cloud_db):
     assert result["label"] == "Alice at Example"
     assert result["contact_id"]
 
-    contacts = await list_contacts(db_shim, team_id="acme.com/backend")
+    contacts = await list_contacts(db_shim, team_id="backend:acme.com")
     assert len(contacts) == 1
     assert contacts[0]["contact_address"] == "example.com/alice"
 
@@ -79,15 +79,15 @@ async def test_add_duplicate_contact_raises(aweb_cloud_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mktest')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mktest')
         ON CONFLICT DO NOTHING
         """,
     )
 
-    await add_contact(db_shim, team_id="acme.com/backend", contact_address="example.com/bob", label="")
+    await add_contact(db_shim, team_id="backend:acme.com", contact_address="example.com/bob", label="")
 
     with pytest.raises(ConflictError, match="already exists"):
-        await add_contact(db_shim, team_id="acme.com/backend", contact_address="example.com/bob", label="")
+        await add_contact(db_shim, team_id="backend:acme.com", contact_address="example.com/bob", label="")
 
 
 @pytest.mark.asyncio
@@ -98,17 +98,17 @@ async def test_remove_contact(aweb_cloud_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mktest')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mktest')
         ON CONFLICT DO NOTHING
         """,
     )
 
-    result = await add_contact(db_shim, team_id="acme.com/backend", contact_address="example.com/carol", label="")
+    result = await add_contact(db_shim, team_id="backend:acme.com", contact_address="example.com/carol", label="")
     contact_id = result["contact_id"]
 
-    await remove_contact(db_shim, team_id="acme.com/backend", contact_id=contact_id)
+    await remove_contact(db_shim, team_id="backend:acme.com", contact_id=contact_id)
 
-    contacts = await list_contacts(db_shim, team_id="acme.com/backend")
+    contacts = await list_contacts(db_shim, team_id="backend:acme.com")
     assert len(contacts) == 0
 
 
@@ -120,15 +120,15 @@ async def test_get_contact_addresses(aweb_cloud_db):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('acme.com/backend', 'acme.com', 'backend', 'did:key:z6Mktest')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mktest')
         ON CONFLICT DO NOTHING
         """,
     )
 
-    await add_contact(db_shim, team_id="acme.com/backend", contact_address="example.com", label="")
-    await add_contact(db_shim, team_id="acme.com/backend", contact_address="other.org/dave", label="")
+    await add_contact(db_shim, team_id="backend:acme.com", contact_address="example.com", label="")
+    await add_contact(db_shim, team_id="backend:acme.com", contact_address="other.org/dave", label="")
 
-    addrs = await get_contact_addresses(db_shim, team_id="acme.com/backend")
+    addrs = await get_contact_addresses(db_shim, team_id="backend:acme.com")
     assert addrs == {"example.com", "other.org/dave"}
 
 
