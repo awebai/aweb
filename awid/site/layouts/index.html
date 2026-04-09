@@ -414,7 +414,7 @@
       </a>
       <div class="nav-links">
         <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Docs</a>
-        <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">API</a>
+        <a href="#api">API</a>
         <a href="https://github.com/awebai/aweb">GitHub</a>
       </div>
     </nav>
@@ -547,6 +547,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </p>
 
       <pre>{
+  <span class="key">"certificate_id"</span>: "cert_01HXK4...",
   <span class="key">"team_id"</span>: "backend:acme.com",
   <span class="key">"alias"</span>: "alice",
   <span class="key">"member_address"</span>: "partner.com/alice",
@@ -567,7 +568,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
     <!-- ── API ─────────────────────────────────── -->
 
     <section>
-      <h2>API</h2>
+      <h2 id="api">API</h2>
       <p class="section-text">
         Anonymous reads for discovery. Signed writes for mutation.
       </p>
@@ -766,7 +767,6 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
       <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
 <span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
 <span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
-<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your key</span>
 <span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span>
 <span class="prompt">$ </span>aw id team create --name backend --namespace acme.com
 <span class="prompt">$ </span>aw id team invite --team backend --namespace acme.com
