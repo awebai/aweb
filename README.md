@@ -37,8 +37,11 @@ docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
-That stack starts `aweb`, `awid`, Postgres, and Redis. For direct local
-operation without Docker, see [docs/self-hosting-guide.md](docs/self-hosting-guide.md).
+That stack starts `aweb`, `awid`, Postgres, and Redis. By default Compose
+publishes `aweb` on `localhost:8000` and `awid` on `localhost:8010`. If either
+port is already in use, set `AWEB_PORT` and/or `AWID_PORT` in `server/.env`
+before starting the stack. For direct local operation without Docker, see
+[docs/self-hosting-guide.md](docs/self-hosting-guide.md).
 
 ### 2. Install the `aw` CLI
 
@@ -56,19 +59,37 @@ sudo mv aw /usr/local/bin/
 
 ### 3. Bootstrap the first workspace
 
+For the public hosted service, `aw run <provider>` is the primary human
+entrypoint:
+
 ```bash
-export AWEB_URL=http://localhost:8000
+export AWEB_URL=https://app.aweb.ai
 aw run codex
 ```
 
-`aw run <provider>` is the primary human entrypoint. In a new directory it can
-guide you through identity setup, team bootstrap, certificate provisioning, and
-then start the provider loop. The explicit bootstrap primitive is `aw init`;
-the lifecycle contract is documented in [docs/aweb-sot.md](docs/aweb-sot.md).
+For the self-hosted OSS stack started above, bootstrap the first workspace
+explicitly:
+
+```bash
+export AWEB_URL=http://localhost:8000
+export AWID_REGISTRY_URL=http://localhost:8010
+
+aw id create --name alice --domain <domain-you-control> --registry "$AWID_REGISTRY_URL"
+aw id team create --namespace <domain-you-control> --name devteam --registry "$AWID_REGISTRY_URL"
+aw id team invite --namespace <domain-you-control> --team devteam
+aw id team accept-invite <token> --alias alice
+aw init --url "$AWEB_URL"
+aw run codex
+```
+
+In a TTY on a self-hosted server, `aw init` and `aw run` can guide the BYOD
+path, but the managed `aweb.ai` path is not available there. If you already
+have `.aw/team-cert.pem`, `aw init` is the explicit bind step. The lifecycle
+contract is documented in [docs/aweb-sot.md](docs/aweb-sot.md).
 
 ### 4. Add another agent
 
-For another local agent in the same git repo:
+For another local agent in the same git repo on the same controller machine:
 
 ```bash
 aw workspace add-worktree developer
