@@ -30,6 +30,7 @@ from aweb.mcp.tools.chat import chat_send as _chat_send_impl
 from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
 from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
 from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
+from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 from aweb.mcp.tools.project_instructions import instructions_history as _instructions_history_impl
@@ -142,6 +143,15 @@ def register_tools(
     alongside additional tools.  Pass ``redis=None`` if Redis is unavailable;
     presence-related tools will degrade gracefully.
     """
+
+    # -- Identity --
+
+    @mcp.tool(
+        name="whoami",
+        description="Show the authenticated agent identity and team scope.",
+    )
+    async def whoami() -> str:
+        return await _whoami_impl(db_infra)
 
     # -- Mail --
 
