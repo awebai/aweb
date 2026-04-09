@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { spawn, type ChildProcessWithoutNullStreams, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -10,9 +10,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
-
 import { APIClient } from "../src/api/client.js";
-import { RegistryResolver } from "../src/identity/registry.js";
+import { streamAgentEvents } from "../src/api/events.js";
+import { resolveConfig } from "../src/config.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -30,28 +30,32 @@ const ChannelNotificationSchema = NotificationSchema.extend({
   }),
 });
 
-interface WorkspaceInfo {
-  api_key: string;
-  agent_id: string;
-  project_id: string;
-  project_slug: string;
+interface IdentityInfo {
+  address: string;
+  did_aw: string;
+  did_key: string;
+}
+
+interface InviteInfo {
+  token: string;
+}
+
+interface InitInfo {
+  team_address: string;
   alias: string;
-  name?: string;
-  address?: string;
-  namespace?: string;
-  namespace_slug?: string;
-  workspace_id?: string;
-  did?: string;
-  stable_id?: string;
+  aweb_url: string;
+}
+
+interface MailSendInfo {
+  message_id: string;
 }
 
 interface ServerHandle {
-  baseURL: string;
+  awebURL: string;
+  awidURL: string;
   managed: boolean;
   envFilePath?: string;
   overrideFilePath?: string;
-  serverProcess?: ChildProcessWithoutNullStreams;
-  serverLogs: string;
 }
 
 class NotificationQueue {
@@ -106,9 +110,8 @@ describe.sequential("channel integration", () => {
   let aliceDir = "";
   let bobDir = "";
   let server: ServerHandle;
-  let alice: WorkspaceInfo;
-  let bob: WorkspaceInfo;
-  let aliceClient: APIClient;
+  let alice: IdentityInfo;
+  let bob: IdentityInfo;
   let mcpClient: Client | undefined;
   let transport: StdioClientTransport | undefined;
   let notifications: NotificationQueue;
@@ -125,12 +128,20 @@ describe.sequential("channel integration", () => {
 
     server = await ensureServer(tempRoot);
     await ensureAwBinary();
-    const projectSlug = `channel-e2e-${Date.now()}`;
 
-    alice = await createProjectViaAW(homeDir, aliceDir, server.baseURL, projectSlug, "alice");
-    bob = await initWorkspaceViaAW(homeDir, bobDir, server.baseURL, alice.api_key, "bob");
+    const domain = `channel-${Date.now()}.test`;
+    const team = "devteam";
 
-    aliceClient = new APIClient(server.baseURL, alice.api_key);
+    alice = await createIdentity(homeDir, aliceDir, server.awidURL, "alice", domain);
+    await createTeam(homeDir, aliceDir, server.awidURL, domain, team);
+    const aliceInvite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, team);
+    await acceptInvite(homeDir, aliceDir, server.awidURL, aliceInvite.token, "alice");
+    await initWorkspace(homeDir, aliceDir, server.awidURL, server.awebURL);
+
+    bob = await createIdentity(homeDir, bobDir, server.awidURL, "bob", domain);
+    const bobInvite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, team);
+    await acceptInvite(homeDir, bobDir, server.awidURL, bobInvite.token, "bob");
+    await initWorkspace(homeDir, bobDir, server.awidURL, server.awebURL);
 
     notifications = new NotificationQueue();
   }, 300_000);
@@ -143,81 +154,42 @@ describe.sequential("channel integration", () => {
     }
   }, 120_000);
 
-  test("real aw mail verifies through the embedded registry and reaches the channel", async () => {
-    const cliBody = `cli verified mail ${Date.now()}`;
-    const cliMail = await sendMailViaAW(homeDir, aliceDir, bob.address || "bob", cliBody);
-    const inbox = await inboxViaAW(homeDir, bobDir);
-    const cliMessage = inbox.messages.find((msg) => msg.message_id === cliMail.message_id);
-    expect(cliMessage).toBeDefined();
-    expect(cliMessage?.body).toBe(cliBody);
-    expect(cliMessage?.verification_status).toBe("verified");
-    expect(cliMessage?.from_address).toBe(alice.address);
-
-    const verifiedResolver = new RegistryResolver(fetch, txtNotFoundResolver, () => Date.now(), {
-      fallbackRegistryURL: server.baseURL,
-    });
-    await expect(
-      verifiedResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
-    ).resolves.toMatchObject({
-      outcome: "OK_VERIFIED",
-      currentDidKey: alice.did,
-    });
-
-    const degradedResolver = new RegistryResolver(async (input, init) => {
-      const url = String(input);
-      if (url.includes("/v1/did/")) {
-        throw new Error("registry unavailable");
-      }
-      return fetch(input, init);
-    }, txtNotFoundResolver, () => Date.now(), {
-      fallbackRegistryURL: server.baseURL,
-    });
-    await expect(
-      degradedResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
-    ).resolves.toMatchObject({
-      outcome: "OK_DEGRADED",
-    });
-
-    const hardErrorResolver = new RegistryResolver(async (input, init) => {
-      const response = await fetch(input, init);
-      const url = String(input);
-      if (!url.includes(`/v1/did/${alice.stable_id}/key`)) {
-        return response;
-      }
-      const payload = await response.json() as Record<string, unknown>;
-      payload.did_aw = "did:aw:SomeoneElse";
-      return jsonResponse(payload);
-    }, txtNotFoundResolver, () => Date.now(), {
-      fallbackRegistryURL: server.baseURL,
-    });
-    await expect(
-      hardErrorResolver.verifyStableIdentity(alice.address || "", alice.stable_id || ""),
-    ).resolves.toMatchObject({
-      outcome: "HARD_ERROR",
-    });
-
+  test("bridges live aw mail and chat from certificate workspaces into Claude channel notifications", async () => {
     await startChannelIfNeeded();
+    await delay(750);
 
-    const channelBody = `channel verified mail ${Date.now()}`;
-    const mail = await sendMailViaAW(homeDir, aliceDir, bob.address || "bob", channelBody);
+    const mailBody = `channel verified mail ${Date.now()}`;
+    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", mailBody);
     let mailNotification;
     try {
       mailNotification = await notifications.waitFor(
         (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
       );
     } catch (error) {
-      throw new Error(`${String(error)}\nchannel stderr:\n${channelStderr || "(empty)"}`);
+      const inbox = await runAw(homeDir, bobDir, server.awidURL, [
+        "--json",
+        "mail",
+        "inbox",
+      ]).catch(() => ({ stdout: "", stderr: "" }));
+      const directEvents = await collectDirectEvents(bobDir).catch(() => []);
+      throw new Error(
+        `${String(error)}\nchannel stderr:\n${channelStderr || "(empty)"}\n` +
+        `bob inbox stdout:\n${inbox.stdout || "(empty)"}\n` +
+        `bob inbox stderr:\n${inbox.stderr || "(empty)"}\n` +
+        `direct events:\n${directEvents.length > 0 ? directEvents.join("\n") : "(none)"}`,
+      );
     }
-    expect(mailNotification.content).toBe(channelBody);
-    expect(mailNotification.meta.from).toBe(alice.address);
+    expect(mailNotification.content).toBe(mailBody);
+    expect(mailNotification.meta.from).toBe("alice");
     expect(mailNotification.meta.verified).toBe("true");
 
-    const chatBody = `chat notification ${Date.now()}`;
-    const created = await createChatSession(aliceClient, ["bob"], chatBody);
+    const chatBody = `channel verified chat ${Date.now()}`;
+    await sendChatViaAW(homeDir, aliceDir, server.awidURL, "bob", chatBody);
     const chatNotification = await notifications.waitFor(
-      (item) => item.meta.type === "chat" && item.meta.session_id === created.session_id && item.content === chatBody,
+      (item) => item.meta.type === "chat" && item.content === chatBody,
     );
-    expect(chatNotification.meta.from).toContain("alice");
+    expect(chatNotification.meta.from).toBe("alice");
+    expect(chatNotification.meta.verified).toBe("true");
 
     expect(channelStderr).not.toContain("fatal:");
   }, 45_000);
@@ -235,7 +207,7 @@ describe.sequential("channel integration", () => {
       env: {
         ...stringEnv(process.env),
         HOME: homeDir,
-        AWID_REGISTRY_URL: "local",
+        AWID_REGISTRY_URL: server.awidURL,
       },
       stderr: "pipe",
     });
@@ -253,20 +225,23 @@ describe.sequential("channel integration", () => {
 });
 
 async function ensureServer(tempRoot: string): Promise<ServerHandle> {
-  const provided = process.env.AWEB_TEST_URL;
-  if (provided) {
-    await waitForHealthyServer(provided);
-    return { baseURL: provided, managed: false, serverLogs: "" };
+  const providedAwebURL = process.env.AWEB_TEST_URL;
+  const providedAwidURL = process.env.AWID_TEST_URL;
+  if (providedAwebURL || providedAwidURL) {
+    if (!providedAwebURL || !providedAwidURL) {
+      throw new Error("set both AWEB_TEST_URL and AWID_TEST_URL, or neither");
+    }
+    await waitForHealthyServer(providedAwidURL);
+    await waitForHealthyServer(providedAwebURL);
+    return { awebURL: providedAwebURL, awidURL: providedAwidURL, managed: false };
   }
 
   if (!(await dockerAvailable())) {
-    throw new Error("Docker daemon unavailable; start Docker or set AWEB_TEST_URL");
-  }
-  if (!(await uvAvailable())) {
-    throw new Error("uv is unavailable; install uv or set AWEB_TEST_URL");
+    throw new Error("Docker daemon unavailable; start Docker or set AWEB_TEST_URL/AWID_TEST_URL");
   }
 
-  const [appPort, pgPort, redisPort] = await Promise.all([
+  const [awebPort, awidPort, pgPort, redisPort] = await Promise.all([
+    getFreePort(),
     getFreePort(),
     getFreePort(),
     getFreePort(),
@@ -284,6 +259,12 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     `POSTGRES_DB=${postgresDb}`,
     `POSTGRES_PORT=${pgPort}`,
     `REDIS_PORT=${redisPort}`,
+    `AWEB_PORT=${awebPort}`,
+    `AWID_PORT=${awidPort}`,
+    "AWID_LOG_JSON=true",
+    "AWEB_LOG_JSON=true",
+    "AWID_RATE_LIMIT_BACKEND=redis",
+    "AWID_SKIP_DNS_VERIFY=1",
   ].join("\n"));
 
   await writeFile(overrideFilePath, [
@@ -303,7 +284,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     "--env-file", envFilePath,
     "down",
     "-v",
-  ], { cwd: serverDir, allowFailure: true });
+  ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
 
   await runCommand("docker", [
     "compose",
@@ -312,63 +293,36 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     "--env-file", envFilePath,
     "up",
     "-d",
-    "postgres",
-    "redis",
-  ], { cwd: serverDir, timeoutMs: 120_000 });
+    "--build",
+  ], { cwd: serverDir, timeoutMs: 300_000 });
 
-  const serverLogs: string[] = [];
-  const serverProcess = spawn("uv", ["run", "aweb", "serve"], {
-    cwd: serverDir,
-    env: {
-      ...stringEnv(process.env),
-      AWEB_DATABASE_URL: `postgresql://${postgresUser}:${postgresPassword}@127.0.0.1:${pgPort}/${postgresDb}`,
-      AWEB_REDIS_URL: `redis://127.0.0.1:${redisPort}/0`,
-      AWEB_HOST: "127.0.0.1",
-      AWEB_PORT: String(appPort),
-      AWEB_CUSTODY_KEY: randomHex(64),
-      AWEB_MANAGED_DOMAIN: "aweb.local",
-      AWID_REGISTRY_URL: "local",
-      PYTHONUNBUFFERED: "1",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  serverProcess.stdout.on("data", (chunk) => serverLogs.push(chunk.toString()));
-  serverProcess.stderr.on("data", (chunk) => serverLogs.push(chunk.toString()));
-
-  const baseURL = `http://127.0.0.1:${appPort}`;
+  const awidURL = `http://127.0.0.1:${awidPort}`;
+  const awebURL = `http://127.0.0.1:${awebPort}`;
   try {
-    await waitForHealthyServer(baseURL);
+    await waitForHealthyServer(awidURL);
+    await waitForHealthyServer(awebURL);
   } catch (error) {
     await stopServer({
-      baseURL,
+      awebURL,
+      awidURL,
       managed: true,
       envFilePath,
       overrideFilePath,
-      serverProcess,
-      serverLogs: serverLogs.join(""),
     });
-    throw new Error(`server failed to become healthy: ${serverLogs.join("") || String(error)}`);
+    throw error;
   }
 
   return {
-    baseURL,
+    awebURL,
+    awidURL,
     managed: true,
     envFilePath,
     overrideFilePath,
-    serverProcess,
-    serverLogs: serverLogs.join(""),
   };
 }
 
 async function stopServer(server: ServerHandle | undefined): Promise<void> {
   if (!server) return;
-
-  if (server.serverProcess && !server.serverProcess.killed) {
-    server.serverProcess.kill("SIGTERM");
-    await waitForProcessExit(server.serverProcess, 5_000).catch(() => {
-      server.serverProcess?.kill("SIGKILL");
-    });
-  }
 
   if (server.managed && server.envFilePath && server.overrideFilePath) {
     await runCommand("docker", [
@@ -378,23 +332,201 @@ async function stopServer(server: ServerHandle | undefined): Promise<void> {
       "--env-file", server.envFilePath,
       "down",
       "-v",
-    ], { cwd: serverDir, allowFailure: true });
+    ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
     await rm(server.envFilePath, { force: true }).catch(() => {});
     await rm(server.overrideFilePath, { force: true }).catch(() => {});
   }
 }
 
-async function createChatSession(
-  client: APIClient,
-  toAliases: string[],
-  message: string,
-  extra: Record<string, unknown> = {},
-): Promise<{ session_id: string; message_id: string }> {
-  return client.post("/v1/chat/sessions", {
-    to_aliases: toAliases,
-    message,
-    ...extra,
+async function ensureAwBinary(): Promise<void> {
+  const result = await runCommand("make", ["build"], {
+    cwd: cliDir,
+    timeoutMs: 120_000,
   });
+  if (!result.ok) {
+    throw new Error(`aw build failed:\n${result.stderr || result.stdout}`);
+  }
+}
+
+async function createIdentity(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  name: string,
+  domain: string,
+): Promise<IdentityInfo> {
+  return runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "id",
+    "create",
+    "--name", name,
+    "--domain", domain,
+    "--registry", awidURL,
+    "--skip-dns-verify",
+  ]);
+}
+
+async function createTeam(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  domain: string,
+  team: string,
+): Promise<void> {
+  await runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "id",
+    "team",
+    "create",
+    "--namespace", domain,
+    "--name", team,
+    "--registry", awidURL,
+  ]);
+}
+
+async function inviteMember(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  domain: string,
+  team: string,
+): Promise<InviteInfo> {
+  return runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "id",
+    "team",
+    "invite",
+    "--namespace", domain,
+    "--team", team,
+  ]);
+}
+
+async function acceptInvite(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  token: string,
+  alias: string,
+): Promise<void> {
+  await runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "id",
+    "team",
+    "accept-invite",
+    token,
+    "--alias", alias,
+  ]);
+}
+
+async function initWorkspace(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  awebURL: string,
+): Promise<InitInfo> {
+  return runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "init",
+    "--url", awebURL,
+  ]);
+}
+
+async function sendMailViaAW(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  to: string,
+  body: string,
+): Promise<MailSendInfo> {
+  return runAwJSON(homeDir, workspaceDir, awidURL, [
+    "--json",
+    "mail",
+    "send",
+    "--to", to,
+    "--body", body,
+  ]);
+}
+
+async function sendChatViaAW(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  to: string,
+  body: string,
+): Promise<void> {
+  await runAw(homeDir, workspaceDir, awidURL, [
+    "chat",
+    "send-and-leave",
+    to,
+    body,
+  ]);
+}
+
+async function runAwJSON<T>(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  args: string[],
+): Promise<T> {
+  const result = await runAw(homeDir, workspaceDir, awidURL, args);
+  return JSON.parse(extractJSONObject(result.stdout)) as T;
+}
+
+async function runAw(
+  homeDir: string,
+  workspaceDir: string,
+  awidURL: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  const result = await execFileAsync(awBinary, args, {
+    cwd: workspaceDir,
+    encoding: "utf8",
+    env: {
+      ...stringEnv(process.env),
+      HOME: homeDir,
+      AW_CONFIG_PATH: join(homeDir, ".config", "aw", "config.yaml"),
+      AWID_REGISTRY_URL: awidURL,
+      AWID_SKIP_DNS_VERIFY: "1",
+    },
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return {
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
+  };
+}
+
+function extractJSONObject(output: string): string {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`expected JSON object in output:\n${output}`);
+  }
+  return output.slice(start, end + 1);
+}
+
+async function collectDirectEvents(workdir: string, timeoutMs: number = 5_000): Promise<string[]> {
+  const cfg = await resolveConfig(workdir);
+  const client = new APIClient(cfg.baseURL, {
+    did: cfg.did,
+    signingKey: cfg.signingKey,
+    teamAddress: cfg.teamAddress,
+    teamCertificateHeader: cfg.teamCertificateHeader,
+  });
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  const events: string[] = [];
+  try {
+    for await (const event of streamAgentEvents(client, abort.signal)) {
+      events.push(JSON.stringify(event));
+      if (event.type !== "connected") {
+        break;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  return events;
 }
 
 async function waitForHealthyServer(baseURL: string): Promise<void> {
@@ -410,104 +542,6 @@ async function waitForHealthyServer(baseURL: string): Promise<void> {
     await delay(1_000);
   }
   throw new Error(`server at ${baseURL} did not become healthy`);
-}
-
-async function ensureAwBinary(): Promise<void> {
-  const result = await runCommand("make", ["build"], {
-    cwd: cliDir,
-    timeoutMs: 120_000,
-  });
-  if (!result.ok) {
-    throw new Error(`aw build failed:\n${result.stderr || result.stdout}`);
-  }
-}
-
-async function createProjectViaAW(
-  homeDir: string,
-  workspaceDir: string,
-  baseURL: string,
-  projectSlug: string,
-  name: string,
-): Promise<WorkspaceInfo> {
-  return runAwJSON<WorkspaceInfo>(homeDir, workspaceDir, [
-    "--json",
-    "project",
-    "create",
-    "--server-url", baseURL,
-    "--project", projectSlug,
-    "--name", name,
-    "--permanent",
-  ]);
-}
-
-async function initWorkspaceViaAW(
-  homeDir: string,
-  workspaceDir: string,
-  baseURL: string,
-  apiKey: string,
-  name: string,
-): Promise<WorkspaceInfo> {
-  return runAwJSON<WorkspaceInfo>(homeDir, workspaceDir, [
-    "--json",
-    "init",
-    "--server-url", baseURL,
-    "--name", name,
-    "--permanent",
-  ], { AWEB_API_KEY: apiKey });
-}
-
-async function sendMailViaAW(
-  homeDir: string,
-  workspaceDir: string,
-  to: string,
-  body: string,
-): Promise<{ message_id: string }> {
-  return runAwJSON<{ message_id: string }>(homeDir, workspaceDir, [
-    "--json",
-    "mail",
-    "send",
-    "--to", to,
-    "--body", body,
-  ]);
-}
-
-async function inboxViaAW(
-  homeDir: string,
-  workspaceDir: string,
-): Promise<{ messages: Array<{ message_id: string; body: string; from_address?: string; verification_status?: string }> }> {
-  return runAwJSON(homeDir, workspaceDir, ["--json", "mail", "inbox"]);
-}
-
-async function runAwJSON<T>(
-  homeDir: string,
-  workspaceDir: string,
-  args: string[],
-  extraEnv: Record<string, string> = {},
-): Promise<T> {
-  const result = await execFileAsync(awBinary, args, {
-    cwd: workspaceDir,
-    encoding: "utf8",
-    env: {
-      ...stringEnv(process.env),
-      ...extraEnv,
-      HOME: homeDir,
-      AW_CONFIG_PATH: join(homeDir, ".config", "aw", "config.yaml"),
-      AWID_REGISTRY_URL: "local",
-    },
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return JSON.parse(result.stdout) as T;
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-async function txtNotFoundResolver(): Promise<string[][]> {
-  throw Object.assign(new Error("not found"), { code: "ENOTFOUND" });
 }
 
 async function runCommand(
@@ -545,28 +579,6 @@ async function dockerAvailable(): Promise<boolean> {
   return result.ok && !result.stderr.includes("Cannot connect to the Docker daemon");
 }
 
-async function uvAvailable(): Promise<boolean> {
-  const result = await runCommand("uv", ["--version"], {
-    cwd: serverDir,
-    allowFailure: true,
-    timeoutMs: 5_000,
-  });
-  return result.ok && result.stdout.startsWith("uv ");
-}
-
-async function waitForProcessExit(
-  child: ChildProcessWithoutNullStreams,
-  timeoutMs: number,
-): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    const timer = setTimeout(() => rejectPromise(new Error("process did not exit")), timeoutMs);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolvePromise();
-    });
-  });
-}
-
 async function getFreePort(): Promise<number> {
   return new Promise((resolvePort, rejectPort) => {
     const server = createServer();
@@ -592,15 +604,6 @@ function stringEnv(source: NodeJS.ProcessEnv): Record<string, string> {
     if (typeof value === "string") env[key] = value;
   }
   return env;
-}
-
-function randomHex(length: number): string {
-  const chars = "0123456789abcdef";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
 }
 
 function delay(ms: number): Promise<void> {

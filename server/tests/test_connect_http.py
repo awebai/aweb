@@ -61,12 +61,29 @@ def _build_test_app(aweb_db, team_did_key):
 
     @app.middleware("http")
     async def cache_body(request, call_next):
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            request.state.cached_body = b""
+            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
+            return await call_next(request)
+
+        original_receive = request._receive
         body = await request.body()
         request.state.cached_body = body
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest()
+        replayed = False
 
         async def _receive():
-            return {"type": "http.request", "body": body}
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            while True:
+                message = await original_receive()
+                if message["type"] == "http.disconnect":
+                    return message
+                if message["type"] == "http.request" and not message.get("more_body", False):
+                    continue
+                return message
 
         request._receive = _receive
         return await call_next(request)
