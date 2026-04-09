@@ -618,17 +618,32 @@ echo ""
 echo "=== Phase 20: Bob's requests fail after revocation ==="
 
 echo "  Flushing cached team revocations from Redis..."
-cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T redis redis-cli DEL 'awid:registry_cache:v2:team_revocations:*'
+revocation_flush_out="$(
+  cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T redis sh -lc "
+    keys=\$(redis-cli --scan --pattern 'awid:registry_cache:v1:team_revocations:*')
+    if [ -n \"\$keys\" ]; then
+      printf '%s\n' \"\$keys\" | xargs redis-cli DEL
+    else
+      echo 0
+    fi
+  "
+)"
+echo "$revocation_flush_out"
 
-bob_mail_out="$(run_aw_in "$BOB_DIR" mail send \
-  --to alice --body "should fail" 2>&1)"
-bob_mail_exit=$?
+if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send \
+  --to alice --body "should fail" 2>&1)"; then
+  bob_mail_exit=0
+else
+  bob_mail_exit=$?
+fi
 
 if echo "$bob_mail_out" | grep -qi "revoked\|unauthorized\|forbidden\|401\|403\|certificate"; then
   echo "  PASS: bob's request rejected after revocation"
   pass=$((pass + 1))
 else
-  fail "bob request should be rejected after revocation cache flush (exit=$bob_mail_exit output=${bob_mail_out:0:120})"
+  echo "  FAIL: bob request should be rejected after revocation cache flush (exit=$bob_mail_exit output=${bob_mail_out:0:120})"
+  fail=$((fail + 1))
+  exit 1
 fi
 echo ""
 
