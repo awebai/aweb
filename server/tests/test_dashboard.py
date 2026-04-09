@@ -334,7 +334,7 @@ async def test_anonymous_request_returns_503_during_partial_init_without_registr
 
 
 @pytest.mark.asyncio
-async def test_authenticated_request_returns_503_during_partial_init_without_registry_client(aweb_cloud_db):
+async def test_authenticated_request_succeeds_during_partial_init_without_registry_client(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db, registry_client=None)
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["acme.com/backend"])
@@ -345,7 +345,8 @@ async def test_authenticated_request_returns_503_during_partial_init_without_reg
             headers={"X-Dashboard-Token": token},
         )
 
-    assert resp.status_code == 503
+    assert resp.status_code == 200
+    assert len(resp.json()["agents"]) == 2
 
 
 @pytest.mark.asyncio

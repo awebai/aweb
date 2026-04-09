@@ -37,9 +37,7 @@ async def _require_dashboard_auth(request: Request, team_address: str) -> dict[s
     token = request.headers.get("X-Dashboard-Token")
     try:
         visibility = await _get_team_visibility(request, team_address)
-    except HTTPException as exc:
-        if exc.status_code == 503 and getattr(request.app.state, "awid_registry_client", None) is None:
-            raise
+    except HTTPException:
         if not token:
             raise
         visibility = "private"
