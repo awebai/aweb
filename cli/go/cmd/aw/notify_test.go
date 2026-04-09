@@ -162,7 +162,7 @@ func TestAwNotifySilentOnAPIError(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "notify-api-error",
 		WorkspaceID: "workspace-1",
 	})
@@ -215,7 +215,7 @@ func TestAwNotifyOutputsHookJSONWhenPendingChatsExist(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "notify-pending",
 		WorkspaceID: "workspace-1",
 	})

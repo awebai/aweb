@@ -176,10 +176,10 @@ async def create_or_send(
     request: Request, payload: CreateSessionRequest, db=Depends(get_db), redis=Depends(get_redis),
     identity: TeamIdentity = Depends(get_team_identity),
 ):
-    team_address = identity.team_address
+    team_id = identity.team_id
     actor_id = identity.agent_id
 
-    sender = await get_agent_by_id(db, team_address=team_address, agent_id=actor_id)
+    sender = await get_agent_by_id(db, team_id=team_id, agent_id=actor_id)
     if sender is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -191,7 +191,7 @@ async def create_or_send(
     if sender["alias"] in to_aliases:
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
-    target_rows = await get_agents_by_aliases(db, team_address=team_address, aliases=to_aliases)
+    target_rows = await get_agents_by_aliases(db, team_id=team_id, aliases=to_aliases)
     resolved_aliases = {r["alias"] for r in target_rows}
     missing = [a for a in to_aliases if a not in resolved_aliases]
     if missing:
@@ -201,7 +201,7 @@ async def create_or_send(
     agent_rows = [sender] + [t for t in target_rows if str(t["agent_id"]) != sender["agent_id"]]
 
     session_id = await ensure_session(
-        db, team_address=team_address, agent_rows=agent_rows, created_by_alias=identity.alias
+        db, team_id=team_id, agent_rows=agent_rows, created_by_alias=identity.alias
     )
 
     aweb_db = db.get_manager("aweb")
@@ -329,10 +329,10 @@ async def pending(
     redis=Depends(get_redis),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> PendingResponse:
-    team_address = identity.team_address
+    team_id = identity.team_id
     actor_id = identity.agent_id
 
-    owner = await get_agent_by_id(db, team_address=team_address, agent_id=actor_id)
+    owner = await get_agent_by_id(db, team_id=team_id, agent_id=actor_id)
     if owner is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -344,9 +344,9 @@ async def pending(
         """
         SELECT COUNT(*)::int
         FROM {{tables.messages}}
-        WHERE team_address = $1 AND to_agent_id = $2 AND read_at IS NULL
+        WHERE team_id = $1 AND to_agent_id = $2 AND read_at IS NULL
         """,
-        team_address,
+        team_id,
         UUID(actor_id),
     )
 
@@ -429,7 +429,7 @@ async def history(
     db=Depends(get_db),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> HistoryResponse:
-    team_address = identity.team_address
+    team_id = identity.team_id
     actor_id = identity.agent_id
 
     try:
@@ -461,7 +461,7 @@ async def history(
         limit=limit,
     )
 
-    contact_addrs = await get_contact_addresses(db, team_address=team_address)
+    contact_addrs = await get_contact_addresses(db, team_id=team_id)
 
     history_items: list[dict[str, Any]] = []
     for m in messages:
@@ -556,7 +556,7 @@ async def _sse_events(
     agent_id: UUID,
     deadline: datetime,
     after: datetime | None = None,
-    team_address: str,
+    team_id: str,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     agent_id_str = str(agent_id)
@@ -595,7 +595,7 @@ async def _sse_events(
             return
         # Fetched once per SSE session -- contact changes during the stream
         # won't be reflected until the next connection.
-        contact_addrs = await get_contact_addresses(db, team_address=team_address)
+        contact_addrs = await get_contact_addresses(db, team_id=team_id)
 
         async def _connect_pubsub() -> PubSub:
             ps: PubSub = redis.pubsub()
@@ -867,7 +867,7 @@ async def stream(
     identity: TeamIdentity = Depends(get_team_identity),
 ):
     actor_id = identity.agent_id
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -911,7 +911,7 @@ async def stream(
             agent_id=agent_uuid,
             deadline=deadline_dt,
             after=after_dt,
-            team_address=team_address,
+            team_id=team_id,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},

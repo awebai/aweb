@@ -16,15 +16,15 @@ async def whoami(db_infra) -> str:
         """
         SELECT did_aw, address
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
-        auth.team_address,
+        auth.team_id,
         auth.did_key,
     )
 
     return json.dumps(
         {
-            "team_address": auth.team_address,
+            "team_id": auth.team_id,
             "agent_id": auth.agent_id,
             "alias": auth.alias,
             "did_key": auth.did_key,

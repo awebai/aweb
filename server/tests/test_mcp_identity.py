@@ -25,16 +25,16 @@ async def test_whoami_requires_auth_context(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, monkeypatch):
-    team_address = "acme.com/backend-stable"
+    team_id = "backend-stable:acme.com"
     did_key = "did:key:z6MkStable"
     agent_id = uuid4()
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         "acme.com",
         "backend-stable",
         "did:key:z6MkTeam",
@@ -42,11 +42,11 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, did_aw, address, alias, lifetime, status)
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
         VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'active')
         """,
         agent_id,
-        team_address,
+        team_id,
         did_key,
         "did:aw:alice",
         "acme.com/alice",
@@ -57,7 +57,7 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
         identity_tools,
         "get_auth",
         lambda: AuthContext(
-            team_address=team_address,
+            team_id=team_id,
             agent_id=str(agent_id),
             alias="alice",
             did_key=did_key,
@@ -67,7 +67,7 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
     data = json.loads(await identity_tools.whoami(DBInfra(aweb_cloud_db.aweb_db)))
 
     assert data == {
-        "team_address": team_address,
+        "team_id": team_id,
         "agent_id": str(agent_id),
         "alias": "alice",
         "did_key": did_key,
@@ -78,16 +78,16 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
 
 @pytest.mark.asyncio
 async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud_db, monkeypatch):
-    team_address = "acme.com/backend-ephemeral"
+    team_id = "backend-ephemeral:acme.com"
     did_key = "did:key:z6MkEphemeral"
     agent_id = uuid4()
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         "acme.com",
         "backend-ephemeral",
         "did:key:z6MkTeam",
@@ -95,11 +95,11 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, lifetime, status)
         VALUES ($1, $2, $3, $4, 'ephemeral', 'active')
         """,
         agent_id,
-        team_address,
+        team_id,
         did_key,
         "eve",
     )
@@ -108,7 +108,7 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
         identity_tools,
         "get_auth",
         lambda: AuthContext(
-            team_address=team_address,
+            team_id=team_id,
             agent_id=str(agent_id),
             alias="eve",
             did_key=did_key,
@@ -118,7 +118,7 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
     data = json.loads(await identity_tools.whoami(DBInfra(aweb_cloud_db.aweb_db)))
 
     assert data == {
-        "team_address": team_address,
+        "team_id": team_id,
         "agent_id": str(agent_id),
         "alias": "eve",
         "did_key": did_key,

@@ -18,6 +18,7 @@ from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.team_ids import parse_team_id
 from awid.dns_auth import parse_didkey_auth, require_timestamp, enforce_timestamp_skew
 from aweb.team_auth import parse_and_verify_certificate
 
@@ -31,7 +32,7 @@ class TeamIdentity:
     Resolved from the verified team certificate and the agents table.
     """
 
-    team_address: str
+    team_id: str
     alias: str
     did_key: str
     agent_id: str
@@ -45,7 +46,7 @@ async def resolve_team_identity(
 ) -> TeamIdentity:
     """Resolve a TeamIdentity from verified certificate info.
 
-    Looks up the agent row by (team_address, did_key). The agent must
+    Looks up the agent row by (team_id, did_key). The agent must
     already exist (created via POST /v1/connect).
 
     Args:
@@ -58,26 +59,26 @@ async def resolve_team_identity(
     Raises:
         ValueError: If the agent is not found (not connected).
     """
-    team_address = cert_info["team_address"]
+    team_id = cert_info["team_id"]
     did_key = cert_info["did_key"]
 
     row = await db.fetch_one(
         """
         SELECT agent_id FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         did_key,
     )
 
     if not row:
         raise ValueError(
             f"Agent not connected: no agent with did_key {did_key[:20]}... "
-            f"in team {team_address}"
+            f"in team {team_id}"
         )
 
     return TeamIdentity(
-        team_address=team_address,
+        team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
         agent_id=str(row["agent_id"]),
@@ -101,7 +102,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     4. Resolve team public key from awid registry
     5. Check revocation list from awid registry
 
-    Returns cert_info dict (team_address, alias, did_key, lifetime,
+    Returns cert_info dict (team_id, alias, did_key, lifetime,
     certificate_id, member_did_aw, member_address). The last two are
     empty strings for ephemeral certificates. Does NOT look up the agent
     in the local DB — suitable for /v1/connect where the agent may not
@@ -115,7 +116,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-    # -- Step 2: Verify DIDKey signature over {team_address, timestamp} --
+    # -- Step 2: Verify DIDKey signature over {team_id, timestamp} --
     # The signature proves the caller holds the private key for the did:key.
     # We sign headers only (not the body) to avoid ASGI body-stream conflicts.
     timestamp = require_timestamp(request)
@@ -130,16 +131,16 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     except Exception:
         raise HTTPException(status_code=401, detail="Malformed certificate")
 
-    cert_team_address = cert_data.get("team", "")
+    cert_team_id = cert_data.get("team_id", "")
 
-    # Verify Ed25519 signature over {team, timestamp, body_sha256}
+    # Verify Ed25519 signature over {team_id, timestamp, body_sha256}
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is None:
         import hashlib as _hashlib
         body_sha256 = _hashlib.sha256(b"").hexdigest()
     sig_payload = canonical_json_bytes({
         "body_sha256": body_sha256,
-        "team": cert_team_address,
+        "team_id": cert_team_id,
         "timestamp": timestamp,
     })
     try:
@@ -148,17 +149,17 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_address)
+    team_did_key = await _resolve_team_key(request, cert_team_id)
     if not team_did_key:
-        raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_address}")
+        raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_id}")
 
     # -- Step 5: Check revocation --
-    revoked_certs = await _get_revoked_certificates(request, cert_team_address)
+    revoked_certs = await _get_revoked_certificates(request, cert_team_id)
 
-    def team_key_resolver(_team_address: str) -> str:
+    def team_key_resolver(_team_id: str) -> str:
         return team_did_key
 
-    def revocation_checker(_team_address: str, certificate_id: str) -> bool:
+    def revocation_checker(_team_id: str, certificate_id: str) -> bool:
         return certificate_id in revoked_certs
 
     try:
@@ -204,16 +205,16 @@ async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentit
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_team_key(request: Request, team_address: str) -> str:
+async def _resolve_team_key(request: Request, team_id: str) -> str:
     """Resolve team public key from awid registry.
 
     Returns the team's did:key, or empty string if the team is unknown.
     Raises HTTPException(503) if awid is unreachable.
     """
-    parts = team_address.split("/", 1)
-    if len(parts) != 2:
+    try:
+        domain, team_name = parse_team_id(team_id)
+    except ValueError:
         return ""
-    domain, team_name = parts
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
@@ -223,19 +224,19 @@ async def _resolve_team_key(request: Request, team_address: str) -> str:
         key = await registry_client.get_team_public_key(domain, team_name)
         return key or ""
     except Exception:
-        logger.warning("AWID registry unreachable for team key resolution: %s", team_address, exc_info=True)
+        logger.warning("AWID registry unreachable for team key resolution: %s", team_id, exc_info=True)
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
 
-async def _get_revoked_certificates(request: Request, team_address: str) -> set[str]:
+async def _get_revoked_certificates(request: Request, team_id: str) -> set[str]:
     """Get the set of revoked certificate IDs from awid.
 
     Raises HTTPException(503) if awid is unreachable.
     """
-    parts = team_address.split("/", 1)
-    if len(parts) != 2:
+    try:
+        domain, team_name = parse_team_id(team_id)
+    except ValueError:
         return set()
-    domain, team_name = parts
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
@@ -244,5 +245,5 @@ async def _get_revoked_certificates(request: Request, team_address: str) -> set[
     try:
         return await registry_client.get_team_revocations(domain, team_name)
     except Exception:
-        logger.warning("AWID registry unreachable for revocation check: %s", team_address, exc_info=True)
+        logger.warning("AWID registry unreachable for revocation check: %s", team_id, exc_info=True)
         raise HTTPException(status_code=503, detail="AWID registry unavailable")

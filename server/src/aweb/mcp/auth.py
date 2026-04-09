@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from awid.dns_auth import parse_didkey_auth
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.team_ids import parse_team_id
 from aweb.team_auth import parse_and_verify_certificate
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 class AuthContext:
     """Resolved identity for the current MCP request."""
 
-    team_address: str
+    team_id: str
     agent_id: str
     alias: str
     did_key: str
@@ -105,7 +106,7 @@ class MCPAuthMiddleware:
 
         did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-        # Verify DIDKey signature over {team_address, timestamp}
+        # Verify DIDKey signature over {team_id, timestamp}
         timestamp = request.headers.get("x-aweb-timestamp", "")
         if not timestamp:
             raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp header")
@@ -115,7 +116,7 @@ class MCPAuthMiddleware:
         except Exception:
             raise HTTPException(status_code=401, detail="Malformed certificate")
 
-        cert_team_address = cert_data.get("team", "")
+        cert_team_id = cert_data.get("team_id", "")
 
         import hashlib as _hashlib
         body_sha256 = getattr(request.state, "body_sha256", None)
@@ -123,7 +124,7 @@ class MCPAuthMiddleware:
             body_sha256 = _hashlib.sha256(b"").hexdigest()
         sig_payload = canonical_json_bytes({
             "body_sha256": body_sha256,
-            "team": cert_team_address,
+            "team_id": cert_team_id,
             "timestamp": timestamp,
         })
         try:
@@ -135,23 +136,29 @@ class MCPAuthMiddleware:
         registry_client = getattr(request.app.state, "awid_registry_client", None)
         team_did_key = ""
         if registry_client is not None:
-            parts = cert_team_address.split("/", 1)
-            if len(parts) == 2:
+            try:
+                domain, team_name = parse_team_id(cert_team_id)
+            except ValueError:
+                domain, team_name = "", ""
+            if domain and team_name:
                 try:
-                    team_did_key = await registry_client.get_team_public_key(parts[0], parts[1]) or ""
+                    team_did_key = await registry_client.get_team_public_key(domain, team_name) or ""
                 except Exception:
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
         if not team_did_key:
-            raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_address}")
+            raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_id}")
 
         # Check revocations
         revoked_certs: set[str] = set()
         if registry_client is not None:
-            parts = cert_team_address.split("/", 1)
-            if len(parts) == 2:
+            try:
+                domain, team_name = parse_team_id(cert_team_id)
+            except ValueError:
+                domain, team_name = "", ""
+            if domain and team_name:
                 try:
-                    revoked_certs = await registry_client.get_team_revocations(parts[0], parts[1])
+                    revoked_certs = await registry_client.get_team_revocations(domain, team_name)
                 except Exception:
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
@@ -170,16 +177,16 @@ class MCPAuthMiddleware:
         row = await aweb_db.fetch_one(
             """
             SELECT agent_id, alias FROM {{tables.agents}}
-            WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
-            cert_info["team_address"],
+            cert_info["team_id"],
             cert_info["did_key"],
         )
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
 
         return AuthContext(
-            team_address=cert_info["team_address"],
+            team_id=cert_info["team_id"],
             agent_id=str(row["agent_id"]),
             alias=row["alias"],
             did_key=cert_info["did_key"],

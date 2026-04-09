@@ -3,8 +3,8 @@ package awid
 import "context"
 
 type SuggestAliasPrefixResponse struct {
-	TeamAddress string `json:"team_address"`
-	NamePrefix  string `json:"name_prefix"`
+	TeamID     string `json:"team_id"`
+	NamePrefix string `json:"name_prefix"`
 }
 
 // SuggestAliasPrefix suggests the next available classic alias prefix for the

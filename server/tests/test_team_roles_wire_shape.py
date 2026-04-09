@@ -45,7 +45,7 @@ def test_active_team_roles_response_uses_team_roles_ids():
     response = ActiveTeamRolesResponse(
         team_roles_id="550e8400-e29b-41d4-a716-446655440000",
         active_team_roles_id="550e8400-e29b-41d4-a716-446655440000",
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         version=3,
         updated_at="2026-01-01T00:00:00Z",
         roles={"developer": {"title": "Developer", "playbook_md": "Ship code"}},
@@ -110,7 +110,7 @@ def test_active_team_instructions_response_uses_team_instruction_ids():
     response = ActiveTeamInstructionsResponse(
         team_instructions_id="770e8400-e29b-41d4-a716-446655440000",
         active_team_instructions_id="770e8400-e29b-41d4-a716-446655440000",
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         version=2,
         updated_at="2026-01-01T00:00:00Z",
         document={"body_md": "Use aw", "format": "markdown"},
@@ -152,7 +152,7 @@ class _FakeDBInfra:
 
 class _FakeTeamRolesVersion:
     id = "roles-123"
-    team_address = "acme.com/backend"
+    team_id = "backend:acme.com"
     version = 4
     created_at = type(
         "FakeCreatedAt",
@@ -179,7 +179,7 @@ class _FakeInstructionsDB:
     async def fetch_one(self, _query: str, *_args):
         return {
             "id": "instr-123",
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "version": 2,
             "document_json": {"body_md": "Use aw", "format": "markdown"},
             "created_at": type(
@@ -206,7 +206,7 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
         team_roles_tools,
         "get_auth",
         lambda: AuthContext(
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             agent_id="agent-1",
             alias="alice",
             did_key="did:key:z6Mkexample",
@@ -233,7 +233,7 @@ async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_mi
         team_instructions_tools,
         "get_auth",
         lambda: AuthContext(
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             agent_id="agent-1",
             alias="alice",
             did_key="did:key:z6Mkexample",

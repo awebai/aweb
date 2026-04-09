@@ -16,15 +16,15 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
         """
         SELECT role
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         auth.agent_id,
-        auth.team_address,
+        auth.team_id,
     )
     agent_role = (agent.get("role") or "").strip() if agent else ""
 
     team_roles_version = await get_active_team_roles(
-        aweb_db, auth.team_address, bootstrap_if_missing=True
+        aweb_db, auth.team_id, bootstrap_if_missing=True
     )
     if team_roles_version is None:
         return json.dumps({"error": "Team roles not found"})
@@ -50,7 +50,7 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
         {
             "team_roles_id": team_roles_version.id,
             "active_team_roles_id": team_roles_version.id,
-            "team_address": team_roles_version.team_address,
+            "team_id": team_roles_version.team_id,
             "version": team_roles_version.version,
             "updated_at": updated_at.isoformat(),
             "agent_id": auth.agent_id,
@@ -73,15 +73,15 @@ async def roles_list(db_infra) -> str:
         """
         SELECT role
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         auth.agent_id,
-        auth.team_address,
+        auth.team_id,
     )
     current_role = (agent.get("role") or "").strip() if agent else ""
 
     team_roles_version = await get_active_team_roles(
-        aweb_db, auth.team_address, bootstrap_if_missing=True
+        aweb_db, auth.team_id, bootstrap_if_missing=True
     )
     available_roles = (
         sorted(team_roles_version.bundle.roles.keys()) if team_roles_version else []
@@ -89,7 +89,7 @@ async def roles_list(db_infra) -> str:
 
     return json.dumps(
         {
-            "team_address": auth.team_address,
+            "team_id": auth.team_id,
             "agent_id": auth.agent_id,
             "current_role": current_role or None,
             "current_role_name": current_role or None,

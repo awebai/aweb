@@ -59,12 +59,12 @@ async def list_conversations(
             (array_agg(m.subject ORDER BY m.created_at DESC))[1] AS subject,
             COUNT(*) FILTER (WHERE m.to_agent_id = $2 AND m.read_at IS NULL)::int AS unread_count
         FROM {{tables.messages}} m
-        WHERE m.team_address = $1
+        WHERE m.team_id = $1
           AND (m.from_agent_id = $2 OR m.to_agent_id = $2)
         GROUP BY m.message_id
         ORDER BY MAX(m.created_at) DESC
         """,
-        identity.team_address,
+        identity.team_id,
         actor_uuid,
     )
 
@@ -77,12 +77,12 @@ async def list_conversations(
             SELECT m.message_id::text AS conv_id, a.alias
             FROM {{tables.messages}} m
             JOIN {{tables.agents}} a ON a.agent_id IN (m.from_agent_id, m.to_agent_id)
-            WHERE m.team_address = $1
+            WHERE m.team_id = $1
               AND m.message_id::text = ANY($2)
             GROUP BY m.message_id, a.alias
             ORDER BY a.alias
             """,
-            identity.team_address,
+            identity.team_id,
             conv_ids,
         )
         for r in part_rows:
@@ -139,12 +139,12 @@ async def list_conversations(
               AND cm.from_agent_id <> $2
               AND cm.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
         ) unread ON TRUE
-        WHERE s.team_address = $1
+        WHERE s.team_id = $1
           AND lm.created_at IS NOT NULL
         GROUP BY s.session_id, lm.body, lm.from_alias, lm.created_at, unread.cnt
         ORDER BY lm.created_at DESC
         """,
-        identity.team_address,
+        identity.team_id,
         actor_uuid,
     )
 

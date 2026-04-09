@@ -101,7 +101,7 @@ type Client struct {
 	signingKey          ed25519.PrivateKey // nil for legacy/custodial
 	did                 string             // empty for legacy/custodial
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
-	teamAddress         string             // team address from certificate, used in auth signature
+	teamID              string             // team identifier from certificate, used in auth signature
 	address             string             // namespace/alias, used in signed envelopes
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
 	resolver            IdentityResolver   // optional; resolves recipient DID for to_did binding
@@ -170,7 +170,7 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	c.signingKey = signingKey
 	c.did = did
 	c.teamCertHeader = certHeader
-	c.teamAddress = cert.Team
+	c.teamID = cert.Team
 	return c, nil
 }
 
@@ -648,11 +648,11 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 	}
 	req.Header.Set("Accept", accept)
 	if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: DIDKey signature over {body_sha256, team, timestamp}.
+		// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
 		// body_sha256 binds the request body to the signature without the
 		// server having to consume the body stream for signature verification.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := certAuthSignPayload(c.teamAddress, timestamp, bodyBytes)
+		signPayload := certAuthSignPayload(c.teamID, timestamp, bodyBytes)
 		sig := ed25519.Sign(c.signingKey, signPayload)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
@@ -670,15 +670,15 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 }
 
 // certAuthSignPayload builds the canonical JSON bytes for certificate auth:
-// {"body_sha256":"<hex>","team":"<team_address>","timestamp":"<ts>"} —
+// {"body_sha256":"<hex>","team_id":"<team_id>","timestamp":"<ts>"} —
 // sorted keys, no whitespace. body_sha256 is the hex SHA256 of the request
 // body bytes (empty body hashes the empty string).
-func certAuthSignPayload(teamAddress, timestamp string, body []byte) []byte {
+func certAuthSignPayload(teamID, timestamp string, body []byte) []byte {
 	h := sha256.Sum256(body)
 	bodyHash := hex.EncodeToString(h[:])
 	payload, err := CanonicalJSONValue(map[string]string{
 		"body_sha256": bodyHash,
-		"team":        teamAddress,
+		"team_id":     teamID,
 		"timestamp":   timestamp,
 	})
 	if err != nil {

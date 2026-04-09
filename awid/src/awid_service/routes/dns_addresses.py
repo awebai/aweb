@@ -519,7 +519,7 @@ async def delete_address(
             """
             SELECT tc.certificate_id
             FROM {{tables.team_certificates}} tc
-            JOIN {{tables.teams}} t ON t.team_id = tc.team_id
+            JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
             WHERE t.domain = $1
               AND t.deleted_at IS NULL
               AND tc.revoked_at IS NULL

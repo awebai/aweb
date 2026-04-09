@@ -8,15 +8,15 @@ from aweb.coordination.tasks_service import list_blocked_tasks, list_ready_tasks
 from aweb.mcp.auth import get_auth
 
 
-async def _claim_rows(aweb_db, *, team_address: str) -> list[dict]:
+async def _claim_rows(aweb_db, *, team_id: str) -> list[dict]:
     return await aweb_db.fetch_all(
         """
         SELECT task_ref, workspace_id, alias, claimed_at
         FROM {{tables.task_claims}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY claimed_at DESC
         """,
-        team_address,
+        team_id,
     )
 
 
@@ -25,14 +25,14 @@ async def work_ready(db_infra) -> str:
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
 
-    claim_rows = await _claim_rows(aweb_db, team_address=auth.team_address)
+    claim_rows = await _claim_rows(aweb_db, team_id=auth.team_id)
     claimed_by_others = {
         row["task_ref"]
         for row in claim_rows
         if str(row["workspace_id"]) != auth.agent_id
     }
 
-    tasks = await list_ready_tasks(db_infra, team_address=auth.team_address)
+    tasks = await list_ready_tasks(db_infra, team_id=auth.team_id)
     items = [task for task in tasks if task["task_ref"] not in claimed_by_others]
     return json.dumps({"kind": "ready", "tasks": items})
 
@@ -42,8 +42,8 @@ async def work_active(db_infra) -> str:
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
 
-    tasks = await list_tasks(db_infra, team_address=auth.team_address, status="in_progress")
-    claim_rows = await _claim_rows(aweb_db, team_address=auth.team_address)
+    tasks = await list_tasks(db_infra, team_id=auth.team_id, status="in_progress")
+    claim_rows = await _claim_rows(aweb_db, team_id=auth.team_id)
 
     claims_by_ref = {}
     for row in claim_rows:
@@ -72,5 +72,5 @@ async def work_active(db_infra) -> str:
 async def work_blocked(db_infra) -> str:
     """List blocked tasks in the authenticated team."""
     auth = get_auth()
-    tasks = await list_blocked_tasks(db_infra, team_address=auth.team_address)
+    tasks = await list_blocked_tasks(db_infra, team_id=auth.team_id)
     return json.dumps({"kind": "blocked", "tasks": tasks})

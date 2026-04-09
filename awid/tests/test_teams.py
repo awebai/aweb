@@ -13,14 +13,14 @@ async def test_teams_table_insert_and_unique_constraint(awid_db_infra):
     _, pub = generate_keypair()
     team_did_key = did_from_public_key(pub)
 
-    team_id = uuid4()
+    team_uuid = uuid4()
     await db.execute(
         """
         INSERT INTO {{tables.teams}}
-            (team_id, domain, name, display_name, team_did_key, created_by)
+            (team_uuid, domain, name, display_name, team_did_key, created_by)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
-        team_id,
+        team_uuid,
         "acme.com",
         "backend",
         "Backend Team",
@@ -29,8 +29,8 @@ async def test_teams_table_insert_and_unique_constraint(awid_db_infra):
     )
 
     row = await db.fetch_one(
-        "SELECT * FROM {{tables.teams}} WHERE team_id = $1",
-        team_id,
+        "SELECT * FROM {{tables.teams}} WHERE team_uuid = $1",
+        team_uuid,
     )
     assert row is not None
     assert row["domain"] == "acme.com"
@@ -45,7 +45,7 @@ async def test_teams_table_insert_and_unique_constraint(awid_db_infra):
         await db.execute(
             """
             INSERT INTO {{tables.teams}}
-                (team_id, domain, name, team_did_key)
+                (team_uuid, domain, name, team_did_key)
             VALUES ($1, $2, $3, $4)
             """,
             uuid4(),
@@ -63,14 +63,14 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
     _, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
 
-    team_id = uuid4()
+    team_uuid = uuid4()
     await db.execute(
         """
         INSERT INTO {{tables.teams}}
-            (team_id, domain, name, team_did_key)
+            (team_uuid, domain, name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_id,
+        team_uuid,
         "example.com",
         "infra",
         team_did_key,
@@ -80,11 +80,11 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
     await db.execute(
         """
         INSERT INTO {{tables.team_certificates}}
-            (team_id, certificate_id, member_did_key, member_did_aw,
+            (team_uuid, certificate_id, member_did_key, member_did_aw,
              member_address, alias, lifetime)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
-        team_id,
+        team_uuid,
         cert_id,
         member_did_key,
         "did:aw:abc123",
@@ -104,15 +104,15 @@ async def test_team_certificates_table_and_constraints(awid_db_infra):
     assert row["issued_at"] is not None
     assert row["revoked_at"] is None
 
-    # Unique constraint on (team_id, certificate_id) must reject duplicates
+    # Unique constraint on (team_uuid, certificate_id) must reject duplicates
     with pytest.raises(Exception, match="unique|duplicate"):
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
-                (team_id, certificate_id, member_did_key, alias)
+                (team_uuid, certificate_id, member_did_key, alias)
             VALUES ($1, $2, $3, $4)
             """,
-            team_id,
+            team_uuid,
             cert_id,
             member_did_key,
             "bob",
@@ -125,14 +125,14 @@ async def test_team_certificates_lifetime_check_constraint(awid_db_infra):
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
 
-    team_id = uuid4()
+    team_uuid = uuid4()
     await db.execute(
         """
         INSERT INTO {{tables.teams}}
-            (team_id, domain, name, team_did_key)
+            (team_uuid, domain, name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_id,
+        team_uuid,
         "check.example",
         "ops",
         team_did_key,
@@ -142,10 +142,10 @@ async def test_team_certificates_lifetime_check_constraint(awid_db_infra):
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
-                (team_id, certificate_id, member_did_key, alias, lifetime)
+                (team_uuid, certificate_id, member_did_key, alias, lifetime)
             VALUES ($1, $2, $3, $4, $5)
             """,
-            team_id,
+            team_uuid,
             str(uuid4()),
             "did:key:z6MkTest",
             "bad",
@@ -157,12 +157,12 @@ async def test_team_certificates_lifetime_check_constraint(awid_db_infra):
 async def test_team_certificates_foreign_key_to_teams(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
 
-    # Insert into team_certificates with non-existent team_id must fail
+    # Insert into team_certificates with non-existent team_uuid must fail
     with pytest.raises(Exception, match="foreign key|violates"):
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
-                (team_id, certificate_id, member_did_key, alias)
+                (team_uuid, certificate_id, member_did_key, alias)
             VALUES ($1, $2, $3, $4)
             """,
             uuid4(),

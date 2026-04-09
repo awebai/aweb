@@ -95,7 +95,7 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 			didKey, _ := signupBody["did_key"].(string)
 			didAW, _ := signupBody["did_aw"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "juanre.aweb.ai/default",
+				Team:          "default:juanre.aweb.ai",
 				MemberDIDKey:  didKey,
 				MemberDIDAW:   didAW,
 				MemberAddress: "juanre.aweb.ai/laptop",
@@ -114,7 +114,7 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 				"username":         "juanre",
 				"org_id":           "org-1",
 				"namespace_domain": "juanre.aweb.ai",
-				"team_address":     "juanre.aweb.ai/default",
+				"team_id":          "default:juanre.aweb.ai",
 				"certificate":      encoded,
 				"did_aw":           didAW,
 				"member_address":   "juanre.aweb.ai/laptop",

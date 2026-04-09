@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from awid.team_ids import team_slug
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
@@ -121,7 +122,7 @@ async def heartbeat(
     are best-effort and will converge once the client retries.
     """
     identity = await get_team_identity(request, db)
-    team_address = identity.team_address
+    team_id = identity.team_id
     settings = get_settings()
 
     aweb_db = db.get_manager("aweb")
@@ -129,7 +130,7 @@ async def heartbeat(
     # Pre-check: workspace must exist and belong to this team.
     existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, team_address, alias, repo_id, deleted_at
+        SELECT workspace_id, team_id, alias, repo_id, deleted_at
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1
         """,
@@ -141,7 +142,7 @@ async def heartbeat(
                 status_code=410,
                 detail="Workspace was deleted. Run 'aw connect' to re-register.",
             )
-        if existing.get("team_address") != team_address:
+        if existing.get("team_id") != team_id:
             raise HTTPException(
                 status_code=400,
                 detail=f"Workspace {payload.workspace_id} does not belong to this team.",
@@ -197,7 +198,7 @@ async def heartbeat(
             workspace_id=payload.workspace_id,
             alias=payload.alias,
             human_name=payload.human_name or "",
-            team_address=team_address,
+            team_id=team_id,
             repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
             model=None,
@@ -210,7 +211,7 @@ async def heartbeat(
             "Heartbeat SQL upsert succeeded but presence update failed",
             extra={
                 "workspace_id": payload.workspace_id,
-                "team_address": team_address,
+                "team_id": team_id,
                 "error": str(e),
             },
         )
@@ -281,18 +282,18 @@ async def update_workspace(
         raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
 
     identity = await get_team_identity(request, db)
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     aweb_db = db.get_manager("aweb")
 
     existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, alias, team_address, deleted_at
+        SELECT workspace_id, alias, team_id, deleted_at
         FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND team_address = $2
+        WHERE workspace_id = $1 AND team_id = $2
         """,
         UUID(validated_id),
-        team_address,
+        team_id,
     )
 
     if not existing:
@@ -379,7 +380,7 @@ async def delete_workspace(
         raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
 
     identity = await get_team_identity(request, db)
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     aweb_db = db.get_manager("aweb")
 
@@ -389,19 +390,19 @@ async def delete_workspace(
             w.workspace_id,
             w.agent_id,
             w.alias,
-            w.team_address,
+            w.team_id,
             w.deleted_at,
             w.last_seen_at,
             a.lifetime AS agent_lifetime
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.agents}} a
           ON a.agent_id = w.agent_id
-         AND a.team_address = w.team_address
+         AND a.team_id = w.team_id
          AND a.deleted_at IS NULL
-        WHERE w.workspace_id = $1 AND w.team_address = $2
+        WHERE w.workspace_id = $1 AND w.team_id = $2
         """,
         UUID(validated_id),
-        team_address,
+        team_id,
     )
 
     if not existing:
@@ -461,14 +462,14 @@ async def delete_workspace(
             SET deleted_at = $2,
                 status = 'deleted'
             WHERE agent_id = $1
-              AND team_address = $3
+              AND team_id = $3
               AND deleted_at IS NULL
               AND lifetime = 'ephemeral'
             RETURNING agent_id
             """,
             existing["agent_id"],
             deleted_at,
-            team_address,
+            team_id,
         )
 
     if redis is not None:
@@ -488,7 +489,7 @@ async def delete_workspace(
                 "Workspace delete SQL cleanup succeeded but Redis cleanup failed",
                 extra={
                     "workspace_id": validated_id,
-                    "team_address": team_address,
+                    "team_id": team_id,
                     "error": str(exc),
                 },
             )
@@ -528,7 +529,7 @@ class WorkspaceInfo(BaseModel):
     alias: str
     human_name: Optional[str] = None
     context_kind: Optional[str] = None
-    team_address: Optional[str] = None
+    team_id: Optional[str] = None
     program: Optional[str] = None
     model: Optional[str] = None
     repo: Optional[str] = None
@@ -564,13 +565,13 @@ class ListWorkspacesResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
-def _get_team_slug(team_address: str) -> str:
-    return team_address.split("/")[-1]
+def _get_team_slug(team_id: str) -> str:
+    return team_slug(team_id)
 
 
 def _title_join(
     alias: str,
-    team_address_col: str,
+    team_id_col: str,
     task_ref_col: str,
     *,
     include_type: bool = False,
@@ -581,24 +582,24 @@ def _title_join(
 
     guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
 
-    # task_ref = slug || '-' || task_ref_suffix, where slug is the last
-    # component of team_address (after '/').
+    # task_ref = slug || '-' || task_ref_suffix, where slug is the team-name
+    # prefix from the colon-form team_id.
     return f"""
         LEFT JOIN LATERAL (
             SELECT {select_expr}
             FROM aweb.tasks t
-            WHERE t.team_address = {team_address_col}
-              AND split_part({team_address_col}, '/', -1) || '-' || t.task_ref_suffix = {task_ref_col}
+            WHERE t.team_id = {team_id_col}
+              AND split_part({team_id_col}, '/', -1) || '-' || t.task_ref_suffix = {task_ref_col}
               AND t.deleted_at IS NULL{guard}
             LIMIT 1
         ) {alias} ON true"""
 
 
 def _build_workspace_claims_query(placeholders: str) -> str:
-    claim_join = _title_join("claim_info", "c.team_address", "c.task_ref")
+    claim_join = _title_join("claim_info", "c.team_id", "c.task_ref")
     apex_join = _title_join(
         "apex_info",
-        "c.team_address",
+        "c.team_id",
         "c.apex_task_ref",
         include_type=True,
         guard_col="c.apex_task_ref",
@@ -639,7 +640,7 @@ def _timestamp(value: Optional[datetime] | Optional[str]) -> float:
 
 _TEAM_FOCUS_JOIN = _title_join(
     "focus_issue",
-    "w.team_address",
+    "w.team_id",
     "w.focus_task_ref",
     include_type=True,
     guard_col="w.focus_task_ref",
@@ -654,7 +655,7 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
                 WHEN w.workspace_type = 'agent' THEN 'repo_worktree'::TEXT
                 ELSE w.workspace_type
             END AS context_kind,
-            w.team_address,
+            w.team_id,
             w.role,
             w.hostname,
             w.workspace_path,
@@ -677,13 +678,13 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
 async def _fetch_extra_team_workspace(
     aweb_db,
     workspace_id: str,
-    team_address: str,
+    team_id: str,
     *,
     human_name: str | None,
     repo: str | None,
 ):
     """Fetch a single workspace by ID for the always_include_workspace_id guarantee."""
-    params: list = [uuid_module.UUID(workspace_id), team_address]
+    params: list = [uuid_module.UUID(workspace_id), team_id]
 
     query = f"""
         WITH claim_stats AS (
@@ -691,7 +692,7 @@ async def _fetch_extra_team_workspace(
                    COUNT(*) AS claim_count,
                    MAX(claimed_at) AS last_claimed_at
             FROM {{{{tables.task_claims}}}}
-            WHERE team_address = $2
+            WHERE team_id = $2
             GROUP BY workspace_id
         )
         SELECT *
@@ -699,7 +700,7 @@ async def _fetch_extra_team_workspace(
             {_TEAM_PARTICIPANT_WORKSPACE_SELECT}
             WHERE w.deleted_at IS NULL
         ) participants
-        WHERE workspace_id = $1 AND team_address = $2
+        WHERE workspace_id = $1 AND team_id = $2
     """
 
     if human_name:
@@ -745,7 +746,7 @@ def _row_to_workspace_info(
         alias=row["alias"],
         human_name=row["human_name"],
         context_kind=row.get("context_kind"),
-        team_address=row["team_address"],
+        team_id=row["team_id"],
         program=program,
         model=model,
         repo=row["repo"],
@@ -837,7 +838,7 @@ async def list_workspaces(
     Use /v1/workspaces/online for only currently active workspaces.
     """
     identity = await get_team_identity(request, db_infra)
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     try:
         validated_limit, cursor_data = validate_pagination_params(limit, cursor)
@@ -852,7 +853,7 @@ async def list_workspaces(
             w.workspace_id,
             w.alias,
             w.human_name,
-            w.team_address,
+            w.team_id,
             w.role,
             w.hostname,
             w.workspace_path,
@@ -869,7 +870,7 @@ async def list_workspaces(
         """
         + _title_join(
             "focus_issue",
-            "w.team_address",
+            "w.team_id",
             "w.focus_task_ref",
             include_type=True,
             guard_col="w.focus_task_ref",
@@ -881,8 +882,8 @@ async def list_workspaces(
     params: list = []
     param_idx = 1
 
-    query += f" AND w.team_address = ${param_idx}"
-    params.append(team_address)
+    query += f" AND w.team_id = ${param_idx}"
+    params.append(team_id)
     param_idx += 1
 
     if human_name:
@@ -1009,13 +1010,13 @@ async def list_team_workspaces(
     prioritized set of workspaces.
     """
     identity = await get_team_identity(request, db_infra)
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     aweb_db = db_infra.get_manager("aweb")
 
-    params: list = [team_address]
+    params: list = [team_id]
     param_idx = 2
-    claim_stats_where = "WHERE team_address = $1"
+    claim_stats_where = "WHERE team_id = $1"
 
     query = f"""
         WITH claim_stats AS (
@@ -1035,7 +1036,7 @@ async def list_team_workspaces(
         WHERE 1=1
     """
 
-    query += " AND team_address = $1"
+    query += " AND team_id = $1"
 
     if human_name:
         query += f" AND human_name = ${param_idx}"
@@ -1084,7 +1085,7 @@ async def list_team_workspaces(
             extra_row = await _fetch_extra_team_workspace(
                 aweb_db,
                 validated_id,
-                team_address,
+                team_id,
                 human_name=human_name,
                 repo=repo,
             )
@@ -1163,7 +1164,7 @@ async def list_online_workspaces(
     For all registered workspaces (including offline), use GET /v1/workspaces.
     """
     identity = await get_team_identity(request, db_infra)
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     presences = await list_agent_presences(redis)
 
@@ -1174,7 +1175,7 @@ async def list_online_workspaces(
         if not workspace_id or not alias:
             continue
 
-        if presence.get("team_address") != team_address:
+        if presence.get("team_id") != team_id:
             continue
 
         if human_name and presence.get("human_name") != human_name:
@@ -1185,7 +1186,7 @@ async def list_online_workspaces(
                 workspace_id=workspace_id,
                 alias=alias,
                 human_name=presence.get("human_name"),
-                team_address=team_address,
+                team_id=team_id,
                 program=presence.get("program"),
                 model=presence.get("model"),
                 repo=None,

@@ -39,7 +39,7 @@ func TestBootstrapRedeem(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"certificate":    "Y2VydA==",
-			"team_address":   "juanre.aweb.ai/default",
+			"team_id":        "default:juanre.aweb.ai",
 			"lifetime":       "persistent",
 			"alias":          "laptop-agent",
 			"did_aw":         "did:aw:test123",
@@ -94,8 +94,8 @@ func TestBootstrapRedeem(t *testing.T) {
 		t.Fatalf("did_aw=%v", gotBody["did_aw"])
 	}
 
-	if resp.TeamAddress != "juanre.aweb.ai/default" {
-		t.Fatalf("team_address=%q", resp.TeamAddress)
+	if resp.TeamID != "default:juanre.aweb.ai" {
+		t.Fatalf("team_id=%q", resp.TeamID)
 	}
 	if resp.DIDAW != "did:aw:test123" {
 		t.Fatalf("did_aw=%q", resp.DIDAW)
@@ -153,10 +153,10 @@ func TestBootstrapRedeemWithAPIBaseURLSignsWirePath(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"certificate":  "Y2VydA==",
-			"team_address": "juanre.aweb.ai/default",
-			"lifetime":     "ephemeral",
-			"alias":        "ci-runner-01",
+			"certificate": "Y2VydA==",
+			"team_id":     "default:juanre.aweb.ai",
+			"lifetime":    "ephemeral",
+			"alias":       "ci-runner-01",
 		})
 	}))
 	t.Cleanup(server.Close)

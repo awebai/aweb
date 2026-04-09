@@ -1,6 +1,6 @@
 """Dashboard read endpoints for hosted dashboard clients.
 
-Authenticated with X-Dashboard-Token (JWT containing team_addresses).
+Authenticated with X-Dashboard-Token (JWT containing team_ids).
 All endpoints are read-only.
 """
 
@@ -12,6 +12,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from awid.team_ids import parse_team_id, team_slug
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_auth import verify_dashboard_token
@@ -32,25 +33,25 @@ def _get_dashboard_secret(request: Request) -> str:
     return secret or ""
 
 
-async def _require_dashboard_auth(request: Request, team_address: str) -> dict[str, Any]:
+async def _require_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
     """Allow anonymous reads for public teams; otherwise verify dashboard JWT."""
     token = request.headers.get("X-Dashboard-Token")
     try:
-        visibility = await _get_team_visibility(request, team_address)
+        visibility = await _get_team_visibility(request, team_id)
     except HTTPException:
         if not token:
             raise
         visibility = "private"
 
     if visibility == "public":
-        return {"user_id": "", "team_addresses": [team_address]}
+        return {"user_id": "", "team_ids": [team_id]}
 
     if not token:
         raise HTTPException(status_code=401, detail="Missing X-Dashboard-Token header")
 
     secret = _get_dashboard_secret(request)
     try:
-        return verify_dashboard_token(token, secret, required_team=team_address)
+        return verify_dashboard_token(token, secret, required_team=team_id)
     except ValueError as e:
         msg = str(e)
         if "not configured" in msg:
@@ -60,9 +61,10 @@ async def _require_dashboard_auth(request: Request, team_address: str) -> dict[s
         raise HTTPException(status_code=401, detail=msg)
 
 
-async def _get_team_visibility(request: Request, team_address: str) -> str:
-    parts = team_address.split("/", 1)
-    if len(parts) != 2:
+async def _get_team_visibility(request: Request, team_id: str) -> str:
+    try:
+        domain, team_name = parse_team_id(team_id)
+    except ValueError:
         return "private"
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
@@ -70,7 +72,7 @@ async def _get_team_visibility(request: Request, team_address: str) -> str:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
     try:
-        team = await registry_client.get_team(parts[0], parts[1])
+        team = await registry_client.get_team(domain, team_name)
     except Exception:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
 
@@ -133,7 +135,7 @@ class TaskSummary(BaseModel):
 
 
 class TeamStatus(BaseModel):
-    team_address: str
+    team_id: str
     agent_count: int
     online_agents: list[str]
     active_claims: list[dict[str, Any]]
@@ -141,7 +143,7 @@ class TeamStatus(BaseModel):
 
 
 class UsageMetrics(BaseModel):
-    team_address: str
+    team_id: str
     messages_sent: int
     active_agents: int
     since: Optional[str]
@@ -153,11 +155,11 @@ class UsageMetrics(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/v1/teams/{team_address:path}/agents")
+@router.get("/v1/teams/{team_id:path}/agents")
 async def list_team_agents(
-    request: Request, team_address: str, db=Depends(get_db)
+    request: Request, team_id: str, db=Depends(get_db)
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
@@ -168,14 +170,14 @@ async def list_team_agents(
         LEFT JOIN LATERAL (
             SELECT last_seen_at, workspace_path
             FROM {{tables.workspaces}}
-            WHERE agent_id = a.agent_id AND team_address = a.team_address AND deleted_at IS NULL
+            WHERE agent_id = a.agent_id AND team_id = a.team_id AND deleted_at IS NULL
             ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
             LIMIT 1
         ) w ON TRUE
-        WHERE a.team_address = $1 AND a.deleted_at IS NULL
+        WHERE a.team_id = $1 AND a.deleted_at IS NULL
         ORDER BY a.alias
         """,
-        team_address,
+        team_id,
     )
 
     return {
@@ -196,11 +198,11 @@ async def list_team_agents(
     }
 
 
-@router.get("/v1/teams/{team_address:path}/agents/{alias}")
+@router.get("/v1/teams/{team_id:path}/agents/{alias}")
 async def get_team_agent(
-    request: Request, team_address: str, alias: str, db=Depends(get_db)
+    request: Request, team_id: str, alias: str, db=Depends(get_db)
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
@@ -208,9 +210,9 @@ async def get_team_agent(
         SELECT agent_id, alias, did_key, did_aw, address, role, status, lifetime,
                human_name, agent_type, created_at
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         alias,
     )
     if not row:
@@ -231,25 +233,25 @@ async def get_team_agent(
     ).model_dump()
 
 
-@router.get("/v1/teams/{team_address:path}/messages")
+@router.get("/v1/teams/{team_id:path}/messages")
 async def list_team_messages(
     request: Request,
-    team_address: str,
+    team_id: str,
     limit: int = Query(default=50, ge=1, le=200),
     db=Depends(get_db),
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
         """
         SELECT message_id, from_alias, to_alias, subject, body, priority, created_at, read_at
         FROM {{tables.messages}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY created_at DESC
         LIMIT $2
         """,
-        team_address,
+        team_id,
         limit,
     )
 
@@ -270,28 +272,28 @@ async def list_team_messages(
     }
 
 
-@router.get("/v1/teams/{team_address:path}/tasks")
+@router.get("/v1/teams/{team_id:path}/tasks")
 async def list_team_tasks(
     request: Request,
-    team_address: str,
+    team_id: str,
     limit: int = Query(default=50, ge=1, le=200),
     db=Depends(get_db),
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
-    slug = team_address.split("/")[-1]
+    slug = team_slug(team_id)
 
     rows = await aweb_db.fetch_all(
         """
         SELECT task_id, task_ref_suffix, title, status, priority, task_type,
                assignee_alias, created_at
         FROM {{tables.tasks}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        WHERE team_id = $1 AND deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT $2
         """,
-        team_address,
+        team_id,
         limit,
     )
 
@@ -312,20 +314,20 @@ async def list_team_tasks(
     }
 
 
-@router.get("/v1/teams/{team_address:path}/roles/active")
+@router.get("/v1/teams/{team_id:path}/roles/active")
 async def get_active_roles(
-    request: Request, team_address: str, db=Depends(get_db)
+    request: Request, team_id: str, db=Depends(get_db)
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
         """
         SELECT id, version, bundle_json, updated_at
         FROM {{tables.team_roles}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     if not row:
@@ -341,20 +343,20 @@ async def get_active_roles(
     }
 
 
-@router.get("/v1/teams/{team_address:path}/instructions/active")
+@router.get("/v1/teams/{team_id:path}/instructions/active")
 async def get_active_instructions(
-    request: Request, team_address: str, db=Depends(get_db)
+    request: Request, team_id: str, db=Depends(get_db)
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
         """
         SELECT id, version, document_json, updated_at
         FROM {{tables.team_instructions}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     if not row:
@@ -370,16 +372,16 @@ async def get_active_instructions(
     }
 
 
-@router.get("/v1/teams/{team_address:path}/status")
+@router.get("/v1/teams/{team_id:path}/status")
 async def get_team_status(
-    request: Request, team_address: str, db=Depends(get_db)
+    request: Request, team_id: str, db=Depends(get_db)
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     agent_count_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_address = $1 AND deleted_at IS NULL",
-        team_address,
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        team_id,
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
 
@@ -387,10 +389,10 @@ async def get_team_status(
     online_rows = await aweb_db.fetch_all(
         """
         SELECT DISTINCT alias FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        WHERE team_id = $1 AND deleted_at IS NULL
           AND last_seen_at > NOW() - INTERVAL '30 minutes'
         """,
-        team_address,
+        team_id,
     )
     online_agents = [r["alias"] for r in online_rows]
 
@@ -398,24 +400,24 @@ async def get_team_status(
         """
         SELECT task_ref, alias, claimed_at
         FROM {{tables.task_claims}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY claimed_at DESC
         """,
-        team_address,
+        team_id,
     )
 
     lock_rows = await aweb_db.fetch_all(
         """
         SELECT resource_key, holder_alias, acquired_at, expires_at
         FROM {{tables.reservations}}
-        WHERE team_address = $1
+        WHERE team_id = $1
           AND (expires_at IS NULL OR expires_at > NOW())
         """,
-        team_address,
+        team_id,
     )
 
     return TeamStatus(
-        team_address=team_address,
+        team_id=team_id,
         agent_count=agent_count,
         online_agents=online_agents,
         active_claims=[
@@ -437,20 +439,20 @@ async def get_team_status(
 @router.get("/v1/usage")
 async def get_usage(
     request: Request,
-    team_address: str = Query(...),
+    team_id: str = Query(...),
     since: Optional[str] = Query(default=None),
     until: Optional[str] = Query(default=None),
     db=Depends(get_db),
 ) -> dict:
-    await _require_dashboard_auth(request, team_address)
+    await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
 
     since_dt = _parse_optional_datetime(since)
     until_dt = _parse_optional_datetime(until)
 
     # Count messages
-    msg_query = "SELECT COUNT(*)::int AS cnt FROM {{tables.messages}} WHERE team_address = $1"
-    msg_params: list = [team_address]
+    msg_query = "SELECT COUNT(*)::int AS cnt FROM {{tables.messages}} WHERE team_id = $1"
+    msg_params: list = [team_id]
     idx = 2
     if since_dt:
         msg_query += f" AND created_at >= ${idx}"
@@ -465,13 +467,13 @@ async def get_usage(
 
     # Count active agents
     agent_row = await aweb_db.fetch_one(
-        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_address = $1 AND deleted_at IS NULL",
-        team_address,
+        "SELECT COUNT(*)::int AS cnt FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+        team_id,
     )
     active_agents = agent_row["cnt"] if agent_row else 0
 
     return UsageMetrics(
-        team_address=team_address,
+        team_id=team_id,
         messages_sent=messages_sent,
         active_agents=active_agents,
         since=since,

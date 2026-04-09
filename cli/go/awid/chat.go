@@ -295,7 +295,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	if c.teamCertHeader != "" && c.signingKey != nil {
 		// Certificate auth: same DIDKey + cert headers as regular requests.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := certAuthSignPayload(c.teamAddress, timestamp, nil)
+		signPayload := certAuthSignPayload(c.teamID, timestamp, nil)
 		sig := ed25519.Sign(c.signingKey, signPayload)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)

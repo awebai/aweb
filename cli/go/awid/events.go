@@ -34,7 +34,7 @@ type AgentEvent struct {
 	Type          AgentEventType  `json:"type"`
 	Raw           json.RawMessage `json:"raw,omitempty"`
 	AgentID       string          `json:"agent_id,omitempty"`
-	TeamAddress   string          `json:"team_address,omitempty"`
+	TeamID        string          `json:"team_id,omitempty"`
 	WakeMode      string          `json:"wake_mode,omitempty"`
 	Channel       string          `json:"channel,omitempty"`
 	MessageID     string          `json:"message_id,omitempty"`
@@ -116,7 +116,7 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 	req.Header.Set("Cache-Control", "no-cache")
 	if c.teamCertHeader != "" && c.signingKey != nil {
 		timestamp := time.Now().UTC().Format(time.RFC3339)
-		sigPayload := certAuthSignPayload(c.teamAddress, timestamp, nil)
+		sigPayload := certAuthSignPayload(c.teamID, timestamp, nil)
 		sig := ed25519.Sign(c.signingKey, sigPayload)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
@@ -150,17 +150,17 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 	switch AgentEventType(eventName) {
 	case AgentEventConnected:
 		var payload struct {
-			AgentID     string `json:"agent_id"`
-			TeamAddress string `json:"team_address"`
+			AgentID string `json:"agent_id"`
+			TeamID  string `json:"team_id"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return AgentEvent{}, false, fmt.Errorf("parse connected event: %w", err)
 		}
 		return AgentEvent{
-			Type:        AgentEventConnected,
-			Raw:         raw,
-			AgentID:     payload.AgentID,
-			TeamAddress: payload.TeamAddress,
+			Type:    AgentEventConnected,
+			Raw:     raw,
+			AgentID: payload.AgentID,
+			TeamID:  payload.TeamID,
 		}, true, nil
 
 	case AgentEventActionableMail:

@@ -22,10 +22,10 @@ async def list_agents(db_infra, redis) -> str:
         SELECT agent_id, alias, human_name, agent_type,
                lifetime, status
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND deleted_at IS NULL AND agent_type != 'human'
+        WHERE team_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
         ORDER BY alias
         """,
-        auth.team_address,
+        auth.team_id,
     )
 
     agent_ids = [str(r["agent_id"]) for r in rows]
@@ -52,7 +52,7 @@ async def list_agents(db_infra, redis) -> str:
             }
         )
 
-    return json.dumps({"team_address": auth.team_address, "agents": agents})
+    return json.dumps({"team_id": auth.team_id, "agents": agents})
 
 
 async def heartbeat(db_infra, redis) -> str:
@@ -64,10 +64,10 @@ async def heartbeat(db_infra, redis) -> str:
         """
         SELECT alias
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         auth.agent_id,
-        auth.team_address,
+        auth.team_id,
     )
     if not row:
         return json.dumps({"error": "Agent not found"})
@@ -77,7 +77,7 @@ async def heartbeat(db_infra, redis) -> str:
         redis,
         agent_id=auth.agent_id,
         alias=row["alias"],
-        team_address=auth.team_address,
+        team_id=auth.team_id,
         ttl_seconds=ttl,
     )
 

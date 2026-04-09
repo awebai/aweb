@@ -104,14 +104,14 @@ class RepoLookupRequest(BaseModel):
 
 class RepoLookupResponse(BaseModel):
     repo_id: str
-    team_address: str
+    team_id: str
     canonical_origin: str
     name: str
 
 
 class RepoLookupCandidate(BaseModel):
     repo_id: str
-    team_address: str
+    team_id: str
 
 
 @router.post("/lookup")
@@ -128,10 +128,10 @@ async def lookup_repo(
 
     results = await aweb_db.fetch_all(
         """
-        SELECT id as repo_id, canonical_origin, name, team_address
+        SELECT id as repo_id, canonical_origin, name, team_id
         FROM {{tables.repos}}
         WHERE canonical_origin = $1 AND deleted_at IS NULL
-        ORDER BY team_address
+        ORDER BY team_id
         """,
         canonical_origin,
     )
@@ -146,7 +146,7 @@ async def lookup_repo(
         result = results[0]
         return RepoLookupResponse(
             repo_id=str(result["repo_id"]),
-            team_address=result["team_address"],
+            team_id=result["team_id"],
             canonical_origin=result["canonical_origin"],
             name=result["name"],
         )
@@ -154,16 +154,16 @@ async def lookup_repo(
     candidates = [
         RepoLookupCandidate(
             repo_id=str(r["repo_id"]),
-            team_address=r["team_address"],
+            team_id=r["team_id"],
         )
         for r in results
     ]
-    team_addresses = [c.team_address for c in candidates]
+    team_ids = [c.team_id for c in candidates]
 
     raise HTTPException(
         status_code=409,
         detail={
-            "message": f"Repo {canonical_origin} exists in multiple teams: {', '.join(team_addresses)}.",
+            "message": f"Repo {canonical_origin} exists in multiple teams: {', '.join(team_ids)}.",
             "canonical_origin": canonical_origin,
             "candidates": [c.model_dump() for c in candidates],
         },
@@ -205,13 +205,13 @@ async def ensure_repo(
 
     result = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.repos}} (team_address, origin_url, canonical_origin, name)
+        INSERT INTO {{tables.repos}} (team_id, origin_url, canonical_origin, name)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (team_address, canonical_origin)
+        ON CONFLICT (team_id, canonical_origin)
         DO UPDATE SET origin_url = EXCLUDED.origin_url, deleted_at = NULL
         RETURNING id, canonical_origin, name, (xmax = 0) AS created
         """,
-        identity.team_address,
+        identity.team_id,
         payload.origin_url,
         canonical_origin,
         name,
@@ -221,7 +221,7 @@ async def ensure_repo(
     if created:
         logger.info(
             "Repo created: team=%s canonical=%s id=%s",
-            identity.team_address,
+            identity.team_id,
             canonical_origin,
             result["id"],
         )
@@ -236,7 +236,7 @@ async def ensure_repo(
 
 class RepoSummary(BaseModel):
     id: str
-    team_address: str
+    team_id: str
     canonical_origin: str
     name: str
     created_at: datetime
@@ -269,17 +269,17 @@ async def list_repos(
     query = """
         SELECT
             r.id,
-            r.team_address,
+            r.team_id,
             r.canonical_origin,
             r.name,
             r.created_at,
             COUNT(w.workspace_id) FILTER (WHERE w.deleted_at IS NULL) AS workspace_count
         FROM {{tables.repos}} r
         LEFT JOIN {{tables.workspaces}} w ON w.repo_id = r.id
-        WHERE r.deleted_at IS NULL AND r.team_address = $1
+        WHERE r.deleted_at IS NULL AND r.team_id = $1
     """
 
-    params: list = [identity.team_address]
+    params: list = [identity.team_id]
     param_idx = 2
 
     if cursor_data and "created_at" in cursor_data and "id" in cursor_data:
@@ -293,7 +293,7 @@ async def list_repos(
         param_idx += 2
 
     query += """
-        GROUP BY r.id, r.team_address, r.canonical_origin, r.name, r.created_at
+        GROUP BY r.id, r.team_id, r.canonical_origin, r.name, r.created_at
         ORDER BY r.created_at, r.id
     """
 
@@ -319,7 +319,7 @@ async def list_repos(
         repos=[
             RepoSummary(
                 id=str(row["id"]),
-                team_address=row["team_address"],
+                team_id=row["team_id"],
                 canonical_origin=row["canonical_origin"],
                 name=row["name"],
                 created_at=row["created_at"],
@@ -352,11 +352,11 @@ async def delete_repo(
 
     repo = await aweb_db.fetch_one(
         """
-        SELECT id, team_address FROM {{tables.repos}}
-        WHERE id = $1 AND team_address = $2 AND deleted_at IS NULL
+        SELECT id, team_id FROM {{tables.repos}}
+        WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         str(repo_id),
-        identity.team_address,
+        identity.team_id,
     )
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")

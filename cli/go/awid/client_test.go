@@ -39,12 +39,12 @@ func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
 
 	body := []byte(`{"ok":true}`)
 	timestamp := "2026-04-07T12:00:00Z"
-	teamAddress := "tést.example/<a&b>"
+	teamID := "backend:tést.example/<a&b>"
 
-	got := string(certAuthSignPayload(teamAddress, timestamp, body))
+	got := string(certAuthSignPayload(teamID, timestamp, body))
 
 	h := sha256.Sum256(body)
-	want := `{"body_sha256":"` + hex.EncodeToString(h[:]) + `","team":"tést.example/<a&b>","timestamp":"2026-04-07T12:00:00Z"}`
+	want := `{"body_sha256":"` + hex.EncodeToString(h[:]) + `","team_id":"backend:tést.example/<a&b>","timestamp":"2026-04-07T12:00:00Z"}`
 	if got != want {
 		t.Fatalf("got:  %s\nwant: %s", got, want)
 	}

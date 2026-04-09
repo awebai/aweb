@@ -344,7 +344,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "eve",
 		WorkspaceID: "workspace-1",
 	})
@@ -490,7 +490,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "eve",
 		WorkspaceID: "workspace-1",
 	})
@@ -926,7 +926,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:     server.URL,
-		TeamAddress: "myco/backend",
+		TeamID:      "backend:myco",
 		Alias:       "agent",
 		WorkspaceID: "workspace-1",
 		DID:         did,
@@ -1013,7 +1013,7 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:     server.URL,
-		TeamAddress: "acme/backend",
+		TeamID:      "backend:acme",
 		Alias:       "bot",
 		WorkspaceID: "workspace-1",
 		DID:         did,
@@ -1240,7 +1240,7 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
 		AwebURL:     "https://app.aweb.ai",
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: "workspace-1",
 	})

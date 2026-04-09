@@ -14,6 +14,7 @@ import (
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -203,9 +204,9 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing team binding; run `aw init` first")
 	}
 
-	teamAddress := strings.TrimSpace(state.TeamAddress)
-	if teamAddress == "" {
-		return usageError("current worktree is missing team_address; run `aw init` first")
+	teamID := strings.TrimSpace(state.TeamID)
+	if teamID == "" {
+		return usageError("current worktree is missing team_id; run `aw init` first")
 	}
 	sourceServerURL := strings.TrimSpace(state.AwebURL)
 	if sourceServerURL == "" {
@@ -268,10 +269,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, "Bootstrapping team certificate...")
 	}
 
-	teamDomain, teamName, err := parseAddress(teamAddress)
+	teamDomain, teamName, err := awid.ParseTeamID(teamID)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return fmt.Errorf("invalid team_address in workspace.yaml: %w", err)
+		return fmt.Errorf("invalid team_id in workspace.yaml: %w", err)
 	}
 
 	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, sourceServerURL, teamDomain)
@@ -283,7 +284,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, true)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return fmt.Errorf("create ephemeral team invite for %s: %w", teamAddress, err)
+		return fmt.Errorf("create ephemeral team invite for %s: %w", teamID, err)
 	}
 	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, alias)
 	if err != nil {

@@ -61,7 +61,7 @@ class TeamRolesVersion(BaseModel):
     """A versioned team roles record."""
 
     id: str
-    team_address: str
+    team_id: str
     version: int
     bundle: TeamRolesBundle
     created_by_alias: Optional[str]
@@ -71,19 +71,19 @@ class TeamRolesVersion(BaseModel):
 
 async def get_active_team_roles(
     db: AsyncDatabaseManager,
-    team_address: str,
+    team_id: str,
     *,
     bootstrap_if_missing: bool = True,
 ) -> Optional[TeamRolesVersion]:
     """Get the active team roles bundle for a team."""
     result = await db.fetch_one(
         """
-        SELECT pr.id, pr.team_address, pr.version, pr.bundle_json,
+        SELECT pr.id, pr.team_id, pr.version, pr.bundle_json,
                pr.created_by_alias, pr.created_at, pr.updated_at
         FROM {{tables.team_roles}} pr
-        WHERE pr.team_address = $1 AND pr.is_active = true
+        WHERE pr.team_id = $1 AND pr.is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     if result:
@@ -93,7 +93,7 @@ async def get_active_team_roles(
 
         return TeamRolesVersion(
             id=str(result["id"]),
-            team_address=result["team_address"],
+            team_id=result["team_id"],
             version=result["version"],
             bundle=TeamRolesBundle(**bundle_data),
             created_by_alias=result["created_by_alias"],
@@ -104,11 +104,11 @@ async def get_active_team_roles(
     if not bootstrap_if_missing:
         return None
 
-    logger.info("Bootstrapping default team roles for team %s", team_address)
+    logger.info("Bootstrapping default team roles for team %s", team_id)
     try:
         team_roles_version = await create_team_roles_version(
             db,
-            team_address=team_address,
+            team_id=team_id,
             base_roles_id=None,
             bundle=get_default_bundle(),
             created_by_alias=None,
@@ -119,13 +119,13 @@ async def get_active_team_roles(
         ):
             raise
         # A concurrent bootstrap already created the version -- read it
-        logger.info("Concurrent bootstrap for team %s, retrying read", team_address)
+        logger.info("Concurrent bootstrap for team %s, retrying read", team_id)
         return await get_active_team_roles(
-            db, team_address, bootstrap_if_missing=False
+            db, team_id, bootstrap_if_missing=False
         )
     await activate_team_roles(
         db,
-        team_address=team_address,
+        team_id=team_id,
         roles_id=team_roles_version.id,
     )
     return team_roles_version
@@ -134,7 +134,7 @@ async def get_active_team_roles(
 async def create_team_roles_version(
     db: AsyncDatabaseManager,
     *,
-    team_address: str,
+    team_id: str,
     base_roles_id: Optional[str],
     bundle: Dict[str, Any],
     created_by_alias: Optional[str],
@@ -145,7 +145,7 @@ async def create_team_roles_version(
         WITH active_check AS (
             SELECT id
             FROM {{tables.team_roles}}
-            WHERE team_address = $1 AND is_active = true
+            WHERE team_id = $1 AND is_active = true
         ),
         base_check AS (
             SELECT 1 AS ok
@@ -155,20 +155,20 @@ async def create_team_roles_version(
         next_version AS (
             SELECT COALESCE(MAX(version), 0) + 1 AS version
             FROM {{tables.team_roles}}
-            WHERE team_address = $1
+            WHERE team_id = $1
         )
         INSERT INTO {{tables.team_roles}} (
-            team_address,
+            team_id,
             version,
             bundle_json,
             created_by_alias
         )
         SELECT $1, nv.version, $2::jsonb, $3
         FROM next_version nv, base_check bc
-        RETURNING id, team_address, version, bundle_json,
+        RETURNING id, team_id, version, bundle_json,
                   created_by_alias, created_at, updated_at
         """,
-        team_address,
+        team_id,
         json.dumps(bundle),
         created_by_alias,
         base_roles_id,
@@ -178,9 +178,9 @@ async def create_team_roles_version(
         active = await db.fetch_one(
             """
             SELECT id FROM {{tables.team_roles}}
-            WHERE team_address = $1 AND is_active = true
+            WHERE team_id = $1 AND is_active = true
             """,
-            team_address,
+            team_id,
         )
         active_id = str(active["id"]) if active else "none"
         raise HTTPException(
@@ -196,7 +196,7 @@ async def create_team_roles_version(
     logger.info(
         "Created team roles version %d for team %s (id=%s)",
         result["version"],
-        team_address,
+        team_id,
         result["id"],
     )
 
@@ -206,7 +206,7 @@ async def create_team_roles_version(
 
     return TeamRolesVersion(
         id=str(result["id"]),
-        team_address=result["team_address"],
+        team_id=result["team_id"],
         version=result["version"],
         bundle=TeamRolesBundle(**bundle_data),
         created_by_alias=result["created_by_alias"],
@@ -218,13 +218,13 @@ async def create_team_roles_version(
 async def activate_team_roles(
     db: AsyncDatabaseManager,
     *,
-    team_address: str,
+    team_id: str,
     roles_id: str,
 ) -> bool:
     """Set the active team roles bundle for a team."""
     target = await db.fetch_one(
         """
-        SELECT id, team_address
+        SELECT id, team_id
         FROM {{tables.team_roles}}
         WHERE id = $1
         """,
@@ -233,7 +233,7 @@ async def activate_team_roles(
     if not target:
         raise HTTPException(status_code=404, detail="Team roles not found")
 
-    if target["team_address"] != team_address:
+    if target["team_id"] != team_id:
         raise HTTPException(
             status_code=400,
             detail="Team roles do not belong to this team",
@@ -244,9 +244,9 @@ async def activate_team_roles(
         """
         UPDATE {{tables.team_roles}}
         SET is_active = false
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        team_address,
+        team_id,
     )
 
     # Activate the target version
@@ -259,7 +259,7 @@ async def activate_team_roles(
         roles_id,
     )
 
-    logger.info("Activated team roles %s for team %s", roles_id, team_address)
+    logger.info("Activated team roles %s for team %s", roles_id, team_id)
     return True
 
 
@@ -304,7 +304,7 @@ class ActiveTeamRolesResponse(BaseModel):
 
     team_roles_id: str
     active_team_roles_id: Optional[str] = None
-    team_address: str
+    team_id: str
     version: int
     updated_at: Optional[datetime] = None
     roles: Dict[str, RoleDefinition]
@@ -329,7 +329,7 @@ class CreateTeamRolesResponse(BaseModel):
     """Response for POST /v1/roles."""
 
     team_roles_id: str
-    team_address: str
+    team_id: str
     version: int
     created: bool = True
 
@@ -396,7 +396,7 @@ async def get_active_team_roles_endpoint(
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    team_roles_version = await get_active_team_roles(aweb_db, identity.team_address)
+    team_roles_version = await get_active_team_roles(aweb_db, identity.team_id)
     if not team_roles_version:
         raise HTTPException(status_code=404, detail="No active team roles found")
 
@@ -455,7 +455,7 @@ async def get_active_team_roles_endpoint(
     return ActiveTeamRolesResponse(
         team_roles_id=team_roles_version.id,
         active_team_roles_id=team_roles_version.id,
-        team_address=team_roles_version.team_address,
+        team_id=team_roles_version.team_id,
         version=team_roles_version.version,
         updated_at=team_roles_version.updated_at,
         roles=roles,
@@ -474,17 +474,17 @@ async def list_team_roles_history(
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
-    await get_active_team_roles(aweb_db, identity.team_address, bootstrap_if_missing=True)
+    await get_active_team_roles(aweb_db, identity.team_id, bootstrap_if_missing=True)
 
     rows = await aweb_db.fetch_all(
         """
         SELECT id, version, created_at, created_by_alias, is_active
         FROM {{tables.team_roles}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY version DESC
         LIMIT $2
         """,
-        identity.team_address,
+        identity.team_id,
         limit,
     )
 
@@ -516,7 +516,7 @@ async def create_team_roles_endpoint(
 
     team_roles_version = await create_team_roles_version(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         base_roles_id=payload.base_team_roles_id,
         bundle=bundle_dict,
         created_by_alias=identity.alias,
@@ -524,14 +524,14 @@ async def create_team_roles_endpoint(
 
     logger.info(
         "Team roles created via API: team=%s id=%s version=%d",
-        identity.team_address,
+        identity.team_id,
         team_roles_version.id,
         team_roles_version.version,
     )
 
     return CreateTeamRolesResponse(
         team_roles_id=team_roles_version.id,
-        team_address=team_roles_version.team_address,
+        team_id=team_roles_version.team_id,
         version=team_roles_version.version,
     )
 
@@ -548,13 +548,13 @@ async def get_team_roles_by_id_endpoint(
 
     result = await aweb_db.fetch_one(
         """
-        SELECT pr.id, pr.team_address, pr.version, pr.bundle_json,
+        SELECT pr.id, pr.team_id, pr.version, pr.bundle_json,
                pr.created_by_alias, pr.created_at, pr.updated_at
         FROM {{tables.team_roles}} pr
-        WHERE pr.id = $1 AND pr.team_address = $2
+        WHERE pr.id = $1 AND pr.team_id = $2
         """,
         team_roles_id,
-        identity.team_address,
+        identity.team_id,
     )
 
     if not result:
@@ -580,7 +580,7 @@ async def get_team_roles_by_id_endpoint(
     return ActiveTeamRolesResponse(
         team_roles_id=str(result["id"]),
         active_team_roles_id=None,
-        team_address=result["team_address"],
+        team_id=result["team_id"],
         version=result["version"],
         updated_at=result["updated_at"],
         roles=roles,
@@ -602,21 +602,21 @@ async def activate_team_roles_endpoint(
     previous_active = await aweb_db.fetch_one(
         """
         SELECT id FROM {{tables.team_roles}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        identity.team_address,
+        identity.team_id,
     )
     previous_roles_id = str(previous_active["id"]) if previous_active else None
 
     await activate_team_roles(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         roles_id=team_roles_id,
     )
 
     logger.info(
         "Team roles activated via API: team=%s id=%s (was: %s)",
-        identity.team_address,
+        identity.team_id,
         team_roles_id,
         previous_roles_id,
     )
@@ -639,9 +639,9 @@ async def reset_team_roles_to_default_endpoint(
     previous_active = await aweb_db.fetch_one(
         """
         SELECT id FROM {{tables.team_roles}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        identity.team_address,
+        identity.team_id,
     )
     previous_roles_id = str(previous_active["id"]) if previous_active else None
 
@@ -656,20 +656,20 @@ async def reset_team_roles_to_default_endpoint(
 
     team_roles_version = await create_team_roles_version(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         base_roles_id=previous_roles_id,
         bundle=fresh_bundle,
         created_by_alias=None,
     )
     await activate_team_roles(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         roles_id=team_roles_version.id,
     )
 
     logger.info(
         "Team roles reset to default via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_address,
+        identity.team_id,
         team_roles_version.id,
         team_roles_version.version,
         previous_roles_id,
@@ -694,28 +694,28 @@ async def deactivate_team_roles_endpoint(
     previous_active = await aweb_db.fetch_one(
         """
         SELECT id FROM {{tables.team_roles}}
-        WHERE team_address = $1 AND is_active = true
+        WHERE team_id = $1 AND is_active = true
         """,
-        identity.team_address,
+        identity.team_id,
     )
     previous_roles_id = str(previous_active["id"]) if previous_active else None
 
     team_roles_version = await create_team_roles_version(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         base_roles_id=previous_roles_id,
         bundle={"roles": {}, "adapters": {}},
         created_by_alias=identity.alias,
     )
     await activate_team_roles(
         aweb_db,
-        team_address=identity.team_address,
+        team_id=identity.team_id,
         roles_id=team_roles_version.id,
     )
 
     logger.info(
         "Team roles deactivated via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_address,
+        identity.team_id,
         team_roles_version.id,
         team_roles_version.version,
         previous_roles_id,

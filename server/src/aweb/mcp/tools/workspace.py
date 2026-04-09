@@ -18,10 +18,10 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
         """
         SELECT agent_id, alias, human_name, role
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND deleted_at IS NULL AND agent_type != 'human'
+        WHERE team_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
         ORDER BY alias
         """,
-        auth.team_address,
+        auth.team_id,
     )
     agent_ids = [str(row["agent_id"]) for row in agents]
     presences = await list_agent_presences_by_ids(redis, agent_ids)
@@ -33,22 +33,22 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
 
     claim_rows = await aweb_db.fetch_all(
         """
-        SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_address,
+        SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_id,
                counts.claimant_count, t.title
         FROM {{tables.task_claims}} c
         JOIN (
-            SELECT team_address, task_ref, COUNT(*) AS claimant_count
+            SELECT team_id, task_ref, COUNT(*) AS claimant_count
             FROM {{tables.task_claims}}
-            GROUP BY team_address, task_ref
-        ) counts ON c.team_address = counts.team_address AND c.task_ref = counts.task_ref
+            GROUP BY team_id, task_ref
+        ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
         LEFT JOIN {{tables.tasks}} t
-            ON t.team_address = c.team_address
+            ON t.team_id = c.team_id
             AND t.task_ref_suffix = SUBSTRING(c.task_ref FROM POSITION('-' IN c.task_ref) + 1)
             AND t.deleted_at IS NULL
-        WHERE c.team_address = $1
+        WHERE c.team_id = $1
         ORDER BY c.claimed_at DESC
         """,
-        auth.team_address,
+        auth.team_id,
     )
 
     claims_by_workspace = {}
@@ -120,10 +120,10 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
 
     return json.dumps(
         {
-            "team_address": auth.team_address,
+            "team_id": auth.team_id,
             "workspace_id": auth.agent_id,
             "self": self_entry,
-            "team": team,
+            "team_agents": team,
             "conflicts": conflicts,
             "conflict_count": len(conflicts),
             "timestamp": datetime.now(timezone.utc).isoformat(),

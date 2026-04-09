@@ -26,7 +26,7 @@ type SelectedRoleInfo struct {
 type ActiveTeamRolesResponse struct {
 	TeamRolesID       string                    `json:"team_roles_id"`
 	ActiveTeamRolesID string                    `json:"active_team_roles_id,omitempty"`
-	TeamAddress       string                    `json:"team_address"`
+	TeamID            string                    `json:"team_id"`
 	Version           int                       `json:"version"`
 	UpdatedAt         string                    `json:"updated_at"`
 	Roles             map[string]RoleDefinition `json:"roles"`
@@ -48,7 +48,7 @@ type CreateTeamRolesRequest struct {
 
 type CreateTeamRolesResponse struct {
 	TeamRolesID string `json:"team_roles_id"`
-	TeamAddress string `json:"team_address"`
+	TeamID      string `json:"team_id"`
 	Version     int    `json:"version"`
 	Created     bool   `json:"created"`
 }

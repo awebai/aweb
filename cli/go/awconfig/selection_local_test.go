@@ -14,7 +14,7 @@ func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
 		AwebURL:     "https://app.aweb.ai",
-		TeamAddress: "myteam.aweb.ai/backend",
+		TeamID:      "backend:myteam.aweb.ai",
 		Alias:       "support",
 		WorkspaceID: "agent-1",
 	}); err != nil {
@@ -52,7 +52,7 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
 		AwebURL:     "https://app.aweb.ai",
-		TeamAddress: "acme.com/backend",
+		TeamID:      "backend:acme.com",
 		Alias:       "alice",
 		WorkspaceID: "workspace-1",
 	}); err != nil {

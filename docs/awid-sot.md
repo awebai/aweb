@@ -64,7 +64,7 @@ Three controller keys exist, each with its own scope:
   the hosted deployment (managed)
 
 This is the **awid pattern**, distinct from the aweb pattern
-(`{team, timestamp, body_sha256}`) and the hosted deployment pattern
+(`{team_id, timestamp, body_sha256}`) and the hosted deployment pattern
 (`{body_sha256, method, path, timestamp}`). The three patterns are not
 interchangeable; see the per-endpoint signed payload examples below for
 each operation's exact envelope shape.
@@ -133,7 +133,7 @@ POST   /v1/namespaces/{domain}/teams
                "visibility": "private" | "public" }
        The caller generates the team keypair and provides the public
        key. awid never sees the private key.
-       Response: { "team_id": "uuid", "domain": "acme.com",
+       Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
                    "visibility": "private",
@@ -152,7 +152,7 @@ GET    /v1/namespaces/{domain}/teams/{name}
        Auth: none (public). Services call this to get the team
        public key and visibility metadata for certificate verification
        and dashboard auth.
-       Response: { "team_id": "uuid", "domain": "acme.com",
+       Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
                    "visibility": "private" | "public",
@@ -200,6 +200,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
        Auth: none (public).
        Query params: active_only (boolean), since (timestamp)
        Response: { "certificates": [{
+                   "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
                    "member_did_key": "did:key:z6Mk...",
                    "member_did_aw": "did:aw:...",
@@ -210,6 +211,19 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "revoked_at": null }] }
        With active_only=true: only rows where revoked_at IS NULL.
        This is how the dashboard lists team members.
+
+GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
+       Resolve an active team-member reference.
+       Auth: none (public).
+       Response: { "team_id": "backend:acme.com",
+                   "certificate_id": "uuid",
+                   "member_did_key": "did:key:z6Mk...",
+                   "member_did_aw": "did:aw:...",
+                   "member_address": "acme.com/alice",
+                   "alias": "alice",
+                   "lifetime": "persistent",
+                   "issued_at": "..." }
+       This is the canonical `(team_id, alias)` lookup layer.
 
 POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Revoke a certificate.
@@ -244,7 +258,7 @@ any service.
 {
   "version": 1,
   "certificate_id": "uuid",
-  "team": "acme.com/backend",
+  "team_id": "backend:acme.com",
   "team_did_key": "did:key:z6Mk...(team public key)",
   "member_did_key": "did:key:z6Mk...(agent's key)",
   "member_did_aw": "did:aw:...(agent's stable ID, empty for ephemeral)",
@@ -332,9 +346,9 @@ that owns the team, and the certificate's `member_address` field carries
 the cross-namespace address.
 
 Example: a team in `acme.com` namespace adds `partner.com/bob` as a member.
-The certificate is signed by the `acme.com/backend` team controller. The
+The certificate is signed by the `backend:acme.com` team controller. The
 verifying service sees that bob (whose home namespace is `partner.com`) is
-a member of `acme.com/backend`. No special protocol support is needed —
+a member of `backend:acme.com`. No special protocol support is needed —
 the certificate format already accommodates this because `member_address`
 is just a string and is not constrained to match the team's namespace.
 
@@ -408,7 +422,7 @@ CREATE TABLE public_addresses (
 );
 
 CREATE TABLE teams (
-    team_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_uuid       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
     display_name    TEXT NOT NULL DEFAULT '',
@@ -428,7 +442,7 @@ CREATE TABLE teams (
 -- Services cache the revoked rows to reject removed members.
 CREATE TABLE team_certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id         UUID NOT NULL REFERENCES teams(team_id),
+    team_uuid       UUID NOT NULL REFERENCES teams(team_uuid),
     certificate_id  TEXT NOT NULL,
     member_did_key  TEXT NOT NULL,
     member_did_aw   TEXT,
@@ -439,14 +453,17 @@ CREATE TABLE team_certificates (
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 
-    UNIQUE (team_id, certificate_id)
+    UNIQUE (team_uuid, certificate_id)
 );
 
 CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_id, member_did_key)
+    ON team_certificates (team_uuid, member_did_key)
+    WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX idx_team_certificates_alias_active
+    ON team_certificates (team_uuid, alias)
     WHERE revoked_at IS NULL;
 CREATE INDEX idx_team_certificates_revoked
-    ON team_certificates (team_id, revoked_at) WHERE revoked_at IS NOT NULL;
+    ON team_certificates (team_uuid, revoked_at) WHERE revoked_at IS NOT NULL;
 ```
 
 ---

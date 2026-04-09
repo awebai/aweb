@@ -38,7 +38,7 @@ async def send_mail(
         return json.dumps({"error": "Recipient is required"})
 
     recipient = await get_agent_by_alias(
-        db_infra, team_address=auth.team_address, alias=recipient_alias,
+        db_infra, team_id=auth.team_id, alias=recipient_alias,
     )
     if recipient is None:
         return json.dumps({"error": f"Agent '{recipient_alias}' not found"})
@@ -46,7 +46,7 @@ async def send_mail(
     try:
         message_id, created_at = await deliver_message(
             db_infra,
-            team_address=auth.team_address,
+            team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
             to_agent_id=str(recipient["agent_id"]),
@@ -81,7 +81,7 @@ async def check_inbox(
     aweb_db = db_infra.get_manager("aweb")
 
     owner = await get_agent_by_id(
-        db_infra, team_address=auth.team_address, agent_id=auth.agent_id,
+        db_infra, team_id=auth.team_id, agent_id=auth.agent_id,
     )
     if owner is None:
         return json.dumps({"error": "Agent not found"})
@@ -97,13 +97,13 @@ async def check_inbox(
                subject, body, priority, read_at, created_at,
                from_did, signature, signed_payload
         FROM {{tables.messages}}
-        WHERE team_address = $1
+        WHERE team_id = $1
           AND to_agent_id = $2
           AND ($3::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
         LIMIT $4
         """,
-        auth.team_address,
+        auth.team_id,
         UUID(auth.agent_id),
         bool(unread_only),
         limit_value,
@@ -116,11 +116,11 @@ async def check_inbox(
             """
             UPDATE {{tables.messages}}
             SET read_at = COALESCE(read_at, NOW())
-            WHERE team_address = $1
+            WHERE team_id = $1
               AND to_agent_id = $2
               AND message_id = ANY($3::uuid[])
             """,
-            auth.team_address,
+            auth.team_id,
             UUID(auth.agent_id),
             unread_message_ids,
         )

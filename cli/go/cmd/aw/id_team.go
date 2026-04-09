@@ -19,7 +19,7 @@ import (
 
 type teamCreateOutput struct {
 	Status      string `json:"status"`
-	TeamAddress string `json:"team_address"`
+	TeamID      string `json:"team_id"`
 	TeamDIDKey  string `json:"team_did_key"`
 	TeamKeyPath string `json:"team_key_path"`
 	RegistryURL string `json:"registry_url,omitempty"`
@@ -32,27 +32,27 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	Status      string `json:"status"`
-	TeamAddress string `json:"team_address"`
-	Alias       string `json:"alias"`
-	CertPath    string `json:"cert_path"`
+	Status   string `json:"status"`
+	TeamID   string `json:"team_id"`
+	Alias    string `json:"alias"`
+	CertPath string `json:"cert_path"`
 }
 
 type teamAddMemberOutput struct {
 	Status        string `json:"status"`
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	MemberAddress string `json:"member_address"`
 	CertificateID string `json:"certificate_id"`
 }
 
 type teamRemoveMemberOutput struct {
 	Status        string `json:"status"`
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	MemberAddress string `json:"member_address"`
 }
 
 type certShowOutput struct {
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	Alias         string `json:"alias"`
 	MemberDIDKey  string `json:"member_did_key"`
 	MemberDIDAW   string `json:"member_did_aw,omitempty"`
@@ -64,14 +64,14 @@ type certShowOutput struct {
 }
 
 type localTeamRegistration struct {
-	TeamAddress string
+	TeamID      string
 	TeamDIDKey  string
 	TeamKey     ed25519.PrivateKey
 	TeamKeyPath string
 }
 
 type localTeamBootstrapResult struct {
-	TeamAddress string
+	TeamID      string
 	TeamDIDKey  string
 	TeamKeyPath string
 	Certificate *awid.TeamCertificate
@@ -235,7 +235,7 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	}
 	printOutput(teamCreateOutput{
 		Status:      "created",
-		TeamAddress: registration.TeamAddress,
+		TeamID:      registration.TeamID,
 		TeamDIDKey:  registration.TeamDIDKey,
 		TeamKeyPath: registration.TeamKeyPath,
 		RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL),
@@ -358,11 +358,11 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 		return nil, fmt.Errorf("invalid invite token: secret mismatch")
 	}
 
-	teamAddress := invite.Domain + "/" + invite.TeamName
+	teamID := awid.BuildTeamID(invite.Domain, invite.TeamName)
 
 	teamKey, err := awconfig.LoadTeamKey(invite.Domain, invite.TeamName)
 	if err != nil {
-		return nil, fmt.Errorf("team key for %s not found: %w (accept-invite must run on the machine that created the team)", teamAddress, err)
+		return nil, fmt.Errorf("team key for %s not found: %w (accept-invite must run on the machine that created the team)", teamID, err)
 	}
 
 	memberDIDKey, err := resolveOrGenerateMemberDIDKey(workingDir, invite.Ephemeral)
@@ -388,7 +388,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 
 	// Sign certificate
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamAddress,
+		Team:          teamID,
 		MemberDIDKey:  memberDIDKey,
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
@@ -425,10 +425,10 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
-			Status:      "accepted",
-			TeamAddress: teamAddress,
-			Alias:       alias,
-			CertPath:    certPath,
+			Status:   "accepted",
+			TeamID:   teamID,
+			Alias:    alias,
+			CertPath: certPath,
 		},
 		Certificate: cert,
 		RegistryURL: registryURL,
@@ -490,12 +490,12 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return usageError("--member is required")
 	}
 
-	teamAddress := domain + "/" + team
+	teamID := awid.BuildTeamID(domain, team)
 
 	// Load team key
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
-		return fmt.Errorf("load team key for %s: %w", teamAddress, err)
+		return fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
 
 	// Resolve member's did:key from their address via awid
@@ -519,7 +519,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 
 	// Sign certificate — include the member's stable identity from awid
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamAddress,
+		Team:          teamID,
 		MemberDIDKey:  address.CurrentDIDKey,
 		MemberDIDAW:   address.DIDAW,
 		MemberAddress: member,
@@ -537,7 +537,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 
 	printOutput(teamAddMemberOutput{
 		Status:        "added",
-		TeamAddress:   teamAddress,
+		TeamID:        teamID,
 		MemberAddress: member,
 		CertificateID: cert.CertificateID,
 	}, formatTeamAddMember)
@@ -558,11 +558,11 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return usageError("--member is required")
 	}
 
-	teamAddress := domain + "/" + team
+	teamID := awid.BuildTeamID(domain, team)
 
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
-		return fmt.Errorf("load team key for %s: %w", teamAddress, err)
+		return fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
 
 	registry, err := newConfiguredRegistryClient(nil, "")
@@ -586,36 +586,22 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// List active certificates to find the member's certificate_id
-	certs, err := registry.ListCertificates(ctx, registryURL, domain, team, true)
-	if err != nil {
-		return fmt.Errorf("list certificates: %w", err)
-	}
-
-	memberDomain, memberName, err := parseAddress(member)
+	_, memberName, err := parseAddress(member)
 	if err != nil {
 		return err
 	}
-
-	// Try to resolve the member's did:key for precise matching
-	var memberDIDKey string
-	address, _, addrErr := registry.GetNamespaceAddressAt(ctx, registryURL, memberDomain, memberName)
-	if addrErr == nil {
-		memberDIDKey = address.CurrentDIDKey
-	}
-
-	certID, err := findCertificateForMember(certs, memberName, memberDIDKey)
+	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
 	if err != nil {
-		return fmt.Errorf("in team %s: %w", teamAddress, err)
+		return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
 	}
 
-	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, certID, teamKey); err != nil {
+	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, memberRef.CertificateID, teamKey); err != nil {
 		return fmt.Errorf("revoke certificate: %w", err)
 	}
 
 	printOutput(teamRemoveMemberOutput{
 		Status:        "removed",
-		TeamAddress:   teamAddress,
+		TeamID:        teamID,
 		MemberAddress: member,
 	}, formatTeamRemoveMember)
 	return nil
@@ -633,7 +619,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 	}
 
 	printOutput(certShowOutput{
-		TeamAddress:   cert.Team,
+		TeamID:        cert.Team,
 		Alias:         cert.Alias,
 		MemberDIDKey:  cert.MemberDIDKey,
 		MemberDIDAW:   cert.MemberDIDAW,
@@ -715,7 +701,7 @@ func ensureLocalTeamRegistered(
 		return nil, err
 	}
 	return &localTeamRegistration{
-		TeamAddress: domain + "/" + name,
+		TeamID:      awid.BuildTeamID(domain, name),
 		TeamDIDKey:  teamDIDKey,
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
@@ -742,7 +728,7 @@ func bootstrapFirstLocalTeamMember(
 	}
 	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
 	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamAddress,
+		Team:          registration.TeamID,
 		MemberDIDKey:  memberDIDKey,
 		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
 		MemberAddress: strings.TrimSpace(memberAddress),
@@ -756,7 +742,7 @@ func bootstrapFirstLocalTeamMember(
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	return &localTeamBootstrapResult{
-		TeamAddress: registration.TeamAddress,
+		TeamID:      registration.TeamID,
 		TeamDIDKey:  registration.TeamDIDKey,
 		TeamKeyPath: registration.TeamKeyPath,
 		Certificate: cert,
@@ -824,33 +810,4 @@ func parseAddress(address string) (domain, name string, err error) {
 		return "", "", usageError("invalid address %q (expected domain/name)", address)
 	}
 	return awconfig.NormalizeDomain(parts[0]), strings.ToLower(strings.TrimSpace(parts[1])), nil
-}
-
-// findCertificateForMember finds a certificate by DID key (preferred) or alias.
-// Returns an error if alias-based matching finds multiple certificates.
-func findCertificateForMember(certs []awid.RegistryCertificate, alias, memberDIDKey string) (string, error) {
-	// Prefer exact did:key match
-	if strings.TrimSpace(memberDIDKey) != "" {
-		for _, c := range certs {
-			if c.MemberDIDKey == memberDIDKey {
-				return c.CertificateID, nil
-			}
-		}
-	}
-
-	// Fall back to alias match with ambiguity detection
-	var matches []string
-	for _, c := range certs {
-		if c.Alias == alias {
-			matches = append(matches, c.CertificateID)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("no active certificate found for member %s", alias)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("multiple active certificates found for alias %s; resolve the member's address to disambiguate", alias)
-	}
 }

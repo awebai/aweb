@@ -38,7 +38,7 @@ class TestConnect:
         agent_sk, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "persistent",
@@ -57,7 +57,7 @@ class TestConnect:
             agent_type="agent",
         )
 
-        assert result["team_address"] == "acme.com/backend"
+        assert result["team_id"] == "backend:acme.com"
         assert result["alias"] == "alice"
         assert result["role"] == "developer"
         assert result["agent_id"] is not None
@@ -65,8 +65,8 @@ class TestConnect:
 
         # Verify team row was created
         team = await db.fetch_one(
-            "SELECT * FROM {{tables.teams}} WHERE team_address = $1",
-            "acme.com/backend",
+            "SELECT * FROM {{tables.teams}} WHERE team_id = $1",
+            "backend:acme.com",
         )
         assert team is not None
         assert team["team_did_key"] == team_did_key
@@ -93,7 +93,7 @@ class TestConnect:
         _, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "persistent",
@@ -116,11 +116,11 @@ class TestConnect:
         result2 = await connect_agent(**kwargs)
 
         assert result1["agent_id"] == result2["agent_id"]
-        assert result1["team_address"] == result2["team_address"]
+        assert result1["team_id"] == result2["team_id"]
         assert result1["workspace_id"] == result2["workspace_id"]
 
     @pytest.mark.asyncio
-    async def test_team_address_parsed_correctly(self, aweb_cloud_db):
+    async def test_team_id_parsed_correctly(self, aweb_cloud_db):
         from aweb.routes.connect import connect_agent
 
         db = aweb_cloud_db.aweb_db
@@ -129,7 +129,7 @@ class TestConnect:
         _, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "example.org/frontend",
+            "team_id": "frontend:example.org",
             "alias": "bob",
             "did_key": agent_did_key,
             "lifetime": "ephemeral",
@@ -149,8 +149,8 @@ class TestConnect:
         )
 
         team = await db.fetch_one(
-            "SELECT * FROM {{tables.teams}} WHERE team_address = $1",
-            "example.org/frontend",
+            "SELECT * FROM {{tables.teams}} WHERE team_id = $1",
+            "frontend:example.org",
         )
         assert team["namespace"] == "example.org"
         assert team["team_name"] == "frontend"
@@ -165,7 +165,7 @@ class TestConnect:
         _, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "persistent",
@@ -203,7 +203,7 @@ class TestConnect:
         _, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "ephemeral",
@@ -241,7 +241,7 @@ class TestConnect:
         _, _, agent_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "persistent",

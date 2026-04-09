@@ -128,21 +128,21 @@ async def chat_send(
 
     if to_alias:
         # Create or find session and send.
-        sender = await get_agent_by_id(db_infra, team_address=auth.team_address, agent_id=auth.agent_id)
+        sender = await get_agent_by_id(db_infra, team_id=auth.team_id, agent_id=auth.agent_id)
         if not sender:
             return json.dumps({"error": "Sender agent not found"})
 
         if sender["alias"] == to_alias:
             return json.dumps({"error": "Cannot chat with yourself"})
 
-        target = await get_agent_by_alias(db_infra, team_address=auth.team_address, alias=to_alias)
+        target = await get_agent_by_alias(db_infra, team_id=auth.team_id, alias=to_alias)
         if not target:
             return json.dumps({"error": f"Agent '{to_alias}' not found in team"})
 
         try:
             sid = await ensure_session(
                 db_infra,
-                team_address=auth.team_address,
+                team_id=auth.team_id,
                 agent_rows=[dict(sender), dict(target)],
                 created_by_alias=auth.alias,
             )
@@ -181,9 +181,9 @@ async def chat_send(
 
         # Verify session belongs to team.
         sess = await aweb_db.fetch_one(
-            "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_address = $2",
+            "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_id = $2",
             sid,
-            auth.team_address,
+            auth.team_id,
         )
         if not sess:
             return json.dumps({"error": "Session not found"})
@@ -285,9 +285,9 @@ async def chat_history(
 
     # Verify session exists in team.
     sess = await aweb_db.fetch_one(
-        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_address = $2",
+        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 AND team_id = $2",
         session_uuid,
-        auth.team_address,
+        auth.team_id,
     )
     if not sess:
         return json.dumps({"error": "Session not found"})

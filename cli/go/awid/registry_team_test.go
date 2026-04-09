@@ -31,7 +31,7 @@ func TestCreateTeam(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -50,7 +50,7 @@ func TestCreateTeam(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if team.TeamID != "team-uuid-1" {
+	if team.TeamID != "backend:acme.com" {
 		t.Fatalf("team_id=%q", team.TeamID)
 	}
 	if team.Name != "backend" {
@@ -75,7 +75,7 @@ func TestGetTeam(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -122,7 +122,7 @@ func TestSetTeamVisibility(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -191,7 +191,7 @@ func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
 			t.Fatalf("invalid team signature for payload %s", payload)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "team-uuid-1",
+			"team_id":      "backend:acme.com",
 			"domain":       "acme.com",
 			"name":         "backend",
 			"display_name": "Backend Team",
@@ -316,7 +316,7 @@ func TestRegisterCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:  "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     LifetimePersistent,
@@ -363,7 +363,7 @@ func TestListCertificates(t *testing.T) {
 			"certificates": []map[string]any{
 				{
 					"certificate_id": "cert-1",
-					"team_address":   "acme.com/backend",
+					"team_id":        "backend:acme.com",
 					"member_did_key": "did:key:z6MkAlice",
 					"alias":          "alice",
 					"lifetime":       "persistent",
@@ -390,6 +390,45 @@ func TestListCertificates(t *testing.T) {
 	}
 	if !strings.Contains(gotPath, "active_only=true") {
 		t.Fatalf("path=%q should contain active_only=true", gotPath)
+	}
+}
+
+func TestResolveTeamMember(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/members/alice" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "backend:acme.com",
+			"certificate_id": "cert-1",
+			"member_did_key": "did:key:z6MkAlice",
+			"member_did_aw":  "did:aw:alice",
+			"member_address": "acme.com/alice",
+			"alias":          "alice",
+			"lifetime":       "persistent",
+			"issued_at":      "2026-04-06T00:00:00Z",
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	member, err := client.ResolveTeamMember(ctx, server.URL, "acme.com", "backend", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if member.TeamID != "backend:acme.com" {
+		t.Fatalf("team_id=%q", member.TeamID)
+	}
+	if member.CertificateID != "cert-1" {
+		t.Fatalf("certificate_id=%q", member.CertificateID)
+	}
+	if member.MemberAddress != "acme.com/alice" {
+		t.Fatalf("member_address=%q", member.MemberAddress)
 	}
 }
 

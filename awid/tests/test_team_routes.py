@@ -48,6 +48,7 @@ async def test_create_team(client, controller_identity):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    assert body["team_id"] == "backend:acme.com"
     assert body["domain"] == "acme.com"
     assert body["name"] == "backend"
     assert body["display_name"] == "Backend Team"
@@ -185,9 +186,117 @@ async def test_get_team(client, controller_identity):
     resp = await client.get("/v1/namespaces/get.com/teams/infra")
     assert resp.status_code == 200
     body = resp.json()
+    assert body["team_id"] == "infra:get.com"
     assert body["name"] == "infra"
     assert body["team_did_key"] == team_did_key
     assert body["visibility"] == "private"
+
+
+@pytest.mark.asyncio
+async def test_get_team_member_by_alias(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "members.com")
+
+    team_key, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="members.com", operation="create_team", name="backend")
+    resp = await client.post(
+        "/v1/namespaces/members.com/teams",
+        json={"name": "backend", "team_did_key": team_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    _, member_pub = generate_keypair()
+    headers = _sign(
+        team_key,
+        team_did_key,
+        domain="members.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id="cert-1",
+    )
+    resp = await client.post(
+        "/v1/namespaces/members.com/teams/backend/certificates",
+        json={
+            "certificate_id": "cert-1",
+            "member_did_key": did_from_public_key(member_pub),
+            "member_did_aw": "did:aw:member1",
+            "member_address": "members.com/alice",
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = await client.get("/v1/namespaces/members.com/teams/backend/members/alice")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["team_id"] == "backend:members.com"
+    assert body["certificate_id"] == "cert-1"
+    assert body["member_did_aw"] == "did:aw:member1"
+    assert body["member_address"] == "members.com/alice"
+    assert body["alias"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_register_certificate_rejects_duplicate_active_alias(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "dupalias.com")
+
+    team_key, team_pub = generate_keypair()
+    team_did_key = did_from_public_key(team_pub)
+    headers = _sign(signing_key, controller_did, domain="dupalias.com", operation="create_team", name="backend")
+    resp = await client.post(
+        "/v1/namespaces/dupalias.com/teams",
+        json={"name": "backend", "team_did_key": team_did_key},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    _, member1_pub = generate_keypair()
+    headers = _sign(
+        team_key,
+        team_did_key,
+        domain="dupalias.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id="cert-1",
+    )
+    resp = await client.post(
+        "/v1/namespaces/dupalias.com/teams/backend/certificates",
+        json={
+            "certificate_id": "cert-1",
+            "member_did_key": did_from_public_key(member1_pub),
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    _, member2_pub = generate_keypair()
+    headers = _sign(
+        team_key,
+        team_did_key,
+        domain="dupalias.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id="cert-2",
+    )
+    resp = await client.post(
+        "/v1/namespaces/dupalias.com/teams/backend/certificates",
+        json={
+            "certificate_id": "cert-2",
+            "member_did_key": did_from_public_key(member2_pub),
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 409, resp.text
+    assert "Alias already active in team" in resp.text
 
 
 @pytest.mark.asyncio

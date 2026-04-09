@@ -30,16 +30,16 @@ class _DbShim:
         return self._db
 
 
-async def _setup_team_and_agents(aweb_db, team_address="acme.com/backend"):
+async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, 'did:key:z6Mkteam')
         ON CONFLICT DO NOTHING
         """,
-        team_address,
-        team_address.split("/")[0],
-        team_address.split("/")[1],
+        team_id,
+        "acme.com",
+        "backend",
     )
 
     alice_did = _make_did_key()
@@ -47,24 +47,24 @@ async def _setup_team_and_agents(aweb_db, team_address="acme.com/backend"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime)
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
         VALUES ($1, $2, 'alice', 'persistent')
         RETURNING agent_id
         """,
-        team_address, alice_did,
+        team_id, alice_did,
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime)
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
         VALUES ($1, $2, 'bob', 'persistent')
         RETURNING agent_id
         """,
-        team_address, bob_did,
+        team_id, bob_did,
     )
 
     return (
-        {"agent_id": alice["agent_id"], "team_address": team_address, "alias": "alice"},
-        {"agent_id": bob["agent_id"], "team_address": team_address, "alias": "bob"},
+        {"agent_id": alice["agent_id"], "team_id": team_id, "alias": "alice"},
+        {"agent_id": bob["agent_id"], "team_id": team_id, "alias": "bob"},
     )
 
 
@@ -75,7 +75,7 @@ async def test_ensure_session_creates_session(aweb_cloud_db):
 
     session_id = await ensure_session(
         db_shim,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         agent_rows=[alice, bob],
         created_by_alias="alice",
     )
@@ -89,11 +89,11 @@ async def test_ensure_session_idempotent(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     s1 = await ensure_session(
-        db_shim, team_address="acme.com/backend",
+        db_shim, team_id="backend:acme.com",
         agent_rows=[alice, bob], created_by_alias="alice",
     )
     s2 = await ensure_session(
-        db_shim, team_address="acme.com/backend",
+        db_shim, team_id="backend:acme.com",
         agent_rows=[alice, bob], created_by_alias="alice",
     )
 
@@ -106,7 +106,7 @@ async def test_send_and_read_message(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     session_id = await ensure_session(
-        db_shim, team_address="acme.com/backend",
+        db_shim, team_id="backend:acme.com",
         agent_rows=[alice, bob], created_by_alias="alice",
     )
 
@@ -136,7 +136,7 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
     session_id = await ensure_session(
-        db_shim, team_address="acme.com/backend",
+        db_shim, team_id="backend:acme.com",
         agent_rows=[alice, bob], created_by_alias="alice",
     )
 
@@ -144,8 +144,8 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_address, did_key, alias, lifetime)
-        VALUES ('acme.com/backend', $1, 'charlie', 'ephemeral')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
+        VALUES ('backend:acme.com', $1, 'charlie', 'ephemeral')
         RETURNING agent_id
         """,
         charlie_did,

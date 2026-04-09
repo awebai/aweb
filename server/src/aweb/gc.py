@@ -42,19 +42,19 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
 
     inactive = await aweb_db.fetch_all(
         """
-        SELECT t.team_address
+        SELECT t.team_id
         FROM {{tables.teams}} t
         WHERE t.created_at < $1
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.messages}} m
-              WHERE m.team_address = t.team_address
+              WHERE m.team_id = t.team_id
                 AND m.created_at >= $1
           )
           AND NOT EXISTS (
               SELECT 1 FROM {{tables.chat_participants}} cp
               JOIN {{tables.chat_messages}} cm ON cm.session_id = cp.session_id
               JOIN {{tables.agents}} a ON a.agent_id = cp.agent_id
-              WHERE a.team_address = t.team_address
+              WHERE a.team_id = t.team_id
                 AND cm.created_at >= $1
           )
         """,
@@ -63,114 +63,114 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
 
     deleted_count = 0
     for row in inactive:
-        await _hard_delete_scope(aweb_db, team_address=row["team_address"])
+        await _hard_delete_scope(aweb_db, team_id=row["team_id"])
         deleted_count += 1
 
     logger.info("gc_inactive_scopes: deleted %d scopes (cutoff=%s)", deleted_count, cutoff.isoformat())
     return {"scopes_deleted": deleted_count}
 
 
-async def _hard_delete_scope(aweb_db, *, team_address) -> None:
+async def _hard_delete_scope(aweb_db, *, team_id) -> None:
     async with aweb_db.transaction() as tx:
         await tx.execute(
             """
             DELETE FROM {{tables.chat_read_receipts}}
             WHERE agent_id IN (
-                SELECT agent_id FROM {{tables.agents}} WHERE team_address = $1
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
             )
             """,
-            team_address,
+            team_id,
         )
         await tx.execute(
             """
             DELETE FROM {{tables.chat_messages}}
             WHERE session_id IN (
-                SELECT session_id FROM {{tables.chat_sessions}} WHERE team_address = $1
+                SELECT session_id FROM {{tables.chat_sessions}} WHERE team_id = $1
             )
             """,
-            team_address,
+            team_id,
         )
         await tx.execute(
             """
             DELETE FROM {{tables.chat_participants}}
             WHERE agent_id IN (
-                SELECT agent_id FROM {{tables.agents}} WHERE team_address = $1
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
             )
             """,
-            team_address,
+            team_id,
         )
         await tx.execute(
             """
             DELETE FROM {{tables.chat_sessions}}
-            WHERE team_address = $1
+            WHERE team_id = $1
             """,
-            team_address,
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.messages}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.messages}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.control_signals}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.control_signals}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.contacts}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.contacts}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.task_claims}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.task_claims}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.task_comments}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.task_comments}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.task_dependencies}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.task_dependencies}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.tasks}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.tasks}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.task_counters}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.task_counters}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.task_root_counters}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.task_root_counters}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.reservations}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.reservations}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.workspaces}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.workspaces}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.repos}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.repos}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.team_roles}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.team_roles}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.team_instructions}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.team_instructions}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.audit_log}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.audit_log}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.agents}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.agents}} WHERE team_id = $1",
+            team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.teams}} WHERE team_address = $1",
-            team_address,
+            "DELETE FROM {{tables.teams}} WHERE team_id = $1",
+            team_id,
         )

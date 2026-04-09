@@ -29,7 +29,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
     cert = {
         "version": 1,
         "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team": kwargs.get("team_address", "acme.com/backend"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": "",
@@ -101,14 +101,14 @@ def _build_test_app(aweb_db, team_did_key):
     return app
 
 
-def _signed_request(agent_sk, agent_did_key, team_address, body_bytes=b""):
-    """Build signed headers. Signs {body_sha256, team, timestamp}."""
+def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
+    """Build signed headers. Signs {body_sha256, team_id, timestamp}."""
     import hashlib
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
     payload_bytes = canonical_json_bytes({
         "body_sha256": body_sha256,
-        "team": team_address,
+        "team_id": team_id,
         "timestamp": timestamp,
     })
     sig = sign_message(agent_sk, payload_bytes)
@@ -127,7 +127,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
 
     cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
         lifetime="persistent",
     )
@@ -143,7 +143,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
     }
 
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -155,7 +155,7 @@ async def test_connect_http_first_time(aweb_cloud_db):
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     data = resp.json()
-    assert data["team_address"] == "acme.com/backend"
+    assert data["team_id"] == "backend:acme.com"
     assert data["alias"] == "alice"
     assert data["agent_id"]
     assert data["workspace_id"]
@@ -172,7 +172,7 @@ async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
         lifetime="persistent",
     )
@@ -187,7 +187,7 @@ async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
     }
 
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -209,9 +209,9 @@ async def test_connect_http_missing_role_stays_empty(aweb_cloud_db):
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT role FROM {{tables.agents}}
-        WHERE team_address = $1 AND did_key = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
     )
     assert row is not None
@@ -226,7 +226,7 @@ async def test_connect_http_idempotent(aweb_cloud_db):
 
     cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="bob",
     )
     cert_header = _encode_certificate(cert)
@@ -239,11 +239,11 @@ async def test_connect_http_idempotent(aweb_cloud_db):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        headers1 = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+        headers1 = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
         headers1["X-AWID-Team-Certificate"] = cert_header
         resp1 = await client.post("/v1/connect", content=body_bytes, headers={**headers1, "Content-Type": "application/json"})
 
-        headers2 = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+        headers2 = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
         headers2["X-AWID-Team-Certificate"] = cert_header
         resp2 = await client.post("/v1/connect", content=body_bytes, headers={**headers2, "Content-Type": "application/json"})
 
@@ -260,17 +260,17 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
 
     existing_cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
         lifetime="persistent",
     )
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         "acme.com",
         "backend",
         team_did_key,
@@ -279,11 +279,11 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, did_aw, address, alias, lifetime, human_name, agent_type, role, status)
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, human_name, agent_type, role, status)
         VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'Old Name', 'old-type', 'old-role', 'retired')
         """,
         existing_agent_id,
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
         "did:aw:old",
         "acme.com/alice",
@@ -298,7 +298,7 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
         "agent_type": "codex",
     }
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(existing_cert)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -334,7 +334,7 @@ async def test_connect_http_missing_cert_returns_401(aweb_cloud_db):
 
     body = {"hostname": "Mac.local"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     # No X-AWID-Team-Certificate header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -356,14 +356,14 @@ async def test_connect_http_invalid_signature_returns_401(aweb_cloud_db):
 
     cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="eve",
     )
     cert_header = _encode_certificate(cert)
 
     body = {"hostname": "Mac.local"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(other_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(other_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = cert_header
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -385,21 +385,21 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
 
     existing_cert = _make_certificate(
         team_sk, team_did_key, first_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
     )
     new_cert = _make_certificate(
         team_sk, team_did_key, second_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
     )
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         "acme.com",
         "backend",
         team_did_key,
@@ -408,11 +408,11 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, lifetime, status)
         VALUES ($1, $2, $3, $4, 'persistent', 'active')
         """,
         first_agent_id,
-        "acme.com/backend",
+        "backend:acme.com",
         first_did_key,
         "alice",
     )
@@ -420,11 +420,11 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_type, workspace_path)
+            (workspace_id, team_id, agent_id, alias, workspace_type, workspace_path)
         VALUES ($1, $2, $3, $4, 'agent', $5)
         """,
         existing_workspace_id,
-        "acme.com/backend",
+        "backend:acme.com",
         first_agent_id,
         "alice",
         "/existing",
@@ -432,7 +432,7 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(aweb_clo
 
     body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(second_sk, second_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(second_sk, second_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(new_cert)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -463,16 +463,16 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
 
     new_cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="bob",
     )
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         "acme.com",
         "backend",
         team_did_key,
@@ -481,11 +481,11 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status)
+            (agent_id, team_id, did_key, alias, lifetime, status)
         VALUES ($1, $2, $3, $4, 'persistent', 'active')
         """,
         existing_agent_id,
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
         "alice",
     )
@@ -493,11 +493,11 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_type, workspace_path)
+            (workspace_id, team_id, agent_id, alias, workspace_type, workspace_path)
         VALUES ($1, $2, $3, $4, 'agent', $5)
         """,
         existing_workspace_id,
-        "acme.com/backend",
+        "backend:acme.com",
         existing_agent_id,
         "alice",
         "/existing",
@@ -505,7 +505,7 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
 
     body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(new_cert)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -520,10 +520,10 @@ async def test_connect_http_rejects_alias_change_for_same_agent(aweb_cloud_db):
     workspace_rows = await aweb_cloud_db.aweb_db.fetch_all(
         """
         SELECT alias, workspace_path FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        WHERE team_id = $1 AND deleted_at IS NULL
         ORDER BY alias
         """,
-        "acme.com/backend",
+        "backend:acme.com",
     )
     assert len(workspace_rows) == 1
     assert workspace_rows[0]["alias"] == "alice"
@@ -538,17 +538,17 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db
 
     cert = _make_certificate(
         team_sk, team_did_key, agent_did_key,
-        team_address="acme.com/backend",
+        team_id="backend:acme.com",
         alias="alice",
         lifetime="persistent",
     )
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        "acme.com/backend",
+        "backend:acme.com",
         "acme.com",
         "backend",
         team_did_key,
@@ -557,18 +557,18 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, status, deleted_at)
+            (agent_id, team_id, did_key, alias, lifetime, status, deleted_at)
         VALUES ($1, $2, $3, $4, 'persistent', 'deleted', NOW())
         """,
         deleted_agent_id,
-        "acme.com/backend",
+        "backend:acme.com",
         agent_did_key,
         "alice",
     )
 
     body = {"hostname": "Mac.local", "workspace_path": "/new-path"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(agent_sk, agent_did_key, "acme.com/backend", body_bytes)
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -589,10 +589,10 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(aweb_cloud_db
         """
         SELECT agent_id, alias, did_key, status, deleted_at
         FROM {{tables.agents}}
-        WHERE team_address = $1
+        WHERE team_id = $1
         ORDER BY deleted_at NULLS FIRST, created_at
         """,
-        "acme.com/backend",
+        "backend:acme.com",
     )
     assert len(rows) == 2
     assert str(rows[0]["agent_id"]) == new_agent_id

@@ -207,7 +207,7 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 			"username":"juanre",
 			"org_id":"o1",
 			"namespace_domain":"juanre.aweb.ai",
-			"team_address":"juanre.aweb.ai/default",
+			"team_id":"default:juanre.aweb.ai",
 			"certificate":"eyJ2ZXJzaW9uIjoxfQ==",
 			"did_aw":"did:aw:test",
 			"member_address":"juanre.aweb.ai/laptop",
@@ -229,8 +229,8 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 	if sigErr != nil {
 		t.Fatalf("server-side validation failed: %v", sigErr)
 	}
-	if resp.TeamAddress != "juanre.aweb.ai/default" {
-		t.Fatalf("unexpected team_address: %s", resp.TeamAddress)
+	if resp.TeamID != "default:juanre.aweb.ai" {
+		t.Fatalf("unexpected team_id: %s", resp.TeamID)
 	}
 	if resp.Certificate == "" {
 		t.Fatalf("missing certificate")
@@ -267,7 +267,7 @@ func TestCliSignup_APIBasePath(t *testing.T) {
 			"username":"juanre",
 			"org_id":"o1",
 			"namespace_domain":"juanre.aweb.ai",
-			"team_address":"juanre.aweb.ai/default",
+			"team_id":"default:juanre.aweb.ai",
 			"certificate":"eyJ2ZXJzaW9uIjoxfQ==",
 			"did_aw":"did:aw:test",
 			"member_address":"juanre.aweb.ai/laptop",

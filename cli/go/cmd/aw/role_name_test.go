@@ -68,7 +68,7 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 
 	writeWorkspaceBindingForTest(t, repo, awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: "workspace-1",
 		RoleName:    "developer",

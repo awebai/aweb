@@ -230,6 +230,143 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	}
 }
 
+func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := ComputeDIDKey(pub)
+	currentDIDKey := ComputeDIDKey(currentPub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-1",
+				"member_did_key": memberDIDKey,
+				"member_did_aw":  stableID,
+				"member_address": "research.org/alice",
+				"alias":          "alice",
+				"lifetime":       "persistent",
+				"issued_at":      "2026-04-04T00:00:00Z",
+			})
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentDIDKey,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	identity, err := resolver.Resolve(context.Background(), "backend:acme.com/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != currentDIDKey {
+		t.Fatalf("DID=%q", identity.DID)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("StableID=%q", identity.StableID)
+	}
+	if identity.Address != "research.org/alice" {
+		t.Fatalf("Address=%q", identity.Address)
+	}
+	if identity.Handle != "alice" {
+		t.Fatalf("Handle=%q", identity.Handle)
+	}
+	if identity.Lifetime != LifetimePersistent {
+		t.Fatalf("Lifetime=%q", identity.Lifetime)
+	}
+	if identity.ResolvedVia != "registry" {
+		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
+	}
+}
+
+func TestRegistryResolverResolvesEphemeralTeamMemberReference(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := ComputeDIDKey(pub)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/eve":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-eve",
+				"member_did_key": memberDIDKey,
+				"member_did_aw":  "",
+				"member_address": "",
+				"alias":          "eve",
+				"lifetime":       "ephemeral",
+				"issued_at":      "2026-04-04T00:00:00Z",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	identity, err := resolver.Resolve(context.Background(), "backend:acme.com/eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != memberDIDKey {
+		t.Fatalf("DID=%q", identity.DID)
+	}
+	if identity.StableID != "" {
+		t.Fatalf("StableID=%q", identity.StableID)
+	}
+	if identity.Address != "backend:acme.com/eve" {
+		t.Fatalf("Address=%q", identity.Address)
+	}
+	if identity.Lifetime != LifetimeEphemeral {
+		t.Fatalf("Lifetime=%q", identity.Lifetime)
+	}
+}
+
+func TestRegistryResolverTeamMemberReferenceNotFound(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	if _, err := resolver.Resolve(context.Background(), "backend:acme.com/missing"); err == nil {
+		t.Fatal("expected error for missing team member reference")
+	}
+}
+
 func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 	t.Parallel()
 

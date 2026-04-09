@@ -29,7 +29,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
     cert = {
         "version": 1,
         "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team": kwargs.get("team_address", "acme.com/backend"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": "",
@@ -46,7 +46,7 @@ def _encode_certificate(cert):
     return base64.b64encode(json.dumps(cert).encode()).decode()
 
 
-def _signed_request(agent_sk, agent_did_key, team_address, body_bytes=b""):
+def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
     import hashlib
 
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -54,7 +54,7 @@ def _signed_request(agent_sk, agent_did_key, team_address, body_bytes=b""):
     payload_bytes = canonical_json_bytes(
         {
             "body_sha256": body_sha256,
-            "team": team_address,
+            "team_id": team_id,
             "timestamp": timestamp,
         }
     )
@@ -118,7 +118,7 @@ def _build_test_app(aweb_db, team_did_key):
 async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
-    team_address = "acme.com/backend"
+    team_id = "backend:acme.com"
     workspace_id = uuid4()
     agent_id = uuid4()
 
@@ -126,19 +126,19 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address=team_address,
+        team_id=team_id,
         alias="bob",
         lifetime="ephemeral",
     )
-    headers = _signed_request(agent_sk, agent_did_key, team_address)
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         "acme.com",
         "backend",
         team_did_key,
@@ -146,22 +146,22 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, role)
+            (agent_id, team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
         """,
         agent_id,
-        team_address,
+        team_id,
         agent_did_key,
         "bob",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at)
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         workspace_id,
-        team_address,
+        team_id,
         agent_id,
         "bob",
         "/tmp/gone-worktree",
@@ -170,10 +170,10 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.task_claims}}
-            (team_address, workspace_id, alias, human_name, task_ref, claimed_at)
+            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
-        team_address,
+        team_id,
         workspace_id,
         "bob",
         "",
@@ -226,7 +226,7 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
 async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
-    team_address = "acme.com/backend"
+    team_id = "backend:acme.com"
     workspace_id = uuid4()
     agent_id = uuid4()
 
@@ -234,19 +234,19 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address=team_address,
+        team_id=team_id,
         alias="maintainer",
         lifetime="persistent",
     )
-    headers = _signed_request(agent_sk, agent_did_key, team_address)
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         "acme.com",
         "backend",
         team_did_key,
@@ -254,22 +254,22 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, role)
+            (agent_id, team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, $3, $4, 'persistent', 'developer')
         """,
         agent_id,
-        team_address,
+        team_id,
         agent_did_key,
         "maintainer",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at)
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         workspace_id,
-        team_address,
+        team_id,
         agent_id,
         "maintainer",
         "/tmp/gone-worktree",
@@ -291,7 +291,7 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
 async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
-    team_address = "acme.com/backend"
+    team_id = "backend:acme.com"
     workspace_id = uuid4()
     agent_id = uuid4()
 
@@ -299,19 +299,19 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         team_sk,
         team_did_key,
         agent_did_key,
-        team_address=team_address,
+        team_id=team_id,
         alias="bot",
         lifetime="ephemeral",
     )
-    headers = _signed_request(agent_sk, agent_did_key, team_address)
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         """,
-        team_address,
+        team_id,
         "acme.com",
         "backend",
         team_did_key,
@@ -319,22 +319,22 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, role)
+            (agent_id, team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
         """,
         agent_id,
-        team_address,
+        team_id,
         agent_did_key,
         "bot",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at)
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         workspace_id,
-        team_address,
+        team_id,
         agent_id,
         "bot",
         "/tmp/recent-worktree",
@@ -374,8 +374,8 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     team_a_sk, _, team_a_did_key = _make_keypair()
     team_b_sk, _, team_b_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
-    team_a_address = "acme.com/backend"
-    team_b_address = "other.example/dev"
+    team_a_address = "backend:acme.com"
+    team_b_address = "dev:other.example"
     workspace_id = uuid4()
     agent_id = uuid4()
 
@@ -383,7 +383,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
         team_b_sk,
         team_b_did_key,
         agent_did_key,
-        team_address=team_b_address,
+        team_id=team_b_address,
         alias="eve",
         lifetime="ephemeral",
     )
@@ -392,7 +392,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_address, namespace, team_name, team_did_key)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)
         """,
         team_a_address,
@@ -407,7 +407,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_address, did_key, alias, lifetime, role)
+            (agent_id, team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, $3, $4, 'ephemeral', 'developer')
         """,
         agent_id,
@@ -418,7 +418,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (team_address, did_key, alias, lifetime, role)
+            (team_id, did_key, alias, lifetime, role)
         VALUES ($1, $2, $3, 'ephemeral', 'developer')
         """,
         team_b_address,
@@ -428,7 +428,7 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_address, agent_id, alias, workspace_path, last_seen_at)
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         workspace_id,

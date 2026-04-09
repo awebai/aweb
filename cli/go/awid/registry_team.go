@@ -22,12 +22,24 @@ type RegistryTeam struct {
 // RegistryCertificate represents a registered team membership certificate.
 type RegistryCertificate struct {
 	CertificateID string `json:"certificate_id"`
-	TeamAddress   string `json:"team_address"`
+	TeamID        string `json:"team_id"`
 	MemberDIDKey  string `json:"member_did_key"`
 	Alias         string `json:"alias"`
 	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
+}
+
+// TeamMemberReference resolves a (team_id, alias) reference to an active member.
+type TeamMemberReference struct {
+	TeamID        string `json:"team_id"`
+	CertificateID string `json:"certificate_id"`
+	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	MemberAddress string `json:"member_address,omitempty"`
+	Alias         string `json:"alias"`
+	Lifetime      string `json:"lifetime"`
+	IssuedAt      string `json:"issued_at"`
 }
 
 type teamCreateRequest struct {
@@ -268,6 +280,34 @@ func (c *RegistryClient) ListCertificates(
 		return nil, err
 	}
 	return out.Certificates, nil
+}
+
+// ResolveTeamMember resolves an active (team_id, alias) team-member reference.
+func (c *RegistryClient) ResolveTeamMember(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	alias string,
+) (*TeamMemberReference, error) {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	alias = strings.TrimSpace(alias)
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("team name is required")
+	}
+	if alias == "" {
+		return nil, fmt.Errorf("alias is required")
+	}
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/members/" + urlPathEscape(alias)
+	var out TeamMemberReference
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // RevokeCertificate revokes a team membership certificate at awid.

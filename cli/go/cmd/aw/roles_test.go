@@ -30,7 +30,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id":        "roles-1",
 				"active_team_roles_id": "roles-1",
-				"team_address":         "proj-1",
+				"team_id":              "backend:proj-1",
 				"version":              3,
 				"updated_at":           "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
@@ -64,7 +64,7 @@ func TestAwRolesShowUsesWorkspaceRoleName(t *testing.T) {
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
 		AwebURL:     server.URL,
-		TeamAddress: "demo/backend",
+		TeamID:      "backend:demo",
 		Alias:       "alice",
 		WorkspaceID: "agent-1",
 		RoleName:    "reviewer",
@@ -104,7 +104,7 @@ func TestAwRolesListListsSortedRoles(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-1",
-				"team_address":  "proj-1",
+				"team_id":       "backend:proj-1",
 				"version":       1,
 				"updated_at":    "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
@@ -157,7 +157,7 @@ func TestAwRolesShowAllRolesRendersPlaybooks(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-2",
-				"team_address":  "proj-1",
+				"team_id":       "backend:proj-1",
 				"version":       2,
 				"updated_at":    "2026-03-10T10:00:00Z",
 				"roles": map[string]any{
@@ -275,7 +275,7 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id":        "roles-1",
 				"active_team_roles_id": "roles-1",
-				"team_address":         "proj-1",
+				"team_id":              "backend:proj-1",
 				"version":              1,
 				"updated_at":           "2026-03-10T10:00:00Z",
 				"roles":                map[string]any{},
@@ -290,7 +290,7 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-2",
-				"team_address":  "proj-1",
+				"team_id":       "backend:proj-1",
 				"version":       2,
 				"created":       true,
 			})

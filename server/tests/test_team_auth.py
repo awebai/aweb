@@ -32,7 +32,7 @@ def _make_certificate(
     team_did_key: str,
     member_did_key: str,
     *,
-    team_address: str = "acme.com/backend",
+    team_id: str = "backend:acme.com",
     alias: str = "alice",
     lifetime: str = "persistent",
     certificate_id: str = "cert-001",
@@ -42,7 +42,7 @@ def _make_certificate(
     cert = {
         "version": 1,
         "certificate_id": certificate_id,
-        "team": team_address,
+        "team_id": team_id,
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": member_did_aw,
@@ -76,7 +76,7 @@ class TestCertificateSignature:
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             alias="alice",
         )
 
@@ -152,7 +152,7 @@ class TestParseAndVerifyCertificate:
 
         cert = _make_certificate(
             team_sk, team_did_key, agent_did_key,
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             alias="alice",
             lifetime="persistent",
         )
@@ -165,7 +165,7 @@ class TestParseAndVerifyCertificate:
             revocation_checker=lambda _ta, _cid: False,
         )
 
-        assert result["team_address"] == "acme.com/backend"
+        assert result["team_id"] == "backend:acme.com"
         assert result["alias"] == "alice"
         assert result["did_key"] == agent_did_key
         assert result["lifetime"] == "persistent"
@@ -275,21 +275,21 @@ class TestDashboardJWT:
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend", "acme.com/frontend"],
+            "team_ids": ["backend:acme.com", "frontend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
         result = verify_dashboard_token(token, _JWT_SECRET)
         assert result["user_id"] == "user-123"
-        assert "acme.com/backend" in result["team_addresses"]
+        assert "backend:acme.com" in result["team_ids"]
 
     def test_expired_jwt_rejected(self):
         from aweb.team_auth import verify_dashboard_token
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend"],
+            "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) - 3600,
         }
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
@@ -302,7 +302,7 @@ class TestDashboardJWT:
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend"],
+            "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
         token = jwt.encode(payload, "real-secret-at-least-thirty-two-bytes!", algorithm="HS256")
@@ -310,31 +310,31 @@ class TestDashboardJWT:
         with pytest.raises(ValueError, match="invalid"):
             verify_dashboard_token(token, "wrong-secret-at-least-thirty-two-bytes!")
 
-    def test_team_address_authorization(self):
+    def test_team_id_authorization(self):
         from aweb.team_auth import verify_dashboard_token
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend"],
+            "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
-        result = verify_dashboard_token(token, _JWT_SECRET, required_team="acme.com/backend")
+        result = verify_dashboard_token(token, _JWT_SECRET, required_team="backend:acme.com")
         assert result["user_id"] == "user-123"
 
-    def test_team_address_unauthorized(self):
+    def test_team_id_unauthorized(self):
         from aweb.team_auth import verify_dashboard_token
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend"],
+            "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
         with pytest.raises(ValueError, match="not authorized"):
-            verify_dashboard_token(token, _JWT_SECRET, required_team="acme.com/frontend")
+            verify_dashboard_token(token, _JWT_SECRET, required_team="frontend:acme.com")
 
     def test_empty_secret_rejected(self):
         import warnings
@@ -343,7 +343,7 @@ class TestDashboardJWT:
 
         payload = {
             "user_id": "user-123",
-            "team_addresses": ["acme.com/backend"],
+            "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
         with warnings.catch_warnings():

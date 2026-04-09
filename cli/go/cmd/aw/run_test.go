@@ -901,7 +901,7 @@ func TestRunUsesWakeEventToTriggerSecondCycle(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"mia\",\"session_id\":\"s-1\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()
@@ -1018,7 +1018,7 @@ func TestRunUsesActionableWakeEventToTriggerSecondCycle(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
+			_, _ = io.WriteString(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 			_, _ = io.WriteString(w, "event: actionable_chat\ndata: {\"message_id\":\"m-2\",\"from_alias\":\"henry\",\"session_id\":\"s-9\",\"wake_mode\":\"interrupt\",\"unread_count\":1,\"sender_waiting\":true}\n\n")
 			flusher.Flush()

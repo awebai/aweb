@@ -53,7 +53,7 @@ type CliSignupResponse struct {
 	Username        string `json:"username"`
 	OrgID           string `json:"org_id"`
 	NamespaceDomain string `json:"namespace_domain"`
-	TeamAddress     string `json:"team_address"`
+	TeamID          string `json:"team_id"`
 	Certificate     string `json:"certificate"`
 	DIDAW           string `json:"did_aw"`
 	MemberAddress   string `json:"member_address"`

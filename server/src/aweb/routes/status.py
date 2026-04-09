@@ -42,15 +42,15 @@ _WORKSPACE_IDS_CACHE: OrderedDict[
 ] = OrderedDict()
 
 
-def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, team_address: str) -> tuple[int, str]:
+def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, team_id: str) -> tuple[int, str]:
     # Scope cache to the DatabaseInfra instance to avoid cross-DB bleed.
-    return (id(db_infra), team_address)
+    return (id(db_infra), team_id)
 
 
 def _get_cached_workspace_ids(
-    db_infra: DatabaseInfra, limit: int, team_address: str
+    db_infra: DatabaseInfra, limit: int, team_id: str
 ) -> Optional[List[str]]:
-    key = _get_workspace_ids_cache_key(db_infra, team_address)
+    key = _get_workspace_ids_cache_key(db_infra, team_id)
     entry = _WORKSPACE_IDS_CACHE.get(key)
     if entry is None:
         return None
@@ -64,9 +64,9 @@ def _get_cached_workspace_ids(
 
 
 def _update_workspace_ids_cache(
-    db_infra: DatabaseInfra, limit: int, team_address: str, workspace_ids: List[str]
+    db_infra: DatabaseInfra, limit: int, team_id: str, workspace_ids: List[str]
 ) -> None:
-    key = _get_workspace_ids_cache_key(db_infra, team_address)
+    key = _get_workspace_ids_cache_key(db_infra, team_id)
     _WORKSPACE_IDS_CACHE[key] = _WorkspaceIDsCacheEntry(
         workspace_ids=workspace_ids,
         fetched_at=time.monotonic(),
@@ -79,7 +79,7 @@ def _update_workspace_ids_cache(
 
 def _title_join(
     alias: str,
-    team_address_col: str,
+    team_id_col: str,
     task_ref_col: str,
     *,
     include_type: bool = False,
@@ -87,7 +87,7 @@ def _title_join(
 ) -> str:
     """Lateral join resolving title (+ optional type) from aweb tasks.
 
-    Matches task_ref (e.g. 'myteam-42') against team_address and task_ref_suffix
+    Matches task_ref (e.g. 'myteam-42') against team_id and task_ref_suffix
     by reconstructing the full ref from the team slug and suffix.
     """
     select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
@@ -98,8 +98,8 @@ def _title_join(
         LEFT JOIN LATERAL (
             SELECT {select_expr}
             FROM {{{{tables.tasks}}}} t
-            WHERE t.team_address = {team_address_col}
-              AND {task_ref_col} = (substring({team_address_col} from '[^/]+$') || '-' || t.task_ref_suffix)
+            WHERE t.team_id = {team_id_col}
+              AND {task_ref_col} = (split_part({team_id_col}, ':', 1) || '-' || t.task_ref_suffix)
               AND t.deleted_at IS NULL{guard}
             LIMIT 1
         ) {alias} ON true"""
@@ -108,22 +108,22 @@ def _title_join(
 async def get_all_workspace_ids_from_db(
     db_infra: DatabaseInfra,
     limit: int = DEFAULT_WORKSPACE_LIMIT,
-    team_address: str = "",
+    team_id: str = "",
 ) -> List[str]:
     """Get all registered workspace IDs from the database (excluding soft-deleted).
 
     Args:
         db_infra: Database infrastructure.
         limit: Maximum number of workspace IDs to return.
-        team_address: Scope to this team (tenant isolation).
+        team_id: Scope to this team (tenant isolation).
 
     Returns:
         List of workspace IDs, ordered by most recently updated first.
     """
-    if not team_address:
-        raise ValueError("team_address is required")
+    if not team_id:
+        raise ValueError("team_id is required")
 
-    cached = _get_cached_workspace_ids(db_infra, limit, team_address)
+    cached = _get_cached_workspace_ids(db_infra, limit, team_id)
     if cached is not None:
         return cached
 
@@ -132,14 +132,14 @@ async def get_all_workspace_ids_from_db(
         """
         SELECT workspace_id
         FROM {{tables.workspaces}}
-        WHERE team_address = $1 AND deleted_at IS NULL
+        WHERE team_id = $1 AND deleted_at IS NULL
         ORDER BY updated_at DESC LIMIT $2
         """,
-        team_address,
+        team_id,
         limit,
     )
     workspace_ids = [str(row["workspace_id"]) for row in rows]
-    _update_workspace_ids_cache(db_infra, limit, team_address, workspace_ids)
+    _update_workspace_ids_cache(db_infra, limit, team_id, workspace_ids)
     return workspace_ids
 
 
@@ -147,7 +147,7 @@ async def get_workspace_ids_by_repo_from_db(
     db_infra: DatabaseInfra,
     repo: str,
     limit: int = DEFAULT_WORKSPACE_LIMIT,
-    team_address: str = "",
+    team_id: str = "",
 ) -> List[str]:
     """Get workspace IDs for a repo by canonical_origin from the database.
 
@@ -155,13 +155,13 @@ async def get_workspace_ids_by_repo_from_db(
         db_infra: Database infrastructure.
         repo: Canonical origin (e.g., "github.com/org/repo").
         limit: Maximum number of workspace IDs to return.
-        team_address: Scope by team (tenant isolation).
+        team_id: Scope by team (tenant isolation).
 
     Returns:
         List of workspace IDs belonging to the repo.
     """
-    if not team_address:
-        raise ValueError("team_address is required")
+    if not team_id:
+        raise ValueError("team_id is required")
 
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
@@ -169,12 +169,12 @@ async def get_workspace_ids_by_repo_from_db(
         SELECT w.workspace_id
         FROM {{tables.workspaces}} w
         JOIN {{tables.repos}} r ON w.repo_id = r.id
-        WHERE r.canonical_origin = $1 AND w.team_address = $2 AND w.deleted_at IS NULL AND r.deleted_at IS NULL
+        WHERE r.canonical_origin = $1 AND w.team_id = $2 AND w.deleted_at IS NULL AND r.deleted_at IS NULL
         ORDER BY w.updated_at DESC
         LIMIT $3
         """,
         repo,
-        team_address,
+        team_id,
         limit,
     )
     return [str(row["workspace_id"]) for row in rows]
@@ -184,7 +184,7 @@ async def get_workspace_ids_by_repo_id_from_db(
     db_infra: DatabaseInfra,
     repo_id: str,
     limit: int = DEFAULT_WORKSPACE_LIMIT,
-    team_address: str = "",
+    team_id: str = "",
 ) -> List[str]:
     """Get workspace IDs for a repo by repo UUID from the database.
 
@@ -192,25 +192,25 @@ async def get_workspace_ids_by_repo_id_from_db(
         db_infra: Database infrastructure.
         repo_id: Repo UUID.
         limit: Maximum number of workspace IDs to return.
-        team_address: Scope by team (tenant isolation).
+        team_id: Scope by team (tenant isolation).
 
     Returns:
         List of workspace IDs belonging to the repo.
     """
-    if not team_address:
-        raise ValueError("team_address is required")
+    if not team_id:
+        raise ValueError("team_id is required")
 
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
         SELECT workspace_id
         FROM {{tables.workspaces}}
-        WHERE repo_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE repo_id = $1 AND team_id = $2 AND deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT $3
         """,
         repo_id,
-        team_address,
+        team_id,
         limit,
     )
     return [str(row["workspace_id"]) for row in rows]
@@ -220,7 +220,7 @@ async def get_workspace_ids_by_human_name_from_db(
     db_infra: DatabaseInfra,
     human_name: str,
     limit: int = DEFAULT_WORKSPACE_LIMIT,
-    team_address: str = "",
+    team_id: str = "",
 ) -> List[str]:
     """Get workspace IDs for workspaces owned by a specific human.
 
@@ -228,25 +228,25 @@ async def get_workspace_ids_by_human_name_from_db(
         db_infra: Database infrastructure.
         human_name: Owner name to filter by.
         limit: Maximum number of workspace IDs to return.
-        team_address: Scope by team (tenant isolation).
+        team_id: Scope by team (tenant isolation).
 
     Returns:
         List of workspace IDs owned by the human.
     """
-    if not team_address:
-        raise ValueError("team_address is required")
+    if not team_id:
+        raise ValueError("team_id is required")
 
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
         SELECT workspace_id
         FROM {{tables.workspaces}}
-        WHERE human_name = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE human_name = $1 AND team_id = $2 AND deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT $3
         """,
         human_name,
-        team_address,
+        team_id,
         limit,
     )
     return [str(row["workspace_id"]) for row in rows]
@@ -271,7 +271,7 @@ async def status(
     - workspace_id: Show status for a specific workspace
     - repo_id: Show aggregated status for all workspaces in a repo (UUID)
     """
-    team_address = identity.team_address
+    team_id = identity.team_id
     aweb_db = db_infra.get_manager("aweb")
 
     # Determine which workspace_ids to include
@@ -288,38 +288,38 @@ async def status(
             """
             SELECT workspace_id
             FROM {{tables.workspaces}}
-            WHERE workspace_id = $1 AND team_address = $2 AND deleted_at IS NULL
+            WHERE workspace_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
             validated_workspace_id,
-            team_address,
+            team_id,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Workspace not found")
         workspace_ids = [validated_workspace_id]
     elif repo_id:
         workspace_ids = await get_workspace_ids_by_repo_id_from_db(
-            db_infra, repo_id, DEFAULT_WORKSPACE_LIMIT, team_address=team_address
+            db_infra, repo_id, DEFAULT_WORKSPACE_LIMIT, team_id=team_id
         )
     else:
         workspace_ids = await get_all_workspace_ids_from_db(
-            db_infra, DEFAULT_WORKSPACE_LIMIT, team_address=team_address
+            db_infra, DEFAULT_WORKSPACE_LIMIT, team_id=team_id
         )
 
     # Build workspace info based on the filter that was used
     if workspace_id:
         workspace_info: Dict[str, Any] = {
             "workspace_id": workspace_id,
-            "team_address": team_address,
+            "team_id": team_id,
         }
     elif repo_id:
         workspace_info = {
             "repo_id": repo_id,
             "workspace_count": len(workspace_ids),
-            "team_address": team_address,
+            "team_id": team_id,
         }
     else:
         workspace_info = {
-            "team_address": team_address,
+            "team_id": team_id,
             "workspace_count": len(workspace_ids),
         }
 
@@ -360,13 +360,13 @@ async def status(
             focus_info.issue_type AS focus_task_type
         FROM {{{{tables.workspaces}}}} w
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        {_title_join("focus_info", "w.team_address", "w.focus_task_ref", include_type=True, guard_col="w.focus_task_ref")}
-        WHERE w.team_address = $1
+        {_title_join("focus_info", "w.team_id", "w.focus_task_ref", include_type=True, guard_col="w.focus_task_ref")}
+        WHERE w.team_id = $1
           AND w.deleted_at IS NULL
           AND w.workspace_id = ANY($2::uuid[])
         ORDER BY w.updated_at DESC, w.alias ASC
         """,
-        team_address,
+        team_id,
         workspace_ids,
     )
     workspace_rows_by_id = {str(row["workspace_id"]): row for row in workspace_rows}
@@ -382,7 +382,7 @@ async def status(
             c.alias,
             c.human_name,
             c.claimed_at,
-            c.team_address,
+            c.team_id,
             c.apex_task_ref,
             counts.claimant_count,
             claim_info.title AS title,
@@ -390,18 +390,18 @@ async def status(
             apex_info.issue_type AS apex_type
         FROM {{{{tables.task_claims}}}} c
         JOIN (
-            SELECT team_address, task_ref, COUNT(*) AS claimant_count
+            SELECT team_id, task_ref, COUNT(*) AS claimant_count
             FROM {{{{tables.task_claims}}}}
-            WHERE team_address = $1
-            GROUP BY team_address, task_ref
-        ) counts ON c.team_address = counts.team_address AND c.task_ref = counts.task_ref
-        {_title_join("claim_info", "c.team_address", "c.task_ref")}
-        {_title_join("apex_info", "c.team_address", "c.apex_task_ref", include_type=True, guard_col="c.apex_task_ref")}
-        WHERE c.team_address = $1
+            WHERE team_id = $1
+            GROUP BY team_id, task_ref
+        ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
+        {_title_join("claim_info", "c.team_id", "c.task_ref")}
+        {_title_join("apex_info", "c.team_id", "c.apex_task_ref", include_type=True, guard_col="c.apex_task_ref")}
+        WHERE c.team_id = $1
           AND c.workspace_id = ANY($2::uuid[])
         ORDER BY c.claimed_at DESC
         """,
-        team_address,
+        team_id,
         workspace_ids,
     )
 
@@ -419,7 +419,7 @@ async def status(
             "claimed_at": row["claimed_at"].isoformat(),
             "claimant_count": row["claimant_count"],
             "title": row["title"],
-            "team_address": row["team_address"],
+            "team_id": row["team_id"],
             "apex_task_ref": row["apex_task_ref"],
             "apex_title": row["apex_title"],
             "apex_type": row["apex_type"],
@@ -438,15 +438,15 @@ async def status(
 
     reservation_rows = await aweb_db.fetch_all(
         """
-        SELECT team_address, resource_key, holder_agent_id, holder_alias,
+        SELECT team_id, resource_key, holder_agent_id, holder_alias,
                acquired_at, expires_at, metadata_json
         FROM {{tables.reservations}}
-        WHERE team_address = $1
+        WHERE team_id = $1
           AND expires_at > NOW()
           AND holder_agent_id = ANY($2::uuid[])
         ORDER BY resource_key ASC
         """,
-        team_address,
+        team_id,
         workspace_ids,
     )
     reservations: List[Dict[str, Any]] = []
@@ -457,7 +457,7 @@ async def status(
         if not isinstance(reason, str) or not reason.strip():
             reason = None
         reservation = {
-            "team_address": row["team_address"],
+            "team_id": row["team_id"],
             "resource_key": row["resource_key"],
             "holder_agent_id": str(row["holder_agent_id"]),
             "holder_alias": row["holder_alias"],
@@ -594,7 +594,7 @@ async def status_stream(
         data: {"type": "task.status_changed", "workspace_id": "...", ...}
         ```
     """
-    team_address = identity.team_address
+    team_id = identity.team_id
 
     # Determine which workspace_ids to subscribe to
     workspace_ids: List[str] = []
@@ -610,10 +610,10 @@ async def status_stream(
             """
             SELECT 1
             FROM {{tables.workspaces}}
-            WHERE workspace_id = $1 AND team_address = $2 AND deleted_at IS NULL
+            WHERE workspace_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
             validated_workspace_id,
-            team_address,
+            team_id,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Workspace not found")
@@ -625,19 +625,19 @@ async def status_stream(
                 status_code=422,
                 detail=f"Invalid repo format: {repo[:50]}",
             )
-        # Look up workspace_ids for this repo from database (scoped by team_address)
+        # Look up workspace_ids for this repo from database (scoped by team_id)
         workspace_ids = await get_workspace_ids_by_repo_from_db(
-            db_infra, repo, limit, team_address=team_address
+            db_infra, repo, limit, team_id=team_id
         )
     elif human_name:
         # Look up workspace_ids for this owner from database
         workspace_ids = await get_workspace_ids_by_human_name_from_db(
-            db_infra, human_name, limit, team_address=team_address
+            db_infra, human_name, limit, team_id=team_id
         )
     else:
         # No filter - stream registered workspaces from database (limited)
         workspace_ids = await get_all_workspace_ids_from_db(
-            db_infra, limit, team_address=team_address
+            db_infra, limit, team_id=team_id
         )
 
     # Handle empty workspace lists:

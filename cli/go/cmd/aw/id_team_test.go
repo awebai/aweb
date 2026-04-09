@@ -78,7 +78,7 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "team-uuid-1",
+				"team_id":      "backend:acme.com",
 				"domain":       "acme.com",
 				"name":         gotPayload["name"],
 				"team_did_key": gotPayload["team_did_key"],
@@ -123,8 +123,8 @@ func TestTeamCreateRegistersAtRegistry(t *testing.T) {
 	if got["status"] != "created" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if got["team_did_key"] == "" || got["team_did_key"] == nil {
 		t.Fatal("team_did_key is empty")
@@ -153,7 +153,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "team-uuid-1",
+				"team_id":      "default:acme.com",
 				"domain":       "acme.com",
 				"name":         "default",
 				"team_did_key": gotCreatePayload["team_did_key"],
@@ -194,8 +194,8 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	if err != nil {
 		t.Fatalf("bootstrapFirstLocalTeamMember: %v", err)
 	}
-	if result.TeamAddress != "acme.com/default" {
-		t.Fatalf("team_address=%q", result.TeamAddress)
+	if result.TeamID != "default:acme.com" {
+		t.Fatalf("team_id=%q", result.TeamID)
 	}
 	if result.Certificate == nil {
 		t.Fatal("expected certificate")
@@ -321,8 +321,8 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if acceptGot["status"] != "accepted" {
 		t.Fatalf("accept status=%v", acceptGot["status"])
 	}
-	if acceptGot["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", acceptGot["team_address"])
+	if acceptGot["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", acceptGot["team_id"])
 	}
 	if acceptGot["alias"] != "alice" {
 		t.Fatalf("alias=%v", acceptGot["alias"])
@@ -334,8 +334,8 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.Team != "acme.com/backend" {
-		t.Fatalf("cert team_address=%q", cert.Team)
+	if cert.Team != "backend:acme.com" {
+		t.Fatalf("cert team_id=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
 		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, memberDIDKey)
@@ -421,8 +421,8 @@ func TestTeamAddMemberFlow(t *testing.T) {
 	if got["status"] != "added" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if registeredCert["member_did_key"] != memberDIDKey {
 		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
@@ -435,28 +435,16 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	var gotRevokePayload map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address_id":      "addr-1",
-				"domain":          "acme.com",
-				"name":            "alice",
-				"did_aw":          "did:aw:test123",
-				"current_did_key": "did:key:z6MkAlice",
-				"reachability":    "public",
-				"created_at":      "2026-04-06T00:00:00Z",
-			})
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/certificates"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificates": []map[string]any{
-					{
-						"certificate_id": "cert-42",
-						"team_address":   "acme.com/backend",
-						"member_did_key": "did:key:z6MkAlice",
-						"alias":          "alice",
-						"lifetime":       "persistent",
-						"issued_at":      "2026-04-06T00:00:00Z",
-					},
-				},
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-42",
+				"member_did_key": "did:key:z6MkAlice",
+				"member_did_aw":  "did:aw:test123",
+				"member_address": "acme.com/alice",
+				"alias":          "alice",
+				"lifetime":       "persistent",
+				"issued_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
 			if err := json.NewDecoder(r.Body).Decode(&gotRevokePayload); err != nil {
@@ -506,6 +494,73 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	}
 }
 
+func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
+	t.Parallel()
+
+	var gotRevokePayload map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/bob":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-cross",
+				"member_did_key": "did:key:z6MkBob",
+				"member_did_aw":  "did:aw:bob",
+				"member_address": "partner.com/bob",
+				"alias":          "bob",
+				"lifetime":       "persistent",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
+			if err := json.NewDecoder(r.Body).Decode(&gotRevokePayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "remove-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--member", "partner.com/bob",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remove-member failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "removed" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["member_address"] != "partner.com/bob" {
+		t.Fatalf("member_address=%v", got["member_address"])
+	}
+	if gotRevokePayload["certificate_id"] != "cert-cross" {
+		t.Fatalf("revoke certificate_id=%v", gotRevokePayload["certificate_id"])
+	}
+}
+
 func TestCertShow(t *testing.T) {
 	t.Parallel()
 
@@ -526,7 +581,7 @@ func TestCertShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "acme.com/backend",
+		Team:         "backend:acme.com",
 		MemberDIDKey: awid.ComputeDIDKey(memberPub),
 		Alias:        "alice",
 		Lifetime:     awid.LifetimePersistent,
@@ -551,8 +606,8 @@ func TestCertShow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["team_address"] != "acme.com/backend" {
-		t.Fatalf("team_address=%v", got["team_address"])
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
 	}
 	if got["alias"] != "alice" {
 		t.Fatalf("alias=%v", got["alias"])

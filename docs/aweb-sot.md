@@ -44,8 +44,8 @@ For supporting reference material that does not redefine the contract:
    may layer additional auth modes (OAuth, opaque bearer tokens, etc.)
    on top of their own MCP surface, but those are operator-specific
    and outside the aweb OSS contract.
-4. **team_address is the coordination scope.** Every coordination table
-   is scoped to a `team_address` (e.g., `acme.com/backend`). All
+4. **team_id is the coordination scope.** Every coordination table
+   is scoped to a `team_id` (e.g., `backend:acme.com`). All
    coordination data — messages, tasks, claims, locks, roles,
    instructions, presence — lives at the team level.
 
@@ -171,7 +171,7 @@ X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
 The `Authorization` header is an Ed25519 signature over the canonical
-JSON of `{team, timestamp, body_sha256}` where `body_sha256`
+JSON of `{team_id, timestamp, body_sha256}` where `body_sha256`
 is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
 
@@ -202,14 +202,13 @@ remains the canonical credential.
 
 1. Parse `Authorization` header → extract did:key and signature.
 2. Compute SHA256 hex digest of the request body. Verify the Ed25519
-   signature over canonical JSON of `{team, timestamp,
-   body_sha256}`. Reject if invalid.
+   signature over canonical JSON of `{team_id, timestamp, body_sha256}`. Reject if invalid.
 3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
    per the [certificate verification protocol](awid-sot.md#verification-by-a-service)
    defined in the awid SoT (verify signature against the cached team
    public key, verify certificate `member_did_key` matches the request
    did:key, check `certificate_id` against the cached revocation list).
-4. Extract `team` (the coordination `team_address`), `alias`, and `lifetime`
+4. Extract `team` (the coordination `team_id`), `alias`, and `lifetime`
    from the certificate.
 5. Request is authenticated and authorized for the given team.
 
@@ -283,7 +282,7 @@ aweb uses a single PostgreSQL schema: `aweb`.
 -- Teams this server coordinates for.
 -- Auto-created when the first agent from a team connects.
 CREATE TABLE teams (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     namespace       TEXT NOT NULL,
     team_name       TEXT NOT NULL,
     team_did_key    TEXT NOT NULL,
@@ -299,7 +298,7 @@ CREATE TABLE teams (
 -- did_key for reuse; only active rows remain unique within a team.
 CREATE TABLE agents (
     agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES teams(team_address),
+    team_id    TEXT NOT NULL REFERENCES teams(team_id),
     did_key         TEXT NOT NULL,
     did_aw          TEXT,
     address         TEXT,
@@ -316,11 +315,11 @@ CREATE TABLE agents (
 );
 
 CREATE UNIQUE INDEX idx_agents_active_alias
-    ON agents (team_address, alias)
+    ON agents (team_id, alias)
     WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX idx_agents_active_did_key
-    ON agents (team_address, did_key)
+    ON agents (team_id, did_key)
     WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
@@ -328,7 +327,7 @@ CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND d
 -- Mail
 CREATE TABLE messages (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES teams(team_address),
+    team_id    TEXT NOT NULL REFERENCES teams(team_id),
     from_agent_id   UUID NOT NULL REFERENCES agents(agent_id),
     to_agent_id     UUID NOT NULL REFERENCES agents(agent_id),
     from_alias      TEXT NOT NULL,
@@ -343,13 +342,13 @@ CREATE TABLE messages (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_messages_inbox ON messages (team_address, to_agent_id, created_at)
+CREATE INDEX idx_messages_inbox ON messages (team_id, to_agent_id, created_at)
     WHERE read_at IS NULL;
 
 -- Chat sessions
 CREATE TABLE chat_sessions (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES teams(team_address),
+    team_id    TEXT NOT NULL REFERENCES teams(team_id),
     created_by      TEXT NOT NULL,
     wait_seconds    INTEGER,
     wait_started_at TIMESTAMPTZ,
@@ -393,18 +392,18 @@ CREATE TABLE chat_read_receipts (
 -- Contacts (per-team address book)
 CREATE TABLE contacts (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES teams(team_address),
+    team_id    TEXT NOT NULL REFERENCES teams(team_id),
     contact_address TEXT NOT NULL,
     label           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_address, contact_address)
+    UNIQUE (team_id, contact_address)
 );
 
 -- Control signals
 CREATE TABLE control_signals (
     signal_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL REFERENCES teams(team_address),
+    team_id    TEXT NOT NULL REFERENCES teams(team_id),
     target_agent_id UUID NOT NULL REFERENCES agents(agent_id),
     from_agent_id   UUID NOT NULL REFERENCES agents(agent_id),
     signal_type     TEXT NOT NULL
@@ -414,26 +413,26 @@ CREATE TABLE control_signals (
 );
 
 CREATE INDEX idx_control_signals_pending
-    ON control_signals (team_address, target_agent_id, created_at)
+    ON control_signals (team_id, target_agent_id, created_at)
     WHERE consumed_at IS NULL;
 
 -- Repos (git context)
 CREATE TABLE repos (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     origin_url      TEXT NOT NULL,
     canonical_origin TEXT NOT NULL,
     name            TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, canonical_origin)
+    UNIQUE (team_id, canonical_origin)
 );
 
 -- Workspaces (agent presence in a repo context)
 CREATE TABLE workspaces (
     workspace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     agent_id        UUID NOT NULL,
     repo_id         UUID REFERENCES repos(id),
     alias           TEXT NOT NULL,
@@ -451,13 +450,13 @@ CREATE TABLE workspaces (
 );
 
 CREATE UNIQUE INDEX idx_workspaces_active_alias
-    ON workspaces (team_address, alias)
+    ON workspaces (team_id, alias)
     WHERE deleted_at IS NULL;
 
 -- Tasks
 CREATE TABLE tasks (
     task_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     task_number     INTEGER NOT NULL,
     root_task_seq   INTEGER,
     task_ref_suffix TEXT NOT NULL,
@@ -480,14 +479,14 @@ CREATE TABLE tasks (
     closed_at       TIMESTAMPTZ,
     deleted_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, task_number),
-    UNIQUE (team_address, task_ref_suffix)
+    UNIQUE (team_id, task_number),
+    UNIQUE (team_id, task_ref_suffix)
 );
 
 CREATE TABLE task_comments (
     comment_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id         UUID NOT NULL REFERENCES tasks(task_id),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     author_alias    TEXT NOT NULL,
     body            TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -496,24 +495,24 @@ CREATE TABLE task_comments (
 CREATE TABLE task_dependencies (
     task_id         UUID NOT NULL REFERENCES tasks(task_id),
     depends_on_id   UUID NOT NULL REFERENCES tasks(task_id),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     PRIMARY KEY (task_id, depends_on_id)
 );
 
 CREATE TABLE task_counters (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     next_number     INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE task_root_counters (
-    team_address    TEXT PRIMARY KEY,
+    team_id    TEXT PRIMARY KEY,
     next_number     INTEGER NOT NULL DEFAULT 1
 );
 
 -- Claims
 CREATE TABLE task_claims (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     workspace_id    UUID NOT NULL,
     alias           TEXT NOT NULL,
     human_name      TEXT NOT NULL DEFAULT '',
@@ -521,12 +520,12 @@ CREATE TABLE task_claims (
     apex_task_ref   TEXT,
     claimed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_address, task_ref, workspace_id)
+    UNIQUE (team_id, task_ref, workspace_id)
 );
 
 -- Locks (resource reservations)
 CREATE TABLE reservations (
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     resource_key    TEXT NOT NULL,
     holder_alias    TEXT NOT NULL,
     holder_agent_id UUID NOT NULL,
@@ -534,13 +533,13 @@ CREATE TABLE reservations (
     expires_at      TIMESTAMPTZ,
     metadata_json   JSONB,
 
-    PRIMARY KEY (team_address, resource_key)
+    PRIMARY KEY (team_id, resource_key)
 );
 
 -- Roles (versioned per team)
 CREATE TABLE team_roles (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
     bundle_json     JSONB NOT NULL DEFAULT '[]',
     is_active       BOOLEAN NOT NULL DEFAULT false,
@@ -548,13 +547,13 @@ CREATE TABLE team_roles (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, version)
+    UNIQUE (team_id, version)
 );
 
 -- Instructions (versioned per team)
 CREATE TABLE team_instructions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
     document_json   JSONB NOT NULL DEFAULT '{}',
     is_active       BOOLEAN NOT NULL DEFAULT false,
@@ -562,13 +561,13 @@ CREATE TABLE team_instructions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ,
 
-    UNIQUE (team_address, version)
+    UNIQUE (team_id, version)
 );
 
 -- Audit log
 CREATE TABLE audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_address    TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
     alias           TEXT,
     event_type      TEXT NOT NULL,
     resource        TEXT,
@@ -586,8 +585,8 @@ CREATE TABLE audit_log (
 | Route | Purpose |
 |-------|---------|
 | `POST /v1/connect` | Agent connects with certificate. Auto-provisions team + agent if needed. Returns workspace binding info. Called by `aw init` under the hood. |
-| `GET /v1/team` | Get team info (team_address, team_did_key, member count). |
-| `GET /v1/usage` | Per-team usage metrics. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Auth: dashboard JWT via `X-Dashboard-Token`, not team certificate. Intended for operator billing and metering rather than agent traffic. |
+| `GET /v1/team` | Get team info (team_id, team_did_key, member count). |
+| `GET /v1/usage` | Per-team usage metrics. Query params: `team_id`, `since`, `until`. Returns `{messages_sent, active_agents}`. Auth: dashboard JWT via `X-Dashboard-Token`, not team certificate. Intended for operator billing and metering rather than agent traffic. |
 
 ### Messaging
 
@@ -623,7 +622,7 @@ CREATE TABLE audit_log (
 
 `POST /v1/agents/suggest-alias-prefix` uses the normal team-certificate
 auth for coordination routes. The request body is empty (`{}`). On
-success it returns `{ team_address, name_prefix }`. If no classic alias
+success it returns `{ team_id, name_prefix }`. If no classic alias
 is available, it returns HTTP 409 with detail `alias_exhausted`.
 
 ### Coordination
@@ -644,7 +643,7 @@ the workspace. It returns `409` if the bound agent is persistent
 (persistent identities outlive workspaces) or if `last_seen_at` is
 within the 30-minute presence TTL and the workspace is not yet
 considered gone. The caller must present a team certificate for the same
-`team_address` as the target workspace.
+`team_id` as the target workspace.
 
 ### Dashboard routes
 
@@ -656,13 +655,13 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /v1/teams/{team_address}/agents` | List active agents in team |
-| `GET /v1/teams/{team_address}/agents/{alias}` | Agent detail |
-| `GET /v1/teams/{team_address}/messages` | Message history |
-| `GET /v1/teams/{team_address}/tasks` | Task list |
-| `GET /v1/teams/{team_address}/roles/active` | Active role definitions |
-| `GET /v1/teams/{team_address}/instructions/active` | Active instructions |
-| `GET /v1/teams/{team_address}/status` | Team status (online agents, locks, claims) |
+| `GET /v1/teams/{team_id}/agents` | List active agents in team |
+| `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
+| `GET /v1/teams/{team_id}/messages` | Message history |
+| `GET /v1/teams/{team_id}/tasks` | Task list |
+| `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
+| `GET /v1/teams/{team_id}/instructions/active` | Active instructions |
+| `GET /v1/teams/{team_id}/status` | Team status (online agents, locks, claims) |
 
 ### Dashboard auth
 
@@ -670,8 +669,8 @@ aweb verifies a short-lived JWT in the `X-Dashboard-Token` header on
 every dashboard read. The JWT is minted by an upstream dashboard
 service (any operator that has provisioned a human-account layer on
 top of aweb) and signed with a secret shared between that service and
-aweb. The token carries the list of `team_addresses` the human is
-authorized to read; aweb checks the requested `team_address` against
+aweb. The token carries the list of `team_ids` the human is
+authorized to read; aweb checks the requested `team_id` against
 that list.
 
 **Algorithm**: HS256 (HMAC-SHA256) using `AWEB_DASHBOARD_JWT_SECRET`.
@@ -685,7 +684,7 @@ bugs).
 ```json
 {
   "user_id": "uuid",
-  "team_addresses": ["acme.aweb.ai/default", "acme.aweb.ai/backend"],
+  "team_ids": ["default:acme.aweb.ai", "backend:acme.aweb.ai"],
   "exp": 1775500000
 }
 ```
@@ -694,7 +693,7 @@ The JWT validation is local (no awid call at request time). aweb does
 query awid for team metadata (team_did_key, revocation list, visibility)
 but those reads are cached.
 
-**Public-team anonymous bypass.** When the requested team_address
+**Public-team anonymous bypass.** When the requested team_id
 resolves (via the cached team metadata above) to `visibility = "public"`,
 aweb allows the dashboard read **without** a valid `X-Dashboard-Token`.
 This makes public team activity (agents, messages, tasks, status)
@@ -920,7 +919,7 @@ aw mcp-config
 
 ```yaml
 aweb_url: https://app.aweb.ai
-team_address: acme.com/backend
+team_id: backend:acme.com
 alias: alice
 role_name: developer
 human_name: ""
@@ -951,7 +950,7 @@ aweb makes these calls to awid. All are cached.
 ```
 GET /v1/namespaces/{domain}/teams/{name}
 → {
-    "team_id": "uuid",
+    "team_id": "backend:acme.com",
     "domain": "acme.com",
     "name": "backend",
     "display_name": "...",
@@ -1090,7 +1089,7 @@ via `aweb.mcp.auth.get_auth()`, which returns:
 ```python
 @dataclass
 class AuthContext:
-    team_address: str   # e.g., "acme.com/backend"
+    team_id: str   # e.g., "backend:acme.com"
     agent_id: str        # the aweb-side agent UUID
     alias: str           # routing name within the team
     did_key: str         # the calling agent's did:key
@@ -1098,7 +1097,7 @@ class AuthContext:
 
 The context is stored in a contextvar and is per-request. Tools that
 need to know who the caller is read from `get_auth()`; tools that
-operate on the team's coordination data scope by `team_address`. Tools
+operate on the team's coordination data scope by `team_id`. Tools
 do NOT receive the raw certificate or signing material.
 
 ### Tool inventory

@@ -6,18 +6,20 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
-func splitTeamAddress(teamAddress string) (string, string) {
-	teamAddress = strings.TrimSpace(teamAddress)
-	if teamAddress == "" {
+func splitTeamID(teamID string) (string, string) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
 		return "", ""
 	}
-	parts := strings.SplitN(teamAddress, "/", 2)
-	if len(parts) != 2 {
-		return teamAddress, ""
+	domain, name, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return "", ""
 	}
-	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	return domain, name
 }
 
 type Selection struct {
@@ -90,9 +92,9 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	if overrideBaseURL != "" {
 		baseURL = overrideBaseURL
 	}
-	teamAddress := strings.TrimSpace(workspace.TeamAddress)
-	if baseURL == "" || teamAddress == "" {
-		return nil, errors.New("worktree workspace binding is missing aweb_url or team_address")
+	teamID := strings.TrimSpace(workspace.TeamID)
+	if baseURL == "" || teamID == "" {
+		return nil, errors.New("worktree workspace binding is missing aweb_url or team_id")
 	}
 	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -122,7 +124,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	registryURL := ""
 	awebURL := ""
 	if ws != nil {
-		teamDomain, _ := splitTeamAddress(ws.TeamAddress)
+		teamDomain, _ := splitTeamID(ws.TeamID)
 		awebURL = strings.TrimSpace(ws.AwebURL)
 		domain = teamDomain
 		alias = strings.TrimSpace(ws.Alias)

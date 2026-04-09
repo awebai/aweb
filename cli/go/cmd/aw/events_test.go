@@ -31,7 +31,7 @@ func TestAwEventsStream(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
+			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
 			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
@@ -122,7 +122,7 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 
-			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_address\":\"acme.com/backend\"}\n\n")
+			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
 			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
@@ -165,7 +165,7 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 		t.Fatalf("expected at least 2 lines, got %d (err=%v)\noutput:\n%s", len(lines), runErr, output)
 	}
 
-	wantConnected := `[connected] agent_id=a-1 team_address=acme.com/backend`
+	wantConnected := `[connected] agent_id=a-1 team_id=backend:acme.com`
 	if strings.TrimSpace(lines[0]) != wantConnected {
 		t.Fatalf("line[0]=%q, want %q", lines[0], wantConnected)
 	}

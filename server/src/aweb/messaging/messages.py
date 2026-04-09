@@ -25,33 +25,33 @@ def _parse_uuid(v: str, *, field_name: str) -> UUID:
         raise ValidationError(f"Invalid {field_name} format")
 
 
-async def get_agent_by_id(db, *, team_address: str, agent_id: str) -> dict | None:
+async def get_agent_by_id(db, *, team_id: str, agent_id: str) -> dict | None:
     """Look up an agent by agent_id within a team."""
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_address, alias, did_key, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, status, deleted_at
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_address = $2 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
         _parse_uuid(agent_id, field_name="agent_id"),
-        team_address,
+        team_id,
     )
     if not row:
         return None
     return dict(row)
 
 
-async def get_agent_by_alias(db, *, team_address: str, alias: str) -> dict | None:
+async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     """Look up an agent by alias within a team."""
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_address, alias, did_key, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, status, deleted_at
         FROM {{tables.agents}}
-        WHERE team_address = $1 AND alias = $2 AND deleted_at IS NULL
+        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
-        team_address,
+        team_id,
         alias,
     )
     if not row:
@@ -62,7 +62,7 @@ async def get_agent_by_alias(db, *, team_address: str, alias: str) -> dict | Non
 async def deliver_message(
     db,
     *,
-    team_address: str,
+    team_id: str,
     from_agent_id: str,
     from_alias: str,
     to_agent_id: str,
@@ -84,13 +84,13 @@ async def deliver_message(
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id")
     to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id")
 
-    sender = await get_agent_by_id(db, team_address=team_address, agent_id=str(from_uuid))
+    sender = await get_agent_by_id(db, team_id=team_id, agent_id=str(from_uuid))
     if sender is None:
         raise NotFoundError("Sender agent not found")
     if sender["alias"] != from_alias:
         raise ValidationError("from_alias does not match canonical alias")
 
-    recipient = await get_agent_by_id(db, team_address=team_address, agent_id=str(to_uuid))
+    recipient = await get_agent_by_id(db, team_id=team_id, agent_id=str(to_uuid))
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
@@ -103,14 +103,14 @@ async def deliver_message(
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (message_id, team_address, from_agent_id, to_agent_id,
+            (message_id, team_id, from_agent_id, to_agent_id,
              from_alias, to_alias, subject, body, priority,
              from_did, signature, signed_payload, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING message_id, created_at
         """,
         message_id,
-        team_address,
+        team_id,
         from_uuid,
         to_uuid,
         from_alias,

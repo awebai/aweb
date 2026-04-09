@@ -26,7 +26,7 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
     cert = {
         "version": 1,
         "certificate_id": kwargs.get("certificate_id", "cert-001"),
-        "team": kwargs.get("team_address", "acme.com/backend"),
+        "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
         "member_did_aw": "",
@@ -50,7 +50,7 @@ class TestTeamIdentity:
         from aweb.team_auth_deps import TeamIdentity
 
         identity = TeamIdentity(
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             alias="alice",
             did_key="did:key:z6Mktest",
             agent_id="agent-uuid",
@@ -58,7 +58,7 @@ class TestTeamIdentity:
             certificate_id="cert-001",
         )
 
-        assert identity.team_address == "acme.com/backend"
+        assert identity.team_id == "backend:acme.com"
         assert identity.alias == "alice"
         assert identity.did_key == "did:key:z6Mktest"
         assert identity.agent_id == "agent-uuid"
@@ -69,7 +69,7 @@ class TestTeamIdentity:
         from aweb.team_auth_deps import TeamIdentity
 
         identity = TeamIdentity(
-            team_address="acme.com/backend",
+            team_id="backend:acme.com",
             alias="alice",
             did_key="did:key:z6Mktest",
             agent_id="agent-uuid",
@@ -78,7 +78,7 @@ class TestTeamIdentity:
         )
 
         with pytest.raises(AttributeError):
-            identity.team_address = "other"
+            identity.team_id = "other"
 
 
 class TestResolveTeamIdentity:
@@ -97,7 +97,7 @@ class TestResolveTeamIdentity:
         result = await connect_agent(
             db=db,
             cert_info={
-                "team_address": "acme.com/backend",
+                "team_id": "backend:acme.com",
                 "alias": "alice",
                 "did_key": agent_did_key,
                 "lifetime": "persistent",
@@ -113,7 +113,7 @@ class TestResolveTeamIdentity:
         )
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
             "lifetime": "persistent",
@@ -122,7 +122,7 @@ class TestResolveTeamIdentity:
 
         identity = await resolve_team_identity(db, cert_info)
 
-        assert identity.team_address == "acme.com/backend"
+        assert identity.team_id == "backend:acme.com"
         assert identity.alias == "alice"
         assert identity.did_key == agent_did_key
         assert identity.agent_id == result["agent_id"]
@@ -137,7 +137,7 @@ class TestResolveTeamIdentity:
         _, _, unknown_did_key = _make_keypair()
 
         cert_info = {
-            "team_address": "acme.com/backend",
+            "team_id": "backend:acme.com",
             "alias": "unknown",
             "did_key": unknown_did_key,
             "lifetime": "ephemeral",
