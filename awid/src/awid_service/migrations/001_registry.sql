@@ -89,9 +89,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_public_addresses_namespace_name_active
 -- Replacement announcements
 CREATE TABLE IF NOT EXISTS {{tables.replacement_announcements}} (
     announcement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id      UUID,
-    old_agent_id    UUID,
-    new_agent_id    UUID,
     namespace_id    UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
     address_name    TEXT NOT NULL,
     old_did         TEXT NOT NULL,
@@ -102,12 +99,6 @@ CREATE TABLE IF NOT EXISTS {{tables.replacement_announcements}} (
     authorized_by   TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX IF NOT EXISTS idx_replacement_announcements_new_agent
-    ON {{tables.replacement_announcements}} (new_agent_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_replacement_announcements_old_agent
-    ON {{tables.replacement_announcements}} (old_agent_id, created_at DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_replacement_announcements_address_new_did
     ON {{tables.replacement_announcements}} (namespace_id, address_name, new_did);
