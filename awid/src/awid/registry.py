@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
 import time
@@ -515,18 +516,45 @@ class RegistryClient:
             )
         )
 
-    async def resolve_address(self, domain: str, name: str) -> Address | None:
+    async def resolve_address(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
         data = await self._request_optional_json(
             "GET",
             f"/v1/namespaces/{domain}/addresses/{name}",
+            headers=self._signed_address_lookup_headers(
+                domain=domain,
+                name=name,
+                operation="get_address",
+                signing_key=signing_key,
+                did_key=did_key,
+            ),
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _address_from_json(data)
 
-    async def list_addresses(self, domain: str) -> list[Address]:
+    async def list_addresses(
+        self,
+        domain: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> list[Address]:
         data = await self._request_json(
             "GET",
             f"/v1/namespaces/{domain}/addresses",
+            headers=self._signed_address_lookup_headers(
+                domain=domain,
+                name=None,
+                operation="list_addresses",
+                signing_key=signing_key,
+                did_key=did_key,
+            ),
             registry_url=await self._registry_url_for_domain(domain),
         )
         return [_address_from_json(item) for item in data.get("addresses", [])]
@@ -699,6 +727,34 @@ class RegistryClient:
             "X-AWEB-Timestamp": timestamp,
         }
 
+    def _signed_address_lookup_headers(
+        self,
+        *,
+        domain: str,
+        name: str | None,
+        operation: str,
+        signing_key: bytes | None,
+        did_key: str | None = None,
+    ) -> dict[str, str] | None:
+        if signing_key is None:
+            return None
+        signer_did = _did_key_from_signing_key(signing_key)
+        if did_key is not None and did_key.strip() and did_key.strip() != signer_did:
+            raise ValueError("signing_key must match did_key for signed address lookup")
+        timestamp = _utc_timestamp()
+        payload_dict: dict[str, Any] = {
+            "domain": domain,
+            "operation": operation,
+            "timestamp": timestamp,
+        }
+        if name is not None:
+            payload_dict["name"] = name
+        payload = canonical_json_bytes(payload_dict)
+        return {
+            "Authorization": f"DIDKey {signer_did} {sign_message(signing_key, payload)}",
+            "X-AWEB-Timestamp": timestamp,
+        }
+
     def _signed_parent_namespace_headers(
         self,
         *,
@@ -795,22 +851,46 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: None if payload is None else _namespace_from_json(payload),
         )
 
-    async def list_addresses(self, domain: str) -> list[Address]:
+    async def list_addresses(
+        self,
+        domain: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> list[Address]:
         registry_url = await self._registry_url_for_domain(domain)
+        caller_did_key = _normalize_lookup_did_key(signing_key=signing_key, did_key=did_key)
         return await self._cached_read(
-            cache_key=self._domain_addresses_cache_key(domain, registry_url=registry_url),
+            cache_key=self._domain_addresses_cache_key(domain, registry_url=registry_url, caller_did_key=caller_did_key),
             ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
-            fetcher=lambda: super(CachedRegistryClient, self).list_addresses(domain),
+            fetcher=lambda: super(CachedRegistryClient, self).list_addresses(
+                domain,
+                signing_key=signing_key,
+                did_key=caller_did_key,
+            ),
             encode=lambda value: [_address_to_json(item) for item in value],
             decode=lambda payload: [_address_from_json(item) for item in payload],
         )
 
-    async def resolve_address(self, domain: str, name: str) -> Address | None:
+    async def resolve_address(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
         registry_url = await self._registry_url_for_domain(domain)
+        caller_did_key = _normalize_lookup_did_key(signing_key=signing_key, did_key=did_key)
         return await self._cached_read(
-            cache_key=self._address_cache_key(domain, name, registry_url=registry_url),
+            cache_key=self._address_cache_key(domain, name, registry_url=registry_url, caller_did_key=caller_did_key),
             ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
-            fetcher=lambda: super(CachedRegistryClient, self).resolve_address(domain, name),
+            fetcher=lambda: super(CachedRegistryClient, self).resolve_address(
+                domain,
+                name,
+                signing_key=signing_key,
+                did_key=caller_did_key,
+            ),
             encode=lambda value: None if value is None else _address_to_json(value),
             decode=lambda payload: None if payload is None else _address_from_json(payload),
         )
@@ -960,7 +1040,7 @@ class CachedRegistryClient(RegistryClient):
         previous = await super().resolve_address(domain, name)
         if previous is None:
             previous = await self._peek_cached_address(
-                self._address_cache_key(domain, name, registry_url=registry_url)
+                self._address_cache_key(domain, name, registry_url=registry_url, caller_did_key=None)
             )
         await super().delete_address(domain, name, controller_signing_key)
         did_aws = [previous.did_aw] if previous is not None else []
@@ -1112,10 +1192,12 @@ class CachedRegistryClient(RegistryClient):
     async def _invalidate_address_cache(self, *, domain: str, name: str, did_aws: list[str]) -> None:
         registry_url = await self._registry_url_for_domain(domain)
         keys = [
-            self._address_cache_key(domain, name, registry_url=registry_url),
-            self._domain_addresses_cache_key(domain, registry_url=registry_url),
+            self._address_cache_key(domain, name, registry_url=registry_url, caller_did_key=None),
+            self._domain_addresses_cache_key(domain, registry_url=registry_url, caller_did_key=None),
         ]
         keys.extend(self._did_addresses_cache_key(did_aw) for did_aw in did_aws)
+        keys.extend(await self._matching_cache_keys(f"{self._address_cache_key_prefix(domain, name, registry_url=registry_url)}:*"))
+        keys.extend(await self._matching_cache_keys(f"{self._domain_addresses_cache_key_prefix(domain, registry_url=registry_url)}:*"))
         await self._invalidate_keys(*keys)
 
     async def _invalidate_keys(self, *keys: str) -> None:
@@ -1154,11 +1236,32 @@ class CachedRegistryClient(RegistryClient):
     def _namespace_cache_key(self, domain: str, *, registry_url: str) -> str:
         return f"awid:registry_cache:v1:namespace:{registry_url}:{domain}"
 
-    def _domain_addresses_cache_key(self, domain: str, *, registry_url: str) -> str:
-        return f"awid:registry_cache:v1:domain_addresses:{registry_url}:{domain}"
+    async def _matching_cache_keys(self, pattern: str) -> list[str]:
+        scan_iter = getattr(self.redis_client, "scan_iter", None)
+        if scan_iter is not None:
+            keys: list[str] = []
+            async for key in scan_iter(match=pattern):
+                if isinstance(key, bytes):
+                    keys.append(key.decode("utf-8"))
+                else:
+                    keys.append(str(key))
+            return keys
+        values = getattr(self.redis_client, "values", None)
+        if isinstance(values, dict):
+            return [str(key) for key in values if fnmatch.fnmatch(str(key), pattern)]
+        return []
 
-    def _address_cache_key(self, domain: str, name: str, *, registry_url: str) -> str:
-        return f"awid:registry_cache:v1:address:{registry_url}:{domain}:{name}"
+    def _domain_addresses_cache_key(self, domain: str, *, registry_url: str, caller_did_key: str | None) -> str:
+        return f"{self._domain_addresses_cache_key_prefix(domain, registry_url=registry_url)}:{_lookup_cache_scope(caller_did_key)}"
+
+    def _domain_addresses_cache_key_prefix(self, domain: str, *, registry_url: str) -> str:
+        return f"awid:registry_cache:v2:domain_addresses:{registry_url}:{domain}"
+
+    def _address_cache_key(self, domain: str, name: str, *, registry_url: str, caller_did_key: str | None) -> str:
+        return f"{self._address_cache_key_prefix(domain, name, registry_url=registry_url)}:{_lookup_cache_scope(caller_did_key)}"
+
+    def _address_cache_key_prefix(self, domain: str, name: str, *, registry_url: str) -> str:
+        return f"awid:registry_cache:v2:address:{registry_url}:{domain}:{name}"
 
     def _team_metadata_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}"
@@ -1169,6 +1272,21 @@ class CachedRegistryClient(RegistryClient):
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_lookup_did_key(*, signing_key: bytes | None, did_key: str | None) -> str | None:
+    normalized = (did_key or "").strip() or None
+    if signing_key is None:
+        return None
+    signer_did = _did_key_from_signing_key(signing_key)
+    if normalized is not None and normalized != signer_did:
+        raise ValueError("signing_key must match did_key for signed address lookup")
+    return signer_did
+
+
+def _lookup_cache_scope(caller_did_key: str | None) -> str:
+    normalized = (caller_did_key or "").strip()
+    return normalized or "anon"
 
 
 def _cache_now() -> int:

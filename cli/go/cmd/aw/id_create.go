@@ -374,7 +374,21 @@ func ensureStandaloneAddress(
 	plan *idCreatePlan,
 	controllerKey ed25519.PrivateKey,
 ) error {
-	address, _, err := registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
+	signingDir := awconfig.WorktreeRootFromIdentityPath(plan.IdentityPath)
+	if strings.TrimSpace(signingDir) == "" {
+		signingDir = filepath.Dir(filepath.Dir(plan.SigningKeyPath))
+	}
+	signingKey, loadErr := loadOptionalWorktreeSigningKey(signingDir)
+	if loadErr != nil {
+		return loadErr
+	}
+	var address *awid.RegistryAddress
+	var err error
+	if signingKey != nil {
+		address, _, err = registry.GetNamespaceAddressAtSigned(ctx, plan.RegistryURL, plan.Domain, plan.Name, signingKey)
+	} else {
+		address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
+	}
 	if err == nil {
 		if strings.TrimSpace(address.DIDAW) != plan.DIDAW {
 			return fmt.Errorf("address %s is already assigned to %s", plan.Address, address.DIDAW)
@@ -390,7 +404,11 @@ func ensureStandaloneAddress(
 	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, "public", controllerKey)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
-			address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
+			if signingKey != nil {
+				address, _, err = registry.GetNamespaceAddressAtSigned(ctx, plan.RegistryURL, plan.Domain, plan.Name, signingKey)
+			} else {
+				address, _, err = registry.GetNamespaceAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name)
+			}
 			if err != nil {
 				return err
 			}

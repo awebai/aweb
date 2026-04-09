@@ -164,9 +164,34 @@ func (c *RegistryClient) ListNamespaceAddresses(ctx context.Context, domain stri
 	return c.ListNamespaceAddressesAt(ctx, registryURL, domain)
 }
 
+func (c *RegistryClient) ListNamespaceAddressesSigned(
+	ctx context.Context,
+	domain string,
+	signingKey ed25519.PrivateKey,
+) ([]RegistryAddress, string, error) {
+	registryURL, err := c.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.ListNamespaceAddressesAtSigned(ctx, registryURL, domain, signingKey)
+}
+
 func (c *RegistryClient) ListNamespaceAddressesAt(ctx context.Context, registryURL, domain string) ([]RegistryAddress, string, error) {
 	var out RegistryAddressList
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/namespaces/"+urlPathEscape(canonicalizeDomain(domain))+"/addresses", nil, nil, &out); err != nil {
+		return nil, "", err
+	}
+	return out.Addresses, registryURL, nil
+}
+
+func (c *RegistryClient) ListNamespaceAddressesAtSigned(
+	ctx context.Context,
+	registryURL, domain string,
+	signingKey ed25519.PrivateKey,
+) ([]RegistryAddress, string, error) {
+	var out RegistryAddressList
+	headers := signedAddressLookupHeaders(domain, "", "list_addresses", signingKey)
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/namespaces/"+urlPathEscape(canonicalizeDomain(domain))+"/addresses", headers, nil, &out); err != nil {
 		return nil, "", err
 	}
 	return out.Addresses, registryURL, nil

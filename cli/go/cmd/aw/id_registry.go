@@ -297,7 +297,7 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	registry, _, err := resolveRegistryClientForLookup()
+	registry, sel, err := resolveRegistryClientForLookup()
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,19 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	addresses, _, err := registry.ListNamespaceAddressesAt(ctx, registryURL, domain)
+	var lookupSigningKey ed25519.PrivateKey
+	if sel != nil && strings.TrimSpace(sel.SigningKey) != "" {
+		lookupSigningKey, err = awid.LoadSigningKey(sel.SigningKey)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("load signing key: %w", err)
+		}
+	}
+	var addresses []awid.RegistryAddress
+	if lookupSigningKey != nil {
+		addresses, _, err = registry.ListNamespaceAddressesAtSigned(ctx, registryURL, domain, lookupSigningKey)
+	} else {
+		addresses, _, err = registry.ListNamespaceAddressesAt(ctx, registryURL, domain)
+	}
 	if err != nil {
 		return err
 	}
