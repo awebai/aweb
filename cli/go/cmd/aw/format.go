@@ -61,8 +61,8 @@ func formatIntrospect(v any) string {
 	if routing := awid.RoutingHandle(out.Alias, out.Address, out.Lifetime); routing != "" {
 		sb.WriteString(fmt.Sprintf("Routing:   %s\n", routing))
 	}
-	if out.NamespaceSlug != "" {
-		sb.WriteString(fmt.Sprintf("Domain:    %s\n", out.NamespaceSlug))
+	if out.Domain != "" {
+		sb.WriteString(fmt.Sprintf("Domain:    %s\n", out.Domain))
 	}
 	if address := awid.PublicAddress(out.Address, out.Lifetime); address != "" {
 		sb.WriteString(fmt.Sprintf("Address:   %s\n", address))
@@ -400,7 +400,7 @@ func formatDirectoryGet(v any) string {
 		handle = resp.Name
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Identity:     %s/%s\n", resp.OrgSlug, handle))
+	sb.WriteString(fmt.Sprintf("Identity:     %s/%s\n", resp.Domain, handle))
 	if resp.Description != "" {
 		sb.WriteString(fmt.Sprintf("Description:  %s\n", resp.Description))
 	}
@@ -425,7 +425,7 @@ func formatDirectorySearch(v any) string {
 		if a.Description != "" {
 			desc = " — " + a.Description
 		}
-		sb.WriteString(fmt.Sprintf("- %s/%s%s\n", a.OrgSlug, handle, desc))
+		sb.WriteString(fmt.Sprintf("- %s/%s%s\n", a.Domain, handle, desc))
 	}
 	return sb.String()
 }

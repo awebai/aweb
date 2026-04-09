@@ -27,17 +27,17 @@ type Selection struct {
 	BaseURL       string
 	AwebURL       string
 
-	IdentityID     string
-	IdentityHandle string
-	Address        string
-	Email          string
-	NamespaceSlug  string
-	DID            string
-	StableID       string
-	SigningKey     string
-	Custody        string
-	Lifetime       string
-	RegistryURL    string
+	WorkspaceID string
+	Alias       string
+	Address     string
+	Email       string
+	Domain      string
+	DID         string
+	StableID    string
+	SigningKey  string
+	Custody     string
+	Lifetime    string
+	RegistryURL string
 }
 
 type ResolveOptions struct {
@@ -110,9 +110,9 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 }
 
 func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity) *Selection {
-	namespaceSlug := ""
-	identityHandle := ""
-	identityID := ""
+	domain := ""
+	alias := ""
+	workspaceID := ""
 	address := ""
 	did := ""
 	stableID := ""
@@ -124,9 +124,9 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	if ws != nil {
 		teamDomain, _ := splitTeamAddress(ws.TeamAddress)
 		awebURL = strings.TrimSpace(ws.AwebURL)
-		namespaceSlug = teamDomain
-		identityHandle = strings.TrimSpace(ws.Alias)
-		identityID = strings.TrimSpace(ws.WorkspaceID)
+		domain = teamDomain
+		alias = strings.TrimSpace(ws.Alias)
+		workspaceID = strings.TrimSpace(ws.WorkspaceID)
 	}
 	if identity != nil {
 		if v := strings.TrimSpace(identity.Address); v != "" {
@@ -147,9 +147,14 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		if v := strings.TrimSpace(identity.RegistryURL); v != "" {
 			registryURL = v
 		}
-		if identityHandle == "" && strings.TrimSpace(identity.Address) != "" {
+		if alias == "" && strings.TrimSpace(identity.Address) != "" {
 			if _, handle, ok := CutIdentityAddress(identity.Address); ok {
-				identityHandle = handle
+				alias = handle
+			}
+		}
+		if domain == "" && strings.TrimSpace(identity.Address) != "" {
+			if authority, _, ok := CutIdentityAddress(identity.Address); ok {
+				domain = authority
 			}
 		}
 		if strings.EqualFold(custody, "self") && strings.TrimSpace(workingDir) != "" {
@@ -157,21 +162,21 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		}
 	}
 	return &Selection{
-		WorkingDir:     strings.TrimSpace(workingDir),
-		WorkspacePath:  strings.TrimSpace(workspacePath),
-		ServerName:     serverName,
-		BaseURL:        baseURL,
-		AwebURL:        awebURL,
-		IdentityID:     identityID,
-		IdentityHandle: identityHandle,
-		Address:        address,
-		NamespaceSlug:  namespaceSlug,
-		DID:            did,
-		StableID:       stableID,
-		SigningKey:     signingKey,
-		Custody:        custody,
-		Lifetime:       lifetime,
-		RegistryURL:    registryURL,
+		WorkingDir:    strings.TrimSpace(workingDir),
+		WorkspacePath: strings.TrimSpace(workspacePath),
+		ServerName:    serverName,
+		BaseURL:       baseURL,
+		AwebURL:       awebURL,
+		WorkspaceID:   workspaceID,
+		Alias:         alias,
+		Address:       address,
+		Domain:        domain,
+		DID:           did,
+		StableID:      stableID,
+		SigningKey:    signingKey,
+		Custody:       custody,
+		Lifetime:      lifetime,
+		RegistryURL:   registryURL,
 	}
 }
 
@@ -192,16 +197,25 @@ func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeId
 		}
 	}
 	return &Selection{
-		WorkingDir:     workingDir,
-		DID:            did,
-		StableID:       stableID,
-		Address:        address,
-		IdentityHandle: handle,
-		SigningKey:     signingKey,
-		Custody:        custody,
-		Lifetime:       lifetime,
-		RegistryURL:    strings.TrimSpace(identity.RegistryURL),
+		WorkingDir:  workingDir,
+		DID:         did,
+		StableID:    stableID,
+		Address:     address,
+		Alias:       handle,
+		Domain:      domainFromAddress(address),
+		SigningKey:  signingKey,
+		Custody:     custody,
+		Lifetime:    lifetime,
+		RegistryURL: strings.TrimSpace(identity.RegistryURL),
 	}
+}
+
+func domainFromAddress(address string) string {
+	authority, _, ok := CutIdentityAddress(address)
+	if !ok {
+		return ""
+	}
+	return authority
 }
 
 func DeriveBaseURLFromServerName(name string) (string, error) {

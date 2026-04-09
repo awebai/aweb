@@ -12,12 +12,11 @@ import (
 type ResolvedIdentity struct {
 	DID           string
 	StableID      string
-	IdentityID    string // server-assigned UUID
-	Address       string // namespace/handle
+	Address       string // domain/handle
 	ControllerDID string
 	Handle        string
 	PublicKey     ed25519.PublicKey
-	ServerURL     string
+	RegistryURL   string
 	Custody       string // "self" or "custodial"
 	Lifetime      string // "persistent" or "ephemeral"
 	ResolvedAt    time.Time
@@ -76,7 +75,7 @@ func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedId
 			DID:         identifier,
 			Address:     pin.Address,
 			Handle:      pin.Handle,
-			ServerURL:   pin.Server,
+			RegistryURL: pin.Server,
 			ResolvedAt:  time.Now().UTC(),
 			ResolvedVia: "pin",
 		}, nil
@@ -91,7 +90,7 @@ func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedId
 			DID:         did,
 			Address:     pin.Address,
 			Handle:      pin.Handle,
-			ServerURL:   pin.Server,
+			RegistryURL: pin.Server,
 			ResolvedAt:  time.Now().UTC(),
 			ResolvedVia: "pin",
 		}, nil
@@ -118,7 +117,7 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 			if pinIdentity, pinErr := r.Pin.Resolve(ctx, identifier); pinErr == nil {
 				identity.Address = pinIdentity.Address
 				identity.Handle = pinIdentity.Handle
-				identity.ServerURL = pinIdentity.ServerURL
+				identity.RegistryURL = pinIdentity.RegistryURL
 			}
 		}
 		return identity, nil

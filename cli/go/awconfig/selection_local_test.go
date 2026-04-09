@@ -41,8 +41,8 @@ func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 	if sel.Address != "acme.com/support" {
 		t.Fatalf("address=%q want %q", sel.Address, "acme.com/support")
 	}
-	if sel.NamespaceSlug != "myteam.aweb.ai" {
-		t.Fatalf("namespace_slug=%q", sel.NamespaceSlug)
+	if sel.Domain != "myteam.aweb.ai" {
+		t.Fatalf("domain=%q", sel.Domain)
 	}
 }
 
@@ -63,13 +63,13 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.IdentityHandle != "alice" {
-		t.Fatalf("identity_handle=%q", sel.IdentityHandle)
+	if sel.Alias != "alice" {
+		t.Fatalf("alias=%q", sel.Alias)
 	}
-	if sel.IdentityID != "workspace-1" {
-		t.Fatalf("identity_id=%q", sel.IdentityID)
+	if sel.WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace_id=%q", sel.WorkspaceID)
 	}
-	if sel.NamespaceSlug != "acme.com" {
-		t.Fatalf("namespace_slug=%q", sel.NamespaceSlug)
+	if sel.Domain != "acme.com" {
+		t.Fatalf("domain=%q", sel.Domain)
 	}
 }

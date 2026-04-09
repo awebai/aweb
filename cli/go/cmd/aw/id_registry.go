@@ -125,7 +125,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	serverURL, err := resolveOptionalWorkspaceBaseURL()
+	awebURL, err := resolveOptionalWorkspaceBaseURL()
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	mapping, err := registry.RegisterDID(
 		ctx,
 		registryURL,
-		serverURL,
+		awebURL,
 		identity.Address,
 		identity.Handle,
 		identity.DID,
@@ -152,7 +152,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 		mapping = &awid.DIDMapping{
 			DIDAW:         identity.StableID,
 			CurrentDIDKey: identity.DID,
-			Server:        serverURL,
+			Server:        awebURL,
 			Address:       identity.Address,
 		}
 	} else if err != nil {

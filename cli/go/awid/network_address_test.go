@@ -45,8 +45,8 @@ func TestParseNetworkAddress(t *testing.T) {
 			if addr.IsNetwork != tc.wantIsNet {
 				t.Fatalf("IsNetwork=%v, want %v", addr.IsNetwork, tc.wantIsNet)
 			}
-			if addr.OrgSlug != tc.wantOrg {
-				t.Fatalf("OrgSlug=%q, want %q", addr.OrgSlug, tc.wantOrg)
+			if addr.Domain != tc.wantOrg {
+				t.Fatalf("Domain=%q, want %q", addr.Domain, tc.wantOrg)
 			}
 			if addr.Alias != tc.wantAlias {
 				t.Fatalf("Alias=%q, want %q", addr.Alias, tc.wantAlias)
@@ -58,7 +58,7 @@ func TestParseNetworkAddress(t *testing.T) {
 func TestNetworkAddressString(t *testing.T) {
 	t.Parallel()
 
-	addr := NetworkAddress{OrgSlug: "acme", Alias: "researcher", IsNetwork: true}
+	addr := NetworkAddress{Domain: "acme", Alias: "researcher", IsNetwork: true}
 	if s := addr.String(); s != "acme/researcher" {
 		t.Fatalf("String()=%q", s)
 	}

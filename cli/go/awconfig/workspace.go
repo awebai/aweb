@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,7 +21,6 @@ type WorktreeWorkspace struct {
 	HumanName       string `yaml:"human_name,omitempty"`
 	AgentType       string `yaml:"agent_type,omitempty"`
 	RoleName        string `yaml:"role_name,omitempty"`
-	Role            string `yaml:"-"`
 	Hostname        string `yaml:"hostname,omitempty"`
 	WorkspacePath   string `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
@@ -28,9 +28,7 @@ type WorktreeWorkspace struct {
 
 type worktreeWorkspaceYAML struct {
 	AwebURL         string `yaml:"aweb_url,omitempty"`
-	ServerURL       string `yaml:"server_url,omitempty"`
 	TeamAddress     string `yaml:"team_address,omitempty"`
-	APIKey          string `yaml:"api_key,omitempty"`
 	WorkspaceID     string `yaml:"workspace_id"`
 	RepoID          string `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string `yaml:"canonical_origin,omitempty"`
@@ -38,36 +36,47 @@ type worktreeWorkspaceYAML struct {
 	HumanName       string `yaml:"human_name,omitempty"`
 	AgentType       string `yaml:"agent_type,omitempty"`
 	RoleName        string `yaml:"role_name,omitempty"`
-	Role            string `yaml:"role,omitempty"`
 	Hostname        string `yaml:"hostname,omitempty"`
 	WorkspacePath   string `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
-	IdentityID      string `yaml:"identity_id,omitempty"`
-	IdentityHandle  string `yaml:"identity_handle,omitempty"`
-	NamespaceSlug   string `yaml:"namespace_slug,omitempty"`
-	DID             string `yaml:"did,omitempty"`
-	StableID        string `yaml:"stable_id,omitempty"`
-	SigningKey      string `yaml:"signing_key,omitempty"`
-	Custody         string `yaml:"custody,omitempty"`
-	Lifetime        string `yaml:"lifetime,omitempty"`
-	ProjectID       string `yaml:"project_id,omitempty"`
-	ProjectSlug     string `yaml:"project_slug,omitempty"`
 }
 
-const legacyWorkspaceFormatError = "workspace.yaml is in the legacy format. Run `aw init` to reinitialize, or manually replace server_url with aweb_url in workspace.yaml."
+const legacyWorkspaceFormatError = "workspace.yaml uses removed server_url. Run `aw init` to reinitialize this worktree."
 const legacyWorkspaceAPIKeyError = "workspace.yaml uses removed api_key auth. Run `aw init` to reinitialize this worktree with team certificate auth."
-const legacyWorkspaceRemovedFieldsErrorPrefix = "workspace.yaml uses removed legacy fields"
+const legacyWorkspaceRemovedFieldsErrorPrefix = "workspace.yaml uses removed fields"
+const workspaceUnsupportedFieldsErrorPrefix = "workspace.yaml contains unsupported fields"
 
-func (w *WorktreeWorkspace) syncRoleFields() {
-	if w == nil {
-		return
-	}
-	resolved := strings.TrimSpace(w.RoleName)
-	if resolved == "" {
-		resolved = strings.TrimSpace(w.Role)
-	}
-	w.RoleName = resolved
-	w.Role = resolved
+var canonicalWorkspaceYAMLKeys = map[string]struct{}{
+	"aweb_url":         {},
+	"team_address":     {},
+	"workspace_id":     {},
+	"repo_id":          {},
+	"canonical_origin": {},
+	"alias":            {},
+	"human_name":       {},
+	"agent_type":       {},
+	"role_name":        {},
+	"hostname":         {},
+	"workspace_path":   {},
+	"updated_at":       {},
+}
+
+var removedWorkspaceYAMLKeys = map[string]struct{}{
+	"api_key":         {},
+	"awid_url":        {},
+	"cloud_url":       {},
+	"custody":         {},
+	"did":             {},
+	"identity_handle": {},
+	"identity_id":     {},
+	"lifetime":        {},
+	"namespace_slug":  {},
+	"project_id":      {},
+	"project_slug":    {},
+	"role":            {},
+	"server_url":      {},
+	"signing_key":     {},
+	"stable_id":       {},
 }
 
 func (w *WorktreeWorkspace) syncURLFields() {
@@ -82,7 +91,17 @@ func (w *WorktreeWorkspace) normalize() {
 		return
 	}
 	w.syncURLFields()
-	w.syncRoleFields()
+	w.TeamAddress = strings.TrimSpace(w.TeamAddress)
+	w.WorkspaceID = strings.TrimSpace(w.WorkspaceID)
+	w.RepoID = strings.TrimSpace(w.RepoID)
+	w.CanonicalOrigin = strings.TrimSpace(w.CanonicalOrigin)
+	w.Alias = strings.TrimSpace(w.Alias)
+	w.HumanName = strings.TrimSpace(w.HumanName)
+	w.AgentType = strings.TrimSpace(w.AgentType)
+	w.RoleName = strings.TrimSpace(w.RoleName)
+	w.Hostname = strings.TrimSpace(w.Hostname)
+	w.WorkspacePath = strings.TrimSpace(w.WorkspacePath)
+	w.UpdatedAt = strings.TrimSpace(w.UpdatedAt)
 }
 
 func (w *WorktreeWorkspace) HasBinding() bool {
@@ -99,42 +118,38 @@ func (w *WorktreeWorkspace) HasTeamBinding() bool {
 	return strings.TrimSpace(w.AwebURL) != "" && strings.TrimSpace(w.TeamAddress) != ""
 }
 
-func (raw worktreeWorkspaceYAML) removedFieldNames() []string {
-	fields := make([]string, 0, 11)
-	if strings.TrimSpace(raw.Role) != "" {
-		fields = append(fields, "role")
+func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, []string, []string) {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return false, false, nil, nil
 	}
-	if strings.TrimSpace(raw.IdentityID) != "" {
-		fields = append(fields, "identity_id")
+	removed := make([]string, 0, 8)
+	unsupported := make([]string, 0, 4)
+	hasServerURL := false
+	hasAPIKey := false
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key := strings.TrimSpace(value.Content[i].Value)
+		if key == "" {
+			continue
+		}
+		if _, ok := canonicalWorkspaceYAMLKeys[key]; ok {
+			continue
+		}
+		switch key {
+		case "server_url":
+			hasServerURL = true
+		case "api_key":
+			hasAPIKey = true
+		default:
+			if _, ok := removedWorkspaceYAMLKeys[key]; ok {
+				removed = append(removed, key)
+			} else {
+				unsupported = append(unsupported, key)
+			}
+		}
 	}
-	if strings.TrimSpace(raw.IdentityHandle) != "" {
-		fields = append(fields, "identity_handle")
-	}
-	if strings.TrimSpace(raw.NamespaceSlug) != "" {
-		fields = append(fields, "namespace_slug")
-	}
-	if strings.TrimSpace(raw.DID) != "" {
-		fields = append(fields, "did")
-	}
-	if strings.TrimSpace(raw.StableID) != "" {
-		fields = append(fields, "stable_id")
-	}
-	if strings.TrimSpace(raw.SigningKey) != "" {
-		fields = append(fields, "signing_key")
-	}
-	if strings.TrimSpace(raw.Custody) != "" {
-		fields = append(fields, "custody")
-	}
-	if strings.TrimSpace(raw.Lifetime) != "" {
-		fields = append(fields, "lifetime")
-	}
-	if strings.TrimSpace(raw.ProjectID) != "" {
-		fields = append(fields, "project_id")
-	}
-	if strings.TrimSpace(raw.ProjectSlug) != "" {
-		fields = append(fields, "project_slug")
-	}
-	return fields
+	sort.Strings(removed)
+	sort.Strings(unsupported)
+	return hasServerURL, hasAPIKey, removed, unsupported
 }
 
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
@@ -142,14 +157,18 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	if strings.TrimSpace(raw.AwebURL) == "" && strings.TrimSpace(raw.ServerURL) != "" {
+	hasServerURL, hasAPIKey, removed, unsupported := inspectWorkspaceYAMLKeys(value)
+	if hasServerURL {
 		return errors.New(legacyWorkspaceFormatError)
 	}
-	if strings.TrimSpace(raw.APIKey) != "" {
+	if hasAPIKey {
 		return errors.New(legacyWorkspaceAPIKeyError)
 	}
-	if removed := raw.removedFieldNames(); len(removed) > 0 {
+	if len(removed) > 0 {
 		return fmt.Errorf("%s: %s. Run `aw init` to reinitialize this worktree.", legacyWorkspaceRemovedFieldsErrorPrefix, strings.Join(removed, ", "))
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("%s: %s. Remove them and keep only the canonical workspace binding keys.", workspaceUnsupportedFieldsErrorPrefix, strings.Join(unsupported, ", "))
 	}
 
 	*w = WorktreeWorkspace{
@@ -162,7 +181,6 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		HumanName:       raw.HumanName,
 		AgentType:       raw.AgentType,
 		RoleName:        raw.RoleName,
-		Role:            raw.Role,
 		Hostname:        raw.Hostname,
 		WorkspacePath:   raw.WorkspacePath,
 		UpdatedAt:       raw.UpdatedAt,

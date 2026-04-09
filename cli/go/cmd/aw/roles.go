@@ -307,9 +307,6 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 		if roleName := strings.TrimSpace(state.RoleName); roleName != "" {
 			return roleName
 		}
-		if role := strings.TrimSpace(state.Role); role != "" {
-			return role
-		}
 	}
 	_ = sel
 	return "developer"

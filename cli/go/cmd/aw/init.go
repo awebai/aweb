@@ -373,7 +373,7 @@ func shouldSuggestClaimHuman(result *initResult) bool {
 	return false
 }
 
-func normalizeServerBaseURL(baseURL string) (string, error) {
+func normalizeAwebBaseURL(baseURL string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
 		return "", err

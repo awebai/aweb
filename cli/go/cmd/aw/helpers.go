@@ -23,9 +23,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// DefaultServerURL is the public aweb instance used when no server URL is
+// DefaultAwebURL is the public aweb instance used when no aweb URL is
 // configured via flags, environment, or local config.
-const DefaultServerURL = "https://app.aweb.ai"
+const DefaultAwebURL = "https://app.aweb.ai"
 
 func loadDotenvBestEffort() {
 	// Best effort: load from current working directory.
@@ -295,7 +295,7 @@ func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL s
 		configuredBaseURL: strings.TrimSuffix(baseURL, "/"),
 		currentBaseURL:    strings.TrimSuffix(baseURL, "/"),
 		persist: func(resolved string) {
-			if err := persistResolvedServerURL(sel.WorkspacePath, resolved); err != nil {
+			if err := persistResolvedAwebURL(sel.WorkspacePath, resolved); err != nil {
 				debugLog("persist resolved base URL for %s: %v", sel.WorkspacePath, err)
 			}
 		},
@@ -348,7 +348,7 @@ func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) e
 	return nil
 }
 
-func persistResolvedServerURL(workspacePath, baseURL string) error {
+func persistResolvedAwebURL(workspacePath, baseURL string) error {
 	workspacePath = strings.TrimSpace(workspacePath)
 	baseURL = strings.TrimSpace(baseURL)
 	if workspacePath == "" || baseURL == "" {
@@ -535,7 +535,7 @@ func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName
 		}
 	}
 	if baseURL == "" {
-		baseURL = DefaultServerURL
+		baseURL = DefaultAwebURL
 	}
 	if serverName == "" {
 		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
@@ -710,9 +710,9 @@ func sanitizeKeyComponent(s string) string {
 
 // deriveIdentityAddress builds the canonical external identity address from
 // the identity domain plus the local routing handle or persistent name.
-func deriveIdentityAddress(namespaceSlug, handle string) string {
-	if namespaceSlug != "" {
-		return namespaceSlug + "/" + handle
+func deriveIdentityAddress(domain, handle string) string {
+	if domain != "" {
+		return domain + "/" + handle
 	}
 	return handle
 }
@@ -724,7 +724,7 @@ func selectionAddress(sel *awconfig.Selection) string {
 	if address := strings.TrimSpace(sel.Address); address != "" {
 		return address
 	}
-	return deriveIdentityAddress(strings.TrimSpace(sel.NamespaceSlug), strings.TrimSpace(sel.IdentityHandle))
+	return deriveIdentityAddress(strings.TrimSpace(sel.Domain), strings.TrimSpace(sel.Alias))
 }
 
 func handleFromAddress(address string) string {
@@ -887,7 +887,7 @@ func networkError(err error, target string) error {
 // wrong agent when .aw/context resolves to a different account than
 // .aw/workspace.yaml expects.
 func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
-	if sel == nil || strings.TrimSpace(sel.IdentityHandle) == "" {
+	if sel == nil || strings.TrimSpace(sel.Alias) == "" {
 		return nil
 	}
 	ws, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
@@ -895,7 +895,7 @@ func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
 		return nil
 	}
 	wsAlias := strings.TrimSpace(ws.Alias)
-	selAlias := strings.TrimSpace(sel.IdentityHandle)
+	selAlias := strings.TrimSpace(sel.Alias)
 	if wsAlias == "" || selAlias == "" {
 		return nil
 	}

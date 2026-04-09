@@ -182,7 +182,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		TeamAddress:     "demo/backend",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -463,7 +463,6 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "bob",
-						"project_slug":   "demo",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
@@ -498,7 +497,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 		TeamAddress:     "demo/backend",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -569,7 +568,6 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "maintainer",
-						"project_slug":   "demo",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
@@ -604,7 +602,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 		TeamAddress:     "demo/backend",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",
@@ -629,7 +627,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing.T) {
+func TestAwWorkspaceStatusSkipsGoneIdentityDeletionWithoutLegacyFields(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -675,8 +673,6 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 					{
 						"workspace_id":   goneID,
 						"alias":          "bot",
-						"project_slug":   "demo",
-						"namespace_slug": "demo.example.com",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
@@ -711,7 +707,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityByNamespaceSlug(t *testing
 		TeamAddress:     "demo/backend",
 		WorkspaceID:     selfID,
 		Alias:           "alice",
-		Role:            "developer",
+		RoleName:        "developer",
 		Hostname:        "devbox",
 		WorkspacePath:   tmp,
 		CanonicalOrigin: "github.com/acme/repo",

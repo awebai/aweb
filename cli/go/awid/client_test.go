@@ -3085,7 +3085,6 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 			}
 			return &ResolvedIdentity{
 				DID:         senderDID,
-				IdentityID:  "identity-uuid-1",
 				Address:     identifier,
 				Lifetime:    "ephemeral",
 				Custody:     "self",
@@ -3173,7 +3172,6 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 			}
 			return &ResolvedIdentity{
 				DID:         senderDID,
-				IdentityID:  "identity-uuid-2",
 				Address:     identifier,
 				Lifetime:    "ephemeral",
 				Custody:     "self",
