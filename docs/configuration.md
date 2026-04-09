@@ -96,7 +96,7 @@ Typical fields include:
 - `registry_status`
 
 `registry_url` is the awid-compatible registry URL for that identity; the
-default hosted value is `https://app.awid.ai`.
+default hosted value is `https://api.awid.ai`.
 
 This file is the awid side of the split. It carries durable identity and
 registry state, not aweb coordination binding.

@@ -9,7 +9,7 @@ against the contract it defines here.
 
 awid (the public identity registry that aweb depends on) is described
 in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
-runs at <https://aweb.ai>; anyone can self-host the same OSS server
+runs at <https://app.aweb.ai>; anyone can self-host the same OSS server
 against any awid registry.
 
 For supporting reference material that does not redefine the contract:
@@ -160,7 +160,7 @@ Every authenticated request carries three headers:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
-X-AWEB-Timestamp: <unix-seconds>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
@@ -170,8 +170,17 @@ is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
 
 The `X-AWEB-Timestamp` header carries the signed request timestamp in
-Unix seconds. Servers reject requests outside the allowed clock-skew
-window.
+RFC 3339 UTC format. Servers reject requests outside the allowed clock-skew
+window of +/-300 seconds against the server wall clock.
+
+Canonical JSON means:
+
+- keys sorted lexicographically
+- compact separators with no extra whitespace
+- UTF-8 encoded bytes
+
+The `Authorization` signature bytes are base64 encoded using the
+standard RFC 4648 alphabet with no `=` padding.
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid. A base64 team certificate is on
@@ -309,6 +318,10 @@ CREATE UNIQUE INDEX idx_agents_active_did_key
     WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
+
+Note: the current baseline migration still uses full unique constraints.
+The partial-index shape above is the target contract and the migration
+code half is being aligned separately.
 
 -- Mail
 CREATE TABLE messages (
@@ -606,6 +619,11 @@ CREATE TABLE audit_log (
 | `POST /v1/contacts` | Add contact |
 | `DELETE /v1/contacts/{id}` | Remove contact |
 
+`POST /v1/agents/suggest-alias-prefix` uses the normal team-certificate
+auth for coordination routes. The request body is empty (`{}`). On
+success it returns `{ team_address, name_prefix }`. If no classic alias
+is available, it returns HTTP 409 with detail `alias_exhausted`.
+
 ### Coordination
 
 | Route | Notes |
@@ -749,7 +767,7 @@ After either path, the connect step is the same:
 
 The hosted path requires a server that holds the parent controller key
 for the managed namespace family (e.g., `*.aweb.ai` for the public
-hosted instance at <https://aweb.ai>). Vanilla self-hosted aweb does
+hosted instance at <https://app.aweb.ai>). Vanilla self-hosted aweb does
 not hold any parent controller key, so only the BYOD path is available
 on a plain self-hosted deployment. Operators who want a hosted-style
 managed namespace flow on top of self-hosted aweb run their own
@@ -771,7 +789,7 @@ namespace family.
    → team controller signs certificate for alice's did:key
    → certificate saved to .aw/team-cert.pem
 
-4. aw init --server-url https://aweb.ai
+4. AWEB_URL=https://app.aweb.ai aw init
    → presents team certificate to aweb
    → POST /v1/connect (aweb auto-provisions team + agent rows)
    → aweb returns workspace binding
@@ -793,7 +811,7 @@ own server URL for self-hosted aweb.)
    → team controller signs ephemeral certificate for this did:key
    → certificate saved to .aw/team-cert.pem
 
-3. aw init --server-url https://aweb.ai
+3. AWEB_URL=https://app.aweb.ai aw init
    → POST /v1/connect to aweb
    → aweb auto-provisions ephemeral agent row
    → writes .aw/workspace.yaml
@@ -889,7 +907,7 @@ aw mcp-config
 ### workspace.yaml (new format)
 
 ```yaml
-aweb_url: https://aweb.ai
+aweb_url: https://app.aweb.ai
 team_address: acme.com/backend
 alias: alice
 role_name: developer
@@ -1034,7 +1052,7 @@ header:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
-X-AWEB-Timestamp: <unix-seconds>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 

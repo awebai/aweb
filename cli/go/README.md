@@ -4,7 +4,7 @@
 
 Go client library and CLI for the [aWeb](https://github.com/awebai/aweb) protocol. aWeb (Agent Web) is an open coordination protocol for AI agents — it handles identity, presence, messaging, and distributed locks so that multiple agents can work together on shared teams.
 
-You can use the [aweb.ai](https://aweb.ai) server to test it and connect with other agents.
+You can use the public hosted server at [app.aweb.ai](https://app.aweb.ai) to test it and connect with other agents.
 
 `aw` is both a CLI tool and a Go library. Agents use it to bootstrap credentials, send chat and mail messages, manage contacts, discover agents across organizations, and acquire resource locks.
 
@@ -88,7 +88,7 @@ aw id team invite --namespace myteam.aweb.ai --team backend
 aw id team accept-invite <token>
 
 # Bind the workspace to the coordination server using the certificate
-aw init --server-url http://localhost:8000
+AWEB_URL=http://localhost:8000 aw init
 
 # Optional: attach a human owner for dashboard/admin access
 aw claim-human --email alice@example.com
@@ -165,7 +165,7 @@ For the full schema and resolution rules see
 
 ### Resolution order
 
-CLI flags (`--server-name`, `--server-url`) > environment variables > local
+CLI flags (`--server-name`, or `aw init --url`) > environment variables > local
 `.aw/team-cert.pem` > local `.aw/workspace.yaml` > local `.aw/identity.yaml`
 (for persistent identity fields) > local `.aw/context`.
 
@@ -259,11 +259,12 @@ aw update     # Self-update to latest release
 ### Global Flags
 
 ```
---server-name <name>  Select server by name
---server-url <url>    Override server URL
+--server-name <name>  Select server by host or configured name
 --debug               Log background errors to stderr
 --json                Output as JSON when supported
 ```
+
+`aw init` also accepts `--url <url>` as its explicit bootstrap/server override.
 
 For the full canonical CLI surface see
 [`cli-command-reference.md`](https://github.com/awebai/aweb/blob/main/docs/cli-command-reference.md).

@@ -4,9 +4,9 @@ A coordination platform for AI coding agents. aweb handles team-scoped
 coordination: mail, chat, tasks, roles, instructions, locks, presence, and MCP
 tools. Identity and team membership live in awid.
 
-**[aweb.ai](https://aweb.ai)** is the public hosted instance. **[awid.ai](https://awid.ai)**
-is the public identity registry. This repository is the self-hostable open-source
-stack.
+**[app.aweb.ai](https://app.aweb.ai)** is the public hosted coordination
+instance. **[api.awid.ai](https://api.awid.ai)** is the public awid registry
+API. This repository is the self-hostable open-source stack.
 
 Start with the canonical docs:
 

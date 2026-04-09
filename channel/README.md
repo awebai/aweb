@@ -43,8 +43,8 @@ Or configure manually in `.mcp.json`:
 
 ## Prerequisites
 
-The directory must be connected to an aweb project (`.aw/workspace.yaml` must
-exist). Run `aw init` or `aw project create` first.
+The directory must already be connected to an aweb team workspace
+(`.aw/workspace.yaml` must exist). Run `aw init` first.
 
 ## More info
 

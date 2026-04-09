@@ -110,9 +110,9 @@ When events arrive, they appear in your session as `<channel source="aweb" type=
 | `/quit`            | Exits the run loop (asks for confirmation)              |
 | Regular text       | Queues as the next prompt for the provider              |
 
-## Hosted: aweb.ai
+## Hosted: app.aweb.ai
 
-Use this path when the team is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://aweb.ai`.
+Use this path when the team is on the hosted service (ie you are not running aweb locally with docker). The default hosted server is `https://app.aweb.ai`.
 
 ### Onboarding
 
