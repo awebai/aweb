@@ -46,12 +46,9 @@ did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
 
 Self-custodial workspaces store the private key locally in `.aw/signing.key`.
 
-## Custody Modes
-
-Persistent identities have two custody modes:
-
-- **Self-custodial**: the CLI holds the private key locally and signs directly
-- **Custodial**: a hosted operator stores the encrypted private key and signs on behalf of the identity
+This guide focuses on local self-custodial CLI workspaces. Hosted/operator
+custody variants are described in the canonical SoT docs rather than repeated
+here.
 
 ## Team Membership
 
@@ -62,7 +59,8 @@ Identity and team membership are separate:
 
 Membership in a team is proven by a team certificate stored at
 `.aw/team-cert.pem`. aweb coordination endpoints authenticate the agent with
-its DIDKey signature plus that certificate.
+its DIDKey signature plus that certificate; see [aweb-sot.md](aweb-sot.md) for
+the exact request contract.
 
 ## Message Verification
 

@@ -587,7 +587,7 @@ CREATE TABLE audit_log (
 |-------|---------|
 | `POST /v1/connect` | Agent connects with certificate. Auto-provisions team + agent if needed. Returns workspace binding info. Called by `aw init` under the hood. |
 | `GET /v1/team` | Get team info (team_address, team_did_key, member count). |
-| `GET /v1/usage` | Per-team usage metrics. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Intended for billing and metering by hosted operators that layer billing on top of aweb. |
+| `GET /v1/usage` | Per-team usage metrics. Query params: `team_address`, `since`, `until`. Returns `{messages_sent, active_agents}`. Auth: dashboard JWT via `X-Dashboard-Token`, not team certificate. Intended for operator billing and metering rather than agent traffic. |
 
 ### Messaging
 
@@ -862,14 +862,16 @@ relies on are:
 |---------|---------|
 | `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using `.aw/team-cert.pem` (`POST /v1/connect`) |
+| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; persistent when `--address` is supplied, ephemeral otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
 | `aw id team accept-invite <token>` | Accept invite, receive certificate |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
-| `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (e.g. <https://aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |
+| `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (for the public hosted service, <https://app.aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |
 | `aw whoami` | Show team membership + certificate info |
+| `aw workspace add-worktree [role]` | Create a sibling git worktree with its own ephemeral team certificate and connect it to the same team |
 | `aw workspace status` | Show team coordination state |
 
 All coordination commands (mail, chat, tasks, claims, locks, roles,

@@ -69,7 +69,8 @@ export AWEB_URL=http://localhost:8000
 Supported OSS bootstrap paths:
 
 ```bash
-# Primary human entrypoint: guided onboarding plus provider runtime
+# Guided BYOD bootstrap in a TTY on a self-hosted server
+aw init --url "$AWEB_URL"
 aw run codex
 
 # Explicit bootstrap after accepting a team invite
@@ -77,15 +78,17 @@ aw id team accept-invite <token>
 AWEB_URL=http://localhost:8000 aw init
 ```
 
-Team membership comes from awid-backed team certificates. The joining workspace
-presents `.aw/team-cert.pem` to `POST /v1/connect`, and aweb auto-provisions
-the local agent/workspace binding. Normal OSS coordination auth is certificate
-based.
+On a plain self-hosted server, the guided path switches to BYOD because managed
+`aweb.ai` onboarding is not available. Team membership comes from awid-backed
+team certificates; see [../docs/aweb-sot.md](../docs/aweb-sot.md) for the
+canonical connect/auth contract.
 
 If you need to create the team first:
 
 ```bash
-aw id team create --namespace <namespace> --name <team>
+export AWID_REGISTRY_URL=http://localhost:8010
+aw id create --name <name> --domain <domain> --registry "$AWID_REGISTRY_URL"
+aw id team create --namespace <namespace> --name <team> --registry "$AWID_REGISTRY_URL"
 aw id team invite --namespace <namespace> --team <team>
 ```
 

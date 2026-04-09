@@ -10,9 +10,9 @@ For the canonical contract, see the MCP section of
 - FastAPI mounts the MCP app at `/mcp`
 - With the default `streamable_http_path="/"`, clients should use `/mcp/`
 - The transport is Streamable HTTP via FastMCP with `stateless_http=True`
-- OSS aweb MCP auth uses the same team-certificate model as the REST coordination API
-- The middleware verifies the DIDKey request signature, request timestamp, and `X-AWID-Team-Certificate` header; see [`aweb-sot.md`](aweb-sot.md) and [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py)
-- The OSS `/mcp` path accepts only the certificate-based coordination auth contract
+- The canonical auth contract lives in the MCP and Authentication sections of
+  [`aweb-sot.md`](aweb-sot.md); this reference does not restate the request
+  headers or signature envelope
 - Tools run in the caller's authenticated team scope
 - All registered tools currently return strings, so callers should treat results as human-readable output rather than a stable JSON contract
 
@@ -99,5 +99,5 @@ For the canonical contract, see the MCP section of
 ## Mapping to the REST API
 
 - Tools are thin wrappers over the same coordination primitives exposed by the REST API.
-- Tool auth resolves an `AuthContext` containing `team_address`, `agent_id`, `alias`, and `did_key`; see [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py).
+- Tool auth resolves caller context through [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py); the canonical contract remains [`aweb-sot.md`](aweb-sot.md).
 - If you add a new MCP tool, implement the behavior under [`server/src/aweb/mcp/tools/`](../server/src/aweb/mcp/tools/) and register it in [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
