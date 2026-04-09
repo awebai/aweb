@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid as uuid_module
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -19,6 +19,7 @@ from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
+    DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
     list_agent_presences,
     list_agent_presences_by_workspace_ids,
@@ -26,6 +27,7 @@ from ...presence import (
 )
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
+from ...events import TaskUnclaimedEvent, publish_event
 from ..roles import (
     ROLE_MAX_LENGTH,
 )
@@ -360,6 +362,7 @@ class DeleteWorkspaceResponse(BaseModel):
     workspace_id: str
     alias: str
     deleted_at: str
+    identity_deleted: bool
 
 
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
@@ -369,7 +372,7 @@ async def delete_workspace(
     db: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
 ) -> DeleteWorkspaceResponse:
-    """Soft-delete an ephemeral workspace."""
+    """Soft-delete a stale ephemeral workspace and its bound identity."""
     try:
         validated_id = str(UUID(workspace_id))
     except ValueError:
@@ -382,9 +385,20 @@ async def delete_workspace(
 
     existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, alias, team_address, deleted_at
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND team_address = $2
+        SELECT
+            w.workspace_id,
+            w.agent_id,
+            w.alias,
+            w.team_address,
+            w.deleted_at,
+            w.last_seen_at,
+            a.lifetime AS agent_lifetime
+        FROM {{tables.workspaces}} w
+        LEFT JOIN {{tables.agents}} a
+          ON a.agent_id = w.agent_id
+         AND a.team_address = w.team_address
+         AND a.deleted_at IS NULL
+        WHERE w.workspace_id = $1 AND w.team_address = $2
         """,
         UUID(validated_id),
         team_address,
@@ -402,52 +416,88 @@ async def delete_workspace(
             detail=f"Workspace {workspace_id} is already deleted",
         )
 
-    # Check lifetime from agent table to restrict deletion to ephemeral agents.
-    agent_row = await aweb_db.fetch_one(
-        """
-        SELECT lifetime
-        FROM {{tables.agents}}
-        WHERE agent_id = $1
-          AND team_address = $2
-          AND deleted_at IS NULL
-        """,
-        UUID(validated_id),
-        team_address,
-    )
-    if agent_row is None:
+    agent_lifetime = str(existing.get("agent_lifetime") or "").strip()
+    if not agent_lifetime:
         raise HTTPException(status_code=409, detail="Workspace is missing its bound identity")
-    if str(agent_row.get("lifetime") or "ephemeral") != "ephemeral":
+    if agent_lifetime != "ephemeral":
         raise HTTPException(
             status_code=409,
             detail="Workspace deletion is only available for ephemeral identities",
         )
 
+    last_seen_at = existing.get("last_seen_at")
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
+    if last_seen_at is not None and last_seen_at > stale_cutoff:
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace is still active; only stale ephemeral workspaces can be deleted",
+        )
+
     deleted_at = datetime.now(timezone.utc)
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.workspaces}}
-        SET deleted_at = $2
-        WHERE workspace_id = $1
-        """,
-        UUID(validated_id),
-        deleted_at,
-    )
+    async with aweb_db.transaction() as tx:
+        await tx.execute(
+            """
+            UPDATE {{tables.workspaces}}
+            SET deleted_at = $2
+            WHERE workspace_id = $1
+              AND deleted_at IS NULL
+            """,
+            UUID(validated_id),
+            deleted_at,
+        )
 
-    # Release all task claims for this workspace.
-    await aweb_db.execute(
-        """
-        DELETE FROM {{tables.task_claims}}
-        WHERE workspace_id = $1
-        """,
-        UUID(validated_id),
-    )
+        claimed_rows = await tx.fetch_all(
+            """
+            DELETE FROM {{tables.task_claims}}
+            WHERE workspace_id = $1
+            RETURNING task_ref
+            """,
+            UUID(validated_id),
+        )
 
-    await clear_workspace_presence(redis, [validated_id])
+        deleted_agent = await tx.fetch_one(
+            """
+            UPDATE {{tables.agents}}
+            SET deleted_at = $2,
+                status = 'deleted'
+            WHERE agent_id = $1
+              AND team_address = $3
+              AND deleted_at IS NULL
+              AND lifetime = 'ephemeral'
+            RETURNING agent_id
+            """,
+            existing["agent_id"],
+            deleted_at,
+            team_address,
+        )
+
+    if redis is not None:
+        try:
+            for row in claimed_rows:
+                await publish_event(
+                    redis,
+                    TaskUnclaimedEvent(
+                        workspace_id=validated_id,
+                        task_ref=row["task_ref"],
+                        alias=existing["alias"],
+                    ),
+                )
+            await clear_workspace_presence(redis, [validated_id])
+        except Exception as exc:
+            logger.warning(
+                "Workspace delete SQL cleanup succeeded but Redis cleanup failed",
+                extra={
+                    "workspace_id": validated_id,
+                    "team_address": team_address,
+                    "error": str(exc),
+                },
+            )
 
     return DeleteWorkspaceResponse(
         workspace_id=validated_id,
         alias=existing["alias"],
         deleted_at=deleted_at.isoformat(),
+        identity_deleted=deleted_agent is not None,
     )
 
 
