@@ -67,7 +67,6 @@ func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T
 	t.Setenv("HOME", tmp)
 	t.Setenv("AW_CONFIG_PATH", "")
 	t.Setenv("AWEB_URL", "")
-	t.Setenv("AWEB_API_KEY", "")
 
 	client, _, err := resolveClientSelectionForDir(tmp)
 	if err != nil {

@@ -121,7 +121,7 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestChatCreateSessionSignsLocalAliases(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestChatCreateSessionDoesNotMutateInput(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestChatSendMessageSignsLocalAliases(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestChatSendMessageDoesNotMutateInput(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,7 +591,7 @@ func TestNewWithIdentitySetsFields(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity("http://localhost:8000", "aw_sk_test", priv, did)
+	c, err := NewWithIdentity("http://localhost:8000", priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,29 +615,29 @@ func TestNewWithIdentityValidation(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	if _, err := NewWithIdentity("http://localhost:8000", "aw_sk_test", nil, did); err == nil {
+	if _, err := NewWithIdentity("http://localhost:8000", nil, did); err == nil {
 		t.Fatal("expected error for nil signingKey")
 	}
-	if _, err := NewWithIdentity("http://localhost:8000", "aw_sk_test", priv, ""); err == nil {
+	if _, err := NewWithIdentity("http://localhost:8000", priv, ""); err == nil {
 		t.Fatal("expected error for empty did")
 	}
-	if _, err := NewWithIdentity("http://localhost:8000", "aw_sk_test", priv, "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP"); err == nil {
+	if _, err := NewWithIdentity("http://localhost:8000", priv, "did:key:z6Mkf5rGMoatrSj1f4CyvuHBeXJELe9RPdzo2PKGNCKVtZxP"); err == nil {
 		t.Fatal("expected error for mismatched did")
 	}
 }
 
-func TestNewWithAPIKeyLeavesIdentityNil(t *testing.T) {
+func TestNewLeavesIdentityNil(t *testing.T) {
 	t.Parallel()
 
-	c, err := NewWithAPIKey("http://localhost:8000", "aw_sk_test")
+	c, err := New("http://localhost:8000")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.SigningKey() != nil {
-		t.Fatal("expected nil SigningKey for legacy client")
+		t.Fatal("expected nil SigningKey for unsigned client")
 	}
 	if c.DID() != "" {
-		t.Fatalf("expected empty DID for legacy client, got %q", c.DID())
+		t.Fatalf("expected empty DID for unsigned client, got %q", c.DID())
 	}
 }
 
@@ -654,7 +654,7 @@ func TestPutHelper(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func TestDeregister(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +715,7 @@ func TestDeregisterAgent(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +728,7 @@ func TestDeregisterAgent(t *testing.T) {
 	if gotPath != "/v1/agents/mycompany/researcher" {
 		t.Fatalf("path=%s, want /v1/agents/mycompany/researcher", gotPath)
 	}
-	if gotAuth != "Bearer aw_sk_test" {
+	if gotAuth != "" {
 		t.Fatalf("auth=%q", gotAuth)
 	}
 }
@@ -753,7 +753,7 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +816,7 @@ func TestSendMessageIncludesSignedPayload(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +870,7 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -921,7 +921,7 @@ func TestSendMessageSignsLocalAlias(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -964,7 +964,7 @@ func TestSendMessageNoSignatureWithoutIdentity(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -978,13 +978,13 @@ func TestSendMessageNoSignatureWithoutIdentity(t *testing.T) {
 
 	// Identity fields should not be present.
 	if _, exists := gotBody["from_did"]; exists {
-		t.Fatal("from_did should not be set for legacy client")
+		t.Fatal("from_did should not be set for unsigned client")
 	}
 	if _, exists := gotBody["signature"]; exists {
-		t.Fatal("signature should not be set for legacy client")
+		t.Fatal("signature should not be set for unsigned client")
 	}
 	if _, exists := gotBody["signing_key_id"]; exists {
-		t.Fatal("signing_key_id should not be set for legacy client")
+		t.Fatal("signing_key_id should not be set for unsigned client")
 	}
 }
 
@@ -1008,7 +1008,7 @@ func TestSendMessageSignsWithToAgentID(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,7 +1055,7 @@ func TestSendMessageDoesNotMutateInput(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1098,7 +1098,7 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1151,7 +1151,7 @@ func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1215,7 +1215,7 @@ func TestInboxVerifiesSignedMessages(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1250,7 +1250,7 @@ func TestInboxUnverifiedWithoutDID(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1291,7 +1291,7 @@ func TestInboxFailedBadSignature(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1344,7 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1395,7 +1395,7 @@ func TestRotateKeySendsSignedRequest(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, oldDID)
+	c, err := NewWithIdentity(server.URL, priv, oldDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1469,7 +1469,7 @@ func TestRotateKeyCustodialOmitsKeyMaterial(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	// Custodial client: no signing key.
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1513,7 +1513,7 @@ func TestRotateKeyRequiresIdentity(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1522,7 +1522,7 @@ func TestRotateKeyRequiresIdentity(t *testing.T) {
 		Custody: CustodySelf,
 	})
 	if err == nil {
-		t.Fatal("expected error for legacy client")
+		t.Fatal("expected error for unsigned client")
 	}
 }
 
@@ -1536,7 +1536,7 @@ func TestAgentLogSelf(t *testing.T) {
 		if r.URL.Path != "/v1/agents/me/log" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer aw_sk_test" {
+		if got := r.Header.Get("Authorization"); got != "" {
 			t.Fatalf("auth=%q", got)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1559,7 +1559,7 @@ func TestAgentLogSelf(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1647,7 +1647,7 @@ func TestSendMessageIncludesMessageID(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1684,7 +1684,7 @@ func TestSendMessageNoMessageIDWithoutIdentity(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1736,7 +1736,7 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1836,7 +1836,7 @@ func TestInboxRecipientBindingMismatch(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	// Create receiver client with identity — to_did won't match.
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1874,7 +1874,7 @@ func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", priv, did)
+	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1954,7 +1954,7 @@ func TestInboxTOFUPinFirstContact(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2046,7 +2046,7 @@ func TestInboxTOFUPinMismatch(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2135,7 +2135,7 @@ func TestInboxRotationAnnouncementAccepted(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2236,7 +2236,7 @@ func TestInboxRotationAnnouncementInvalid(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2338,7 +2338,7 @@ func TestInboxRotationAnnouncementUnrelatedOldDID(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2439,7 +2439,7 @@ func TestInboxRotationAnnouncementNewDIDMismatch(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2521,7 +2521,7 @@ func TestInboxRotationAnnouncementEmptyFields(t *testing.T) {
 
 	receiverPub, receiverPriv, _ := ed25519.GenerateKey(nil)
 	receiverDID := ComputeDIDKey(receiverPub)
-	c, err := NewWithIdentity(server.URL, "aw_sk_test", receiverPriv, receiverDID)
+	c, err := NewWithIdentity(server.URL, receiverPriv, receiverDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2596,7 +2596,7 @@ func TestInboxUsesFromAddressForVerification(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2653,7 +2653,7 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2717,7 +2717,7 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2804,7 +2804,7 @@ func TestCheckTOFUPinCustodialReturnsVerifiedCustodial(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2881,7 +2881,7 @@ func TestCheckTOFUPinResolverCachesResults(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2970,7 +2970,7 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3069,7 +3069,7 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3156,7 +3156,7 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3211,7 +3211,7 @@ func TestCheckTOFUPinUpgradeOnFirstSight(t *testing.T) {
 	senderDID := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
 
-	c, err := NewWithAPIKey("http://localhost", "aw_sk_test")
+	c, err := New("http://localhost")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3273,7 +3273,7 @@ func TestCheckTOFUPinAcceptsValidReplacementAnnouncement(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
+	c, _ := New("http://localhost")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
 	c.SetResolver(stubIdentityResolver{
@@ -3332,7 +3332,7 @@ func TestCheckTOFUPinRejectsReplacementWrongController(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
+	c, _ := New("http://localhost")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
 	c.SetResolver(stubIdentityResolver{
@@ -3375,7 +3375,7 @@ func TestCheckTOFUPinRejectsReplacementBadSignature(t *testing.T) {
 		ControllerSignature: base64.RawStdEncoding.EncodeToString([]byte("bad-signature-garbage")),
 	}
 
-	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
+	c, _ := New("http://localhost")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
 	c.SetResolver(stubIdentityResolver{
@@ -3421,7 +3421,7 @@ func TestCheckTOFUPinRejectsReplacementStaleTimestamp(t *testing.T) {
 		ControllerSignature: sigB64,
 	}
 
-	c, _ := NewWithAPIKey("http://localhost", "aw_sk_test")
+	c, _ := New("http://localhost")
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
 	c.SetResolver(stubIdentityResolver{
@@ -3451,7 +3451,7 @@ func TestSignEnvelopePopulatesFromStableID(t *testing.T) {
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
 
-	c, err := NewWithIdentity("http://localhost", "aw_sk_test", priv, did)
+	c, err := NewWithIdentity("http://localhost", priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3498,7 +3498,7 @@ func TestSignEnvelopeOmitsStableIDWhenNotSet(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	c, err := NewWithIdentity("http://localhost", "aw_sk_test", priv, did)
+	c, err := NewWithIdentity("http://localhost", priv, did)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3529,7 +3529,7 @@ func TestLatestClientVersionCapturedFromHeader(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3557,7 +3557,7 @@ func TestLatestClientVersionEmptyWhenNoHeader(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

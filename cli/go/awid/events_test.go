@@ -149,7 +149,7 @@ func TestEventStreamRequestsEventStream(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestEventStreamRequestsEventStream(t *testing.T) {
 	if gotAccept != "text/event-stream" {
 		t.Fatalf("accept=%q", gotAccept)
 	}
-	if gotAuth != "Bearer aw_sk_test" {
+	if gotAuth != "" {
 		t.Fatalf("auth=%q", gotAuth)
 	}
 	if gotCache != "no-cache" {
@@ -235,7 +235,7 @@ func TestEventStreamHTTPError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	c, err := NewWithAPIKey(server.URL, "aw_sk_test")
+	c, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
