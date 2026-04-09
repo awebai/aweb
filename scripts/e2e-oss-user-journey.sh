@@ -245,6 +245,70 @@ except FileNotFoundError:
 PY
 }
 
+workspace_membership_field() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import sys
+
+path, team_id, field = sys.argv[1], sys.argv[2], sys.argv[3]
+current_team = ""
+in_memberships = False
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if not in_memberships:
+                if stripped == "memberships:":
+                    in_memberships = True
+                continue
+            if not line.startswith("  "):
+                break
+            if stripped.startswith("- team_id:"):
+                current_team = stripped.split(":", 1)[1].strip()
+                continue
+            if current_team != team_id:
+                continue
+            prefix = f"{field}:"
+            if stripped.startswith(prefix):
+                value = stripped.split(":", 1)[1].strip()
+                if len(value) >= 2 and value[0] == value[-1] == '"':
+                    value = value[1:-1]
+                print(value)
+                break
+except FileNotFoundError:
+    pass
+PY
+}
+
+team_cert_path() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import os
+import sys
+
+workdir, team_id = sys.argv[1], sys.argv[2]
+certs_dir = os.path.join(workdir, ".aw", "team-certs")
+try:
+    for name in sorted(os.listdir(certs_dir)):
+        if not name.endswith(".pem"):
+            continue
+        path = os.path.join(certs_dir, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cert = json.load(f)
+        except Exception:
+            continue
+        if (cert.get("team_id") or "").strip() == team_id:
+            print(path)
+            break
+except FileNotFoundError:
+    pass
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Phase 0: Build CLI
 # ---------------------------------------------------------------------------
@@ -343,10 +407,10 @@ team_out="$(run_aw_in "$ALICE_DIR" id team create \
   --registry "$AWID_URL" \
   --json 2>/dev/null)"
 
-TEAM_ADDRESS="$(echo "$team_out" | jq_field team_address)"
+TEAM_ID="$(echo "$team_out" | jq_field team_id)"
 TEAM_DID_KEY="$(echo "$team_out" | jq_field team_did_key)"
 
-assert_eq "team address" "test.local/devteam" "$TEAM_ADDRESS"
+assert_eq "team id" "devteam:test.local" "$TEAM_ID"
 assert_not_empty "team did_key" "$TEAM_DID_KEY"
 echo ""
 
@@ -371,11 +435,12 @@ ALICE_ACCEPT_STATUS="$(echo "$alice_accept_out" | jq_field status)"
 assert_eq "alice accepted" "accepted" "$ALICE_ACCEPT_STATUS"
 
 # Verify cert was written
-if [[ -f "$ALICE_DIR/.aw/team-cert.pem" ]]; then
+alice_cert_path="$(team_cert_path "$ALICE_DIR" "devteam:test.local")"
+if [[ -f "$alice_cert_path" ]]; then
   echo "  PASS: alice cert saved"
   pass=$((pass + 1))
 else
-  echo "  FAIL: alice cert not found at $ALICE_DIR/.aw/team-cert.pem"
+  echo "  FAIL: alice cert not found under $ALICE_DIR/.aw/team-certs for devteam:test.local"
   fail=$((fail + 1))
 fi
 echo ""
@@ -386,10 +451,10 @@ echo ""
 echo "=== Phase 5: Verify alice's certificate ==="
 
 cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
-CERT_TEAM="$(echo "$cert_out" | jq_field team_address)"
+CERT_TEAM="$(echo "$cert_out" | jq_field team_id)"
 CERT_ALIAS="$(echo "$cert_out" | jq_field alias)"
 
-assert_eq "cert team" "test.local/devteam" "$CERT_TEAM"
+assert_eq "cert team" "devteam:test.local" "$CERT_TEAM"
 assert_eq "cert alias" "alice" "$CERT_ALIAS"
 echo ""
 
@@ -456,7 +521,7 @@ bob_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
-# Bob accepts the invite (cert saved to $BOB_DIR/.aw/team-cert.pem)
+# Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
 bob_accept="$(run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" \
   --alias bob \
   --json 2>/dev/null)"
@@ -654,7 +719,7 @@ phase_aw_init_reconnect() {
   mkdir -p "$RECONNECT_DIR/.aw"
   cp "$ALICE_DIR/.aw/identity.yaml" "$RECONNECT_DIR/.aw/identity.yaml"
   cp "$ALICE_DIR/.aw/signing.key" "$RECONNECT_DIR/.aw/signing.key"
-  cp "$ALICE_DIR/.aw/team-cert.pem" "$RECONNECT_DIR/.aw/team-cert.pem"
+  cp -R "$ALICE_DIR/.aw/team-certs" "$RECONNECT_DIR/.aw/team-certs"
   RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 
   reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --url "$AWEB_URL" </dev/null 2>&1)"
@@ -664,10 +729,10 @@ phase_aw_init_reconnect() {
   assert_not_contains "reconnect skipped post-init prompts" "$reconnect_out" "Inject agent docs into this repo?"
   assert_file_exists "reconnect workspace.yaml written" "$RECONNECT_DIR/.aw/workspace.yaml"
 
-  reconnect_team="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" team_address)"
-  reconnect_alias="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" alias)"
-  reconnect_role="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" role_name)"
-  assert_eq "reconnect workspace team" "test.local/devteam" "$reconnect_team"
+  reconnect_team="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" active_team)"
+  reconnect_alias="$(workspace_membership_field "$RECONNECT_DIR/.aw/workspace.yaml" "$reconnect_team" alias)"
+  reconnect_role="$(workspace_membership_field "$RECONNECT_DIR/.aw/workspace.yaml" "$reconnect_team" role_name)"
+  assert_eq "reconnect workspace team" "devteam:test.local" "$reconnect_team"
   assert_eq "reconnect workspace alias" "alice" "$reconnect_alias"
   assert_eq "reconnect workspace role empty" "" "$reconnect_role"
 
@@ -686,7 +751,7 @@ phase_aw_init_byod_wizard() {
 
   local wizard_domain="wizard-byod.test.local"
   local wizard_name="wizard-alice"
-  local wizard_team="$wizard_domain/default"
+  local wizard_team="default:$wizard_domain"
   local wizard_input
   wizard_input=$'2\n'"$wizard_name"$'\n'"$wizard_domain"$'\nn\nn\nn\n'
 
@@ -694,16 +759,17 @@ phase_aw_init_byod_wizard() {
   wizard_exit=$?
   assert_eq "wizard init exit" "0" "$wizard_exit"
   assert_file_exists "wizard identity.yaml written" "$WIZARD_BYOD_DIR/.aw/identity.yaml"
-  assert_file_exists "wizard team-cert.pem written" "$WIZARD_BYOD_DIR/.aw/team-cert.pem"
   assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
   assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
+  wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$wizard_team")"
+  assert_file_exists "wizard team certificate written" "$wizard_cert_path"
 
   wizard_did_key="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" did)"
   wizard_did_aw="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" stable_id)"
   wizard_address="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" address)"
-  wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" team_address)"
-  wizard_workspace_alias="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" alias)"
+  wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" active_team)"
+  wizard_workspace_alias="$(workspace_membership_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" "$wizard_workspace_team" alias)"
   assert_not_empty "wizard identity did" "$wizard_did_key"
   assert_not_empty "wizard identity stable_id" "$wizard_did_aw"
   assert_eq "wizard identity address" "$wizard_domain/$wizard_name" "$wizard_address"
@@ -711,7 +777,7 @@ phase_aw_init_byod_wizard() {
   assert_eq "wizard workspace alias" "$wizard_name" "$wizard_workspace_alias"
 
   wizard_cert_out="$(run_aw_in "$WIZARD_BYOD_DIR" id cert show --json 2>/dev/null)"
-  wizard_cert_team="$(echo "$wizard_cert_out" | jq_field team_address)"
+  wizard_cert_team="$(echo "$wizard_cert_out" | jq_field team_id)"
   wizard_cert_alias="$(echo "$wizard_cert_out" | jq_field alias)"
   assert_eq "wizard cert team" "$wizard_team" "$wizard_cert_team"
   assert_eq "wizard cert alias" "$wizard_name" "$wizard_cert_alias"

@@ -7,7 +7,7 @@ ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 export interface APIClientAuth {
   did: string;
   signingKey: Uint8Array;
-  teamAddress: string;
+  teamID: string;
   teamCertificateHeader: string;
 }
 
@@ -74,7 +74,7 @@ export class APIClient {
   private authHeaders(bodyText: string): Record<string, string> {
     const timestamp = new Date().toISOString();
     const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team":${JSON.stringify(this.auth.teamAddress)},"timestamp":${JSON.stringify(timestamp)}}`;
+    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp)}}`;
     const signature = Buffer.from(
       ed.sign(new TextEncoder().encode(payload), this.auth.signingKey),
     ).toString("base64").replace(/=+$/, "");

@@ -1,9 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import yaml from "js-yaml";
-import { loadTeamCertificate, encodeTeamCertificateHeader } from "./identity/certificate.js";
+import { loadTeamCertificate, encodeTeamCertificateHeader, type TeamCertificate } from "./identity/certificate.js";
 import { computeDIDKey } from "./identity/did.js";
 import { loadSigningKey } from "./identity/keys.js";
 
@@ -15,15 +15,24 @@ export interface AgentConfig {
   stableID: string;
   address: string;
   alias: string;
-  teamAddress: string;
+  teamID: string;
   signingKey: Uint8Array;
   teamCertificateHeader: string;
 }
 
+interface WorkspaceMembership {
+  team_id?: string;
+  alias?: string;
+  role_name?: string;
+  workspace_id?: string;
+  cert_path?: string;
+  joined_at?: string;
+}
+
 interface WorkspaceConfig {
   aweb_url?: string;
-  team_address?: string;
-  alias?: string;
+  active_team?: string;
+  memberships?: WorkspaceMembership[];
 }
 
 interface IdentityConfig {
@@ -37,7 +46,6 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   const workspacePath = join(workdir, ".aw", "workspace.yaml");
   const identityPath = join(workdir, ".aw", "identity.yaml");
   const signingKeyPath = join(workdir, ".aw", "signing.key");
-  const certificatePath = join(workdir, ".aw", "team-cert.pem");
 
   const workspace = await readYAML<WorkspaceConfig>(workspacePath);
   if (!workspace) {
@@ -45,14 +53,16 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   }
 
   const baseURL = (workspace.aweb_url || "").trim();
-  const teamAddress = (workspace.team_address || "").trim();
-  const alias = (workspace.alias || "").trim();
-  if (!baseURL || !teamAddress || !alias) {
-    throw new Error("worktree workspace binding is missing aweb_url, team_address, or alias");
+  const activeTeam = (workspace.active_team || "").trim();
+  const membership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
+  const teamID = activeTeam;
+  const alias = ((membership?.alias || "").trim());
+  if (!baseURL || !teamID || !membership || !alias) {
+    throw new Error("worktree workspace binding is missing aweb_url, active_team, or the active membership alias");
   }
 
   const signingKey = await loadSigningKey(signingKeyPath);
-  const certificate = await loadTeamCertificate(certificatePath);
+  const certificate = await loadActiveTeamCertificate(workdir, teamID);
   const identity = await readYAML<IdentityConfig>(identityPath);
   const did = computeDIDKey(ed.getPublicKey(signingKey));
   const stableID = ((identity?.stable_id || "").trim()) || (certificate.member_did_aw || "").trim();
@@ -64,11 +74,11 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   if ((certificate.member_did_key || "").trim() !== did) {
     throw new Error("team certificate member_did_key does not match .aw/signing.key");
   }
-  if ((certificate.team || "").trim() !== teamAddress) {
-    throw new Error("workspace.yaml team_address does not match .aw/team-cert.pem");
+  if ((certificate.team_id || "").trim() !== teamID) {
+    throw new Error(`workspace.yaml active_team does not match certificate for ${teamID}`);
   }
   if ((certificate.alias || "").trim() !== alias) {
-    throw new Error("workspace.yaml alias does not match .aw/team-cert.pem");
+    throw new Error("workspace.yaml active membership alias does not match the team certificate");
   }
 
   return {
@@ -77,10 +87,23 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
     stableID,
     address,
     alias,
-    teamAddress,
+    teamID,
     signingKey,
     teamCertificateHeader: encodeTeamCertificateHeader(certificate),
   };
+}
+
+async function loadActiveTeamCertificate(workdir: string, activeTeam: string): Promise<TeamCertificate> {
+  const certsDir = join(workdir, ".aw", "team-certs");
+  const files = await readdir(certsDir);
+  for (const file of files) {
+    if (!file.endsWith(".pem")) continue;
+    const cert = await loadTeamCertificate(join(certsDir, file));
+    if ((cert.team_id || "").trim() === activeTeam) {
+      return cert;
+    }
+  }
+  throw new Error(`No team certificate found for active team ${activeTeam} in ${certsDir}`);
 }
 
 async function readYAML<T>(path: string): Promise<T | null> {

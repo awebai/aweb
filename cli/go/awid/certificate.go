@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -188,12 +189,15 @@ func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberD
 	}
 	entries = append(entries,
 		entry{"member_did_key", jsonString(memberDIDKey)},
-		entry{"team_id", jsonString(team)},
 		entry{"team_did_key", jsonString(teamDIDKey)},
+		entry{"team_id", jsonString(team)},
 		entry{"version", "1"},
 	)
 
-	// Keys are already in sorted order by construction above.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].key < entries[j].key
+	})
+
 	var b strings.Builder
 	b.WriteByte('{')
 	for i, e := range entries {

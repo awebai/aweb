@@ -41,7 +41,7 @@ interface InviteInfo {
 }
 
 interface InitInfo {
-  team_address: string;
+  team_id: string;
   alias: string;
   aweb_url: string;
 }
@@ -510,7 +510,7 @@ async function collectDirectEvents(workdir: string, timeoutMs: number = 5_000): 
   const client = new APIClient(cfg.baseURL, {
     did: cfg.did,
     signingKey: cfg.signingKey,
-    teamAddress: cfg.teamAddress,
+    teamID: cfg.teamID,
     teamCertificateHeader: cfg.teamCertificateHeader,
   });
   const abort = new AbortController();

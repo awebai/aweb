@@ -46,7 +46,7 @@ async function main() {
   const client = new APIClient(config.baseURL, {
     did: config.did,
     signingKey: config.signingKey,
-    teamAddress: config.teamAddress,
+    teamID: config.teamID,
     teamCertificateHeader: config.teamCertificateHeader,
   });
   const pinStore = await loadPinStore();
@@ -56,7 +56,7 @@ async function main() {
   const trust = new SenderTrustManager(
     client,
     registry,
-    config.teamAddress,
+    config.teamID,
     config.did,
   );
 

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 export interface TeamCertificate {
   version: number;
   certificate_id: string;
-  team: string;
+  team_id: string;
   team_did_key: string;
   member_did_key: string;
   member_did_aw?: string;

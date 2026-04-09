@@ -6,7 +6,7 @@ describe("APIClient URL construction", () => {
   const auth = {
     did: "did:key:z6Mktest",
     signingKey: new Uint8Array(32).fill(1),
-    teamAddress: "acme.com/backend",
+    teamID: "backend:acme.com",
     teamCertificateHeader: "cert-header",
   };
 

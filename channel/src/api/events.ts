@@ -15,7 +15,7 @@ export type AgentEventType =
 export interface AgentEvent {
   type: AgentEventType;
   agent_id?: string;
-  team_address?: string;
+  team_id?: string;
   message_id?: string;
   from_alias?: string;
   session_id?: string;

@@ -53,7 +53,7 @@ export class SenderTrustManager {
   constructor(
     private readonly client: APIClient,
     private readonly registry: RegistryResolver,
-    private readonly teamAddress: string,
+    private readonly teamID: string,
     private readonly selfDid: string,
   ) {}
 
@@ -338,7 +338,7 @@ export class SenderTrustManager {
     if (trimmed.includes("/") || trimmed.includes("~")) {
       return trimmed;
     }
-    return this.teamAddress ? `${this.teamAddress}/${trimmed}` : trimmed;
+    return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
 
   private async resolveAgentMeta(address: string): Promise<AgentMeta> {
@@ -373,7 +373,7 @@ export class SenderTrustManager {
     if (trimmed.includes("/")) {
       return this.registry.resolveIdentity(trimmed);
     }
-    if (trimmed.includes("~") || !this.teamAddress) {
+    if (trimmed.includes("~") || !this.teamID) {
       throw new Error(`unsupported local address ${trimmed}`);
     }
 
@@ -383,12 +383,12 @@ export class SenderTrustManager {
       address?: string;
       lifetime?: string;
     }>(
-      `/v1/teams/${encodeURIComponent(this.teamAddress)}/agents/${encodeURIComponent(trimmed)}`,
+      `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`,
     );
     return {
       did: response.did_key || "",
       stableID: response.did_aw,
-      address: response.address || `${this.teamAddress}/${trimmed}`,
+      address: response.address || `${this.teamID}/${trimmed}`,
       custody: "self",
       lifetime: response.lifetime || "ephemeral",
     };

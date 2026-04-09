@@ -72,6 +72,8 @@ type workspaceMigrateMultiTeamOutput struct {
 	LegacyMoved bool   `json:"legacy_cert_moved"`
 }
 
+var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
+
 func init() {
 	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Override the default alias")
@@ -383,26 +385,31 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	legacy, err := awconfig.LoadLegacySingleTeamWorkspaceFrom(workspacePath)
+	output, err := migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath)
 	if err != nil {
 		return err
+	}
+	printOutput(output, formatWorkspaceMigrateMultiTeam)
+	return nil
+}
+
+func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (workspaceMigrateMultiTeamOutput, error) {
+	legacy, err := awconfig.LoadLegacySingleTeamWorkspaceFrom(workspacePath)
+	if err != nil {
+		return workspaceMigrateMultiTeamOutput{}, err
 	}
 	legacyCertPath := filepath.Join(workingDir, ".aw", "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(legacyCertPath)
 	if err != nil {
-		return fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)
+		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)
 	}
 	if strings.TrimSpace(cert.Team) != strings.TrimSpace(legacy.TeamID) {
-		return fmt.Errorf("legacy team certificate team_id %q does not match workspace.yaml team_id %q", cert.Team, legacy.TeamID)
+		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("legacy team certificate team_id %q does not match workspace.yaml team_id %q", cert.Team, legacy.TeamID)
 	}
 	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, legacy.TeamID, cert)
 	if err != nil {
-		return err
+		return workspaceMigrateMultiTeamOutput{}, err
 	}
-	if err := os.Remove(legacyCertPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
 	state := awconfig.WorktreeWorkspace{
 		AwebURL:    legacy.AwebURL,
 		ActiveTeam: legacy.TeamID,
@@ -422,18 +429,20 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		WorkspacePath:   legacy.WorkspacePath,
 		UpdatedAt:       firstNonEmpty(strings.TrimSpace(legacy.UpdatedAt), time.Now().UTC().Format(time.RFC3339)),
 	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, &state); err != nil {
-		return err
+	if err := saveWorktreeWorkspaceTo(workspacePath, &state); err != nil {
+		return workspaceMigrateMultiTeamOutput{}, err
+	}
+	if err := os.Remove(legacyCertPath); err != nil && !os.IsNotExist(err) {
+		return workspaceMigrateMultiTeamOutput{}, err
 	}
 
-	printOutput(workspaceMigrateMultiTeamOutput{
+	return workspaceMigrateMultiTeamOutput{
 		Status:      "migrated",
 		ActiveTeam:  legacy.TeamID,
 		CertPath:    certPath,
 		Workspace:   workspacePath,
 		LegacyMoved: true,
-	}, formatWorkspaceMigrateMultiTeam)
-	return nil
+	}, nil
 }
 
 func currentGitWorktreeRoot() (string, error) {

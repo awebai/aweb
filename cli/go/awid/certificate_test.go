@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -269,5 +270,23 @@ func TestTeamCertificateJSON(t *testing.T) {
 	teamPub := teamPriv.Public().(ed25519.PublicKey)
 	if err := VerifyTeamCertificate(&decoded, teamPub); err != nil {
 		t.Fatalf("verify after JSON round-trip: %v", err)
+	}
+}
+
+func TestCanonicalCertificatePayloadSortsKeys(t *testing.T) {
+	payload := canonicalCertificatePayload(
+		"cert-1",
+		"backend:acme.com",
+		"did:key:zteam",
+		"did:key:zmember",
+		"did:aw:test",
+		"acme.com/alice",
+		"alice",
+		LifetimePersistent,
+		"2026-04-09T00:00:00Z",
+	)
+
+	if strings.Index(payload, `"team_did_key"`) > strings.Index(payload, `"team_id"`) {
+		t.Fatalf("payload keys not sorted as expected: %s", payload)
 	}
 }

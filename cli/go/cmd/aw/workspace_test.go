@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1153,6 +1154,76 @@ func TestAwWorkspaceMigrateMultiTeamNoopsOnCanonicalWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"status": "already_multi_team"`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwWorkspaceMigrateMultiTeamKeepsLegacyCertWhenWorkspaceWriteFails(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyWorkspace := strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+team_id: backend:acme.com
+alias: alice
+role_name: developer
+workspace_id: ws-1
+hostname: devbox
+workspace_path: /tmp/repo
+canonical_origin: github.com/acme/repo
+updated_at: "2026-04-09T00:00:00Z"
+`) + "\n"
+	workspacePath := filepath.Join(tmp, ".aw", "workspace.yaml")
+	if err := os.WriteFile(workspacePath, []byte(legacyWorkspace), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: awid.ComputeDIDKey(memberPub),
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyCertPath := filepath.Join(tmp, ".aw", "team-cert.pem")
+	if err := awid.SaveTeamCertificate(legacyCertPath, cert); err != nil {
+		t.Fatal(err)
+	}
+
+	origSave := saveWorktreeWorkspaceTo
+	saveWorktreeWorkspaceTo = func(path string, state *awconfig.WorktreeWorkspace) error {
+		return errors.New("boom")
+	}
+	defer func() {
+		saveWorktreeWorkspaceTo = origSave
+	}()
+
+	_, err = migrateLegacyWorkspaceToMultiTeam(tmp, workspacePath)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected workspace save failure, got %v", err)
+	}
+	if _, statErr := os.Stat(legacyCertPath); statErr != nil {
+		t.Fatalf("legacy cert should remain after failed migration, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(awconfig.TeamCertificatePath(tmp, "backend:acme.com")); statErr != nil {
+		t.Fatalf("migrated cert should have been written before workspace save, stat err=%v", statErr)
+	}
+	content, err := os.ReadFile(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "team_id: backend:acme.com") {
+		t.Fatalf("workspace should remain in legacy shape after failed migration:\n%s", string(content))
 	}
 }
 

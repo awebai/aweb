@@ -37,7 +37,7 @@ describe("SenderTrustManager", () => {
     const trust = new SenderTrustManager(
       { get: async () => ({ did, lifetime: "persistent", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/backend",
+      "backend:acme.com",
       "did:key:zrecipient",
     );
 
@@ -61,7 +61,7 @@ describe("SenderTrustManager", () => {
           lifetime: "persistent",
         }),
       } as never,
-      "acme/backend",
+      "backend:acme.com",
       "",
     );
 
@@ -73,18 +73,18 @@ describe("SenderTrustManager", () => {
   test("removes pins for ephemeral senders", async () => {
     const { did } = await didFromSeed(3);
     const store = new PinStore();
-    store.storePin(did, "acme/backend/alice", "", "");
+    store.storePin(did, "backend:acme.com/alice", "", "");
 
     const trust = new SenderTrustManager(
       { get: async () => ({ did, lifetime: "ephemeral", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/backend",
+      "backend:acme.com",
       "",
     );
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
     expect(result.status).toBe("verified");
-    expect(store.addresses.has("acme/backend/alice")).toBe(false);
+    expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
     expect(store.pins.size).toBe(0);
   });
 
@@ -104,11 +104,11 @@ describe("SenderTrustManager", () => {
     };
 
     const store = new PinStore();
-    store.storePin(oldIdentity.did, "acme/backend/alice", "", "");
+    store.storePin(oldIdentity.did, "backend:acme.com/alice", "", "");
     const trust = new SenderTrustManager(
       { get: async () => ({ did: newIdentity.did, lifetime: "persistent", custody: "self" }) } as never,
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "acme/backend",
+      "backend:acme.com",
       "",
     );
 
@@ -122,7 +122,7 @@ describe("SenderTrustManager", () => {
       announcement,
     );
     expect(result.status).toBe("verified");
-    expect(store.addresses.get("acme/backend/alice")).toBe(newIdentity.did);
+    expect(store.addresses.get("backend:acme.com/alice")).toBe(newIdentity.did);
   });
 
   test("accepts valid replacement announcements for public addresses", async () => {
@@ -160,7 +160,7 @@ describe("SenderTrustManager", () => {
           lifetime: "persistent",
         }),
       } as never,
-      "acme/backend",
+      "backend:acme.com",
       "",
     );
 
@@ -184,7 +184,7 @@ describe("SenderTrustManager", () => {
     const store = new PinStore();
     const client = {
       get: vi.fn(async (path: string) => {
-        expect(path).toBe("/v1/teams/acme.com%2Fbackend/agents/alice");
+        expect(path).toBe("/v1/teams/backend%3Aacme.com/agents/alice");
         return {
           did_key: did,
           did_aw: stableID,
@@ -200,7 +200,7 @@ describe("SenderTrustManager", () => {
         return { outcome: "OK_DEGRADED" };
       }),
     };
-    const trust = new SenderTrustManager(client as never, registry as never, "acme.com/backend", "");
+    const trust = new SenderTrustManager(client as never, registry as never, "backend:acme.com", "");
 
     const result = await trust.normalizeTrust(
       store,
@@ -215,7 +215,7 @@ describe("SenderTrustManager", () => {
     );
 
     expect(result.status).toBe("verified");
-    expect(store.addresses.get("acme.com/backend/alice")).toBe(stableID);
+    expect(store.addresses.get("backend:acme.com/alice")).toBe(stableID);
     expect(store.addresses.has("acme.com/alice")).toBe(false);
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
@@ -232,7 +232,7 @@ describe("SenderTrustManager", () => {
           throw new Error("registry unavailable");
         }),
       } as never,
-      "acme.com/backend",
+      "backend:acme.com",
       "",
     );
 
@@ -260,11 +260,11 @@ describe("PinStore", () => {
     const dir = mkdtempSync(join(tmpdir(), "aweb-channel-"));
     const path = join(dir, "known_agents.yaml");
     const store = new PinStore();
-    store.storePin("did:key:zexample", "acme/alice", "", "");
+    store.storePin("did:key:zexample", "backend:acme.com/alice", "", "");
 
     await store.save(path);
 
     const content = readFileSync(path, "utf-8");
-    expect(content).toContain("acme/alice");
+    expect(content).toContain("backend:acme.com/alice");
   });
 });
