@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -123,7 +124,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				if strings.TrimSpace(msg.MessageID) != messageID {
 					continue
 				}
-				if chatMessageFromSelf(msg, selfAlias) {
+				if chatMessageFromSelf(msg, selfAlias, selfIdentityDIDs(client)...) {
 					return runWakeResolution{Skip: true}, nil
 				}
 				alias := strings.TrimSpace(evt.FromAlias)
@@ -163,7 +164,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				_ = chat.SaveDeliveredIDs(ids)
 			}
 			markChatHistoryRead(ctx, client, sessionID, histResp.Messages)
-			if latest := latestIncomingChatMessage(filtered, selfAlias); latest != nil {
+			if latest := latestIncomingChatMessage(filtered, selfAlias, selfIdentityDIDs(client)...); latest != nil {
 				alias := strings.TrimSpace(latest.FromAgent)
 				if alias == "" {
 					alias = strings.TrimSpace(evt.FromAlias)
@@ -176,9 +177,6 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				return runWakeResolution{Skip: true}, nil
 			}
 		}
-		if selfAlias != "" && strings.EqualFold(strings.TrimSpace(pending.LastFrom), selfAlias) {
-			return runWakeResolution{Skip: true}, nil
-		}
 		return runWakeResolution{
 			CycleContext: formatIncomingChatContext(alias, pending.LastMessage),
 		}, nil
@@ -186,7 +184,30 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 	return runWakeResolution{Skip: true}, nil
 }
 
-func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string) bool {
+func selfIdentityDIDs(client *aweb.Client) []string {
+	if client == nil || client.Client == nil {
+		return nil
+	}
+	dids := []string{}
+	for _, value := range []string{client.StableID(), client.DID()} {
+		value = strings.TrimSpace(value)
+		if value != "" && !slices.Contains(dids, value) {
+			dids = append(dids, value)
+		}
+	}
+	return dids
+}
+
+func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...string) bool {
+	hasMessageIdentity := strings.TrimSpace(msg.FromStableID) != "" || strings.TrimSpace(msg.FromDID) != ""
+	for _, did := range selfDIDs {
+		if did != "" && (strings.EqualFold(strings.TrimSpace(msg.FromStableID), did) || strings.EqualFold(strings.TrimSpace(msg.FromDID), did)) {
+			return true
+		}
+	}
+	if len(selfDIDs) > 0 && hasMessageIdentity {
+		return false
+	}
 	selfAlias = strings.TrimSpace(selfAlias)
 	if selfAlias == "" {
 		return false
@@ -194,9 +215,9 @@ func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string) bool {
 	return strings.EqualFold(strings.TrimSpace(msg.FromAgent), selfAlias)
 }
 
-func latestIncomingChatMessage(messages []awid.ChatMessage, selfAlias string) *awid.ChatMessage {
+func latestIncomingChatMessage(messages []awid.ChatMessage, selfAlias string, selfDIDs ...string) *awid.ChatMessage {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if chatMessageFromSelf(messages[i], selfAlias) {
+		if chatMessageFromSelf(messages[i], selfAlias, selfDIDs...) {
 			continue
 		}
 		return &messages[i]

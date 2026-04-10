@@ -209,6 +209,9 @@ func (c *Client) SetAddress(address string) { c.address = address }
 // as from_stable_id in outgoing signed envelopes.
 func (c *Client) SetStableID(id string) { c.stableID = id }
 
+// StableID returns the client's stable identifier, if configured.
+func (c *Client) StableID() string { return c.stableID }
+
 // SetResolver sets the identity resolver used to resolve recipient DIDs
 // for to_did binding in signed envelopes.
 func (c *Client) SetResolver(r IdentityResolver) { c.resolver = r }
