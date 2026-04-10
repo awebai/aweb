@@ -196,11 +196,10 @@ func formatChatSend(v any) string {
 		incomingReply := true
 		if tagEvent != nil {
 			incomingReply = false
-			target := strings.TrimSpace(result.TargetAgent)
-			if target == "" {
+			if strings.TrimSpace(result.TargetAgent) == "" {
 				incomingReply = true
 			}
-			if strings.EqualFold(strings.TrimSpace(tagEvent.FromAgent), target) || strings.EqualFold(strings.TrimSpace(tagEvent.FromAddress), target) {
+			if chatEventMatchesDisplayTarget(tagEvent, result.TargetAgent) {
 				incomingReply = true
 			}
 		}
@@ -261,6 +260,63 @@ func formatChatSend(v any) string {
 	}
 
 	return sb.String()
+}
+
+func formatChatTargetNames(value string) []string {
+	names := []string{}
+	appendUnique := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		for _, existing := range names {
+			if strings.EqualFold(existing, candidate) {
+				return
+			}
+		}
+		names = append(names, candidate)
+	}
+
+	appendUnique(value)
+	value = strings.TrimSpace(value)
+	if value != "" && !strings.HasPrefix(value, "did:") {
+		parts := strings.SplitN(value, "/", 2)
+		if len(parts) == 2 {
+			appendUnique(parts[1])
+		}
+	}
+	return names
+}
+
+func formatChatTargetListsOverlap(left []string, right []string) bool {
+	for _, leftValue := range left {
+		for _, rightValue := range right {
+			if strings.EqualFold(strings.TrimSpace(leftValue), strings.TrimSpace(rightValue)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func chatEventMatchesDisplayTarget(ev *chat.Event, target string) bool {
+	if ev == nil {
+		return false
+	}
+	targetNames := formatChatTargetNames(target)
+	if len(targetNames) == 0 {
+		return false
+	}
+	eventNames := []string{}
+	for _, value := range []string{
+		ev.FromAgent,
+		ev.FromAddress,
+		ev.FromDID,
+		ev.FromStableID,
+	} {
+		eventNames = append(eventNames, formatChatTargetNames(value)...)
+	}
+	return formatChatTargetListsOverlap(targetNames, eventNames)
 }
 
 func formatChatPending(v any) string {

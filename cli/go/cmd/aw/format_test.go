@@ -167,3 +167,28 @@ func TestFormatChatSendPrefersFromAddress(t *testing.T) {
 		t.Fatalf("chat send output should not use alias-only sender label:\n%s", out)
 	}
 }
+
+func TestFormatChatSendPendingTreatsIdentityTargetReplyAsIncoming(t *testing.T) {
+	result := &chat.SendResult{
+		Status:      "pending",
+		TargetAgent: "did:aw:carol",
+		Reply:       "hello",
+		Events: []chat.Event{
+			{
+				Type:        "message",
+				FromAgent:   "carol",
+				FromAddress: "otherco/carol",
+				FromDID:     "did:aw:carol",
+				Body:        "hello",
+			},
+		},
+	}
+
+	out := formatChatSend(result)
+	if !strings.Contains(out, "Chat from: otherco/carol") {
+		t.Fatalf("pending chat send output should treat identity target reply as incoming:\n%s", out)
+	}
+	if strings.Contains(out, "Chat to: did:aw:carol") {
+		t.Fatalf("pending chat send output should not misclassify identity target reply as outgoing:\n%s", out)
+	}
+}
