@@ -208,3 +208,40 @@ async def test_ensure_session_reuses_identity_pair_across_teams(aweb_cloud_db):
     )
 
     assert s1 == s2
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_reuses_identity_pair_across_stable_and_current_dids(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+
+    session_from_current = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[
+            {
+                "agent_id": alice["agent_id"],
+                "team_id": alice["team_id"],
+                "alias": alice["alias"],
+                "did_key": alice["did_key"],
+            },
+            bob,
+        ],
+        created_by="alice",
+    )
+    session_from_stable = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[
+            {
+                "agent_id": alice["agent_id"],
+                "team_id": alice["team_id"],
+                "alias": alice["alias"],
+                "did_aw": alice["did_aw"],
+            },
+            bob,
+        ],
+        created_by="alice",
+    )
+
+    assert session_from_current == session_from_stable

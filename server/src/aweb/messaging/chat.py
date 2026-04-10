@@ -98,19 +98,45 @@ async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
     return None if not row else dict(row)
 
 
+async def _equivalent_identity_dids(db, did: str) -> list[str]:
+    normalized = str(did or "").strip()
+    if not normalized:
+        return []
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT did_aw, did_key
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND (did_aw = $1 OR did_key = $1)
+        """,
+        normalized,
+    )
+    dids: list[str] = [normalized]
+    for row in rows:
+        for value in ((row.get("did_aw") or "").strip(), (row.get("did_key") or "").strip()):
+            if value and value not in dids:
+                dids.append(value)
+    return dids
+
+
 async def find_session_between(db, *, did_a: str, did_b: str) -> UUID | None:
     aweb_db = db.get_manager("aweb")
+    dids_a = await _equivalent_identity_dids(db, did_a)
+    dids_b = await _equivalent_identity_dids(db, did_b)
+    if not dids_a or not dids_b:
+        return None
     row = await aweb_db.fetch_one(
         """
         SELECT cp1.session_id
         FROM {{tables.chat_participants}} cp1
         JOIN {{tables.chat_participants}} cp2
           ON cp2.session_id = cp1.session_id
-        WHERE cp1.did = $1 AND cp2.did = $2
+        WHERE cp1.did = ANY($1::text[]) AND cp2.did = ANY($2::text[])
         LIMIT 1
         """,
-        did_a,
-        did_b,
+        dids_a,
+        dids_b,
     )
     return None if not row else row["session_id"]
 
