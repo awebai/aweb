@@ -74,10 +74,17 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 			return "", nil
 		}
 		others := make([]string, 0, len(s.Participants))
+		removedSelf := false
 		for _, a := range s.Participants {
-			if a != "" && a != selfAlias {
-				others = append(others, a)
+			a = strings.TrimSpace(a)
+			if a == "" {
+				continue
 			}
+			if a == selfAlias && !removedSelf {
+				removedSelf = true
+				continue
+			}
+			others = append(others, a)
 		}
 		sort.Strings(others)
 		return c.toAddressForAliases(others), nil
