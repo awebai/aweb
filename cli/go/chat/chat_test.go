@@ -3386,6 +3386,72 @@ func TestSendAcceptsAddressTargetReplyByStableDID(t *testing.T) {
 	}
 }
 
+func TestSendAcceptsCurrentDIDTargetReplyByStableDID(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetStableID := "did:aw:bob"
+	targetCurrentDID := "did:key:z6MkBobCurrent"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:key:z6MkAliceCurrent"},
+					{DID: targetStableID},
+				},
+				TargetsConnected: []string{targetStableID},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply-1", "from_stable_id": targetStableID, "body": "hi back!",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case targetStableID, targetCurrentDID:
+				return &awid.ResolvedIdentity{DID: targetCurrentDID, StableID: targetStableID}, nil
+			default:
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+	})
+
+	result, err := Send(context.Background(), client, "alice", []string{targetCurrentDID}, "hello", SendOptions{Wait: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s, want replied", result.Status)
+	}
+	if result.Reply != "hi back!" {
+		t.Fatalf("reply=%q, want %q", result.Reply, "hi back!")
+	}
+}
+
 func TestSendDoesNotMarkStableTargetDisconnectedWhenCurrentDIDIsConnected(t *testing.T) {
 	t.Parallel()
 
