@@ -536,6 +536,19 @@ async def pending(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
+    address_map = await _lookup_addresses_by_did(
+        db,
+        [
+            (row.get("did") or "").strip()
+            for row in participant_rows
+            if (row.get("did") or "").strip()
+        ]
+        + [
+            (item.get("last_from_did") or "").strip()
+            for item in conversations
+            if (item.get("last_from_did") or "").strip()
+        ],
+    )
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
@@ -550,6 +563,11 @@ async def pending(
         waiting = waiting_by_session.get(item["session_id"], [])
         participants = [
             row["alias"]
+            for row in session_participants
+            if (row.get("did") or "").strip() not in set(actor_dids)
+        ]
+        participant_addresses = [
+            address_map.get((row.get("did") or "").strip(), row["alias"])
             for row in session_participants
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
@@ -569,8 +587,13 @@ async def pending(
             {
                 "session_id": item["session_id"],
                 "participants": participants,
+                "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_from": item["last_from"],
+                "last_from_address": address_map.get(
+                    (item.get("last_from_did") or "").strip(),
+                    item["last_from"],
+                ),
                 "unread_count": item["unread_count"],
                 "last_activity": _utc_iso(item["last_activity"]) if item["last_activity"] else "",
                 "sender_waiting": len(waiting) > 0,

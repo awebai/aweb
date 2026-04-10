@@ -143,6 +143,29 @@ func TestResolveMailWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
 	}
 }
 
+func TestFormatFallbackCommsContextPrefersFromAddress(t *testing.T) {
+	t.Parallel()
+
+	chatCtx := formatFallbackCommsContext(awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		FromAlias:   "alice",
+		FromAddress: "otherco/alice",
+	})
+	if !strings.Contains(chatCtx, "from otherco/alice (chat)") {
+		t.Fatalf("expected chat fallback to prefer address, got %q", chatCtx)
+	}
+
+	mailCtx := formatFallbackCommsContext(awid.AgentEvent{
+		Type:        awid.AgentEventActionableMail,
+		FromAlias:   "alice",
+		FromAddress: "otherco/alice",
+		Subject:     "hello",
+	})
+	if !strings.Contains(mailCtx, "from otherco/alice (mail)") {
+		t.Fatalf("expected mail fallback to prefer address, got %q", mailCtx)
+	}
+}
+
 // TestResolveChatWakeMarksRead verifies that resolveChatWake marks messages
 // as read after fetching the pending conversation.
 func TestResolveChatWakeMarksRead(t *testing.T) {

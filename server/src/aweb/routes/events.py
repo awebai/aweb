@@ -44,24 +44,54 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
+async def _lookup_addresses_by_did(db_or_manager, dids: list[str]) -> dict[str, str]:
+    unique_dids = sorted({(did or "").strip() for did in dids if (did or "").strip()})
+    if not unique_dids:
+        return {}
+    aweb_db = (
+        db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
+    )
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT did_aw, did_key, address
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND address IS NOT NULL
+          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+        """,
+        unique_dids,
+    )
+    result: dict[str, str] = {}
+    for row in rows:
+        address = (row.get("address") or "").strip()
+        if not address:
+            continue
+        if row.get("did_aw"):
+            result[str(row["did_aw"]).strip()] = address
+        if row.get("did_key"):
+            result[str(row["did_key"]).strip()] = address
+    return result
+
+
 async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
     """Return the current actionable unread mail state for an identity."""
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
-            SELECT message_id, from_alias, subject, priority, created_at
+            SELECT message_id, from_did, from_alias, subject, priority, created_at
             FROM {{tables.messages}}
             WHERE to_did = ANY($1::text[])
               AND read_at IS NULL
         ),
         windowed AS (
-            SELECT message_id, from_alias, subject, priority, created_at
+            SELECT message_id, from_did, from_alias, subject, priority, created_at
             FROM unread
             ORDER BY created_at DESC, message_id DESC
             LIMIT 50
         )
         SELECT
             message_id,
+            from_did,
             from_alias,
             subject,
             priority,
@@ -72,11 +102,16 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         """,
         inbox_dids,
     )
+    address_map = await _lookup_addresses_by_did(
+        aweb_db,
+        [str(row["from_did"]).strip() for row in rows if row.get("from_did")],
+    )
     return [
         {
             "type": "actionable_mail",
             "message_id": str(r["message_id"]),
             "from_alias": r["from_alias"],
+            "from_address": address_map.get((r.get("from_did") or "").strip(), r["from_alias"] or ""),
             "subject": r["subject"] or "",
             "priority": (r.get("priority") or "normal").strip().lower(),
             "unread_count": int(r.get("unread_count") or 0),
@@ -120,6 +155,15 @@ async def _current_actionable_chat(
         for item in pending:
             pending_by_session.setdefault(item["session_id"], item)
     actionable: list[dict[str, Any]] = []
+    participant_address_map = await _lookup_addresses_by_did(
+        db,
+        [
+            did
+            for item in pending_by_session.values()
+            for did in list(item.get("participant_dids", []) or [])
+            + ([(item.get("last_from_did") or "").strip()] if item.get("last_from_did") else [])
+        ],
+    )
     for item in pending_by_session.values():
         other_dids = [
             did for did in item.get("participant_dids", []) if did not in viewer_did_set
@@ -132,8 +176,25 @@ async def _current_actionable_chat(
                 "type": "actionable_chat",
                 "session_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
+                "participant_addresses": [
+                    participant_address_map.get((did or "").strip(), alias or "")
+                    for did, alias in zip(
+                        list(item.get("participant_dids") or []),
+                        list(item.get("participants") or []),
+                        strict=False,
+                    )
+                    if (did or "").strip() not in viewer_did_set
+                ],
                 "from_alias": item.get("last_from") or "",
+                "from_address": participant_address_map.get(
+                    (item.get("last_from_did") or "").strip(),
+                    item.get("last_from") or "",
+                ),
                 "last_from": item.get("last_from") or "",
+                "last_from_address": participant_address_map.get(
+                    (item.get("last_from_did") or "").strip(),
+                    item.get("last_from") or "",
+                ),
                 "last_message": item.get("last_message") or "",
                 "last_activity": (
                     last_activity.astimezone(timezone.utc).isoformat() if last_activity else ""

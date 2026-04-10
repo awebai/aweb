@@ -102,7 +102,7 @@ func printEventText(ev *awid.AgentEvent) {
 	case awid.AgentEventActionableMail:
 		fmt.Printf(
 			"[actionable_mail] from=%s wake_mode=%s unread=%d message_id=%s subject=%q\n",
-			ev.FromAlias,
+			preferredIdentityLabel(ev.FromAlias, ev.FromAddress, ""),
 			eventTextValue(ev.WakeMode),
 			ev.UnreadCount,
 			ev.MessageID,
@@ -111,7 +111,7 @@ func printEventText(ev *awid.AgentEvent) {
 	case awid.AgentEventActionableChat:
 		fmt.Printf(
 			"[actionable_chat] from=%s wake_mode=%s unread=%d sender_waiting=%t session_id=%s message_id=%s\n",
-			ev.FromAlias,
+			preferredIdentityLabel(ev.FromAlias, ev.FromAddress, ""),
 			eventTextValue(ev.WakeMode),
 			ev.UnreadCount,
 			ev.SenderWaiting,

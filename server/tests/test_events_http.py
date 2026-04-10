@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -143,8 +144,8 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, 'alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, address, lifetime, role)
+        VALUES ($1, $2, 'alice', 'acme.com/alice', 'persistent', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -190,6 +191,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     assert '"team_id": "backend:acme.com"' in resp.text
     assert "event: actionable_mail" in resp.text
     assert '"from_alias": "alice"' in resp.text
+    assert '"from_address": "acme.com/alice"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -222,8 +224,8 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime, role)
-        VALUES ($1, $2, $3, 'alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, lifetime, role)
+        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'persistent', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -268,6 +270,7 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
     assert resp.status_code == 200
     assert "event: actionable_mail" in resp.text
     assert '"from_alias": "alice"' in resp.text
+    assert '"from_address": "acme.com/alice"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -300,8 +303,8 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
 
     alice = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime, role)
-        VALUES ($1, $2, $3, 'alice', 'persistent', 'developer')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, lifetime, role)
+        VALUES ($1, $2, $3, 'alice', 'acme.com/alice', 'persistent', 'developer')
         RETURNING agent_id
         """,
         "backend:acme.com",
@@ -362,6 +365,7 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     assert resp.status_code == 200
     assert "event: actionable_chat" in resp.text
     assert '"from_alias": "alice"' in resp.text
+    assert '"from_address": "acme.com/alice"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -406,6 +410,18 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
             ('22222222-2222-4222-8222-222222222222', 'did:aw:carol', 'carol', 'hello from carol')
         """
     )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES
+            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice'),
+            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob'),
+            ($3, 'backend:acme.com', 'did:aw:carol', 'did:key:z6MkCarol', 'carol', 'otherco/carol')
+        """,
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
 
     seen: dict[str, list[str]] = {}
 
@@ -429,11 +445,29 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
         "22222222-2222-4222-8222-222222222222",
     }
     assert all(item["sender_waiting"] is True for item in actionable)
+    by_session = {item["session_id"]: item for item in actionable}
+    assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
+    assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
+        "acme.com/alice"
+    ]
 
 
 @pytest.mark.asyncio
 async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_cloud_db):
     created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice')
+        """,
+        uuid4(),
+    )
     for i in range(50):
         await aweb_cloud_db.aweb_db.execute(
             """

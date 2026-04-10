@@ -173,8 +173,10 @@ type ChatPendingResponse struct {
 type ChatPendingItem struct {
 	SessionID            string   `json:"session_id"`
 	Participants         []string `json:"participants"`
+	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	LastMessage          string   `json:"last_message"`
 	LastFrom             string   `json:"last_from"`
+	LastFromAddress      string   `json:"last_from_address,omitempty"`
 	UnreadCount          int      `json:"unread_count"`
 	LastActivity         string   `json:"last_activity"`
 	SenderWaiting        bool     `json:"sender_waiting"`

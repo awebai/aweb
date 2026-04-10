@@ -129,10 +129,14 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				}
 				return runWakeResolution{
 					CycleContext: formatIncomingChatContext(
-						preferredSenderLabel(
+						preferredIdentityLabel(
 							strings.TrimSpace(msg.FromAgent),
 							strings.TrimSpace(msg.FromAddress),
-							strings.TrimSpace(evt.FromAlias),
+							preferredIdentityLabel(
+								strings.TrimSpace(evt.FromAlias),
+								strings.TrimSpace(evt.FromAddress),
+								"",
+							),
 						),
 						msg.Body,
 					),
@@ -170,10 +174,14 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			if latest := latestIncomingChatMessage(filtered, selfAlias, selfIdentityDIDs(client)...); latest != nil {
 				return runWakeResolution{
 					CycleContext: formatIncomingChatContext(
-						preferredSenderLabel(
+						preferredIdentityLabel(
 							strings.TrimSpace(latest.FromAgent),
 							strings.TrimSpace(latest.FromAddress),
-							strings.TrimSpace(evt.FromAlias),
+							preferredIdentityLabel(
+								strings.TrimSpace(evt.FromAlias),
+								strings.TrimSpace(evt.FromAddress),
+								"",
+							),
 						),
 						latest.Body,
 					),
@@ -184,7 +192,10 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			}
 		}
 		return runWakeResolution{
-			CycleContext: formatIncomingChatContext(alias, pending.LastMessage),
+			CycleContext: formatIncomingChatContext(
+				preferredIdentityLabel(alias, strings.TrimSpace(pending.LastFromAddress), ""),
+				pending.LastMessage,
+			),
 		}, nil
 	}
 	return runWakeResolution{Skip: true}, nil
@@ -243,6 +254,14 @@ func preferredSenderLabel(alias string, address string, fallback string) string 
 	return strings.TrimSpace(fallback)
 }
 
+func preferredIdentityLabel(alias string, address string, fallback string) string {
+	address = strings.TrimSpace(address)
+	if address != "" {
+		return address
+	}
+	return preferredSenderLabel(alias, address, fallback)
+}
+
 func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
 	messageID := strings.TrimSpace(evt.MessageID)
 	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: true})
@@ -259,10 +278,14 @@ func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEve
 		}
 		return runWakeResolution{
 			CycleContext: formatIncomingMailContext(
-				preferredSenderLabel(
+				preferredIdentityLabel(
 					strings.TrimSpace(msg.FromAlias),
 					strings.TrimSpace(msg.FromAddress),
-					strings.TrimSpace(evt.FromAlias),
+					preferredIdentityLabel(
+						strings.TrimSpace(evt.FromAlias),
+						strings.TrimSpace(evt.FromAddress),
+						"",
+					),
 				),
 				msg.Subject,
 				msg.Body,
@@ -289,9 +312,9 @@ func joinPromptSections(parts ...string) string {
 func formatFallbackCommsContext(evt awid.AgentEvent) string {
 	switch evt.Type {
 	case awid.AgentEventActionableChat:
-		return formatIncomingChatContext(evt.FromAlias, "")
+		return formatIncomingChatContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, ""), "")
 	case awid.AgentEventActionableMail:
-		return formatIncomingMailContext(evt.FromAlias, evt.Subject, "")
+		return formatIncomingMailContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, ""), evt.Subject, "")
 	default:
 		return ""
 	}

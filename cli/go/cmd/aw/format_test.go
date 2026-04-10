@@ -63,16 +63,18 @@ func TestFormatChatPendingKeepsOpenHintForDirectSession(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{
 			{
-				Participants:  []string{"carol"},
-				LastFrom:      "carol",
-				UnreadCount:   1,
-				SenderWaiting: true,
+				Participants:         []string{"carol"},
+				ParticipantAddresses: []string{"otherco/carol"},
+				LastFrom:             "carol",
+				LastFromAddress:      "otherco/carol",
+				UnreadCount:          1,
+				SenderWaiting:        true,
 			},
 		},
 	}
 
 	out := formatChatPending(result)
-	if !strings.Contains(out, `aw chat open carol`) {
+	if !strings.Contains(out, `aw chat open otherco/carol`) {
 		t.Fatalf("direct pending output should keep open hint:\n%s", out)
 	}
 }

@@ -39,6 +39,7 @@ type AgentEvent struct {
 	Channel       string          `json:"channel,omitempty"`
 	MessageID     string          `json:"message_id,omitempty"`
 	FromAlias     string          `json:"from_alias,omitempty"`
+	FromAddress   string          `json:"from_address,omitempty"`
 	SessionID     string          `json:"session_id,omitempty"`
 	Subject       string          `json:"subject,omitempty"`
 	UnreadCount   int             `json:"unread_count,omitempty"`
@@ -167,6 +168,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		var payload struct {
 			MessageID   string `json:"message_id"`
 			FromAlias   string `json:"from_alias"`
+			FromAddress string `json:"from_address"`
 			Subject     string `json:"subject"`
 			WakeMode    string `json:"wake_mode"`
 			Channel     string `json:"channel"`
@@ -182,6 +184,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			Channel:     coalesceChannel(payload.Channel, AgentEventActionableMail),
 			MessageID:   payload.MessageID,
 			FromAlias:   payload.FromAlias,
+			FromAddress: payload.FromAddress,
 			Subject:     payload.Subject,
 			UnreadCount: payload.UnreadCount,
 		}, true, nil
@@ -190,6 +193,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		var payload struct {
 			MessageID     string `json:"message_id"`
 			FromAlias     string `json:"from_alias"`
+			FromAddress   string `json:"from_address"`
 			SessionID     string `json:"session_id"`
 			WakeMode      string `json:"wake_mode"`
 			Channel       string `json:"channel"`
@@ -206,6 +210,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			Channel:       coalesceChannel(payload.Channel, AgentEventActionableChat),
 			MessageID:     payload.MessageID,
 			FromAlias:     payload.FromAlias,
+			FromAddress:   payload.FromAddress,
 			SessionID:     payload.SessionID,
 			UnreadCount:   payload.UnreadCount,
 			SenderWaiting: payload.SenderWaiting,
