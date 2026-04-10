@@ -396,6 +396,9 @@ func normalizeSessionTarget(ctx context.Context, client *awid.Client, target str
 	if handle := strings.TrimSpace(identity.Handle); handle != "" {
 		return handle
 	}
+	if did := strings.TrimSpace(identity.DID); did != "" {
+		return did
+	}
 	return target
 }
 
