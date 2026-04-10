@@ -100,6 +100,25 @@ func TestFormatMailInboxPrefersFromAddress(t *testing.T) {
 	}
 }
 
+func TestFormatMailInboxFallsBackToStableID(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{
+				FromAlias:    "",
+				FromAddress:  "",
+				FromStableID: "did:aw:carol",
+				Subject:      "hello",
+				Body:         "world",
+			},
+		},
+	}
+
+	out := formatMailInbox(resp)
+	if !strings.Contains(out, "- did:aw:carol") {
+		t.Fatalf("mail inbox should preserve stable identity fallback:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{
@@ -144,6 +163,25 @@ func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 	}
 }
 
+func TestFormatChatHistoryFallsBackToStableID(t *testing.T) {
+	result := &chat.HistoryResult{
+		Messages: []chat.Event{
+			{
+				Type:         "message",
+				FromAgent:    "",
+				FromAddress:  "",
+				FromStableID: "did:aw:carol",
+				Body:         "hello",
+			},
+		},
+	}
+
+	out := formatChatHistory(result)
+	if !strings.Contains(out, "did:aw:carol: hello") {
+		t.Fatalf("chat history should preserve stable identity fallback:\n%s", out)
+	}
+}
+
 func TestFormatChatSendPrefersFromAddress(t *testing.T) {
 	result := &chat.SendResult{
 		Status:      "replied",
@@ -165,6 +203,28 @@ func TestFormatChatSendPrefersFromAddress(t *testing.T) {
 	}
 	if strings.Contains(out, "Chat from: carol") {
 		t.Fatalf("chat send output should not use alias-only sender label:\n%s", out)
+	}
+}
+
+func TestFormatChatSendFallsBackToStableID(t *testing.T) {
+	result := &chat.SendResult{
+		Status:      "replied",
+		TargetAgent: "did:aw:carol",
+		Reply:       "hello",
+		Events: []chat.Event{
+			{
+				Type:         "message",
+				FromAgent:    "",
+				FromAddress:  "",
+				FromStableID: "did:aw:carol",
+				Body:         "hello",
+			},
+		},
+	}
+
+	out := formatChatSend(result)
+	if !strings.Contains(out, "Chat from: did:aw:carol") {
+		t.Fatalf("chat send output should preserve stable identity fallback:\n%s", out)
 	}
 }
 
