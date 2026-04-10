@@ -1542,6 +1542,96 @@ func TestSendStreamDeadlineExceedsWait(t *testing.T) {
 	}
 }
 
+func TestSendReadReceiptFallsBackToStableTargetLabelWhenReaderAliasMissing(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetStableID := "did:aw:bob"
+	targetCurrentDID := "did:key:z6MkBobCurrent"
+	var callbackCalls []string
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:key:z6MkAliceCurrent"},
+					{DID: targetCurrentDID},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			rrData, _ := json.Marshal(map[string]any{
+				"type": "read_receipt", "reader_alias": "", "extends_wait_seconds": 300,
+			})
+			fmt.Fprintf(w, "event: read_receipt\ndata: %s\n\n", rrData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply", "from_did": targetCurrentDID, "from_stable_id": targetStableID, "body": "got it",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case targetStableID, targetCurrentDID:
+				return &awid.ResolvedIdentity{DID: targetCurrentDID, StableID: targetStableID}, nil
+			default:
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+	})
+
+	callback := func(kind, msg string) {
+		callbackCalls = append(callbackCalls, kind+": "+msg)
+	}
+
+	result, err := Send(context.Background(), client, "alice", []string{targetStableID}, "hello", SendOptions{Wait: 5}, callback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+
+	foundReceipt := false
+	foundExtended := false
+	for _, c := range callbackCalls {
+		if c == "read_receipt: did:aw:bob opened the conversation" {
+			foundReceipt = true
+		}
+		if c == "wait_extended: wait extended by 5 min (did:aw:bob opened the conversation)" {
+			foundExtended = true
+		}
+	}
+	if !foundReceipt || !foundExtended {
+		t.Fatalf("callbacks=%v", callbackCalls)
+	}
+}
+
 func TestDefaultWaitIs120(t *testing.T) {
 	t.Parallel()
 
@@ -2411,6 +2501,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 		},
 		"s1",
 		nil,
+		"",
 		1,
 		nil,
 		nil,
@@ -2442,6 +2533,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 		},
 		"s1",
 		nil,
+		"",
 		1,
 		nil,
 		nil,
@@ -2472,6 +2564,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 		},
 		"s1",
 		nil,
+		"",
 		1,
 		nil,
 		nil,
@@ -2496,6 +2589,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 		},
 		"s1",
 		nil,
+		"",
 		1,
 		nil,
 		nil,
