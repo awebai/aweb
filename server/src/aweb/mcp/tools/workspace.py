@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from aweb.mcp.auth import get_auth
+from aweb.mcp.tools._common import require_team_context
 from aweb.presence import list_agent_presences_by_ids
 
 
 async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     """Show self/team coordination status for the authenticated agent."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     agents = await aweb_db.fetch_all(

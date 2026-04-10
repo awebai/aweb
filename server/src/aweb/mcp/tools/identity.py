@@ -12,15 +12,27 @@ async def whoami(db_infra) -> str:
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
 
-    row = await aweb_db.fetch_one(
-        """
-        SELECT did_aw, address
-        FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-        """,
-        auth.team_id,
-        auth.did_key,
-    )
+    if auth.team_id:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT did_aw, address
+            FROM {{tables.agents}}
+            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+            """,
+            auth.team_id,
+            auth.did_key,
+        )
+    else:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT did_aw, address
+            FROM {{tables.agents}}
+            WHERE did_key = $1 AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            auth.did_key,
+        )
 
     return json.dumps(
         {

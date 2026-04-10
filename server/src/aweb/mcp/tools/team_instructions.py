@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 
 from aweb.coordination.routes.team_instructions import get_active_team_instructions
-from aweb.mcp.auth import get_auth
+from aweb.mcp.tools._common import require_team_context
 
 
 async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
     """Show the active or requested team instructions version."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     if team_instructions_id:
@@ -59,7 +61,9 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
 
 async def instructions_history(db_infra, *, limit: int = 20) -> str:
     """List recent team instructions versions for the authenticated team."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
     limit = max(1, min(int(limit), 100))
 

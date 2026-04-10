@@ -35,7 +35,7 @@ class _RegistryStub:
         self.team_members = team_members
 
     async def list_team_certificates(self, domain: str, name: str, *, active_only: bool = True):
-        del active_only
+        assert active_only is True
         return [
             type(
                 "TeamCertificate",
@@ -282,6 +282,39 @@ async def test_deliver_message_team_policy_allows_active_shared_team_cert(aweb_c
         priority="normal",
     )
     assert msg_id is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_team_policy_blocks_revoked_or_missing_active_cert(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+
+    alice_did_aw = "did:aw:alice"
+    bob_did_aw = "did:aw:bob"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        messaging_policy="team",
+    )
+    registry = _RegistryStub({("acme.com", "backend"): []})
+
+    with pytest.raises(ForbiddenError, match="shared-team"):
+        await deliver_message(
+            db_shim,
+            registry_client=registry,
+            from_did=alice_did_aw,
+            to_did=bob_did_aw,
+            from_alias="alice",
+            to_alias="bob",
+            sender_address="acme.com/alice",
+            subject="Hello",
+            body="Hi Bob!",
+            priority="normal",
+        )
 
 
 @pytest.mark.asyncio

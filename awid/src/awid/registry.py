@@ -30,6 +30,7 @@ _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
 _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
+_TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
@@ -1020,7 +1021,7 @@ class CachedRegistryClient(RegistryClient):
     ) -> list[TeamCertificate]:
         return await self._cached_read(
             cache_key=self._team_certificates_cache_key(domain, name, active_only=active_only),
-            ttl_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+            ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
             fetcher=lambda: super(CachedRegistryClient, self).list_team_certificates(
                 domain, name, active_only=active_only
             ),

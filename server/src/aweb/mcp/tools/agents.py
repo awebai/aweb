@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from aweb.mcp.auth import get_auth
+from aweb.mcp.tools._common import require_team_context
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
     list_agent_presences_by_ids,
@@ -14,7 +14,9 @@ from aweb.presence import (
 
 async def list_agents(db_infra, redis) -> str:
     """List all agents in the authenticated team."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
@@ -57,7 +59,9 @@ async def list_agents(db_infra, redis) -> str:
 
 async def heartbeat(db_infra, redis) -> str:
     """Send a heartbeat to maintain agent presence."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
