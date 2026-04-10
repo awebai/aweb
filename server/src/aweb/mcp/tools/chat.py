@@ -21,15 +21,18 @@ from aweb.messaging.chat import (
 )
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.waiting import register_waiting, unregister_waiting
-from aweb.mcp.auth import get_auth
+from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.service_errors import ServiceError
 
 MAX_TOTAL_WAIT_SECONDS = 600
 
 
+def _actor_dids() -> list[str]:
+    return auth_dids(get_auth())
+
+
 def _actor_did() -> str:
-    auth = get_auth()
-    return (auth.did_aw or auth.did_key or "").strip()
+    return primary_auth_did(get_auth())
 
 
 def _actor_alias(actor_agent: dict | None) -> str:
@@ -41,6 +44,36 @@ def _actor_alias(actor_agent: dict | None) -> str:
         or ((actor_agent or {}).get("address") or "").strip()
         or _actor_did()
     )
+
+
+async def _resolve_actor_agent(db_infra, actor_dids: list[str]) -> dict | None:
+    for did in actor_dids:
+        if not did:
+            continue
+        actor_agent = await resolve_agent_by_did(db_infra, did)
+        if actor_agent is not None:
+            return actor_agent
+    return None
+
+
+async def _resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: list[str]) -> str:
+    if not actor_dids:
+        return ""
+    aweb_db = db_infra.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT did
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+          AND did = ANY($2::text[])
+        ORDER BY CASE WHEN did = $3 THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        session_id,
+        actor_dids,
+        actor_dids[0],
+    )
+    return (row.get("did") or "").strip() if row else ""
 
 
 async def _wait_for_replies(
@@ -129,8 +162,9 @@ async def chat_send(
     hang_on: bool = False,
 ) -> str:
     auth = get_auth()
-    actor_did = _actor_did()
-    actor_agent = await resolve_agent_by_did(db_infra, actor_did) if actor_did else None
+    actor_dids = _actor_dids()
+    actor_did = actor_dids[0] if actor_dids else ""
+    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(actor_agent)
     aweb_db = db_infra.get_manager("aweb")
@@ -169,7 +203,7 @@ async def chat_send(
                 return json.dumps({"error": f"Recipient '{to_address}' not connected"})
 
         target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
-        if target_did == actor_did:
+        if target_did in set(actor_dids):
             return json.dumps({"error": "Cannot chat with yourself"})
         try:
             await evaluate_messaging_policy(
@@ -224,10 +258,18 @@ async def chat_send(
         if not sess:
             return json.dumps({"error": "Session not found"})
 
+        session_actor_did = await _resolve_session_actor_did(
+            db_infra,
+            session_id=sid,
+            actor_dids=actor_dids,
+        )
+        if not session_actor_did:
+            return json.dumps({"error": "Not a participant in this session"})
+
         msg = await send_in_session(
             db_infra,
             session_id=sid,
-            sender_did=actor_did,
+            sender_did=session_actor_did,
             sender_agent_id=actor_agent_id,
             body=message,
             leaving=leaving,
@@ -244,11 +286,12 @@ async def chat_send(
         "delivered": True,
     }
     if wait:
+        wait_participant_did = session_actor_did if session_id else actor_did
         replies, timed_out = await _wait_for_replies(
             aweb_db,
             redis,
             session_id=sid,
-            participant_did=actor_did,
+            participant_did=wait_participant_did,
             after=msg["created_at"],
             wait_seconds=wait_seconds,
         )
@@ -259,15 +302,20 @@ async def chat_send(
 
 async def chat_pending(db_infra, redis) -> str:
     auth = get_auth()
-    actor_did = _actor_did()
-    actor_agent = await resolve_agent_by_did(db_infra, actor_did) if actor_did else None
+    actor_dids = _actor_dids()
+    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
-    conversations = await get_pending_conversations(
-        db_infra,
-        participant_did=actor_did,
-        participant_agent_id=actor_agent_id,
-    )
+    conversations_by_session: dict[str, dict] = {}
+    for actor_did in actor_dids:
+        rows = await get_pending_conversations(
+            db_infra,
+            participant_did=actor_did,
+            participant_agent_id=actor_agent_id,
+        )
+        for row in rows:
+            conversations_by_session.setdefault(row["session_id"], row)
+    conversations = list(conversations_by_session.values())
     pending = [
         {
             "session_id": row["session_id"],
@@ -289,7 +337,7 @@ async def chat_history(
     unread_only: bool = False,
     limit: int = 50,
 ) -> str:
-    actor_did = _actor_did()
+    actor_dids = _actor_dids()
     try:
         session_uuid = UUID(session_id.strip())
     except Exception:
@@ -298,6 +346,14 @@ async def chat_history(
     aweb_db = db_infra.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
+        return json.dumps({"error": "Session not found"})
+
+    actor_did = await _resolve_session_actor_did(
+        db_infra,
+        session_id=session_uuid,
+        actor_dids=actor_dids,
+    )
+    if not actor_did:
         return json.dumps({"error": "Session not found"})
 
     try:
@@ -331,8 +387,8 @@ async def chat_history(
 
 async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
     auth = get_auth()
-    actor_did = _actor_did()
-    actor_agent = await resolve_agent_by_did(db_infra, actor_did) if actor_did else None
+    actor_dids = _actor_dids()
+    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     try:
@@ -343,6 +399,14 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
         UUID(up_to_message_id.strip())
     except Exception:
         return json.dumps({"error": "Invalid message_id format"})
+
+    actor_did = await _resolve_session_actor_did(
+        db_infra,
+        session_id=session_uuid,
+        actor_dids=actor_dids,
+    )
+    if not actor_did:
+        return json.dumps({"error": "Session not found"})
 
     try:
         result = await mark_messages_read(

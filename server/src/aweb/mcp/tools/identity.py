@@ -40,7 +40,7 @@ async def whoami(db_infra) -> str:
             "agent_id": auth.agent_id,
             "alias": auth.alias,
             "did_key": auth.did_key,
-            "did_aw": (row["did_aw"] if row and row["did_aw"] else ""),
-            "address": (row["address"] if row and row["address"] else ""),
+            "did_aw": (auth.did_aw or (row["did_aw"] if row and row["did_aw"] else "")),
+            "address": (auth.address or (row["address"] if row and row["address"] else "")),
         }
     )
