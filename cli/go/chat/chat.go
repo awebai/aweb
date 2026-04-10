@@ -608,7 +608,7 @@ type messageAcceptor func(ev Event) (accept, skip bool)
 // waitForMessage opens an SSE stream and waits for a message matching the acceptor.
 // Handles read receipts, extend-wait messages, and wait extensions.
 // after controls SSE replay: non-nil replays messages after that timestamp; nil skips replay.
-func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
+func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, selfAlias string, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
 	result := &SendResult{
 		SessionID: sessionID,
 		Status:    "timeout",
@@ -697,6 +697,10 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID)
 
 			if chatEvent.Type == "read_receipt" {
+				readerLabel := inferReadReceiptLabel(ctx, client, selfAlias, chatEvent.ReaderAlias, participants)
+				if readerLabel != "" {
+					chatEvent.ReaderAlias = readerLabel
+				}
 				result.Events = append(result.Events, chatEvent)
 				if callback != nil {
 					callback("read_receipt", fmt.Sprintf("%s opened the conversation", chatEvent.ReaderAlias))
@@ -887,7 +891,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		return false, false
 	}
 
-	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, resolvedWait, after, callback, acceptor)
+	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, myAlias, resolvedWait, after, callback, acceptor)
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +916,7 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 
 	acceptAll := func(ev Event) (bool, bool) { return true, false }
 
-	result, err := waitForMessage(ctx, client, client.ChatStream, sessionID, nil, waitSeconds, nil, callback, acceptAll)
+	result, err := waitForMessage(ctx, client, client.ChatStream, sessionID, nil, "", waitSeconds, nil, callback, acceptAll)
 	if err != nil {
 		return nil, err
 	}
@@ -1261,6 +1265,81 @@ func chatEventTrustAddress(ev Event, participants []awid.ChatParticipant) string
 		return value
 	}
 	return strings.TrimSpace(ev.FromAgent)
+}
+
+func inferReadReceiptLabel(ctx context.Context, client *awid.Client, selfAlias string, readerAlias string, participants []awid.ChatParticipant) string {
+	readerAlias = strings.TrimSpace(readerAlias)
+	if readerAlias != "" {
+		return readerAlias
+	}
+	candidates := []string{}
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+	selfIdentifiers := []string{
+		strings.TrimSpace(selfAlias),
+		strings.TrimSpace(client.Address()),
+		addressHandle(client.Address()),
+		strings.TrimSpace(client.StableID()),
+		strings.TrimSpace(client.DID()),
+	}
+	for _, participant := range participants {
+		isSelf := false
+		for _, identifier := range selfIdentifiers {
+			if identifier != "" && chatParticipantMatchesTarget(participant, identifier) {
+				isSelf = true
+				break
+			}
+		}
+		if isSelf {
+			continue
+		}
+		appendUnique(chatParticipantLabel(ctx, client, participant))
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	return ""
+}
+
+func chatParticipantLabel(ctx context.Context, client *awid.Client, participant awid.ChatParticipant) string {
+	if value := strings.TrimSpace(participant.Address); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(participant.Alias); value != "" {
+		return value
+	}
+	if client != nil {
+		for _, identifier := range []string{strings.TrimSpace(participant.DID)} {
+			if identifier == "" {
+				continue
+			}
+			if identity, err := client.ResolveIdentity(ctx, identifier); err == nil && identity != nil {
+				if value := strings.TrimSpace(identity.Address); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(identity.Handle); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(identity.StableID); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(identity.DID); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(participant.DID)
 }
 
 func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
