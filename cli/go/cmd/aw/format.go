@@ -350,6 +350,59 @@ func chatEventMatchesDisplayTarget(ev *chat.Event, target string) bool {
 	return formatChatTargetListsOverlap(targetNames, eventNames)
 }
 
+func pendingParticipantLabel(p chat.PendingConversation, idx int) string {
+	alias := ""
+	if idx < len(p.Participants) {
+		alias = strings.TrimSpace(p.Participants[idx])
+	}
+	address := ""
+	if idx < len(p.ParticipantAddresses) {
+		address = strings.TrimSpace(p.ParticipantAddresses[idx])
+	}
+	did := ""
+	if idx < len(p.ParticipantDIDs) {
+		did = strings.TrimSpace(p.ParticipantDIDs[idx])
+	}
+	return preferredIdentityDisplayLabel(alias, address, "", did, "")
+}
+
+func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, selfDIDs ...string) string {
+	lastFrom := preferredIdentityDisplayLabel(
+		strings.TrimSpace(p.LastFrom),
+		strings.TrimSpace(p.LastFromAddress),
+		"",
+		strings.TrimSpace(p.LastFromDID),
+		"",
+	)
+	if strings.TrimSpace(p.LastFrom) != "" || strings.TrimSpace(p.LastFromAddress) != "" || strings.TrimSpace(p.LastFromDID) == "" {
+		return lastFrom
+	}
+
+	count := len(p.Participants)
+	if len(p.ParticipantAddresses) > count {
+		count = len(p.ParticipantAddresses)
+	}
+	if len(p.ParticipantDIDs) > count {
+		count = len(p.ParticipantDIDs)
+	}
+
+	candidate := ""
+	for idx := 0; idx < count; idx++ {
+		participant := pendingParticipantLabel(p, idx)
+		if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias, selfDIDs...) {
+			continue
+		}
+		if candidate != "" && !strings.EqualFold(candidate, participant) {
+			return lastFrom
+		}
+		candidate = participant
+	}
+	if candidate != "" {
+		return candidate
+	}
+	return lastFrom
+}
+
 func formatChatPending(v any) string {
 	result := v.(*chat.PendingResult)
 	if len(result.Pending) == 0 {
@@ -361,7 +414,7 @@ func formatChatPending(v any) string {
 
 	for _, p := range result.Pending {
 		openHint := ""
-		displayFrom := preferredIdentityLabel(p.LastFrom, p.LastFromAddress, strings.TrimSpace(p.LastFromDID))
+		displayFrom := preferredPendingSenderLabel(p, "")
 		openTarget := ""
 		if len(p.Participants) == 1 {
 			openTarget = strings.TrimSpace(p.Participants[0])
