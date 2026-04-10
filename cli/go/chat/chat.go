@@ -941,9 +941,11 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 		result.Pending = append(result.Pending, PendingConversation{
 			SessionID:            p.SessionID,
 			Participants:         p.Participants,
+			ParticipantDIDs:      p.ParticipantDIDs,
 			ParticipantAddresses: p.ParticipantAddresses,
 			LastMessage:          p.LastMessage,
 			LastFrom:             p.LastFrom,
+			LastFromDID:          p.LastFromDID,
 			LastFromAddress:      p.LastFromAddress,
 			UnreadCount:          p.UnreadCount,
 			LastActivity:         p.LastActivity,
