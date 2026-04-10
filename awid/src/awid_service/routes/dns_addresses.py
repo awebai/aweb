@@ -9,23 +9,32 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from awid.did import stable_id_from_did_key, validate_stable_id
+from awid.dns_verify import DomainVerifier
+from awid.team_ids import build_team_id, parse_team_id
+from awid.dns_verify import DnsVerificationError
+from awid.dns_auth import validate_did_key as _validate_dns_did_key
+from awid.dns_auth import verify_signed_json_request
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import rate_limit_dep
+from awid_service.deps import get_db, get_domain_verifier
 
-_ADDRESS_REACHABILITY_VALUES = {"private", "org_visible", "contacts_only", "public"}
+_ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
 
 
-def normalize_address_reachability(value: str | None, *, default: str = "private") -> str:
+def normalize_address_reachability(value: str | None, *, default: str = "nobody") -> str:
     normalized = (value or "").strip().lower().replace("-", "_") or default
     if normalized not in _ADDRESS_REACHABILITY_VALUES:
         raise ValueError(f"address_reachability must be one of {sorted(_ADDRESS_REACHABILITY_VALUES)}")
     return normalized
-from awid.did import stable_id_from_did_key, validate_stable_id
-from awid.dns_verify import DomainVerifier
-from awid_service.deps import get_db, get_domain_verifier
-from awid.dns_verify import DnsVerificationError
-from awid.pagination import encode_cursor, validate_pagination_params
-from awid.ratelimit import rate_limit_dep
-from awid.dns_auth import validate_did_key as _validate_dns_did_key
-from awid.dns_auth import verify_signed_json_request
+
+
+def normalize_visible_to_team_id(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    domain, name = parse_team_id(raw)
+    return build_team_id(domain, name)
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"])
 logger = logging.getLogger(__name__)
@@ -179,7 +188,8 @@ class AddressRegisterRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     did_aw: str = Field(..., min_length=1)
     current_did_key: str = Field(..., min_length=1)
-    reachability: str = Field(default="private", max_length=32)
+    reachability: str = Field(default="nobody", max_length=32)
+    visible_to_team_id: str | None = Field(default=None, max_length=512)
 
     _check_did_aw = field_validator("did_aw")(_validate_did_aw)
     _check_did_key = field_validator("current_did_key")(_validate_did_key)
@@ -189,11 +199,17 @@ class AddressRegisterRequest(BaseModel):
     def _validate_reachability(cls, value: str) -> str:
         return normalize_address_reachability(value)
 
+    @field_validator("visible_to_team_id")
+    @classmethod
+    def _validate_visible_to_team_id(cls, value: str | None) -> str | None:
+        return normalize_visible_to_team_id(value)
+
 
 class AddressUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reachability: str | None = Field(default=None, max_length=32)
+    visible_to_team_id: str | None = Field(default=None, max_length=512)
 
     @field_validator("reachability")
     @classmethod
@@ -201,6 +217,11 @@ class AddressUpdateRequest(BaseModel):
         if value is None:
             return None
         return normalize_address_reachability(value)
+
+    @field_validator("visible_to_team_id")
+    @classmethod
+    def _validate_visible_to_team_id(cls, value: str | None) -> str | None:
+        return normalize_visible_to_team_id(value)
 
 
 class AddressReassignRequest(BaseModel):
@@ -226,6 +247,7 @@ class AddressResponse(BaseModel):
     did_aw: str
     current_did_key: str
     reachability: str
+    visible_to_team_id: str | None = None
     created_at: str
 
 
@@ -254,7 +276,8 @@ def _address_response(row, domain: str) -> AddressResponse:
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        reachability=str(row.get("reachability") or "private"),
+        reachability=str(row.get("reachability") or "nobody"),
+        visible_to_team_id=row.get("visible_to_team_id"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -279,16 +302,101 @@ async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
     return row["did_aw"]
 
 
-def _is_owner_visible(row, caller_did_aw: str | None) -> bool:
-    reachability = normalize_address_reachability(row.get("reachability"))
-    if reachability == "public":
-        return True
-    if reachability in {"org_visible", "contacts_only"}:
-        logger.warning(
-            "Treating address reachability=%s as owner-only until aago.7 defines broader visibility",
-            reachability,
+async def _require_visible_to_team(db, visible_to_team_id: str) -> str:
+    canonical_team_id = normalize_visible_to_team_id(visible_to_team_id)
+    if canonical_team_id is None:
+        raise HTTPException(status_code=422, detail="visible_to_team_id is required")
+    team_domain, team_name = parse_team_id(canonical_team_id)
+    row = await db.fetch_one(
+        """
+        SELECT 1
+        FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        LIMIT 1
+        """,
+        team_domain,
+        team_name,
+    )
+    if row is None:
+        raise HTTPException(status_code=422, detail="visible_to_team_id must reference an active team")
+    return canonical_team_id
+
+
+async def _resolve_address_visibility(
+    db,
+    *,
+    reachability: str | None,
+    visible_to_team_id: str | None,
+    current_reachability: str | None = None,
+    current_visible_to_team_id: str | None = None,
+    visible_to_team_id_supplied: bool,
+) -> tuple[str, str | None]:
+    next_reachability = normalize_address_reachability(
+        reachability if reachability is not None else current_reachability,
+        default="nobody",
+    )
+    next_visible_to_team_id = (
+        visible_to_team_id if visible_to_team_id_supplied else current_visible_to_team_id
+    )
+
+    if next_reachability == "team_members_only":
+        if next_visible_to_team_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="visible_to_team_id is required when reachability=team_members_only",
+            )
+        return next_reachability, await _require_visible_to_team(db, next_visible_to_team_id)
+
+    if visible_to_team_id_supplied and visible_to_team_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="visible_to_team_id is only allowed when reachability=team_members_only",
         )
-    return bool(caller_did_aw) and row["did_aw"] == caller_did_aw
+    return next_reachability, None
+
+
+def _address_visibility_sql(
+    *,
+    caller_did_aw_param: int | None,
+    address_alias: str = "pa",
+    namespace_alias: str = "ns",
+) -> str:
+    team_certificates_table = "{{tables.team_certificates}}"
+    teams_table = "{{tables.teams}}"
+    if caller_did_aw_param is None:
+        return f"{address_alias}.reachability = 'public'"
+
+    caller_ref = f"${caller_did_aw_param}"
+    return f"""(
+        {address_alias}.reachability = 'public'
+        OR {address_alias}.did_aw = {caller_ref}
+        OR (
+            {address_alias}.reachability = 'org_only'
+            AND EXISTS (
+                SELECT 1
+                FROM {team_certificates_table} tc
+                JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
+                WHERE tc.member_did_aw = {caller_ref}
+                  AND tc.revoked_at IS NULL
+                  AND t.domain = {namespace_alias}.domain
+                  AND t.deleted_at IS NULL
+                LIMIT 1
+            )
+        )
+        OR (
+            {address_alias}.reachability = 'team_members_only'
+            AND EXISTS (
+                SELECT 1
+                FROM {team_certificates_table} tc
+                JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
+                WHERE tc.member_did_aw = {caller_ref}
+                  AND tc.revoked_at IS NULL
+                  AND (t.name || ':' || t.domain) = {address_alias}.visible_to_team_id
+                  AND t.deleted_at IS NULL
+                LIMIT 1
+            )
+        )
+    )"""
 
 
 # ---------------------------------------------------------------------------
@@ -338,19 +446,26 @@ async def register_address(
 
         addr_id = uuid.uuid4()
         now = datetime.now(timezone.utc)
+        reachability, visible_to_team_id = await _resolve_address_visibility(
+            tx,
+            reachability=body.reachability,
+            visible_to_team_id=body.visible_to_team_id,
+            visible_to_team_id_supplied=True,
+        )
         try:
             await tx.execute(
                 """
                 INSERT INTO {{tables.public_addresses}}
-                    (address_id, namespace_id, name, did_aw, current_did_key, reachability, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    (address_id, namespace_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 """,
                 addr_id,
                 ns_row["namespace_id"],
                 body.name,
                 body.did_aw,
                 body.current_did_key,
-                body.reachability,
+                reachability,
+                visible_to_team_id,
                 now,
             )
         except asyncpg.UniqueViolationError as e:
@@ -368,7 +483,8 @@ async def register_address(
         name=body.name,
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        reachability=body.reachability,
+        reachability=reachability,
+        visible_to_team_id=visible_to_team_id,
         created_at=now.isoformat(),
     )
 
@@ -396,18 +512,23 @@ async def get_address(
     )
     caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
 
+    query = """
+        SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,
+               pa.visible_to_team_id, pa.created_at
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
+        WHERE pa.namespace_id = $1
+          AND pa.name = $2
+          AND pa.deleted_at IS NULL
+          AND ns.deleted_at IS NULL
+          AND """ + _address_visibility_sql(caller_did_aw_param=3)
     row = await db.fetch_one(
-        """
-        SELECT address_id, name, did_aw, current_did_key, reachability, created_at
-        FROM {{tables.public_addresses}}
-        WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-        """,
+        query,
         ns_row["namespace_id"],
         name,
+        caller_did_aw,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="Address not found")
-    if not _is_owner_visible(row, caller_did_aw):
         raise HTTPException(status_code=404, detail="Address not found")
     return _address_response(row, domain)
 
@@ -442,24 +563,26 @@ async def list_addresses(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     params: list[object] = [ns_row["namespace_id"]]
-    where_clauses = ["namespace_id = $1", "deleted_at IS NULL"]
+    where_clauses = ["pa.namespace_id = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
     if caller_did_aw:
         params.append(caller_did_aw)
-        where_clauses.append(f"(reachability = 'public' OR did_aw = ${len(params)})")
+        where_clauses.append(_address_visibility_sql(caller_did_aw_param=len(params)))
     else:
-        where_clauses.append("reachability = 'public'")
+        where_clauses.append(_address_visibility_sql(caller_did_aw_param=None))
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
         if not isinstance(cursor_name, str):
             raise HTTPException(status_code=400, detail="Invalid cursor: missing name")
         params.append(cursor_name)
-        where_clauses.append(f"name > ${len(params)}")
+        where_clauses.append(f"pa.name > ${len(params)}")
     params.append(validated_limit + 1)
     query = (
-        "SELECT address_id, name, did_aw, current_did_key, reachability, created_at"
-        " FROM {{tables.public_addresses}}"
+        "SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,"
+        " pa.visible_to_team_id, pa.created_at"
+        " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
         " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY name LIMIT ${len(params)}"
+        + f" ORDER BY pa.name LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
     has_more = len(rows) > validated_limit
@@ -489,8 +612,8 @@ async def update_address(
 ) -> AddressResponse:
     """Update address metadata under a DNS-backed namespace.
 
-    When `reachability` is omitted, this is a no-op that returns the current
-    address state unchanged.
+    When `reachability` and `visible_to_team_id` are both omitted, this is a
+    no-op that returns the current address state unchanged.
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
@@ -518,7 +641,7 @@ async def update_address(
 
         row = await tx.fetch_one(
             """
-            SELECT address_id, name, did_aw, current_did_key, reachability, created_at
+            SELECT address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
             FROM {{tables.public_addresses}}
             WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
@@ -530,15 +653,25 @@ async def update_address(
             raise HTTPException(status_code=404, detail="Address not found")
 
         next_reachability = body.reachability
-        if next_reachability is not None:
+        next_reachability, next_visible_to_team_id = await _resolve_address_visibility(
+            tx,
+            reachability=next_reachability,
+            visible_to_team_id=body.visible_to_team_id,
+            current_reachability=row["reachability"],
+            current_visible_to_team_id=row.get("visible_to_team_id"),
+            visible_to_team_id_supplied="visible_to_team_id" in body.model_fields_set,
+        )
+        if next_reachability != row["reachability"] or next_visible_to_team_id != row.get("visible_to_team_id"):
             row = await tx.fetch_one(
                 """
                 UPDATE {{tables.public_addresses}}
-                SET reachability = $1
-                WHERE address_id = $2
-                RETURNING address_id, name, did_aw, current_did_key, reachability, created_at
+                SET reachability = $1,
+                    visible_to_team_id = $2
+                WHERE address_id = $3
+                RETURNING address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
                 """,
                 next_reachability,
+                next_visible_to_team_id,
                 row["address_id"],
             )
             if row is None:
@@ -550,7 +683,8 @@ async def update_address(
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        reachability=str(row.get("reachability") or "private"),
+        reachability=str(row.get("reachability") or "nobody"),
+        visible_to_team_id=row.get("visible_to_team_id"),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -662,7 +796,7 @@ async def reassign_address(
 
         row = await tx.fetch_one(
             """
-            SELECT address_id, name, reachability, created_at
+            SELECT address_id, name, reachability, visible_to_team_id, created_at
             FROM {{tables.public_addresses}}
             WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
@@ -696,6 +830,7 @@ async def reassign_address(
         name=row["name"],
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        reachability=str(row.get("reachability") or "private"),
+        reachability=str(row.get("reachability") or "nobody"),
+        visible_to_team_id=row.get("visible_to_team_id"),
         created_at=row["created_at"].isoformat(),
     )

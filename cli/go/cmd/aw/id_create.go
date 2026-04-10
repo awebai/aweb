@@ -401,7 +401,7 @@ func ensureStandaloneAddress(
 	if code, ok := registryStatusCode(err); !ok || code != http.StatusNotFound {
 		return err
 	}
-	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, "public", controllerKey)
+	address, err = registry.RegisterAddressAt(ctx, plan.RegistryURL, plan.Domain, plan.Name, plan.DIDAW, plan.DIDKey, "public", controllerKey, "")
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
 			if signingKey != nil {

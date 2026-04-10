@@ -55,7 +55,7 @@ Flags:
 - `--name string Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)`
 - `--persistent Create a durable self-custodial identity instead of the default ephemeral identity`
 - `--print-exports Print shell export lines after JSON output`
-- `--reachability string Persistent address reachability (private|org-visible|contacts-only|public)`
+- `--reachability string Persistent address reachability (nobody|org-only|team-members-only|public)`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code channel MCP server for real-time coordination`
@@ -81,10 +81,12 @@ Manage repo-local coordination workspaces
 
 Subcommands:
 - `add-worktree` Create a sibling git worktree and initialize a new coordination workspace in it
+- `migrate-multi-team` Rewrite a legacy single-team workspace into the canonical multi-team shape
 - `status` Show coordination status for the current workspace/identity and team
 
 Flags:
 - `-h, --help help for workspace`
+- `--team string Override the selected team_id for this command`
 
 ## `workspace add-worktree`
 
@@ -95,6 +97,15 @@ Create a sibling git worktree and initialize a new coordination workspace in it
 Flags:
 - `--alias string Override the default alias`
 - `-h, --help help for add-worktree`
+
+## `workspace migrate-multi-team`
+
+### `workspace migrate-multi-team`
+
+Rewrite a legacy single-team workspace into the canonical multi-team shape
+
+Flags:
+- `-h, --help help for migrate-multi-team`
 
 ## `workspace status`
 
@@ -130,9 +141,9 @@ Subcommands:
 - `log` Show an identity log
 - `namespace` Inspect a namespace and its registered addresses
 - `register` Register the current persistent identity at awid.ai
-- `rotate-key` Rotate the current persistent identity signing key at the registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
+- `rotate-key` Rotate the current persistent identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign a canonical JSON payload with the local identity key
 - `team` Team management (create, invite, membership)
@@ -202,15 +213,6 @@ Register the current persistent identity at awid.ai
 Flags:
 - `-h, --help help for register`
 
-## `id rotate-key`
-
-### `id rotate-key`
-
-Rotate the current persistent identity signing key at the registry
-
-Flags:
-- `-h, --help help for rotate-key`
-
 ## `id request`
 
 ### `id request`
@@ -234,6 +236,15 @@ Resolve a did:aw to its current did:key
 
 Flags:
 - `-h, --help help for resolve`
+
+## `id rotate-key`
+
+### `id rotate-key`
+
+Rotate the current persistent identity signing key at the registry
+
+Flags:
+- `-h, --help help for rotate-key`
 
 ## `id show`
 
@@ -262,8 +273,8 @@ Flags:
 Team management (create, invite, membership)
 
 Subcommands:
-- `add` Join another team in this workspace with the current identity
 - `accept-invite` Accept a team invite and receive a membership certificate
+- `add` Join another team in this workspace with the current identity
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
 - `invite` Generate an invite token for a team
@@ -275,16 +286,6 @@ Subcommands:
 Flags:
 - `-h, --help help for team`
 
-## `id team add`
-
-### `id team add`
-
-Join another team in this workspace with the current identity
-
-Flags:
-- `--alias string Alias for the added team membership (defaults to the current identity name)`
-- `-h, --help help for add`
-
 ## `id team accept-invite`
 
 ### `id team accept-invite`
@@ -294,6 +295,16 @@ Accept a team invite and receive a membership certificate
 Flags:
 - `--alias string Alias for the accepting agent (defaults to identity name)`
 - `-h, --help help for accept-invite`
+
+## `id team add`
+
+### `id team add`
+
+Join another team in this workspace with the current identity
+
+Flags:
+- `--alias string Alias for the added team membership (defaults to the current identity name)`
+- `-h, --help help for add`
 
 ## `id team add-member`
 
@@ -399,6 +410,7 @@ Show the current identity
 
 Flags:
 - `-h, --help help for whoami`
+- `--team string Override the selected team_id for this command`
 
 ## `chat`
 
@@ -418,6 +430,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for chat`
+- `--team string Override the selected team_id for this command`
 
 ## `chat extend-wait`
 
@@ -507,6 +520,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for contacts`
+- `--team string Override the selected team_id for this command`
 
 ## `contacts add`
 
@@ -549,6 +563,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for control`
+- `--team string Override the selected team_id for this command`
 
 ## `control interrupt`
 
@@ -592,6 +607,7 @@ Flags:
 - `-h, --help help for directory`
 - `--limit int Max results (default 100)`
 - `--query string Search handle/description`
+- `--team string Override the selected team_id for this command`
 
 ## `events`
 
@@ -604,6 +620,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for events`
+- `--team string Override the selected team_id for this command`
 
 ## `events stream`
 
@@ -623,6 +640,7 @@ Send an explicit presence heartbeat
 
 Flags:
 - `-h, --help help for heartbeat`
+- `--team string Override the selected team_id for this command`
 
 ## `log`
 
@@ -635,6 +653,7 @@ Flags:
 - `--from string Filter by sender (substring match)`
 - `-h, --help help for log`
 - `--limit int Max entries to show (default 20)`
+- `--team string Override the selected team_id for this command`
 
 ## `mail`
 
@@ -648,6 +667,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for mail`
+- `--team string Override the selected team_id for this command`
 
 ## `mail inbox`
 
@@ -671,7 +691,9 @@ Flags:
 - `-h, --help help for send`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
-- `--to string Recipient address`
+- `--to string Recipient alias within the active team`
+- `--to-address string Recipient address (domain/name)`
+- `--to-did string Recipient stable identity (did:aw:...)`
 
 ## `instructions`
 
@@ -688,6 +710,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for instructions`
+- `--team string Override the selected team_id for this command`
 
 ## `instructions activate`
 
@@ -752,6 +775,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for lock`
+- `--team string Override the selected team_id for this command`
 
 ## `lock acquire`
 
@@ -826,6 +850,7 @@ Hook configuration in .claude/settings.json (set up via aw init --setup-hooks):
 
 Flags:
 - `-h, --help help for notify`
+- `--team string Override the selected team_id for this command`
 
 ## `role-name`
 
@@ -838,6 +863,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for role-name`
+- `--team string Override the selected team_id for this command`
 
 ## `role-name set`
 
@@ -865,6 +891,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for roles`
+- `--team string Override the selected team_id for this command`
 
 ## `roles activate`
 
@@ -969,6 +996,7 @@ Flags:
 - `--model string Provider-specific model override`
 - `--prompt string Initial prompt for the first provider run`
 - `--provider-pty Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available`
+- `--team string Override the selected team_id for this command`
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
@@ -993,6 +1021,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for task`
+- `--team string Override the selected team_id for this command`
 
 ## `task close`
 
@@ -1173,6 +1202,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for work`
+- `--team string Override the selected team_id for this command`
 
 ## `work active`
 

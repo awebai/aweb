@@ -55,13 +55,14 @@ type RegistryNamespace struct {
 }
 
 type RegistryAddress struct {
-	AddressID     string `json:"address_id"`
-	Domain        string `json:"domain"`
-	Name          string `json:"name"`
-	DIDAW         string `json:"did_aw"`
-	CurrentDIDKey string `json:"current_did_key"`
-	Reachability  string `json:"reachability"`
-	CreatedAt     string `json:"created_at"`
+	AddressID       string  `json:"address_id"`
+	Domain          string  `json:"domain"`
+	Name            string  `json:"name"`
+	DIDAW           string  `json:"did_aw"`
+	CurrentDIDKey   string  `json:"current_did_key"`
+	Reachability    string  `json:"reachability"`
+	VisibleToTeamID *string `json:"visible_to_team_id,omitempty"`
+	CreatedAt       string  `json:"created_at"`
 }
 
 type RegistryAddressList struct {

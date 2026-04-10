@@ -94,7 +94,7 @@ Identity handles within namespaces. `acme.com/alice`.
 POST   /v1/namespaces/{domain}/addresses          Create (controller auth)
 GET    /v1/namespaces/{domain}/addresses           List (public, paginated)
 GET    /v1/namespaces/{domain}/addresses/{name}    Read (public)
-PATCH  /v1/namespaces/{domain}/addresses/{name}    Update reachability
+PUT    /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
@@ -413,7 +413,13 @@ CREATE TABLE public_addresses (
     name            TEXT NOT NULL,
     did_aw          TEXT NOT NULL,
     current_did_key TEXT NOT NULL,
-    reachability    TEXT NOT NULL DEFAULT 'public',
+    reachability    TEXT NOT NULL DEFAULT 'nobody'
+                    CHECK (reachability IN ('nobody', 'org_only', 'team_members_only', 'public')),
+    visible_to_team_id TEXT
+                    CHECK (
+                        (reachability = 'team_members_only' AND visible_to_team_id IS NOT NULL)
+                        OR (reachability != 'team_members_only' AND visible_to_team_id IS NULL)
+                    ),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,

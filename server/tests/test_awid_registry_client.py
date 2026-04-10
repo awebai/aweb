@@ -655,7 +655,7 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
                             "name": "support",
                             "did_aw": subject_did_aw,
                             "current_did_key": subject_did_key,
-                            "reachability": "private",
+                            "reachability": "nobody",
                             "created_at": "2026-04-03T00:00:00Z",
                         }
                     ]
@@ -819,7 +819,7 @@ async def test_resolve_address_signs_lookup_when_identity_supplied():
                 "name": "support",
                 "did_aw": "did:aw:z6Mksubject",
                 "current_did_key": "did:key:z6Mksubject",
-                "reachability": "private",
+                "reachability": "nobody",
                 "created_at": "2026-04-04T00:00:00Z",
             },
         )
@@ -831,7 +831,7 @@ async def test_resolve_address_signs_lookup_when_identity_supplied():
 
     address = await client.resolve_address("acme.com", "support", signing_key=signing_key, did_key=did_key)
     assert address is not None
-    assert address.reachability == "private"
+    assert address.reachability == "nobody"
 
 
 @pytest.mark.asyncio
@@ -1259,7 +1259,7 @@ async def test_cached_registry_client_scopes_address_reads_by_caller():
                     "name": "support",
                     "did_aw": subject_did_aw,
                     "current_did_key": owner_did_key,
-                    "reachability": "private",
+                    "reachability": "nobody",
                     "created_at": "2026-04-03T00:00:00Z",
                 },
             )
@@ -1301,7 +1301,7 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_en
             name="support",
             did_aw=subject_did_aw,
             current_did_key=owner_did_key,
-            reachability="private",
+            reachability="nobody",
             created_at="2026-04-03T00:00:00Z",
         ),
         ttl_seconds=300,
@@ -1334,7 +1334,7 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_li
                 name="support",
                 did_aw=subject_did_aw,
                 current_did_key=owner_did_key,
-                reachability="private",
+                reachability="nobody",
                 created_at="2026-04-03T00:00:00Z",
             )
         ],
@@ -1354,7 +1354,7 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
     subject_signing_key, subject_public_key = generate_keypair()
     subject_did_key = did_from_public_key(subject_public_key)
     subject_did_aw = stable_id_from_did_key(subject_did_key)
-    reachability = {"value": "private"}
+    reachability = {"value": "nobody"}
     request_counts: dict[str, int] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -1410,9 +1410,9 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
     after_reverse = await client.list_did_addresses(subject_did_aw)
 
     assert before_address is not None
-    assert before_address.reachability == "private"
-    assert [item.reachability for item in before_domain] == ["private"]
-    assert [item.reachability for item in before_reverse] == ["private"]
+    assert before_address.reachability == "nobody"
+    assert [item.reachability for item in before_domain] == ["nobody"]
+    assert [item.reachability for item in before_reverse] == ["nobody"]
     assert updated.reachability == "public"
     assert after_address is not None
     assert after_address.reachability == "public"

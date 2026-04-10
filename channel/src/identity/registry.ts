@@ -78,6 +78,7 @@ interface AddressResponse {
   did_aw: string;
   current_did_key: string;
   reachability: string;
+  visible_to_team_id?: string | null;
   created_at: string;
 }
 
