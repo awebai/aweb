@@ -699,6 +699,49 @@ func TestResolveChatWakeForAliasSkipsPendingFallbackWhenUnreadHistoryIsOnlySelfA
 	}
 }
 
+func TestResolveChatWakeForAliasSkipsPendingFallbackForSelfStableIDWhenHistoryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"", ""},
+						ParticipantDIDs: []string{"did:aw:self-rose", "did:aw:bob"},
+						LastMessage:     "note to self",
+						LastFrom:        "",
+						LastFromDID:     "did:aw:self-rose",
+						SenderWaiting:   true,
+						UnreadCount:     1,
+					},
+				},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "",
+		FromDID:   "did:aw:self-rose",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored pending stable-id fallback to skip, got %+v", result)
+	}
+}
+
 func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	tmp := deliveredIDsTestPath(t)
 

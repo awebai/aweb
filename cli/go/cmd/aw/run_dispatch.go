@@ -215,6 +215,9 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if displayFromAddress == "" {
 			displayFromAddress = strings.TrimSpace(evt.FromAddress)
 		}
+		if pendingChatSenderFromSelf(pending, selfAlias, selfIdentityDIDs(client)...) {
+			return runWakeResolution{Skip: true}, nil
+		}
 		return runWakeResolution{
 			CycleContext: formatIncomingChatContext(
 				preferredIdentityLabel(
@@ -244,23 +247,55 @@ func selfIdentityDIDs(client *aweb.Client) []string {
 }
 
 func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...string) bool {
-	hasMessageIdentity := strings.TrimSpace(msg.FromStableID) != "" || strings.TrimSpace(msg.FromDID) != ""
-	for _, did := range selfDIDs {
-		if did != "" && (strings.EqualFold(strings.TrimSpace(msg.FromStableID), did) || strings.EqualFold(strings.TrimSpace(msg.FromDID), did)) {
+	return identityMatchesSelf(
+		strings.TrimSpace(msg.FromAgent),
+		strings.TrimSpace(msg.FromAddress),
+		strings.TrimSpace(msg.FromStableID),
+		strings.TrimSpace(msg.FromDID),
+		selfAlias,
+		selfDIDs...,
+	)
+}
+
+func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, selfDIDs ...string) bool {
+	lastFromDID := strings.TrimSpace(pending.LastFromDID)
+	if lastFromDID != "" {
+		for _, selfDID := range selfDIDs {
+			if selfDID != "" && strings.EqualFold(lastFromDID, selfDID) {
+				return true
+			}
+		}
+		return false
+	}
+	lastFromAddress := strings.TrimSpace(pending.LastFromAddress)
+	if lastFromAddress != "" {
+		selfAlias = strings.TrimSpace(selfAlias)
+		return selfAlias != "" && strings.EqualFold(handleFromAddress(lastFromAddress), selfAlias)
+	}
+	if len(selfDIDs) > 0 {
+		return false
+	}
+	return strings.TrimSpace(selfAlias) != "" && strings.EqualFold(strings.TrimSpace(pending.LastFrom), strings.TrimSpace(selfAlias))
+}
+
+func identityMatchesSelf(alias, address, stableID, did, selfAlias string, selfDIDs ...string) bool {
+	hasIdentity := stableID != "" || did != ""
+	for _, selfDID := range selfDIDs {
+		if selfDID != "" && (strings.EqualFold(stableID, selfDID) || strings.EqualFold(did, selfDID)) {
 			return true
 		}
 	}
-	if len(selfDIDs) > 0 && hasMessageIdentity {
+	if len(selfDIDs) > 0 && hasIdentity {
 		return false
 	}
 	selfAlias = strings.TrimSpace(selfAlias)
 	if selfAlias == "" {
 		return false
 	}
-	if strings.EqualFold(handleFromAddress(strings.TrimSpace(msg.FromAddress)), selfAlias) {
+	if strings.EqualFold(handleFromAddress(address), selfAlias) {
 		return true
 	}
-	return strings.EqualFold(strings.TrimSpace(msg.FromAgent), selfAlias)
+	return strings.EqualFold(alias, selfAlias)
 }
 
 func latestIncomingChatMessage(messages []awid.ChatMessage, selfAlias string, selfDIDs ...string) *awid.ChatMessage {
