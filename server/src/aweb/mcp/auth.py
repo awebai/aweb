@@ -30,6 +30,21 @@ class AuthContext:
     address: str | None = None
 
 
+def auth_dids(auth: AuthContext) -> list[str]:
+    """Return the authenticated routing DIDs in preference order."""
+    dids: list[str] = []
+    for value in ((auth.did_aw or "").strip(), (auth.did_key or "").strip()):
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
+def primary_auth_did(auth: AuthContext) -> str:
+    """Return the preferred routing DID for the authenticated caller."""
+    dids = auth_dids(auth)
+    return dids[0] if dids else ""
+
+
 _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
     "aweb_mcp_auth", default=None
 )
@@ -121,6 +136,6 @@ class MCPAuthMiddleware:
             agent_id=str(row["agent_id"]),
             alias=row["alias"],
             did_key=cert_info["did_key"],
-            did_aw=row.get("did_aw"),
-            address=row.get("address"),
+            did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,
+            address=(cert_info.get("member_address") or row.get("address") or "").strip() or None,
         )

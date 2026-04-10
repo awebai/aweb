@@ -25,7 +25,7 @@ def _uuid_or_none(value: str | UUID | None) -> UUID | None:
 
 
 def _participant_did(row: dict[str, Any]) -> str:
-    return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
+    return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
 
 
 async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
@@ -98,19 +98,73 @@ async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
     return None if not row else dict(row)
 
 
-async def find_session_between(db, *, did_a: str, did_b: str) -> UUID | None:
+async def _equivalent_identity_refs(
+    db,
+    did: str,
+    *,
+    did_key: str | None = None,
+) -> tuple[list[str], list[UUID]]:
+    normalized = str(did or "").strip()
+    if not normalized:
+        return [], []
+    normalized_did_key = str(did_key or "").strip()
+    if not normalized_did_key:
+        return [normalized], []
     aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT agent_id, did_aw, did_key
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND did_key = $1
+        """,
+        normalized_did_key,
+    )
+    dids: list[str] = [normalized_did_key]
+    agent_ids: list[UUID] = []
+    for row in rows:
+        agent_id = _uuid_or_none(row.get("agent_id"))
+        if agent_id is not None and agent_id not in agent_ids:
+            agent_ids.append(agent_id)
+        value = (row.get("did_key") or "").strip()
+        if value and value not in dids:
+            dids.append(value)
+    return dids, agent_ids
+
+
+async def find_session_between(
+    db,
+    *,
+    did_a: str,
+    did_b: str,
+    did_key_a: str | None = None,
+    did_key_b: str | None = None,
+) -> UUID | None:
+    aweb_db = db.get_manager("aweb")
+    dids_a, agent_ids_a = await _equivalent_identity_refs(db, did_a, did_key=did_key_a)
+    dids_b, agent_ids_b = await _equivalent_identity_refs(db, did_b, did_key=did_key_b)
+    if not dids_a or not dids_b:
+        return None
     row = await aweb_db.fetch_one(
         """
         SELECT cp1.session_id
         FROM {{tables.chat_participants}} cp1
         JOIN {{tables.chat_participants}} cp2
           ON cp2.session_id = cp1.session_id
-        WHERE cp1.did = $1 AND cp2.did = $2
+        WHERE (
+                cp1.did = ANY($1::text[])
+                OR ($2::uuid[] <> '{}'::uuid[] AND cp1.agent_id = ANY($2::uuid[]))
+              )
+          AND (
+                cp2.did = ANY($3::text[])
+                OR ($4::uuid[] <> '{}'::uuid[] AND cp2.agent_id = ANY($4::uuid[]))
+              )
         LIMIT 1
         """,
-        did_a,
-        did_b,
+        dids_a,
+        agent_ids_a,
+        dids_b,
+        agent_ids_b,
     )
     return None if not row else row["session_id"]
 
@@ -133,6 +187,7 @@ async def ensure_session(
         normalized_participants.append(
             {
                 "did": did,
+                "did_key": (row.get("did_key") or "").strip() or None,
                 "agent_id": _uuid_or_none(row.get("agent_id")),
                 "alias": (row.get("alias") or row.get("address") or did).strip(),
             }
@@ -145,6 +200,8 @@ async def ensure_session(
             db,
             did_a=normalized_participants[0]["did"],
             did_b=normalized_participants[1]["did"],
+            did_key_a=normalized_participants[0].get("did_key"),
+            did_key_b=normalized_participants[1].get("did_key"),
         )
         if existing is not None:
             return existing

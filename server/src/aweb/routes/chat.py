@@ -102,6 +102,36 @@ def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str
     )
 
 
+async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+    for did in actor_dids:
+        if not did:
+            continue
+        actor_agent = await resolve_agent_by_did(db, did)
+        if actor_agent is not None:
+            return actor_agent
+    return None
+
+
+async def _resolve_session_actor_did(db, *, session_id: UUID, actor_dids: list[str]) -> str:
+    if not actor_dids:
+        return ""
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT did
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+          AND did = ANY($2::text[])
+        ORDER BY CASE WHEN did = $3 THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        session_id,
+        actor_dids,
+        actor_dids[0],
+    )
+    return (row.get("did") or "").strip() if row else ""
+
+
 def _chat_to_address(participant_rows: list[dict[str, Any]], *, from_did: str) -> str:
     refs = [row["alias"] for row in participant_rows if (row.get("did") or "").strip() != from_did]
     refs.sort()
@@ -181,7 +211,9 @@ async def _resolve_chat_targets(
     to_dids: list[str],
     to_addresses: list[str],
 ) -> list[dict[str, Any]]:
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
+    actor_did_set = set(actor_dids)
     sender_address = (auth.address or "").strip() or None
     resolved: dict[str, dict[str, Any]] = {}
 
@@ -221,7 +253,7 @@ async def _resolve_chat_targets(
     if not resolved:
         raise HTTPException(status_code=422, detail="Must provide to_aliases, to_dids, or to_addresses")
 
-    if actor_did in resolved:
+    if any(did in resolved for did in actor_did_set):
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
     for row in resolved.values():
@@ -302,10 +334,11 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await resolve_agent_by_did(db, actor_did)
+    actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
@@ -323,12 +356,14 @@ async def create_or_send(
     participant_rows = [
         {
             "did": actor_did,
+            "did_key": auth.did_key,
             "agent_id": actor_agent_id,
             "alias": actor_alias,
         }
     ] + [
         {
             "did": (row.get("did_aw") or row.get("did_key") or "").strip(),
+            "did_key": (row.get("did_key") or "").strip() or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
             "alias": (row.get("alias") or row.get("address") or "").strip()
             or (row.get("did_aw") or row.get("did_key") or "").strip(),
@@ -460,26 +495,32 @@ async def pending(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> PendingResponse:
     del request
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await resolve_agent_by_did(db, actor_did)
+    actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
-    conversations = await get_pending_conversations(
-        db,
-        participant_did=actor_did,
-        participant_agent_id=actor_agent_id,
-    )
+    conversations_by_session: dict[str, dict[str, Any]] = {}
+    for participant_did in actor_dids:
+        rows = await get_pending_conversations(
+            db,
+            participant_did=participant_did,
+            participant_agent_id=actor_agent_id,
+        )
+        for row in rows:
+            conversations_by_session.setdefault(row["session_id"], row)
+    conversations = list(conversations_by_session.values())
 
     aweb_db = db.get_manager("aweb")
     mail_unread = await aweb_db.fetch_value(
         """
         SELECT COUNT(*)::int
         FROM {{tables.messages}}
-        WHERE to_did = $1 AND read_at IS NULL
+        WHERE to_did = ANY($1::text[]) AND read_at IS NULL
         """,
-        actor_did,
+        actor_dids,
     )
 
     session_ids = [UUID(item["session_id"]) for item in conversations]
@@ -498,7 +539,7 @@ async def pending(
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            item["session_id"]: [did for did in item.get("participant_dids", []) if did != actor_did]
+            item["session_id"]: [did for did in item.get("participant_dids", []) if did not in set(actor_dids)]
             for item in conversations
         },
     )
@@ -510,7 +551,7 @@ async def pending(
         participants = [
             row["alias"]
             for row in session_participants
-            if (row.get("did") or "").strip() != actor_did
+            if (row.get("did") or "").strip() not in set(actor_dids)
         ]
         time_remaining_seconds = (
             max(
@@ -554,8 +595,9 @@ async def history(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
     del request
-    actor_did = _actor_did(auth)
-    if not actor_did:
+    actor_dids = _actor_dids(auth)
+    owner_dids = _actor_dids(auth)
+    if not owner_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     try:
@@ -568,6 +610,10 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    if not actor_did:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     participant_rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.alias
@@ -577,8 +623,6 @@ async def history(
         """,
         session_uuid,
     )
-    if actor_did not in {(row.get("did") or "").strip() for row in participant_rows}:
-        raise HTTPException(status_code=404, detail="Session not found")
 
     messages = await get_message_history(
         db,
@@ -587,7 +631,7 @@ async def history(
         unread_only=unread_only,
         limit=limit,
     )
-    contact_addrs = await get_contact_addresses(db, owner_did=actor_did)
+    contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
     address_map = await _lookup_addresses_by_did(
         db,
         [m["from_did"] for m in messages if m.get("from_did")],
@@ -637,16 +681,20 @@ async def mark_read(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict[str, Any]:
     del request
-    actor_did = _actor_did(auth)
-    if not actor_did:
+    actor_dids = _actor_dids(auth)
+    if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await resolve_agent_by_did(db, actor_did)
+    actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
 
     result = await mark_messages_read(
@@ -687,6 +735,7 @@ async def _sse_events(
     redis,
     session_id: UUID,
     viewer_did: str,
+    contact_owner_dids: list[str],
     deadline: datetime,
     after: datetime | None = None,
 ) -> AsyncIterator[str]:
@@ -722,7 +771,7 @@ async def _sse_events(
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
 
-        contact_addrs = await get_contact_addresses(db, owner_did=viewer_did)
+        contact_addrs = await get_contact_addresses(db, owner_dids=contact_owner_dids)
 
         async def _connect_pubsub() -> PubSub:
             ps: PubSub = redis.pubsub()
@@ -930,8 +979,9 @@ async def stream(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
     del request
-    actor_did = _actor_did(auth)
-    if not actor_did:
+    actor_dids = _actor_dids(auth)
+    owner_dids = _actor_dids(auth)
+    if not owner_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     try:
@@ -944,15 +994,8 @@ async def stream(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    is_participant = await aweb_db.fetch_one(
-        """
-        SELECT 1 FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = $2
-        """,
-        session_uuid,
-        actor_did,
-    )
-    if not is_participant:
+    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    if not actor_did:
         raise HTTPException(status_code=403, detail="Not a participant in this session")
 
     deadline_dt = _parse_deadline(deadline)
@@ -969,6 +1012,7 @@ async def stream(
             redis=redis,
             session_id=session_uuid,
             viewer_did=actor_did,
+            contact_owner_dids=owner_dids,
             deadline=deadline_dt,
             after=after_dt,
         ),
@@ -1011,10 +1055,11 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await resolve_agent_by_did(db, actor_did)
+    actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     try:
@@ -1027,15 +1072,8 @@ async def send_message(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    participant = await aweb_db.fetch_one(
-        """
-        SELECT alias FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = $2
-        """,
-        session_uuid,
-        actor_did,
-    )
-    if not participant:
+    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
 
     msg_created_at = datetime.now(timezone.utc)
@@ -1110,26 +1148,33 @@ async def list_sessions(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SessionListResponse:
     del request
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT s.session_id, s.created_at,
-               array_agg(p2.alias ORDER BY p2.alias) AS participants,
-               array_agg(p2.did ORDER BY p2.alias) AS participant_dids
-        FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_participants}} p
-          ON p.session_id = s.session_id AND p.did = $1
-        JOIN {{tables.chat_participants}} p2
-          ON p2.session_id = s.session_id
-        GROUP BY s.session_id, s.created_at
-        ORDER BY s.created_at DESC
-        """,
-        actor_did,
-    )
+    rows_by_session: dict[str, Any] = {}
+    for participant_did in actor_dids:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT s.session_id, s.created_at,
+                   array_agg(p2.alias ORDER BY p2.alias) AS participants,
+                   array_agg(p2.did ORDER BY p2.alias) AS participant_dids
+            FROM {{tables.chat_sessions}} s
+            JOIN {{tables.chat_participants}} p
+              ON p.session_id = s.session_id AND p.did = $1
+            JOIN {{tables.chat_participants}} p2
+              ON p2.session_id = s.session_id
+            GROUP BY s.session_id, s.created_at
+            ORDER BY s.created_at DESC
+            """,
+            participant_did,
+        )
+        for row in rows:
+            rows_by_session.setdefault(str(row["session_id"]), row)
+    rows = list(rows_by_session.values())
+    rows.sort(key=lambda row: row["created_at"], reverse=True)
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
@@ -1147,7 +1192,7 @@ async def list_sessions(
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            str(row["session_id"]): [did for did in (row["participant_dids"] or []) if did != actor_did]
+            str(row["session_id"]): [did for did in (row["participant_dids"] or []) if did not in set(actor_dids)]
             for row in rows
         },
     )
@@ -1162,7 +1207,7 @@ async def list_sessions(
                 participants=[
                     participant["alias"]
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() != actor_did
+                    if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
                 created_at=_utc_iso(row["created_at"]),
                 sender_waiting=len(waiting) > 0,

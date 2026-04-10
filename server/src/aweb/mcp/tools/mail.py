@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from aweb.mcp.auth import get_auth
+from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -71,7 +71,7 @@ async def send_mail(
         message_id, created_at = await deliver_message(
             db_infra,
             registry_client=registry_client,
-            from_did=(auth.did_aw or auth.did_key or "").strip(),
+            from_did=primary_auth_did(auth),
             to_did=recipient_did,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
@@ -107,7 +107,9 @@ async def check_inbox(
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
-    inbox_did = (auth.did_aw or auth.did_key or "").strip()
+    inbox_dids = auth_dids(auth)
+    if not inbox_dids:
+        return json.dumps({"error": "Authenticated identity is missing a routing DID"})
 
     try:
         limit_value = max(1, min(int(limit), 500))
@@ -120,12 +122,12 @@ async def check_inbox(
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload
         FROM {{tables.messages}}
-        WHERE to_did = $1
+        WHERE to_did = ANY($1::text[])
           AND ($2::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
         LIMIT $3
         """,
-        inbox_did,
+        inbox_dids,
         bool(unread_only),
         limit_value,
     )
@@ -137,10 +139,10 @@ async def check_inbox(
             """
             UPDATE {{tables.messages}}
             SET read_at = COALESCE(read_at, NOW())
-            WHERE to_did = $1
+            WHERE to_did = ANY($1::text[])
               AND message_id = ANY($2::uuid[])
             """,
-            inbox_did,
+            inbox_dids,
             unread_message_ids,
         )
 

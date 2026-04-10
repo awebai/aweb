@@ -8,6 +8,20 @@ from aweb.service_errors import ConflictError, ValidationError
 CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 
 
+def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
+    values: list[str] = []
+    if owner_did is not None:
+        values.append(owner_did)
+    if owner_dids:
+        values.extend(owner_dids)
+    normalized: list[str] = []
+    for value in values:
+        did = str(value or "").strip()
+        if did and did not in normalized:
+            normalized.append(did)
+    return normalized
+
+
 async def add_contact(
     db,
     *,
@@ -47,18 +61,21 @@ async def add_contact(
     }
 
 
-async def list_contacts(db, *, owner_did: str) -> list[dict]:
+async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[dict]:
     """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
+    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
+    if not owner_keys:
+        return []
 
     rows = await aweb_db.fetch_all(
         """
         SELECT contact_id, contact_address, label, created_at
         FROM {{tables.contacts}}
-        WHERE owner_did = $1
+        WHERE owner_did = ANY($1::text[])
         ORDER BY contact_address
         """,
-        owner_did,
+        owner_keys,
     )
 
     return [
@@ -72,12 +89,15 @@ async def list_contacts(db, *, owner_did: str) -> list[dict]:
     ]
 
 
-async def get_contact_addresses(db, *, owner_did: str) -> set[str]:
+async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> set[str]:
     """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
+    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
+    if not owner_keys:
+        return set()
     rows = await aweb_db.fetch_all(
-        "SELECT contact_address FROM {{tables.contacts}} WHERE owner_did = $1",
-        owner_did,
+        "SELECT contact_address FROM {{tables.contacts}} WHERE owner_did = ANY($1::text[])",
+        owner_keys,
     )
     return {r["contact_address"] for r in rows}
 
@@ -107,7 +127,7 @@ async def check_access(db, **kwargs) -> bool:
     return True
 
 
-async def remove_contact(db, *, owner_did: str, contact_id: str) -> None:
+async def remove_contact(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -118,8 +138,11 @@ async def remove_contact(db, *, owner_did: str, contact_id: str) -> None:
         raise ValidationError("Invalid contact_id format")
 
     aweb_db = db.get_manager("aweb")
+    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
+    if not owner_keys:
+        return
     await aweb_db.execute(
-        "DELETE FROM {{tables.contacts}} WHERE contact_id = $1 AND owner_did = $2",
+        "DELETE FROM {{tables.contacts}} WHERE contact_id = $1 AND owner_did = ANY($2::text[])",
         contact_uuid,
-        owner_did,
+        owner_keys,
     )

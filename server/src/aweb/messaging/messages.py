@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
+from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts, normalize_owner_dids
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
@@ -100,10 +100,15 @@ async def evaluate_messaging_policy(
     if policy == "nobody":
         raise ForbiddenError("Recipient does not accept messages")
     if policy == "contacts":
-        owner_did = (recipient_agent.get("did_aw") or recipient_agent.get("did_key") or "").strip()
-        if not owner_did:
+        owner_dids = normalize_owner_dids(
+            owner_dids=[
+                recipient_agent.get("did_aw"),
+                recipient_agent.get("did_key"),
+            ]
+        )
+        if not owner_dids:
             raise ForbiddenError("Recipient identity is incomplete")
-        contacts = await get_contact_addresses(db, owner_did=owner_did)
+        contacts = await get_contact_addresses(db, owner_dids=owner_dids)
         if sender_address and is_address_in_contacts(sender_address, contacts):
             return
         raise ForbiddenError("Recipient only accepts messages from contacts")

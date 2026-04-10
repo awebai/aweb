@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,6 +15,7 @@ from awid.did import did_from_public_key
 from awid.registry import Address, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
+from aweb.routes import chat as chat_routes
 from aweb.routes.chat import router as chat_router
 
 
@@ -285,3 +287,320 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aw
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["delivered"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(aweb_cloud_db):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, 'did:aw:bob', 'bob', 'ping', $2)
+        """,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at)
+        VALUES ($1, 'did:aw:bob', 'did:key:z6MkAliceCurrent', 'bob', 'alice', 'hi', 'mail body', 'normal', $2)
+        """,
+        uuid4(),
+        created_at + timedelta(minutes=2),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/chat/pending")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["messages_waiting"] == 1
+    assert len(body["pending"]) == 1
+    assert body["pending"][0]["session_id"] == str(session_id)
+    assert body["pending"][0]["last_message"] == "ping"
+
+
+@pytest.mark.asyncio
+async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, 'did:aw:bob', 'bob', 'ping', $2)
+        """,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    captured: dict[str, list[str]] = {}
+
+    async def _fake_waiting_by_session(_redis, wanted):
+        captured.update(wanted)
+        return {key: [] for key in wanted}
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+    monkeypatch.setattr(chat_routes, "get_waiting_agents_by_session", _fake_waiting_by_session)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/chat/pending")
+
+    assert resp.status_code == 200, resp.text
+    assert captured == {str(session_id): ["did:aw:bob"]}
+
+
+@pytest.mark.asyncio
+async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_cloud_db):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    payload = {"body": "follow-up"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["delivered"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_history_and_read_accept_alternate_session_participant_did(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    message_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'hello', $3)
+        """,
+        message_id,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    monkeypatch.setattr(chat_routes, "publish_chat_session_signal", AsyncMock(return_value=1))
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
+        read = await client.post(
+            f"/v1/chat/sessions/{session_id}/read",
+            json={"up_to_message_id": str(message_id)},
+        )
+
+    assert history.status_code == 200, history.text
+    assert [item["body"] for item in history.json()["messages"]] == ["hello"]
+    assert read.status_code == 200, read.text
+    assert read.json()["messages_marked"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    seen: dict[str, str] = {}
+
+    async def _fake_sse_events(*, viewer_did: str, contact_owner_dids: list[str], **kwargs):
+        seen["viewer_did"] = viewer_did
+        seen["contact_owner_dids"] = contact_owner_dids
+        yield ": keepalive\n\n"
+
+    monkeypatch.setattr(chat_routes, "_sse_events", _fake_sse_events)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=5.0) as client:
+        resp = await client.get(f"/v1/chat/sessions/{session_id}/stream", params={"deadline": deadline})
+
+    assert resp.status_code == 200, resp.text
+    assert "keepalive" in resp.text
+    assert seen == {
+        "viewer_did": "did:key:z6MkAliceCurrent",
+        "contact_owner_dids": ["did:aw:alice", "did:key:z6MkAliceCurrent"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_cloud_db):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/chat/sessions")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sessions"] == [
+        {
+            "session_id": str(session_id),
+            "participants": ["bob"],
+            "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "sender_waiting": False,
+        }
+    ]
