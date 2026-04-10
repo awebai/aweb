@@ -616,6 +616,39 @@ func TestShowPendingSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 	}
 }
 
+func TestShowPendingCarriesLastFromAddress(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"alice", "monitor"},
+						LastMessage:     "help!",
+						LastFrom:        "monitor",
+						LastFromAddress: "otherco/monitor",
+						SenderWaiting:   true,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d", len(result.Events))
+	}
+	if result.Events[0].FromAddress != "otherco/monitor" {
+		t.Fatalf("from_address=%q", result.Events[0].FromAddress)
+	}
+}
+
 func TestSendWithLeaving(t *testing.T) {
 	t.Parallel()
 
@@ -2349,6 +2382,53 @@ func TestSendAfterParameterUsesSecondPrecision(t *testing.T) {
 	// Must parse as valid RFC3339.
 	if _, err := time.Parse(time.RFC3339, afterParam); err != nil {
 		t.Errorf("after param %q is not valid RFC3339: %v", afterParam, err)
+	}
+}
+
+func TestSendAcceptsReplyFromAddressTarget(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply-1", "from_agent": "bob", "from_address": "otherco/bob", "body": "hi back!",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"otherco/bob"}, "hello", SendOptions{Wait: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s, want replied", result.Status)
+	}
+	if result.Reply != "hi back!" {
+		t.Fatalf("reply=%q, want %q", result.Reply, "hi back!")
 	}
 }
 

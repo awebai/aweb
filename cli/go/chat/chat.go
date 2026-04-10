@@ -755,7 +755,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 			return false, true
 		}
 		for _, target := range targets {
-			if ev.FromAgent == target {
+			if chatEventMatchesTarget(ev, target) {
 				return true, false
 			}
 		}
@@ -940,14 +940,33 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 			SenderWaiting: p.SenderWaiting,
 			Events: []Event{
 				{
-					Type:      "message",
-					FromAgent: p.LastFrom,
-					Body:      p.LastMessage,
-					Timestamp: p.LastActivity,
+					Type:        "message",
+					FromAgent:   p.LastFrom,
+					FromAddress: p.LastFromAddress,
+					Body:        p.LastMessage,
+					Timestamp:   p.LastActivity,
 				},
 			},
 		}, nil
 	}
 
 	return nil, fmt.Errorf("no pending conversation with %s", targetAlias)
+}
+
+func chatEventMatchesTarget(ev Event, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		strings.TrimSpace(ev.FromAgent),
+		strings.TrimSpace(ev.FromAddress),
+		strings.TrimSpace(ev.FromStableID),
+		strings.TrimSpace(ev.FromDID),
+	} {
+		if candidate != "" && candidate == target {
+			return true
+		}
+	}
+	return false
 }
