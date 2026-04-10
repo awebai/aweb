@@ -127,7 +127,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 					}(),
 					"",
 				)
-				if participant == "" || participant == selfAlias {
+				if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias) {
 					continue
 				}
 				from = participant
@@ -164,6 +164,18 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 	sb.WriteString("╚══════════════════════════════════════════════════════════════╝\n")
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+func notifyIdentityMatchesSelf(value string, selfAlias string) bool {
+	value = strings.TrimSpace(value)
+	selfAlias = strings.TrimSpace(selfAlias)
+	if value == "" || selfAlias == "" {
+		return false
+	}
+	if strings.EqualFold(value, selfAlias) {
+		return true
+	}
+	return strings.EqualFold(handleFromAddress(value), selfAlias)
 }
 
 func padNotifyLine(line string) string {
