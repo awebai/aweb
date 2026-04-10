@@ -271,6 +271,37 @@ func TestLogChatEventTreatsSelfStableIDAsSentWhenAddressMissing(t *testing.T) {
 	}
 }
 
+func TestLogChatEventPreservesStableIdentityLabelsWhenAddressesMissing(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	logDir := filepath.Join(tmp, "logs")
+
+	logChatEvent(logDir, "acct-test", "acme.com/wendy", chat.Event{
+		Type:         "message",
+		MessageID:    "msg-stable-only",
+		FromStableID: "did:aw:carol",
+		ToStableID:   "did:aw:wendy",
+		FromDID:      "did:key:z6MkCarol",
+		ToDID:        "did:key:z6MkWendy",
+		Body:         "hello",
+	})
+
+	entries, err := readCommLog(filepath.Join(logDir, "acct-test.jsonl"), 0)
+	if err != nil {
+		t.Fatalf("readCommLog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d, want 1", len(entries))
+	}
+	if entries[0].From != "did:aw:carol" {
+		t.Fatalf("from=%q, want stable id", entries[0].From)
+	}
+	if entries[0].To != "did:aw:wendy" {
+		t.Fatalf("to=%q, want stable id", entries[0].To)
+	}
+}
+
 func TestCommLogPathDeterministic(t *testing.T) {
 	t.Parallel()
 
