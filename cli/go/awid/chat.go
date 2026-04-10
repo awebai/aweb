@@ -98,7 +98,7 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		if s.SessionID != sessionID {
 			continue
 		}
-		if toAddr := c.toAddressForAliases(s.ParticipantAddresses); toAddr != "" {
+		if toAddr := c.toAddressForAliases(removeOneSelfIdentifier(s.ParticipantAddresses, c.address)); toAddr != "" {
 			return toAddr, nil
 		}
 		if toDIDs := deterministicTargetList(removeOneSelfIdentifier(s.ParticipantDIDs, c.stableID, c.did)); toDIDs != "" {
