@@ -216,6 +216,13 @@ func (c *Client) StableID() string { return c.stableID }
 // for to_did binding in signed envelopes.
 func (c *Client) SetResolver(r IdentityResolver) { c.resolver = r }
 
+func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if c == nil || c.resolver == nil {
+		return nil, errors.New("aweb: no identity resolver configured")
+	}
+	return c.resolver.Resolve(ctx, identifier)
+}
+
 // SetPinStore sets the TOFU pin store for sender identity verification.
 // If path is non-empty, the store is persisted to disk after updates.
 func (c *Client) SetPinStore(ps *PinStore, path string) {

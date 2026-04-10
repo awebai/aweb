@@ -235,7 +235,6 @@ func TestOpen(t *testing.T) {
 }
 
 func TestOpenSupportsAddressTargetViaUniqueHandleMatch(t *testing.T) {
-	t.Parallel()
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -294,6 +293,60 @@ func TestOpenAddressTargetFailsWhenHandleMatchesMultiplePendingConversations(t *
 	}
 	if !strings.Contains(err.Error(), "multiple conversations match otherco/monitor") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
+	deliveredIDsTestPath(t)
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "monitor"}, SenderWaiting: true},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "m1", FromAgent: "monitor", FromAddress: "otherco/monitor", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
+			var req awid.ChatMarkReadRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			jsonResponse(w, awid.ChatMarkReadResponse{
+				Success:        true,
+				MessagesMarked: 1,
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" && identifier != "otherco/monitor" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &awid.ResolvedIdentity{
+				DID:         "did:key:z6MkMonitor",
+				StableID:    "did:aw:monitor",
+				Address:     "otherco/monitor",
+				Handle:      "monitor",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
+
+	result, err := Open(context.Background(), client, "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%s", result.SessionID)
 	}
 }
 
