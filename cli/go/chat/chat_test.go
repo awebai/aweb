@@ -1092,6 +1092,84 @@ func TestSendWithExtendWaitUsesFromAddressInCallbacks(t *testing.T) {
 	}
 }
 
+func TestSendWithExtendWaitUsesParticipantAddressForStableIDCallbacks(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetDID := "did:aw:bob"
+	var callbackCalls []string
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:aw:alice", Address: "acme.com/alice"},
+					{Alias: "bob", DID: targetDID, Address: "otherco/bob"},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			hangOnData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-hangon", "from_stable_id": targetDID,
+				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 300,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", hangOnData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply", "from_stable_id": targetDID, "body": "here's my answer",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	callback := func(kind, msg string) {
+		callbackCalls = append(callbackCalls, kind+": "+msg)
+	}
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"otherco/bob"}, "hello", SendOptions{Wait: 5}, callback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+
+	foundExtendWait := false
+	foundExtended := false
+	for _, c := range callbackCalls {
+		if c == "extend_wait: otherco/bob: thinking..." {
+			foundExtendWait = true
+		}
+		if c == "wait_extended: wait extended by 5 min (otherco/bob requested more time)" {
+			foundExtended = true
+		}
+	}
+	if !foundExtendWait || !foundExtended {
+		t.Fatalf("callbackCalls=%v", callbackCalls)
+	}
+}
+
 func TestSendWithReadReceipt(t *testing.T) {
 	t.Parallel()
 
@@ -1730,6 +1808,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 			return nil, io.EOF
 		},
 		"s1",
+		nil,
 		1,
 		nil,
 		nil,
@@ -1760,6 +1839,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.EOF}
 		},
 		"s1",
+		nil,
 		1,
 		nil,
 		nil,
@@ -1789,6 +1869,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 			return nil, context.Canceled
 		},
 		"s1",
+		nil,
 		1,
 		nil,
 		nil,
@@ -1812,6 +1893,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.ErrUnexpectedEOF}
 		},
 		"s1",
+		nil,
 		1,
 		nil,
 		nil,
