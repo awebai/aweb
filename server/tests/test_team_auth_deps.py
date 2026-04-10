@@ -53,6 +53,8 @@ class TestTeamIdentity:
             team_id="backend:acme.com",
             alias="alice",
             did_key="did:key:z6Mktest",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
             agent_id="agent-uuid",
             lifetime="persistent",
             certificate_id="cert-001",
@@ -61,6 +63,8 @@ class TestTeamIdentity:
         assert identity.team_id == "backend:acme.com"
         assert identity.alias == "alice"
         assert identity.did_key == "did:key:z6Mktest"
+        assert identity.did_aw == "did:aw:alice"
+        assert identity.address == "acme.com/alice"
         assert identity.agent_id == "agent-uuid"
         assert identity.lifetime == "persistent"
         assert identity.certificate_id == "cert-001"
@@ -72,6 +76,8 @@ class TestTeamIdentity:
             team_id="backend:acme.com",
             alias="alice",
             did_key="did:key:z6Mktest",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
             agent_id="agent-uuid",
             lifetime="persistent",
             certificate_id="cert-001",
@@ -100,6 +106,8 @@ class TestResolveTeamIdentity:
                 "team_id": "backend:acme.com",
                 "alias": "alice",
                 "did_key": agent_did_key,
+                "member_did_aw": "did:aw:alice",
+                "member_address": "acme.com/alice",
                 "lifetime": "persistent",
                 "certificate_id": "cert-001",
             },
@@ -116,6 +124,8 @@ class TestResolveTeamIdentity:
             "team_id": "backend:acme.com",
             "alias": "alice",
             "did_key": agent_did_key,
+            "member_did_aw": "did:aw:alice",
+            "member_address": "acme.com/alice",
             "lifetime": "persistent",
             "certificate_id": "cert-001",
         }
@@ -125,6 +135,8 @@ class TestResolveTeamIdentity:
         assert identity.team_id == "backend:acme.com"
         assert identity.alias == "alice"
         assert identity.did_key == agent_did_key
+        assert identity.did_aw == "did:aw:alice"
+        assert identity.address == "acme.com/alice"
         assert identity.agent_id == result["agent_id"]
         assert identity.lifetime == "persistent"
         assert identity.certificate_id == "cert-001"

@@ -54,9 +54,10 @@ export class APIClient {
   }
 
   /** Open an SSE stream. Returns the raw Response for streaming. */
-  async openSSE(path: string): Promise<Response> {
+  async openSSE(path: string, signal?: AbortSignal): Promise<Response> {
     const url = this.baseURL + path;
     const resp = await fetch(url, {
+      signal,
       headers: {
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",

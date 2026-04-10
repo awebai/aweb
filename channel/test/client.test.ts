@@ -92,13 +92,15 @@ describe("APIClient URL construction", () => {
     ],
   ])("openSSE() preserves the base path for %s", async (baseURL, path, expectedURL) => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    const controller = new AbortController();
 
     const client = new APIClient(baseURL, auth);
-    await client.openSSE(path);
+    await client.openSSE(path, controller.signal);
 
     expect(fetchMock).toHaveBeenCalledWith(
       expectedURL,
       expect.objectContaining({
+        signal: controller.signal,
         headers: expect.objectContaining({
           Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
           Accept: "text/event-stream",

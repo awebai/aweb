@@ -40,7 +40,10 @@ export async function* streamAgentEvents(
     const deadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     let resp: Response;
     try {
-      resp = await client.openSSE(`/v1/events/stream?deadline=${encodeURIComponent(deadline)}`);
+      resp = await client.openSSE(
+        `/v1/events/stream?deadline=${encodeURIComponent(deadline)}`,
+        signal,
+      );
     } catch (err) {
       if (signal.aborted) return;
       console.error(`[aw-channel] events stream connect failed: ${err}`);
@@ -68,6 +71,10 @@ async function* parseSSEResponse(
 ): AsyncGenerator<AgentEvent> {
   const reader = resp.body?.getReader();
   if (!reader) return;
+  const onAbort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -107,6 +114,7 @@ async function* parseSSEResponse(
       }
     }
   } finally {
+    signal.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
 }

@@ -238,6 +238,26 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
+			if meta.FromDID != "" {
+				m.FromDID = meta.FromDID
+			}
+			if meta.ToDID != "" {
+				m.ToDID = meta.ToDID
+			}
+			if m.FromStableID == "" {
+				m.FromStableID = meta.FromStableID
+			}
+			if m.ToStableID == "" {
+				m.ToStableID = meta.ToStableID
+			}
+			if m.FromAddress == "" && meta.From != "" {
+				m.FromAddress = meta.From
+			}
+			if m.ToAddress == "" && meta.To != "" {
+				m.ToAddress = meta.To
+			}
+		}
 		from := m.FromAgent
 		if m.FromAddress != "" {
 			from = m.FromAddress

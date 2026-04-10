@@ -44,14 +44,14 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
-async def _current_actionable_mail(aweb_db, *, inbox_did: str) -> list[dict[str, Any]]:
+async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
     """Return the current actionable unread mail state for an identity."""
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
             SELECT message_id, from_alias, subject, priority, created_at
             FROM {{tables.messages}}
-            WHERE to_did = $1
+            WHERE to_did = ANY($1::text[])
               AND read_at IS NULL
         )
         SELECT
@@ -65,7 +65,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_did: str) -> list[dict[str,
         ORDER BY created_at ASC
         LIMIT 50
         """,
-        inbox_did,
+        inbox_dids,
     )
     return [
         {
@@ -82,22 +82,43 @@ async def _current_actionable_mail(aweb_db, *, inbox_did: str) -> list[dict[str,
     ]
 
 
+def _identity_dids(viewer: dict[str, Any] | None, identity: TeamIdentity | None = None) -> list[str]:
+    dids: list[str] = []
+    for value in (
+        (getattr(identity, "did_aw", None) or "").strip(),
+        (getattr(identity, "did_key", None) or "").strip(),
+        (viewer.get("did_aw") if viewer else "") or "",
+        (viewer.get("did_key") if viewer else "") or "",
+    ):
+        value = value.strip()
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
 async def _current_actionable_chat(
     db,
     redis,
     *,
-    participant_did: str,
+    participant_dids: list[str],
     participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the current actionable unread chat state for an identity."""
-    pending = await get_pending_conversations(
-        db,
-        participant_did=participant_did,
-        participant_agent_id=participant_agent_id,
-    )
+    pending_by_session: dict[str, dict[str, Any]] = {}
+    viewer_did_set = set(participant_dids)
+    for participant_did in participant_dids:
+        pending = await get_pending_conversations(
+            db,
+            participant_did=participant_did,
+            participant_agent_id=participant_agent_id,
+        )
+        for item in pending:
+            pending_by_session.setdefault(item["session_id"], item)
     actionable: list[dict[str, Any]] = []
-    for item in pending:
-        participant_dids = [did for did in item.get("participant_dids", []) if did != participant_did]
+    for item in pending_by_session.values():
+        participant_dids = [
+            did for did in item.get("participant_dids", []) if did not in viewer_did_set
+        ]
         waiting = await get_waiting_agents(redis, item["session_id"], participant_dids)
         sender_waiting = bool(waiting)
         last_activity = item.get("last_activity")
@@ -179,6 +200,7 @@ async def _sse_agent_events(
     redis,
     team_id: str,
     agent_id: str,
+    identity: TeamIdentity,
     deadline: datetime,
 ) -> AsyncIterator[str]:
     """Generate per-agent SSE actionable coordination events."""
@@ -192,12 +214,8 @@ async def _sse_agent_events(
         """,
         aid,
     )
-    viewer_did = (
-        (viewer.get("did_aw") if viewer else None)
-        or (viewer.get("did_key") if viewer else None)
-        or ""
-    ).strip()
-    if not viewer_did:
+    viewer_dids = _identity_dids(viewer, identity)
+    if not viewer_dids:
         yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'identity incomplete'})}\n\n"
         return
 
@@ -206,11 +224,11 @@ async def _sse_agent_events(
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
     # Initial snapshot
-    mail_events = await _current_actionable_mail(aweb_db, inbox_did=viewer_did)
+    mail_events = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
     chat_events = await _current_actionable_chat(
         db,
         redis,
-        participant_did=viewer_did,
+        participant_dids=viewer_dids,
         participant_agent_id=agent_id,
     )
     control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
@@ -235,11 +253,11 @@ async def _sse_agent_events(
             break
 
         try:
-            current_mail = await _current_actionable_mail(aweb_db, inbox_did=viewer_did)
+            current_mail = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
             current_chat = await _current_actionable_chat(
                 db,
                 redis,
-                participant_did=viewer_did,
+                participant_dids=viewer_dids,
                 participant_agent_id=agent_id,
             )
             control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
@@ -298,6 +316,7 @@ async def event_stream(
             redis=redis,
             team_id=identity.team_id,
             agent_id=identity.agent_id,
+            identity=identity,
             deadline=deadline_dt,
         ),
         media_type="text/event-stream",

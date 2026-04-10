@@ -35,6 +35,8 @@ class TeamIdentity:
     team_id: str
     alias: str
     did_key: str
+    did_aw: str
+    address: str
     agent_id: str
     lifetime: str
     certificate_id: str
@@ -81,6 +83,8 @@ async def resolve_team_identity(
         team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
+        did_aw=(cert_info.get("member_did_aw") or "").strip(),
+        address=(cert_info.get("member_address") or "").strip(),
         agent_id=str(row["agent_id"]),
         lifetime=cert_info.get("lifetime", "ephemeral"),
         certificate_id=cert_info.get("certificate_id", ""),

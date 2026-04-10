@@ -10,9 +10,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
-import { APIClient } from "../src/api/client.js";
-import { streamAgentEvents } from "../src/api/events.js";
-import { resolveConfig } from "../src/config.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -160,25 +157,9 @@ describe.sequential("channel integration", () => {
 
     const mailBody = `channel verified mail ${Date.now()}`;
     const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", mailBody);
-    let mailNotification;
-    try {
-      mailNotification = await notifications.waitFor(
-        (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
-      );
-    } catch (error) {
-      const inbox = await runAw(homeDir, bobDir, server.awidURL, [
-        "--json",
-        "mail",
-        "inbox",
-      ]).catch(() => ({ stdout: "", stderr: "" }));
-      const directEvents = await collectDirectEvents(bobDir).catch(() => []);
-      throw new Error(
-        `${String(error)}\nchannel stderr:\n${channelStderr || "(empty)"}\n` +
-        `bob inbox stdout:\n${inbox.stdout || "(empty)"}\n` +
-        `bob inbox stderr:\n${inbox.stderr || "(empty)"}\n` +
-        `direct events:\n${directEvents.length > 0 ? directEvents.join("\n") : "(none)"}`,
-      );
-    }
+    const mailNotification = await notifications.waitFor(
+      (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
+    );
     expect(mailNotification.content).toBe(mailBody);
     expect(mailNotification.meta.from).toBe("alice");
     expect(mailNotification.meta.verified).toBe("true");
@@ -188,7 +169,7 @@ describe.sequential("channel integration", () => {
     const chatNotification = await notifications.waitFor(
       (item) => item.meta.type === "chat" && item.content === chatBody,
     );
-    expect(chatNotification.meta.from).toBe("alice");
+    expect(chatNotification.meta.from).toBe(alice.address);
     expect(chatNotification.meta.verified).toBe("true");
 
     expect(channelStderr).not.toContain("fatal:");
@@ -503,31 +484,6 @@ function extractJSONObject(output: string): string {
     throw new Error(`expected JSON object in output:\n${output}`);
   }
   return output.slice(start, end + 1);
-}
-
-async function collectDirectEvents(workdir: string, timeoutMs: number = 5_000): Promise<string[]> {
-  const cfg = await resolveConfig(workdir);
-  const client = new APIClient(cfg.baseURL, {
-    did: cfg.did,
-    stableID: cfg.stableID,
-    signingKey: cfg.signingKey,
-    teamID: cfg.teamID,
-    teamCertificateHeader: cfg.teamCertificateHeader,
-  });
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), timeoutMs);
-  const events: string[] = [];
-  try {
-    for await (const event of streamAgentEvents(client, abort.signal)) {
-      events.push(JSON.stringify(event));
-      if (event.type !== "connected") {
-        break;
-      }
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-  return events;
 }
 
 async function waitForHealthyServer(baseURL: string): Promise<void> {

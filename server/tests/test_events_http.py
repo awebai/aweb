@@ -30,8 +30,8 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
         "team_id": kwargs.get("team_id", "backend:acme.com"),
         "team_did_key": team_did_key,
         "member_did_key": member_did_key,
-        "member_did_aw": "",
-        "member_address": "",
+        "member_did_aw": kwargs.get("member_did_aw", ""),
+        "member_address": kwargs.get("member_address", ""),
         "alias": kwargs.get("alias", "bob"),
         "lifetime": kwargs.get("lifetime", "persistent"),
         "issued_at": datetime.now(timezone.utc).isoformat(),
@@ -125,6 +125,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
         team_id="backend:acme.com",
         alias="bob",
         lifetime="persistent",
+        member_did_aw="did:aw:bob",
     )
     cert_header = _encode_certificate(cert)
 
@@ -187,4 +188,176 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     assert "event: connected" in resp.text
     assert '"team_id": "backend:acme.com"' in resp.text
     assert "event: actionable_mail" in resp.text
+    assert '"from_alias": "alice"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        bob_did_key,
+        team_id="backend:acme.com",
+        alias="bob",
+        lifetime="persistent",
+        member_did_aw="did:aw:bob",
+    )
+    cert_header = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "backend:acme.com",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+
+    alice = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime, role)
+        VALUES ($1, $2, $3, 'alice', 'persistent', 'developer')
+        RETURNING agent_id
+        """,
+        "backend:acme.com",
+        alice_did_key,
+        "did:aw:alice",
+    )
+    bob = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
+        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        RETURNING agent_id
+        """,
+        "backend:acme.com",
+        bob_did_key,
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """,
+        "did:aw:alice",
+        "did:aw:bob",
+        "alice",
+        "bob",
+        "",
+        "hello stable bob",
+        "backend:acme.com",
+        alice["agent_id"],
+        bob["agent_id"],
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
+    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+
+    assert resp.status_code == 200
+    assert "event: actionable_mail" in resp.text
+    assert '"from_alias": "alice"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        bob_did_key,
+        team_id="backend:acme.com",
+        alias="bob",
+        lifetime="persistent",
+        member_did_aw="did:aw:bob",
+    )
+    cert_header = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "backend:acme.com",
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+
+    alice = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime, role)
+        VALUES ($1, $2, $3, 'alice', 'persistent', 'developer')
+        RETURNING agent_id
+        """,
+        "backend:acme.com",
+        alice_did_key,
+        "did:aw:alice",
+    )
+    bob = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime, role)
+        VALUES ($1, $2, 'bob', 'persistent', 'developer')
+        RETURNING agent_id
+        """,
+        "backend:acme.com",
+        bob_did_key,
+    )
+    session = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ($1, $2)
+        RETURNING session_id
+        """,
+        "backend:acme.com",
+        "did:aw:alice",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES
+            ($1, $2, $3, 'alice'),
+            ($1, $4, $5, 'bob')
+        """,
+        session["session_id"],
+        "did:aw:alice",
+        alice["agent_id"],
+        "did:aw:bob",
+        bob["agent_id"],
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (session_id, from_agent_id, from_did, from_alias, body)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        session["session_id"],
+        alice["agent_id"],
+        "did:aw:alice",
+        "alice",
+        "hello stable bob",
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat()
+    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+
+    assert resp.status_code == 200
+    assert "event: actionable_chat" in resp.text
     assert '"from_alias": "alice"' in resp.text
