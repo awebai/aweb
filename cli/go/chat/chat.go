@@ -605,11 +605,12 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				}
 
 				if chatEvent.ExtendWait {
+					from := chatEventSenderLabel(chatEvent)
 					if callback != nil {
-						callback("extend_wait", fmt.Sprintf("%s: %s", chatEvent.FromAgent, chatEvent.Body))
+						callback("extend_wait", fmt.Sprintf("%s: %s", from, chatEvent.Body))
 					}
 					if chatEvent.ExtendsWaitSeconds > 0 {
-						extendWait(chatEvent.ExtendsWaitSeconds, fmt.Sprintf("%s requested more time", chatEvent.FromAgent))
+						extendWait(chatEvent.ExtendsWaitSeconds, fmt.Sprintf("%s requested more time", from))
 					}
 					continue
 				}
@@ -1009,4 +1010,11 @@ func chatTargetNameListContains(candidates []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func chatEventSenderLabel(ev Event) string {
+	if value := strings.TrimSpace(ev.FromAddress); value != "" {
+		return value
+	}
+	return strings.TrimSpace(ev.FromAgent)
 }
