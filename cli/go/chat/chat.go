@@ -290,23 +290,49 @@ func addressHandle(value string) string {
 	return strings.TrimSpace(parts[1])
 }
 
+func stableAlias(value string) string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "did:aw:") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(value, "did:aw:"))
+}
+
+func chatIdentityMatchesTarget(candidate string, target string) bool {
+	candidate = strings.TrimSpace(candidate)
+	target = strings.TrimSpace(target)
+	if candidate == "" || target == "" {
+		return false
+	}
+	if strings.EqualFold(candidate, target) {
+		return true
+	}
+	if alias := stableAlias(candidate); alias != "" && strings.EqualFold(alias, target) {
+		return true
+	}
+	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
+		return true
+	}
+	return false
+}
+
 func exactParticipantMatch(participants []string, participantDIDs []string, participantAddresses []string, target string) bool {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return false
 	}
 	for _, participant := range participants {
-		if strings.TrimSpace(participant) == target {
+		if chatIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
 	for _, participant := range participantAddresses {
-		if strings.TrimSpace(participant) == target {
+		if chatIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
 	for _, participant := range participantDIDs {
-		if strings.TrimSpace(participant) == target {
+		if chatIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
@@ -1212,7 +1238,7 @@ func chatParticipantMatchesTarget(participant awid.ChatParticipant, target strin
 		strings.TrimSpace(participant.Address),
 		strings.TrimSpace(participant.DID),
 	} {
-		if candidate != "" && candidate == target {
+		if chatIdentityMatchesTarget(candidate, target) {
 			return true
 		}
 	}
