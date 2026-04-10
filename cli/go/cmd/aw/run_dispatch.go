@@ -127,12 +127,15 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				if chatMessageFromSelf(msg, selfAlias, selfIdentityDIDs(client)...) {
 					return runWakeResolution{Skip: true}, nil
 				}
-				alias := strings.TrimSpace(evt.FromAlias)
-				if alias == "" {
-					alias = strings.TrimSpace(msg.FromAgent)
-				}
 				return runWakeResolution{
-					CycleContext: formatIncomingChatContext(alias, msg.Body),
+					CycleContext: formatIncomingChatContext(
+						preferredSenderLabel(
+							strings.TrimSpace(msg.FromAgent),
+							strings.TrimSpace(msg.FromAddress),
+							strings.TrimSpace(evt.FromAlias),
+						),
+						msg.Body,
+					),
 				}, nil
 			}
 			if len(history.Messages) > 0 && len(filtered) == 0 {
@@ -165,12 +168,15 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			}
 			markChatHistoryRead(ctx, client, sessionID, histResp.Messages)
 			if latest := latestIncomingChatMessage(filtered, selfAlias, selfIdentityDIDs(client)...); latest != nil {
-				alias := strings.TrimSpace(latest.FromAgent)
-				if alias == "" {
-					alias = strings.TrimSpace(evt.FromAlias)
-				}
 				return runWakeResolution{
-					CycleContext: formatIncomingChatContext(alias, latest.Body),
+					CycleContext: formatIncomingChatContext(
+						preferredSenderLabel(
+							strings.TrimSpace(latest.FromAgent),
+							strings.TrimSpace(latest.FromAddress),
+							strings.TrimSpace(evt.FromAlias),
+						),
+						latest.Body,
+					),
 				}, nil
 			}
 			if len(histResp.Messages) > 0 {
@@ -225,6 +231,18 @@ func latestIncomingChatMessage(messages []awid.ChatMessage, selfAlias string, se
 	return nil
 }
 
+func preferredSenderLabel(alias string, address string, fallback string) string {
+	alias = strings.TrimSpace(alias)
+	if alias != "" {
+		return alias
+	}
+	address = strings.TrimSpace(address)
+	if address != "" {
+		return address
+	}
+	return strings.TrimSpace(fallback)
+}
+
 func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
 	messageID := strings.TrimSpace(evt.MessageID)
 	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: true})
@@ -235,16 +253,20 @@ func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEve
 		if messageID != "" && strings.TrimSpace(msg.MessageID) != messageID {
 			continue
 		}
-		alias := strings.TrimSpace(msg.FromAlias)
-		if alias == "" {
-			alias = strings.TrimSpace(evt.FromAlias)
-		}
 		// Mark as read — seeing the full content means it's read.
 		if msg.MessageID != "" {
 			_, _ = client.AckMessage(ctx, msg.MessageID)
 		}
 		return runWakeResolution{
-			CycleContext: formatIncomingMailContext(alias, msg.Subject, msg.Body),
+			CycleContext: formatIncomingMailContext(
+				preferredSenderLabel(
+					strings.TrimSpace(msg.FromAlias),
+					strings.TrimSpace(msg.FromAddress),
+					strings.TrimSpace(evt.FromAlias),
+				),
+				msg.Subject,
+				msg.Body,
+			),
 		}, nil
 	}
 	if messageID == "" {

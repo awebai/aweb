@@ -102,6 +102,47 @@ func TestResolveMailWakeMarksRead(t *testing.T) {
 	}
 }
 
+func TestResolveMailWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/messages/inbox":
+			json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID:   "msg-1",
+						FromAlias:   "",
+						FromAddress: "otherco/alice",
+						Subject:     "hello",
+						Body:        "world",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveMailWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableMail,
+		MessageID: "msg-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from otherco/alice (mail)") {
+		t.Fatalf("expected wake context to use sender address, got %q", result.CycleContext)
+	}
+}
+
 // TestResolveChatWakeMarksRead verifies that resolveChatWake marks messages
 // as read after fetching the pending conversation.
 func TestResolveChatWakeMarksRead(t *testing.T) {
@@ -155,6 +196,47 @@ func TestResolveChatWakeMarksRead(t *testing.T) {
 	}
 	if markedReadUpTo != "markread-msg-1" {
 		t.Fatalf("expected mark-read up to markread-msg-1, got %q", markedReadUpTo)
+	}
+}
+
+func TestResolveChatWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{
+						MessageID:   "chat-msg-1",
+						FromAgent:   "",
+						FromAddress: "otherco/alice",
+						Body:        "hey",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		MessageID: "chat-msg-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from otherco/alice (chat)") {
+		t.Fatalf("expected wake context to use sender address, got %q", result.CycleContext)
 	}
 }
 
