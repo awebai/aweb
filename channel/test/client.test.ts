@@ -5,6 +5,7 @@ describe("APIClient URL construction", () => {
   const fetchMock = vi.fn<typeof fetch>();
   const auth = {
     did: "did:key:z6Mktest",
+    stableID: "did:aw:test",
     signingKey: new Uint8Array(32).fill(1),
     teamID: "backend:acme.com",
     teamCertificateHeader: "cert-header",
@@ -48,7 +49,31 @@ describe("APIClient URL construction", () => {
         headers: expect.objectContaining({
           Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
           "X-AWEB-Timestamp": expect.any(String),
-          "X-AWID-Team-Certificate": "cert-header",
+          "X-AWEB-DID-AW": "did:aw:test",
+        }),
+      }),
+    );
+  });
+
+  test("chat history uses identity-scoped auth", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const client = new APIClient("http://localhost:8000", auth);
+    await client.get("/v1/chat/sessions/sess-1/messages?limit=10");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/v1/chat/sessions/sess-1/messages?limit=10",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
+          "X-AWEB-Timestamp": expect.any(String),
+          "X-AWEB-DID-AW": "did:aw:test",
         }),
       }),
     );

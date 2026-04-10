@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -17,39 +20,67 @@ var mailCmd = &cobra.Command{
 // mail send
 
 var (
-	mailSendTo       string
-	mailSendSubject  string
-	mailSendBody     string
-	mailSendPriority string
+	mailSendTo        string
+	mailSendToDID    string
+	mailSendToAddress string
+	mailSendSubject   string
+	mailSendBody      string
+	mailSendPriority  string
 )
 
 var mailSendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Send a message to another agent",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if mailSendTo == "" {
-			return usageError("missing required flag: --to")
-		}
 		if mailSendBody == "" {
 			return usageError("missing required flag: --body")
+		}
+		targetKind, targetValue, err := resolveMailTarget()
+		if err != nil {
+			return err
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		c, sel, err := resolveClientSelection()
-		if err != nil {
-			return err
-		}
-
-		resp, err := c.SendMessage(ctx, &awid.SendMessageRequest{
-			ToAlias:  mailSendTo,
+		var c *aweb.Client
+		var sel *awconfig.Selection
+		req := &awid.SendMessageRequest{
 			Subject:  mailSendSubject,
 			Body:     mailSendBody,
 			Priority: awid.MessagePriority(mailSendPriority),
-		})
+		}
+		switch targetKind {
+		case "alias":
+			c, sel, err = resolveClientSelection()
+			if err != nil {
+				return err
+			}
+			req.ToAlias = targetValue
+		case "did":
+			c, sel, err = resolveIdentityMessagingClientSelection()
+			if err != nil {
+				return err
+			}
+			req.ToDID = targetValue
+		case "address":
+			c, sel, err = resolveIdentityMessagingClientSelection()
+			if err != nil {
+				return err
+			}
+			req.ToAddress = targetValue
+		default:
+			return usageError("missing required recipient flag")
+		}
+
+		var resp *awid.SendMessageResponse
+		if targetKind == "alias" {
+			resp, err = c.SendMessage(ctx, req)
+		} else {
+			resp, err = c.SendMessageByIdentity(ctx, req)
+		}
 		if err != nil {
-			return networkError(err, mailSendTo)
+			return networkError(err, targetValue)
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
@@ -58,7 +89,7 @@ var mailSendCmd = &cobra.Command{
 			Channel:   "mail",
 			MessageID: resp.MessageID,
 			From:      selectionAddress(sel),
-			To:        mailSendTo,
+			To:        targetValue,
 			Subject:   mailSendSubject,
 			Body:      mailSendBody,
 		})
@@ -66,17 +97,43 @@ var mailSendCmd = &cobra.Command{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindMailOut,
 			MessageID: resp.MessageID,
-			To:        mailSendTo,
+			To:        targetValue,
 			Subject:   mailSendSubject,
 			Text:      mailSendBody,
 		})
 		if jsonFlag {
 			printJSON(resp)
 		} else {
-			fmt.Printf("Sent mail to %s (message_id=%s)\n", mailSendTo, resp.MessageID)
+			fmt.Printf("Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
 		}
 		return nil
 	},
+}
+
+func resolveMailTarget() (string, string, error) {
+	count := 0
+	if strings.TrimSpace(mailSendTo) != "" {
+		count++
+	}
+	if strings.TrimSpace(mailSendToDID) != "" {
+		count++
+	}
+	if strings.TrimSpace(mailSendToAddress) != "" {
+		count++
+	}
+	if count == 0 {
+		return "", "", usageError("missing required recipient flag: one of --to, --to-did, or --to-address")
+	}
+	if count > 1 {
+		return "", "", usageError("recipient flags are mutually exclusive: use only one of --to, --to-did, or --to-address")
+	}
+	if value := strings.TrimSpace(mailSendTo); value != "" {
+		return "alias", value, nil
+	}
+	if value := strings.TrimSpace(mailSendToDID); value != "" {
+		return "did", value, nil
+	}
+	return "address", strings.TrimSpace(mailSendToAddress), nil
 }
 
 // mail inbox
@@ -93,7 +150,7 @@ var mailInboxCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		c, sel, err := resolveClientSelection()
+		c, sel, err := resolveIdentityMessagingClientSelection()
 		if err != nil {
 			return err
 		}
@@ -149,7 +206,9 @@ var mailInboxCmd = &cobra.Command{
 }
 
 func init() {
-	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient address")
+	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient alias within the active team")
+	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
+	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
 	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")
 	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", "Body")
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")

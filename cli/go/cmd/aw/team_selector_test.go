@@ -17,16 +17,13 @@ import (
 func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	t.Parallel()
 
-	var sawTeamID string
+	var sawStableID string
+	var sawCertHeader string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
-			certHeader := r.Header.Get("X-AWID-Team-Certificate")
-			cert, err := awid.DecodeTeamCertificateHeader(certHeader)
-			if err != nil {
-				t.Fatalf("decode team cert header: %v", err)
-			}
-			sawTeamID = cert.Team
+			sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+			sawCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -129,8 +126,11 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
 	}
-	if sawTeamID != "ops:acme.com" {
-		t.Fatalf("team cert used %q", sawTeamID)
+	if sawStableID != stableID {
+		t.Fatalf("stable id header = %q want %q", sawStableID, stableID)
+	}
+	if sawCertHeader != "" {
+		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
 	}
 }
 
@@ -160,15 +160,13 @@ func TestMailInboxTeamFlagRejectsUnknownMembership(t *testing.T) {
 func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	t.Parallel()
 
-	var sawTeamID string
+	var sawStableID string
+	var sawCertHeader string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
-			cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-			if err != nil {
-				t.Fatalf("decode team cert header: %v", err)
-			}
-			sawTeamID = cert.Team
+			sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+			sawCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -183,7 +181,24 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stableID := awid.ComputeStableID(memberPub)
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "backend:demo",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		DID:         awid.ComputeDIDKey(memberPub),
+		StableID:    stableID,
+		Address:     "demo/alice",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  memberKey,
+		CreatedAt:   "2026-04-09T00:00:00Z",
+	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "inbox", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -192,8 +207,11 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
 	}
-	if sawTeamID != "backend:demo" {
-		t.Fatalf("team cert used %q", sawTeamID)
+	if sawStableID != stableID {
+		t.Fatalf("stable id header = %q want %q", sawStableID, stableID)
+	}
+	if sawCertHeader != "" {
+		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
 	}
 }
 

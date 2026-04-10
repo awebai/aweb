@@ -152,7 +152,7 @@ describe.sequential("channel integration", () => {
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }
-  }, 120_000);
+  }, 45_000);
 
   test("bridges live aw mail and chat from certificate workspaces into Claude channel notifications", async () => {
     await startChannelIfNeeded();
@@ -192,7 +192,7 @@ describe.sequential("channel integration", () => {
     expect(chatNotification.meta.verified).toBe("true");
 
     expect(channelStderr).not.toContain("fatal:");
-  }, 45_000);
+  }, 120_000);
 
   async function startChannelIfNeeded(): Promise<void> {
     if (mcpClient) return;
@@ -509,6 +509,7 @@ async function collectDirectEvents(workdir: string, timeoutMs: number = 5_000): 
   const cfg = await resolveConfig(workdir);
   const client = new APIClient(cfg.baseURL, {
     did: cfg.did,
+    stableID: cfg.stableID,
     signingKey: cfg.signingKey,
     teamID: cfg.teamID,
     teamCertificateHeader: cfg.teamCertificateHeader,

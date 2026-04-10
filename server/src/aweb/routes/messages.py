@@ -90,6 +90,14 @@ class AckResponse(BaseModel):
     acknowledged_at: str
 
 
+def _identity_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
+    dids: list[str] = []
+    for value in ((getattr(identity, "did_aw", None) or "").strip(), (getattr(identity, "did_key", None) or "").strip()):
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -203,10 +211,12 @@ async def get_inbox(
     identity: IdentityAuth = Depends(get_identity_auth),
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
-    inbox_did = (identity.did_aw or identity.did_key or "").strip()
+    inbox_dids = _identity_dids(identity)
+    if not inbox_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    where_clause = "WHERE m.to_did = $1"
-    params: list = [inbox_did]
+    where_clause = "WHERE m.to_did = ANY($1::text[])"
+    params: list = [inbox_dids]
 
     if unread_only:
         where_clause += " AND m.read_at IS NULL"
@@ -259,19 +269,21 @@ async def ack_message(
 
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-    inbox_did = (identity.did_aw or identity.did_key or "").strip()
+    inbox_dids = _identity_dids(identity)
+    if not inbox_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     result = await aweb_db.fetch_one(
         """
         UPDATE {{tables.messages}}
         SET read_at = $1
-        WHERE message_id = $2 AND to_did = $3
+        WHERE message_id = $2 AND to_did = ANY($3::text[])
           AND read_at IS NULL
         RETURNING message_id
         """,
         now,
         msg_uuid,
-        inbox_did,
+        inbox_dids,
     )
 
     if not result:
@@ -279,10 +291,10 @@ async def ack_message(
         existing = await aweb_db.fetch_one(
             """
             SELECT message_id, read_at FROM {{tables.messages}}
-            WHERE message_id = $1 AND to_did = $2
+            WHERE message_id = $1 AND to_did = ANY($2::text[])
             """,
             msg_uuid,
-            inbox_did,
+            inbox_dids,
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Message not found")

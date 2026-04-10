@@ -117,6 +117,54 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	return c, sel, nil
 }
 
+func resolveIdentityMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
+	wd, _ := os.Getwd()
+	return resolveIdentityMessagingClientSelectionForDir(wd)
+}
+
+func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
+	sel, err := resolveSelectionForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := checkIdentityMismatch(workingDir, sel); err != nil {
+		return nil, nil, err
+	}
+
+	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	sel.BaseURL = baseURL
+
+	identity, err := awconfig.ResolveIdentity(workingDir)
+	if err != nil {
+		return nil, nil, errors.New("current workspace has no local identity; run `aw init` here first")
+	}
+	signingKey, err := awid.LoadSigningKey(identity.SigningKeyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load signing key: %w", err)
+	}
+	rawClient, err := awid.NewWithIdentity(baseURL, signingKey, identity.DID)
+	if err != nil {
+		return nil, nil, err
+	}
+	c := &aweb.Client{Client: rawClient}
+	if strings.TrimSpace(sel.StableID) == "" {
+		sel.StableID = strings.TrimSpace(identity.StableID)
+	}
+	if strings.TrimSpace(sel.Address) == "" {
+		sel.Address = strings.TrimSpace(identity.Address)
+	}
+	if err := configureResolvedClient(c, sel, baseURL); err != nil {
+		return nil, nil, err
+	}
+
+	lastClient = c
+	return c, sel, nil
+}
+
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.

@@ -18,6 +18,8 @@ const (
 type SendMessageRequest struct {
 	ToAgentID     string          `json:"to_agent_id,omitempty"`
 	ToAlias       string          `json:"to_alias,omitempty"`
+	ToDID         string          `json:"to_did,omitempty"`
+	ToAddress     string          `json:"to_address,omitempty"`
 	Subject       string          `json:"subject,omitempty"`
 	Body          string          `json:"body"`
 	Priority      MessagePriority `json:"priority,omitempty"`
@@ -34,6 +36,14 @@ type SendMessageResponse struct {
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
+	return c.sendMessage(ctx, req, false)
+}
+
+func (c *Client) SendMessageByIdentity(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
+	return c.sendMessage(ctx, req, true)
+}
+
+func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, identityTarget bool) (*SendMessageResponse, error) {
 	if req == nil {
 		return nil, errors.New("aweb: request is required")
 	}
@@ -43,13 +53,26 @@ func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*Sen
 	if to == "" {
 		to = payload.ToAgentID
 	}
+	if strings.TrimSpace(payload.ToDID) != "" {
+		to = strings.TrimSpace(payload.ToDID)
+	}
+	if strings.TrimSpace(payload.ToAddress) != "" {
+		to = strings.TrimSpace(payload.ToAddress)
+	}
 	from := c.address
-	if c.signingKey != nil && payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/") {
-		from = c.alias()
+	if c.signingKey != nil {
+		if identityTarget {
+			if strings.TrimSpace(from) == "" {
+				from = c.did
+			}
+		} else if payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/") {
+			from = c.alias()
+		}
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:    from,
 		To:      to,
+		ToDID:   strings.TrimSpace(payload.ToDID),
 		Type:    "mail",
 		Subject: payload.Subject,
 		Body:    payload.Body,
@@ -58,6 +81,9 @@ func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*Sen
 		return nil, err
 	}
 	payload.FromDID = sf.FromDID
+	if strings.TrimSpace(payload.ToDID) == "" {
+		payload.ToDID = sf.ToDID
+	}
 	payload.Signature = sf.Signature
 	payload.MessageID = sf.MessageID
 	payload.SignedPayload = sf.SignedPayload
