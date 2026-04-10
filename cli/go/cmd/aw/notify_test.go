@@ -94,6 +94,31 @@ func TestFormatNotifyOutputUrgentAndFallback(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputFallbackSkipsSelfAddress(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"wendy", "rose"},
+				ParticipantAddresses: []string{"acme.com/wendy", "otherco/rose"},
+				LastFrom:             "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if !strings.Contains(out, "Unread message from otherco/rose") {
+		t.Fatalf("notify output should fall back to the non-self participant address:\n%s", out)
+	}
+	if strings.Contains(out, "Unread message from acme.com/wendy") {
+		t.Fatalf("notify output should not surface self address as sender:\n%s", out)
+	}
+}
+
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 
