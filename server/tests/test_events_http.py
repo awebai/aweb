@@ -191,6 +191,7 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     assert '"team_id": "backend:acme.com"' in resp.text
     assert "event: actionable_mail" in resp.text
     assert '"from_alias": "alice"' in resp.text
+    assert f'"from_did": "{alice_did_key}"' in resp.text
     assert '"from_address": "acme.com/alice"' in resp.text
 
 
@@ -365,6 +366,7 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     assert resp.status_code == 200
     assert "event: actionable_chat" in resp.text
     assert '"from_alias": "alice"' in resp.text
+    assert '"from_did": "did:aw:alice"' in resp.text
     assert '"from_address": "acme.com/alice"' in resp.text
 
 

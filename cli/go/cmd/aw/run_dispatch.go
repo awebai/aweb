@@ -389,9 +389,9 @@ func joinPromptSections(parts ...string) string {
 func formatFallbackCommsContext(evt awid.AgentEvent) string {
 	switch evt.Type {
 	case awid.AgentEventActionableChat:
-		return formatIncomingChatContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, ""), "")
+		return formatIncomingChatContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, evt.FromDID), "")
 	case awid.AgentEventActionableMail:
-		return formatIncomingMailContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, ""), evt.Subject, "")
+		return formatIncomingMailContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, evt.FromDID), evt.Subject, "")
 	default:
 		return ""
 	}

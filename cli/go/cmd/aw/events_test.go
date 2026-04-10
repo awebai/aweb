@@ -34,7 +34,7 @@ func TestAwEventsStream(t *testing.T) {
 			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
-			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
+			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_did\":\"did:aw:alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
 			flusher.Flush()
 
 			// Close to terminate the stream.
@@ -104,6 +104,9 @@ func TestAwEventsStream(t *testing.T) {
 	if events[1]["from_alias"] != "alice" {
 		t.Fatalf("mail from_alias=%v", events[1]["from_alias"])
 	}
+	if events[1]["from_did"] != "did:aw:alice" {
+		t.Fatalf("mail from_did=%v", events[1]["from_did"])
+	}
 	if events[1]["from_address"] != "acme.com/alice" {
 		t.Fatalf("mail from_address=%v", events[1]["from_address"])
 	}
@@ -128,7 +131,7 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
-			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
+			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_did\":\"did:aw:alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
 			flusher.Flush()
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -176,6 +179,65 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 	wantMail := `[actionable_mail] from=acme.com/alice wake_mode=prompt unread=2 message_id=m-1 subject="hello"`
 	if strings.TrimSpace(lines[1]) != wantMail {
 		t.Fatalf("line[1]=%q, want %q", lines[1], wantMail)
+	}
+}
+
+func TestAwEventsStreamTextOutputFallsBackToFromDID(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("response writer does not support flushing")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+
+			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"\",\"from_did\":\"did:aw:alice\",\"from_address\":\"\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
+			flusher.Flush()
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "events", "stream", "--timeout", "5")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, runErr := run.CombinedOutput()
+
+	output := string(out)
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	if len(lines) < 1 {
+		t.Fatalf("expected at least 1 line, got %d (err=%v)\noutput:\n%s", len(lines), runErr, output)
+	}
+
+	wantMail := `[actionable_mail] from=did:aw:alice wake_mode=prompt unread=2 message_id=m-1 subject="hello"`
+	if strings.TrimSpace(lines[0]) != wantMail {
+		t.Fatalf("line[0]=%q, want %q", lines[0], wantMail)
 	}
 }
 
