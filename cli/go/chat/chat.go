@@ -267,6 +267,24 @@ func uniqueHandleParticipantMatch(participants []string, target string) bool {
 	return false
 }
 
+func normalizeSessionTarget(ctx context.Context, client *awid.Client, target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" || !strings.HasPrefix(target, "did:") || client == nil {
+		return target
+	}
+	identity, err := client.ResolveIdentity(ctx, target)
+	if err != nil || identity == nil {
+		return target
+	}
+	if address := strings.TrimSpace(identity.Address); address != "" {
+		return address
+	}
+	if handle := strings.TrimSpace(identity.Handle); handle != "" {
+		return handle
+	}
+	return target
+}
+
 // findSession finds the session ID for a conversation with targetAlias.
 // Checks pending first (captures sender_waiting), falls back to listing sessions.
 //
@@ -279,6 +297,7 @@ func uniqueHandleParticipantMatch(participants []string, target string) bool {
 //  1. smallest participant count
 //  2. most recent CreatedAt (tiebreaker)
 func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
+	targetAlias = normalizeSessionTarget(ctx, client, targetAlias)
 	pendingResp, err := client.ChatPending(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
