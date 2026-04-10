@@ -788,7 +788,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		ToDIDs:      dids,
 		ToAddresses: addresses,
 		Message:     message,
-		Leaving:   opts.Leaving,
+		Leaving:     opts.Leaving,
 	}
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
@@ -1063,6 +1063,24 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		if p.SessionID != sessionID {
 			continue
 		}
+		fromStableID := ""
+		fromDID := ""
+		if value := strings.TrimSpace(p.LastFromDID); value != "" {
+			if strings.HasPrefix(value, "did:aw:") {
+				fromStableID = value
+			} else {
+				fromDID = value
+			}
+		}
+		if fromStableID == "" {
+			for _, participantDID := range p.ParticipantDIDs {
+				participantDID = strings.TrimSpace(participantDID)
+				if strings.HasPrefix(participantDID, "did:aw:") {
+					fromStableID = participantDID
+					break
+				}
+			}
+		}
 		return &SendResult{
 			SessionID:     p.SessionID,
 			Status:        "pending",
@@ -1074,7 +1092,8 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 					Type:         "message",
 					FromAgent:    p.LastFrom,
 					FromAddress:  p.LastFromAddress,
-					FromStableID: p.LastFromDID,
+					FromStableID: fromStableID,
+					FromDID:      fromDID,
 					Body:         p.LastMessage,
 					Timestamp:    p.LastActivity,
 				},

@@ -704,6 +704,43 @@ func TestShowPendingCarriesLastFromStableID(t *testing.T) {
 	}
 }
 
+func TestShowPendingSeparatesLastFromCurrentDIDFromParticipantStableID(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{""},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						LastMessage:     "help!",
+						LastFrom:        "",
+						LastFromDID:     "did:key:z6MkMonitorCurrent",
+						SenderWaiting:   true,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d", len(result.Events))
+	}
+	if result.Events[0].FromStableID != "did:aw:monitor" {
+		t.Fatalf("from_stable_id=%q", result.Events[0].FromStableID)
+	}
+	if result.Events[0].FromDID != "did:key:z6MkMonitorCurrent" {
+		t.Fatalf("from_did=%q", result.Events[0].FromDID)
+	}
+}
+
 func TestShowPendingSupportsAliasTargetViaParticipantStableDID(t *testing.T) {
 	t.Parallel()
 
