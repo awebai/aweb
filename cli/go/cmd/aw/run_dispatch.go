@@ -149,8 +149,8 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 							preferredWakeIdentityLabel(
 								strings.TrimSpace(evt.FromAlias),
 								strings.TrimSpace(evt.FromAddress),
-								"",
-								"",
+								strings.TrimSpace(evt.FromStableID),
+								strings.TrimSpace(evt.FromDID),
 								"",
 							),
 						),
@@ -198,8 +198,8 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 							preferredWakeIdentityLabel(
 								strings.TrimSpace(evt.FromAlias),
 								strings.TrimSpace(evt.FromAddress),
-								"",
-								"",
+								strings.TrimSpace(evt.FromStableID),
+								strings.TrimSpace(evt.FromDID),
 								"",
 							),
 						),
@@ -367,7 +367,7 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			identityMatchesSelf(
 				strings.TrimSpace(evt.FromAlias),
 				strings.TrimSpace(evt.FromAddress),
-				"",
+				strings.TrimSpace(evt.FromStableID),
 				strings.TrimSpace(evt.FromDID),
 				selfAlias,
 				selfIdentityDIDs(client)...,
@@ -391,8 +391,8 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 					preferredWakeIdentityLabel(
 						strings.TrimSpace(evt.FromAlias),
 						strings.TrimSpace(evt.FromAddress),
+						strings.TrimSpace(evt.FromStableID),
 						strings.TrimSpace(evt.FromDID),
-						"",
 						"",
 					),
 				),
@@ -441,9 +441,9 @@ func joinPromptSections(parts ...string) string {
 func formatFallbackCommsContext(evt awid.AgentEvent) string {
 	switch evt.Type {
 	case awid.AgentEventActionableChat:
-		return formatIncomingChatContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, evt.FromDID), "")
+		return formatIncomingChatContext(preferredIdentityDisplayLabel(evt.FromAlias, evt.FromAddress, evt.FromStableID, evt.FromDID, ""), "")
 	case awid.AgentEventActionableMail:
-		return formatIncomingMailContext(preferredIdentityLabel(evt.FromAlias, evt.FromAddress, evt.FromDID), evt.Subject, "")
+		return formatIncomingMailContext(preferredIdentityDisplayLabel(evt.FromAlias, evt.FromAddress, evt.FromStableID, evt.FromDID, ""), evt.Subject, "")
 	default:
 		return ""
 	}

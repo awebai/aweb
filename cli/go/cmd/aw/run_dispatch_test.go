@@ -227,6 +227,49 @@ func TestResolveMailWakeFallsBackToEventStableIDWhenInboxIdentityMissing(t *test
 	}
 }
 
+func TestResolveMailWakeFallsBackToEventFromStableIDWhenCurrentDIDAlsoPresent(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/messages/inbox":
+			json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID:   "msg-1",
+						FromAlias:   "",
+						FromAddress: "",
+						Subject:     "hello",
+						Body:        "world",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveMailWake(context.Background(), client, awid.AgentEvent{
+		Type:         awid.AgentEventActionableMail,
+		MessageID:    "msg-1",
+		FromStableID: "did:aw:alice",
+		FromDID:      "did:key:z6MkAliceCurrent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from did:aw:alice (mail)") {
+		t.Fatalf("expected wake context to prefer event stable id, got %q", result.CycleContext)
+	}
+}
+
 func TestResolveMailWakeSkipsSelfWhenOnlyEventCarriesStableID(t *testing.T) {
 	t.Parallel()
 
@@ -463,6 +506,47 @@ func TestResolveChatWakeUsesStableIDWhenAliasAndAddressMissing(t *testing.T) {
 	}
 	if !strings.Contains(result.CycleContext, "from did:aw:alice (chat)") {
 		t.Fatalf("expected wake context to use sender stable id, got %q", result.CycleContext)
+	}
+}
+
+func TestResolveChatWakeFallsBackToEventFromStableIDWhenCurrentDIDAlsoPresent(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{
+						MessageID: "chat-msg-1",
+						Body:      "hey",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:         awid.AgentEventActionableChat,
+		SessionID:    "s1",
+		MessageID:    "chat-msg-1",
+		FromStableID: "did:aw:alice",
+		FromDID:      "did:key:z6MkAliceCurrent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from did:aw:alice (chat)") {
+		t.Fatalf("expected wake context to prefer event stable id, got %q", result.CycleContext)
 	}
 }
 
