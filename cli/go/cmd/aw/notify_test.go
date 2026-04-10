@@ -143,6 +143,31 @@ func TestFormatNotifyOutputSkipsDirectSelfAddressSender(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"", ""},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "",
+				LastFromDID:          "did:aw:rose",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if !strings.Contains(out, "Unread message from did:aw:rose") {
+		t.Fatalf("notify output should preserve stable identity fallback:\n%s", out)
+	}
+}
+
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 

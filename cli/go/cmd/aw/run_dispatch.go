@@ -220,7 +220,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				preferredIdentityLabel(
 					alias,
 					displayFromAddress,
-					strings.TrimSpace(evt.FromAlias),
+					strings.TrimSpace(pending.LastFromDID),
 				),
 				pending.LastMessage,
 			),

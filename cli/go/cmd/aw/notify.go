@@ -113,7 +113,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 		from := preferredIdentityLabel(
 			strings.TrimSpace(pending.LastFrom),
 			strings.TrimSpace(pending.LastFromAddress),
-			"",
+			strings.TrimSpace(pending.LastFromDID),
 		)
 		if from == "" {
 			for idx, participant := range pending.Participants {
@@ -125,7 +125,12 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 						}
 						return ""
 					}(),
-					"",
+					func() string {
+						if idx < len(pending.ParticipantDIDs) {
+							return strings.TrimSpace(pending.ParticipantDIDs[idx])
+						}
+						return ""
+					}(),
 				)
 				if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias) {
 					continue
