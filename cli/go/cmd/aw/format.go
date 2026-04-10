@@ -251,8 +251,16 @@ func formatChatPending(v any) string {
 
 	for _, p := range result.Pending {
 		openHint := ""
-		if p.LastFrom != "" && len(p.Participants) == 1 && p.Participants[0] == p.LastFrom {
-			openHint = fmt.Sprintf(" — Run \"aw chat open %s\"", p.LastFrom)
+		displayFrom := preferredSenderLabel(p.LastFrom, p.LastFromAddress, "")
+		openTarget := ""
+		if len(p.Participants) == 1 {
+			openTarget = strings.TrimSpace(p.Participants[0])
+			if len(p.ParticipantAddresses) == 1 && strings.TrimSpace(p.ParticipantAddresses[0]) != "" {
+				openTarget = strings.TrimSpace(p.ParticipantAddresses[0])
+			}
+		}
+		if openTarget != "" {
+			openHint = fmt.Sprintf(" — Run \"aw chat open %s\"", openTarget)
 		}
 
 		if p.SenderWaiting {
@@ -260,9 +268,9 @@ func formatChatPending(v any) string {
 			if p.TimeRemainingSeconds != nil && *p.TimeRemainingSeconds < 60 && *p.TimeRemainingSeconds > 0 {
 				timeInfo = fmt.Sprintf(" (%ds left)", *p.TimeRemainingSeconds)
 			}
-			sb.WriteString(fmt.Sprintf("  CHAT WAITING: %s%s (unread: %d)%s\n", p.LastFrom, timeInfo, p.UnreadCount, openHint))
+			sb.WriteString(fmt.Sprintf("  CHAT WAITING: %s%s (unread: %d)%s\n", displayFrom, timeInfo, p.UnreadCount, openHint))
 		} else {
-			sb.WriteString(fmt.Sprintf("  CHAT: %s (unread: %d)%s\n", p.LastFrom, p.UnreadCount, openHint))
+			sb.WriteString(fmt.Sprintf("  CHAT: %s (unread: %d)%s\n", displayFrom, p.UnreadCount, openHint))
 		}
 	}
 

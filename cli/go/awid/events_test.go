@@ -34,11 +34,14 @@ func TestParseAgentEvent(t *testing.T) {
 		{
 			name:      "actionable mail",
 			eventName: "actionable_mail",
-			data:      `{"type":"actionable_mail","message_id":"m2","from_alias":"alice","subject":"hello","wake_mode":"prompt","unread_count":3}`,
+			data:      `{"type":"actionable_mail","message_id":"m2","from_alias":"alice","from_address":"acme.com/alice","subject":"hello","wake_mode":"prompt","unread_count":3}`,
 			check: func(t *testing.T, evt AgentEvent) {
 				t.Helper()
 				if evt.Type != AgentEventActionableMail || evt.MessageID != "m2" || evt.FromAlias != "alice" || evt.Subject != "hello" {
 					t.Fatalf("unexpected actionable mail event: %#v", evt)
+				}
+				if evt.FromAddress != "acme.com/alice" {
+					t.Fatalf("unexpected actionable mail sender: %#v", evt)
 				}
 				if evt.WakeMode != "prompt" || evt.Channel != "mail" || evt.UnreadCount != 3 {
 					t.Fatalf("unexpected actionable mail metadata: %#v", evt)
@@ -48,11 +51,14 @@ func TestParseAgentEvent(t *testing.T) {
 		{
 			name:      "actionable chat",
 			eventName: "actionable_chat",
-			data:      `{"type":"actionable_chat","message_id":"m3","from_alias":"mia","session_id":"s2","wake_mode":"interrupt","unread_count":1,"sender_waiting":true}`,
+			data:      `{"type":"actionable_chat","message_id":"m3","from_alias":"mia","from_address":"otherco/mia","session_id":"s2","wake_mode":"interrupt","unread_count":1,"sender_waiting":true}`,
 			check: func(t *testing.T, evt AgentEvent) {
 				t.Helper()
 				if evt.Type != AgentEventActionableChat || evt.MessageID != "m3" || evt.FromAlias != "mia" || evt.SessionID != "s2" {
 					t.Fatalf("unexpected actionable chat event: %#v", evt)
+				}
+				if evt.FromAddress != "otherco/mia" {
+					t.Fatalf("unexpected actionable chat sender: %#v", evt)
 				}
 				if evt.WakeMode != "interrupt" || evt.Channel != "chat" || evt.UnreadCount != 1 || !evt.SenderWaiting {
 					t.Fatalf("unexpected actionable chat metadata: %#v", evt)

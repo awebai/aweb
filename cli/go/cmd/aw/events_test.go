@@ -34,7 +34,7 @@ func TestAwEventsStream(t *testing.T) {
 			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
-			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
+			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
 			flusher.Flush()
 
 			// Close to terminate the stream.
@@ -104,6 +104,9 @@ func TestAwEventsStream(t *testing.T) {
 	if events[1]["from_alias"] != "alice" {
 		t.Fatalf("mail from_alias=%v", events[1]["from_alias"])
 	}
+	if events[1]["from_address"] != "acme.com/alice" {
+		t.Fatalf("mail from_address=%v", events[1]["from_address"])
+	}
 	if events[1]["wake_mode"] != "prompt" {
 		t.Fatalf("mail wake_mode=%v", events[1]["wake_mode"])
 	}
@@ -125,7 +128,7 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 			fmt.Fprintf(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
 			flusher.Flush()
 
-			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
+			fmt.Fprintf(w, "event: actionable_mail\ndata: {\"message_id\":\"m-1\",\"from_alias\":\"alice\",\"from_address\":\"acme.com/alice\",\"subject\":\"hello\",\"wake_mode\":\"prompt\",\"unread_count\":2}\n\n")
 			flusher.Flush()
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -170,7 +173,7 @@ func TestAwEventsStreamTextOutput(t *testing.T) {
 		t.Fatalf("line[0]=%q, want %q", lines[0], wantConnected)
 	}
 
-	wantMail := `[actionable_mail] from=alice wake_mode=prompt unread=2 message_id=m-1 subject="hello"`
+	wantMail := `[actionable_mail] from=acme.com/alice wake_mode=prompt unread=2 message_id=m-1 subject="hello"`
 	if strings.TrimSpace(lines[1]) != wantMail {
 		t.Fatalf("line[1]=%q, want %q", lines[1], wantMail)
 	}

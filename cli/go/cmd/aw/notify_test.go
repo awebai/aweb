@@ -184,8 +184,10 @@ func TestAwNotifyOutputsHookJSONWhenPendingChatsExist(t *testing.T) {
 					{
 						"session_id":             "s1",
 						"participants":           []string{"wendy", "rose"},
+						"participant_addresses":  []string{"acme.com/wendy", "otherco/rose"},
 						"last_message":           "reply?",
 						"last_from":              "rose",
+						"last_from_address":      "otherco/rose",
 						"unread_count":           1,
 						"last_activity":          "2026-03-21T12:00:00Z",
 						"sender_waiting":         true,
@@ -223,7 +225,7 @@ func TestAwNotifyOutputsHookJSONWhenPendingChatsExist(t *testing.T) {
 	}
 	hook := parsed["hookSpecificOutput"].(map[string]any)
 	contextText := hook["additionalContext"].(string)
-	for _, want := range []string{"URGENT", "rose", "aw chat pending"} {
+	for _, want := range []string{"URGENT", "otherco/rose", "aw chat pending"} {
 		if !strings.Contains(contextText, want) {
 			t.Fatalf("missing %q in context:\n%s", want, contextText)
 		}
