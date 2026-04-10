@@ -277,3 +277,28 @@ func TestFormatChatSendPendingTreatsIdentityTargetReplyAsIncoming(t *testing.T) 
 		t.Fatalf("pending chat send output should not misclassify identity target reply as outgoing:\n%s", out)
 	}
 }
+
+func TestFormatChatSendPendingTreatsAliasTargetStableReplyAsIncoming(t *testing.T) {
+	result := &chat.SendResult{
+		Status:      "pending",
+		TargetAgent: "carol",
+		Reply:       "hello",
+		Events: []chat.Event{
+			{
+				Type:         "message",
+				FromAgent:    "",
+				FromAddress:  "",
+				FromStableID: "did:aw:carol",
+				Body:         "hello",
+			},
+		},
+	}
+
+	out := formatChatSend(result)
+	if !strings.Contains(out, "Chat from: did:aw:carol") {
+		t.Fatalf("pending chat send output should treat stable-id reply to alias target as incoming:\n%s", out)
+	}
+	if strings.Contains(out, "Chat to: carol") {
+		t.Fatalf("pending chat send output should not misclassify stable-id reply to alias target as outgoing:\n%s", out)
+	}
+}

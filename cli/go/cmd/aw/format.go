@@ -307,6 +307,9 @@ func formatChatTargetNames(value string) []string {
 
 	appendUnique(value)
 	value = strings.TrimSpace(value)
+	if value != "" && strings.HasPrefix(value, "did:aw:") {
+		appendUnique(strings.TrimPrefix(value, "did:aw:"))
+	}
 	if value != "" && !strings.HasPrefix(value, "did:") {
 		parts := strings.SplitN(value, "/", 2)
 		if len(parts) == 2 {
