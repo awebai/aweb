@@ -714,6 +714,7 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 | `GET /v1/teams/{team_id}/messages` | Message history |
 | `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
 | `GET /v1/teams/{team_id}/claims` | Active task claims |
+| `GET /v1/teams/{team_id}/events/stream` | Dashboard SSE stream. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream dashboard-shaped events `task.created`, `task.status_changed`, `task.claimed`, `task.unclaimed`, `message.sent`, `agent.online`, and `agent.offline`. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |
 | `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
 | `GET /v1/teams/{team_id}/instructions/active` | Active instructions |
 | `GET /v1/teams/{team_id}/status` | Team status (online agents, locks, claims) |

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +14,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
+from aweb.events import TeamTaskCreatedEvent, publish_team_event
+from aweb.presence import update_agent_presence
+from aweb.routes import dashboard as dashboard_routes
 from aweb.routes.dashboard import router as dashboard_router
 
 _JWT_SECRET = "test-dashboard-secret-at-least-32bytes!"
@@ -49,7 +54,133 @@ class _FailingRegistryClient:
         raise RuntimeError(f"registry unavailable for {domain}/{name}")
 
 
-def _build_app(aweb_db, *, registry_client=_DEFAULT_REGISTRY):
+class _FakeRedisPipeline:
+    def __init__(self, redis) -> None:
+        self.redis = redis
+        self.ops: list[tuple[str, tuple]] = []
+
+    def exists(self, key):
+        self.ops.append(("exists", (key,)))
+        return self
+
+    def hgetall(self, key):
+        self.ops.append(("hgetall", (key,)))
+        return self
+
+    def srem(self, key, value):
+        self.ops.append(("srem", (key, value)))
+        return self
+
+    async def execute(self):
+        results = []
+        for op, args in self.ops:
+            results.append(await getattr(self.redis, op)(*args))
+        self.ops.clear()
+        return results
+
+
+class _FakePubSub:
+    def __init__(self, redis) -> None:
+        self.redis = redis
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.channels: set[str] = set()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.aclose()
+
+    async def subscribe(self, *channels):
+        for channel in channels:
+            self.channels.add(channel)
+            self.redis.subscribers.setdefault(channel, set()).add(self.queue)
+
+    async def unsubscribe(self, *channels):
+        targets = channels or tuple(self.channels)
+        for channel in targets:
+            self.redis.subscribers.get(channel, set()).discard(self.queue)
+            self.channels.discard(channel)
+
+    async def get_message(self, ignore_subscribe_messages=True, timeout=0):
+        try:
+            return await asyncio.wait_for(self.queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
+    async def aclose(self):
+        await self.unsubscribe(*tuple(self.channels))
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.hashes: dict[str, dict[str, str]] = {}
+        self.sets: dict[str, set[str]] = {}
+        self.strings: dict[str, str] = {}
+        self.subscribers: dict[str, set[asyncio.Queue]] = {}
+
+    def pubsub(self):
+        return _FakePubSub(self)
+
+    def pipeline(self):
+        return _FakeRedisPipeline(self)
+
+    async def publish(self, channel, message):
+        queues = list(self.subscribers.get(channel, set()))
+        for queue in queues:
+            await queue.put({"type": "message", "channel": channel, "data": message})
+        return len(queues)
+
+    async def hset(self, key, mapping):
+        current = self.hashes.setdefault(key, {})
+        current.update({str(k): str(v) for k, v in mapping.items()})
+        return len(mapping)
+
+    async def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    async def expire(self, key, ttl):
+        return True
+
+    async def sadd(self, key, *values):
+        bucket = self.sets.setdefault(key, set())
+        bucket.update(str(v) for v in values)
+        return len(values)
+
+    async def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
+    async def exists(self, key):
+        return int(
+            key in self.hashes and bool(self.hashes[key])
+            or key in self.sets and bool(self.sets[key])
+            or key in self.strings
+        )
+
+    async def set(self, key, value, ex=None):
+        self.strings[key] = str(value)
+        return True
+
+    async def get(self, key):
+        return self.strings.get(key)
+
+    async def srem(self, key, value):
+        bucket = self.sets.get(key)
+        if bucket is None:
+            return 0
+        existed = str(value) in bucket
+        bucket.discard(str(value))
+        return 1 if existed else 0
+
+    async def delete(self, key):
+        removed = 0
+        removed += 1 if self.hashes.pop(key, None) is not None else 0
+        removed += 1 if self.sets.pop(key, None) is not None else 0
+        removed += 1 if self.strings.pop(key, None) is not None else 0
+        return removed
+
+
+def _build_app(aweb_db, *, registry_client=_DEFAULT_REGISTRY, redis=None):
     app = FastAPI()
     app.include_router(dashboard_router)
 
@@ -59,6 +190,7 @@ def _build_app(aweb_db, *, registry_client=_DEFAULT_REGISTRY):
 
     app.state.db = _DbShim()
     app.state.dashboard_jwt_secret = _JWT_SECRET
+    app.state.redis = redis
     if registry_client is _DEFAULT_REGISTRY:
         registry_client = _FakeRegistryClient(visibility="private")
     if registry_client is not None:
@@ -115,6 +247,26 @@ async def _seed(aweb_db):
     return str(alice_id), str(bob_id)
 
 
+class _FakeStreamRequest:
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+def _parse_sse_chunk(chunk: str):
+    event_name = None
+    data_lines: list[str] = []
+    for line in chunk.splitlines():
+        if line.startswith(":"):
+            continue
+        if line.startswith("event: "):
+            event_name = line[7:]
+            continue
+        if line.startswith("data: "):
+            data_lines.append(line[6:])
+    payload = json.loads("".join(data_lines)) if data_lines else {}
+    return event_name, payload
+
+
 @pytest.mark.asyncio
 async def test_list_agents(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
@@ -161,10 +313,12 @@ async def test_list_agents(aweb_cloud_db):
     assert set(agents) == {"alice", "bob"}
     assert agents["alice"]["workspace_path"] == "/Users/alice/project"
     assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
+    assert agents["alice"]["human_name"] == "Alice"
     assert agents["alice"]["address"] == "acme.com/alice"
     assert agents["alice"]["agent_type"] == "coder"
     assert agents["bob"]["workspace_path"] is None
     assert agents["bob"]["last_seen"] is None
+    assert agents["bob"]["human_name"] == "Bob"
     assert agents["bob"]["address"] is None
     assert agents["bob"]["agent_type"] == "reviewer"
 
@@ -557,6 +711,153 @@ async def test_tasks_cursor_pagination(aweb_cloud_db):
     assert [task["title"] for task in second_data["tasks"]] == ["Fix bug"]
     assert second_data["has_more"] is False
     assert second_data["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_events_stream_emits_snapshot_and_team_events(aweb_cloud_db):
+    redis = _FakeRedis()
+    alice_id, _ = await _seed(aweb_cloud_db.aweb_db)
+    workspace_id = str(uuid.uuid4())
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, workspace_path
+        )
+        VALUES (
+            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project'
+        )
+        """,
+        uuid.UUID(workspace_id),
+        uuid.UUID(alice_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (
+            team_id, workspace_id, alias, human_name, task_ref, claimed_at
+        )
+        VALUES (
+            'backend:acme.com', $1, 'alice', 'Alice', 'backend-aaaa',
+            TIMESTAMPTZ '2026-04-08T12:15:00Z'
+        )
+        """,
+        uuid.UUID(workspace_id),
+    )
+    await update_agent_presence(
+        redis,
+        workspace_id=workspace_id,
+        alias="alice",
+        team_id="backend:acme.com",
+    )
+    stream = dashboard_routes._sse_dashboard_events(
+        request=_FakeStreamRequest(),
+        db=_build_app(aweb_cloud_db.aweb_db, redis=redis).state.db,
+        redis=redis,
+        team_id="backend:acme.com",
+    )
+    assert await anext(stream) == ": keepalive\n\n"
+
+    event_name, payload = _parse_sse_chunk(await anext(stream))
+    assert event_name == "connected"
+    assert payload["team_id"] == "backend:acme.com"
+
+    event_name, payload = _parse_sse_chunk(await anext(stream))
+    assert event_name == "snapshot"
+    assert payload["team_id"] == "backend:acme.com"
+    assert payload["online_aliases"] == ["alice"]
+    assert payload["active_claims"] == [
+        {
+            "task_ref": "backend-aaaa",
+            "workspace_id": workspace_id,
+            "alias": "alice",
+            "claimed_at": "2026-04-08T12:15:00+00:00",
+        }
+    ]
+
+    await publish_team_event(
+        redis,
+        TeamTaskCreatedEvent(
+            team_id="backend:acme.com",
+            task_ref="backend-aaab",
+            title="Build dashboard stream",
+            status="open",
+        ),
+    )
+
+    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    assert event_name == "task.created"
+    assert payload == {
+        "type": "task.created",
+        "team_id": "backend:acme.com",
+        "task_ref": "backend-aaab",
+        "title": "Build dashboard stream",
+        "status": "open",
+        "timestamp": payload["timestamp"],
+    }
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(dashboard_routes, "DASHBOARD_PRESENCE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(dashboard_routes, "DASHBOARD_PUBSUB_POLL_SECONDS", 0.01)
+    redis = _FakeRedis()
+    await _seed(aweb_cloud_db.aweb_db)
+    stream = dashboard_routes._sse_dashboard_events(
+        request=_FakeStreamRequest(),
+        db=_build_app(aweb_cloud_db.aweb_db, redis=redis).state.db,
+        redis=redis,
+        team_id="backend:acme.com",
+    )
+    assert await anext(stream) == ": keepalive\n\n"
+    await anext(stream)
+    event_name, payload = _parse_sse_chunk(await anext(stream))
+    assert event_name == "snapshot"
+    assert payload["online_aliases"] == []
+
+    workspace_id = str(uuid.uuid4())
+    await update_agent_presence(
+        redis,
+        workspace_id=workspace_id,
+        alias="bob",
+        team_id="backend:acme.com",
+    )
+
+    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    assert event_name == "agent.online"
+    assert payload["alias"] == "bob"
+
+    await redis.delete(f"presence:{workspace_id}")
+
+    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    assert event_name == "agent.offline"
+    assert payload["alias"] == "bob"
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_events_stream_missing_token_returns_401(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, redis=_FakeRedis())
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/backend:acme.com/events/stream")
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_events_stream_unauthorized_team_returns_403(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, redis=_FakeRedis())
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["team:other.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/events/stream",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

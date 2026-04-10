@@ -25,8 +25,14 @@ from .events import (
     TaskCreatedEvent,
     TaskStatusChangedEvent,
     TaskUnclaimedEvent,
+    TeamMessageSentEvent,
+    TeamTaskClaimedEvent,
+    TeamTaskCreatedEvent,
+    TeamTaskStatusChangedEvent,
+    TeamTaskUnclaimedEvent,
     publish_chat_session_signal,
     publish_event,
+    publish_team_event,
 )
 from .presence import clear_workspace_presence, get_agent_presence
 
@@ -66,18 +72,22 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
 
         try:
             event = _translate(event_type, context)
-            if event is None:
+            team_event = _translate_team_event(event_type, context)
+            if event is None and team_event is None:
                 return
-            if not event.workspace_id:
-                logger.warning("Skipping %s event: no workspace_id in context", event_type)
-                return
-            try:
-                await _enrich(event, redis, db_infra)
-            except Exception:
-                logger.warning(
-                    "Enrichment failed for %s, publishing with defaults", event_type, exc_info=True
-                )
-            await publish_event(redis, event)
+            if event is not None:
+                if not event.workspace_id:
+                    logger.warning("Skipping %s event: no workspace_id in context", event_type)
+                else:
+                    try:
+                        await _enrich(event, redis, db_infra)
+                    except Exception:
+                        logger.warning(
+                            "Enrichment failed for %s, publishing with defaults", event_type, exc_info=True
+                        )
+                    await publish_event(redis, event)
+            if team_event is not None:
+                await publish_team_event(redis, team_event)
             if event_type == "chat.message_sent":
                 session_id = str(context.get("session_id", "")).strip()
                 if session_id:
@@ -114,7 +124,7 @@ async def _cascade_agent_deleted(
     # Check if a workspace exists for this agent (workspace_id = agent_id)
     workspace = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, alias
+        SELECT workspace_id, alias, team_id
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND deleted_at IS NULL
         """,
@@ -124,6 +134,7 @@ async def _cascade_agent_deleted(
         return
 
     alias = workspace["alias"]
+    team_id = str(workspace["team_id"])
 
     # Soft-delete the workspace and capture claimed tasks before releasing
     async with aweb_db.transaction() as tx:
@@ -152,6 +163,15 @@ async def _cascade_agent_deleted(
                 workspace_id=agent_id,
                 task_ref=row["task_ref"],
                 alias=alias,
+            ),
+        )
+        await publish_team_event(
+            redis,
+            TeamTaskUnclaimedEvent(
+                team_id=team_id,
+                task_ref=row["task_ref"],
+                alias=alias,
+                title="",
             ),
         )
 
@@ -224,6 +244,15 @@ async def _cascade_task_status_changed(
                 title=title,
             ),
         )
+        await publish_team_event(
+            redis,
+            TeamTaskClaimedEvent(
+                team_id=team_id,
+                task_ref=task_ref,
+                alias=alias,
+                title=title or "",
+            ),
+        )
     else:
         claimant_ids = await release_task_claims(
             db_infra,
@@ -242,6 +271,15 @@ async def _cascade_task_status_changed(
                         title=title,
                     ),
                 )
+                await publish_team_event(
+                    redis,
+                    TeamTaskUnclaimedEvent(
+                        team_id=team_id,
+                        task_ref=task_ref,
+                        alias=claimant_aliases.get(cid, ""),
+                        title=title or "",
+                    ),
+                )
 
     await publish_event(
         redis,
@@ -253,6 +291,16 @@ async def _cascade_task_status_changed(
             new_status=new_status,
             title=title,
             alias=alias,
+        ),
+    )
+    await publish_team_event(
+        redis,
+        TeamTaskStatusChangedEvent(
+            team_id=team_id,
+            task_ref=task_ref,
+            title=title or "",
+            old_status=context.get("old_status", "") or "",
+            new_status=new_status,
         ),
     )
 
@@ -293,6 +341,15 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
                     task_ref=task_ref,
                     alias=claimant_aliases.get(cid, ""),
                     title=context.get("title"),
+                ),
+            )
+            await publish_team_event(
+                redis,
+                TeamTaskUnclaimedEvent(
+                    team_id=team_id,
+                    task_ref=task_ref,
+                    alias=claimant_aliases.get(cid, ""),
+                    title=str(context.get("title") or ""),
                 ),
             )
 
@@ -404,6 +461,34 @@ def _translate(event_type: str, ctx: dict):
         return ReservationReleasedEvent(
             workspace_id=ctx.get("holder_agent_id", ""),
             paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
+        )
+
+    return None
+
+
+def _translate_team_event(event_type: str, ctx: dict):
+    if event_type == "message.sent":
+        team_id = str(ctx.get("team_id", "")).strip()
+        if not team_id:
+            return None
+        return TeamMessageSentEvent(
+            team_id=team_id,
+            message_id=str(ctx.get("message_id", "")).strip(),
+            from_alias=str(ctx.get("from_alias", "")).strip(),
+            to_alias=str(ctx.get("to_alias", "")).strip(),
+            subject=str(ctx.get("subject", "") or ""),
+            priority=str(ctx.get("priority", "normal") or "normal"),
+        )
+
+    if event_type == "task.created":
+        team_id = str(ctx.get("team_id", "")).strip()
+        if not team_id:
+            return None
+        return TeamTaskCreatedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            title=str(ctx.get("title", "") or ""),
+            status="open",
         )
 
     return None

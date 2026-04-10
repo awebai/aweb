@@ -212,13 +212,16 @@ async def send_message(
 
     await fire_mutation_hook(
         request,
-        "message_sent",
+        "message.sent",
         {
             "team_id": auth.team_id,
-            "alias": auth.alias or sender_did,
+            "from_agent_id": auth.agent_id,
+            "to_agent_id": to_agent_id,
+            "from_alias": auth.alias or sender_did,
             "message_id": str(message_id),
             "to_alias": to_alias,
             "subject": payload.subject,
+            "priority": payload.priority,
         },
     )
 
