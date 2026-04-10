@@ -109,6 +109,8 @@ type ChatCreateSessionResponse struct {
 type ChatParticipant struct {
 	AgentID string `json:"agent_id"`
 	Alias   string `json:"alias"`
+	DID     string `json:"did,omitempty"`
+	Address string `json:"address,omitempty"`
 }
 
 func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRequest) (*ChatCreateSessionResponse, error) {

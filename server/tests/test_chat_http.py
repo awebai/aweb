@@ -145,6 +145,7 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
     payload = resp.json()
     assert payload["session_id"]
     assert {participant["did"] for participant in payload["participants"]} == {"did:aw:alice", "did:aw:bob"}
+    assert {participant["address"] for participant in payload["participants"]} == {"acme.com/alice", "otherco.com/bob"}
 
 
 @pytest.mark.asyncio

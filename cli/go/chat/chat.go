@@ -642,6 +642,7 @@ func isCleanEOF(err error) bool {
 type sendResponse struct {
 	SessionID        string
 	MessageID        string
+	Participants     []awid.ChatParticipant
 	TargetsConnected []string
 	TargetsLeft      []string
 }
@@ -681,6 +682,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	return sendCommon(ctx, client, client.ChatStream, sendResponse{
 		SessionID:        createResp.SessionID,
 		MessageID:        createResp.MessageID,
+		Participants:     createResp.Participants,
 		TargetsConnected: createResp.TargetsConnected,
 		TargetsLeft:      createResp.TargetsLeft,
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
@@ -698,7 +700,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	}
 	targetStatusNames := make([][]string, 0, len(targets))
 	for _, target := range targets {
-		targetStatusNames = append(targetStatusNames, normalizedChatTargetNames(ctx, client, target))
+		targetStatusNames = append(targetStatusNames, normalizedChatTargetNames(ctx, client, target, resp.Participants))
 	}
 
 	if opts.Leaving {
@@ -712,8 +714,9 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	// Check if any target has left
 	targetHasLeft := false
 	for _, leftAlias := range resp.TargetsLeft {
+		leftNames := normalizedChatTargetNames(ctx, client, leftAlias, resp.Participants)
 		for _, targetNames := range targetStatusNames {
-			if chatTargetNameListContains(targetNames, leftAlias) {
+			if chatTargetNameListsOverlap(targetNames, leftNames) {
 				targetHasLeft = true
 				break
 			}
@@ -733,7 +736,8 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	for _, targetNames := range targetStatusNames {
 		found := false
 		for _, alias := range resp.TargetsConnected {
-			if chatTargetNameListContains(targetNames, alias) {
+			connectedNames := normalizedChatTargetNames(ctx, client, alias, resp.Participants)
+			if chatTargetNameListsOverlap(targetNames, connectedNames) {
 				found = true
 				break
 			}
@@ -976,7 +980,7 @@ func chatEventMatchesTarget(ev Event, target string) bool {
 	return false
 }
 
-func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target string) []string {
+func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target string, participants []awid.ChatParticipant) []string {
 	names := []string{}
 	appendUnique := func(value string) {
 		value = strings.TrimSpace(value)
@@ -996,6 +1000,13 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 	appendUnique(normalized)
 	appendUnique(addressHandle(target))
 	appendUnique(addressHandle(normalized))
+	for _, participant := range participants {
+		if chatParticipantMatchesTarget(participant, target) || chatParticipantMatchesTarget(participant, normalized) {
+			appendUnique(strings.TrimSpace(participant.Alias))
+			appendUnique(strings.TrimSpace(participant.Address))
+			appendUnique(strings.TrimSpace(participant.DID))
+		}
+	}
 	return names
 }
 
@@ -1012,9 +1023,35 @@ func chatTargetNameListContains(candidates []string, value string) bool {
 	return false
 }
 
+func chatTargetNameListsOverlap(left []string, right []string) bool {
+	for _, candidate := range right {
+		if chatTargetNameListContains(left, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
 func chatEventSenderLabel(ev Event) string {
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
 		return value
 	}
 	return strings.TrimSpace(ev.FromAgent)
+}
+
+func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		strings.TrimSpace(participant.Alias),
+		strings.TrimSpace(participant.Address),
+		strings.TrimSpace(participant.DID),
+	} {
+		if candidate != "" && candidate == target {
+			return true
+		}
+	}
+	return false
 }
