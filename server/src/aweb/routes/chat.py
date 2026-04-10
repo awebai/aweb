@@ -317,10 +317,17 @@ class CreateSessionRequest(BaseModel):
         return _parse_uuid(v, field=str(info.field_name or "message_id"))
 
 
+class CreateSessionParticipant(BaseModel):
+    did: str
+    alias: str
+    agent_id: str | None = None
+    address: str | None = None
+
+
 class CreateSessionResponse(BaseModel):
     session_id: str
     message_id: str
-    participants: list[dict[str, str]]
+    participants: list[CreateSessionParticipant]
     sse_url: str
     targets_connected: list[str]
     targets_left: list[str]
@@ -452,6 +459,10 @@ async def create_or_send(
         """,
         session_id,
     )
+    participant_address_map = await _lookup_addresses_by_did(
+        db,
+        [(row.get("did") or "").strip() for row in participants_rows],
+    )
 
     targets_left = await _targets_left(db, session_id=session_id, target_dids=target_dids)
     waiting_dids = await get_waiting_agents(redis, str(session_id), target_dids)
@@ -475,7 +486,14 @@ async def create_or_send(
     return CreateSessionResponse(
         session_id=str(session_id),
         message_id=str(msg_row["message_id"]),
-        participants=[{"did": str(row["did"]), "alias": row["alias"]} for row in participants_rows],
+        participants=[
+            {
+                "did": str(row["did"]),
+                "alias": row["alias"],
+                "address": participant_address_map.get((row.get("did") or "").strip()) or None,
+            }
+            for row in participants_rows
+        ],
         sse_url=f"/v1/chat/sessions/{session_id}/stream",
         targets_connected=targets_connected,
         targets_left=targets_left,

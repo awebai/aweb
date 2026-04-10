@@ -2509,12 +2509,17 @@ func TestSendDoesNotMarkAddressTargetDisconnectedWhenAliasConnected(t *testing.T
 	t.Parallel()
 
 	sentMsgID := "msg-sent-1"
+	targetDID := "did:aw:bob"
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatCreateSessionResponse{
-				SessionID:        "s1",
-				MessageID:        sentMsgID,
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:aw:alice", Address: "acme.com/alice"},
+					{Alias: "bob", DID: targetDID, Address: "otherco.com/bob"},
+				},
 				TargetsConnected: []string{"bob"},
 			})
 		},
@@ -2573,6 +2578,56 @@ func TestSendTreatsAddressTargetAsLeftWhenAliasLeft(t *testing.T) {
 	}
 	if result.Status != "targets_left" {
 		t.Fatalf("status=%s, want targets_left", result.Status)
+	}
+}
+
+func TestSendDoesNotMarkStableDIDTargetDisconnectedWhenAliasConnected(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetDID := "did:aw:bob"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:aw:alice", Address: "acme.com/alice"},
+					{Alias: "bob", DID: targetDID, Address: "otherco.com/bob"},
+				},
+				TargetsConnected: []string{"bob"},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-reply-1", "from_agent": "bob", "from_did": targetDID, "body": "hi back!",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{targetDID}, "hello", SendOptions{Wait: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TargetNotConnected {
+		t.Fatalf("target_not_connected=%v, want false", result.TargetNotConnected)
 	}
 }
 
