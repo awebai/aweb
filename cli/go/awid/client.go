@@ -52,10 +52,27 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	}
 	env.MessageID = msgID
 
-	// Resolve recipient DID for to_did binding (mail only).
-	if env.Type == "mail" && c.resolver != nil && env.To != "" && env.ToDID == "" {
-		if identity, err := c.resolver.Resolve(ctx, c.canonicalTrustAddress(env.To)); err == nil && identity.DID != "" {
-			env.ToDID = identity.DID
+	// Resolve recipient DID for to_did binding (mail only). Stable did:aw
+	// targets belong in to_stable_id; to_did is reserved for the recipient's
+	// current did:key binding.
+	if env.Type == "mail" {
+		if strings.HasPrefix(strings.TrimSpace(env.ToDID), "did:aw:") {
+			env.ToStableID = strings.TrimSpace(env.ToDID)
+			env.ToDID = ""
+		}
+		if strings.TrimSpace(env.ToStableID) == "" && strings.HasPrefix(strings.TrimSpace(env.To), "did:aw:") {
+			env.ToStableID = strings.TrimSpace(env.To)
+		}
+		if c.resolver != nil && env.ToDID == "" {
+			target := strings.TrimSpace(env.ToStableID)
+			if target == "" {
+				target = c.canonicalTrustAddress(env.To)
+			}
+			if target != "" {
+				if identity, err := c.resolver.Resolve(ctx, target); err == nil && identity.DID != "" {
+					env.ToDID = identity.DID
+				}
+			}
 		}
 	}
 
