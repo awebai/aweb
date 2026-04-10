@@ -339,7 +339,7 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 					preferredWakeIdentityLabel(
 						strings.TrimSpace(evt.FromAlias),
 						strings.TrimSpace(evt.FromAddress),
-						"",
+						strings.TrimSpace(evt.FromDID),
 						"",
 						"",
 					),
