@@ -141,12 +141,16 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				}
 				return runWakeResolution{
 					CycleContext: formatIncomingChatContext(
-						preferredIdentityLabel(
+						preferredWakeIdentityLabel(
 							strings.TrimSpace(msg.FromAgent),
 							strings.TrimSpace(msg.FromAddress),
-							preferredIdentityLabel(
+							strings.TrimSpace(msg.FromStableID),
+							strings.TrimSpace(msg.FromDID),
+							preferredWakeIdentityLabel(
 								strings.TrimSpace(evt.FromAlias),
 								strings.TrimSpace(evt.FromAddress),
+								"",
+								"",
 								"",
 							),
 						),
@@ -186,12 +190,16 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			if latest := latestIncomingChatMessage(filtered, selfAlias, selfIdentityDIDs(client)...); latest != nil {
 				return runWakeResolution{
 					CycleContext: formatIncomingChatContext(
-						preferredIdentityLabel(
+						preferredWakeIdentityLabel(
 							strings.TrimSpace(latest.FromAgent),
 							strings.TrimSpace(latest.FromAddress),
-							preferredIdentityLabel(
+							strings.TrimSpace(latest.FromStableID),
+							strings.TrimSpace(latest.FromDID),
+							preferredWakeIdentityLabel(
 								strings.TrimSpace(evt.FromAlias),
 								strings.TrimSpace(evt.FromAddress),
+								"",
+								"",
 								"",
 							),
 						),
@@ -285,6 +293,22 @@ func preferredIdentityLabel(alias string, address string, fallback string) strin
 	return preferredSenderLabel(alias, address, fallback)
 }
 
+func preferredWakeIdentityLabel(alias string, address string, stableID string, did string, fallback string) string {
+	label := preferredIdentityLabel(alias, address, "")
+	if label != "" {
+		return label
+	}
+	stableID = strings.TrimSpace(stableID)
+	if stableID != "" {
+		return stableID
+	}
+	did = strings.TrimSpace(did)
+	if did != "" {
+		return did
+	}
+	return strings.TrimSpace(fallback)
+}
+
 func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
 	messageID := strings.TrimSpace(evt.MessageID)
 	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: true})
@@ -307,12 +331,16 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		}
 		return runWakeResolution{
 			CycleContext: formatIncomingMailContext(
-				preferredIdentityLabel(
+				preferredWakeIdentityLabel(
 					strings.TrimSpace(msg.FromAlias),
 					strings.TrimSpace(msg.FromAddress),
-					preferredIdentityLabel(
+					strings.TrimSpace(msg.FromStableID),
+					strings.TrimSpace(msg.FromDID),
+					preferredWakeIdentityLabel(
 						strings.TrimSpace(evt.FromAlias),
 						strings.TrimSpace(evt.FromAddress),
+						"",
+						"",
 						"",
 					),
 				),
