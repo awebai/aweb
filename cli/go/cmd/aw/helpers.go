@@ -339,8 +339,8 @@ func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, erro
 }
 
 func resolveAuthenticatedBaseURL(raw string) (string, error) {
-	if strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
-		return resolveWorkingBaseURL(raw)
+	if envBaseURL := strings.TrimSpace(os.Getenv("AWEB_URL")); envBaseURL != "" {
+		return resolveWorkingBaseURL(envBaseURL)
 	}
 	return cleanBaseURL(raw)
 }

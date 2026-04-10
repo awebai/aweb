@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -1052,6 +1053,74 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	// allows recipients to verify the sender independently.
 	if gotBody["from_did"] == nil || gotBody["from_did"] == "" {
 		t.Fatal("from_did missing")
+	}
+}
+
+func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":   "msg-standalone-1",
+				"status":       "delivered",
+				"delivered_at": "2026-02-22T00:00:00Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to-did", "did:aw:monitor",
+		"--body", "hello from standalone",
+	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	logDir := filepath.Join(tmp, ".config", "aw", "logs")
+	logName := commLogNameForSelection(&awconfig.Selection{StableID: stableID, DID: did})
+	entries, err := readCommLog(commLogPath(logDir, logName), 0)
+	if err != nil {
+		t.Fatalf("readCommLog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d, want 1", len(entries))
+	}
+	if entries[0].From != stableID {
+		t.Fatalf("from=%q, want stable id %q", entries[0].From, stableID)
 	}
 }
 

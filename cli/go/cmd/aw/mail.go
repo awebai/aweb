@@ -83,12 +83,19 @@ var mailSendCmd = &cobra.Command{
 			return networkError(err, targetValue)
 		}
 		logsDir := defaultLogsDir()
+		from := preferredIdentityDisplayLabel(
+			"",
+			selectionAddress(sel),
+			strings.TrimSpace(sel.StableID),
+			strings.TrimSpace(sel.DID),
+			"",
+		)
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "mail",
 			MessageID: resp.MessageID,
-			From:      selectionAddress(sel),
+			From:      from,
 			To:        targetValue,
 			Subject:   mailSendSubject,
 			Body:      mailSendBody,
