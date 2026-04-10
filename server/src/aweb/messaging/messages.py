@@ -89,6 +89,7 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 async def evaluate_messaging_policy(
     db,
     *,
+    registry_client,
     recipient_agent: dict,
     sender_did: str,
     sender_address: str | None,
@@ -107,58 +108,56 @@ async def evaluate_messaging_policy(
             return
         raise ForbiddenError("Recipient only accepts messages from contacts")
 
-    aweb_db = db.get_manager("aweb")
-    recipient_team_ids = [
-        str(row["team_id"])
-        for row in await aweb_db.fetch_all(
-            """
-            SELECT DISTINCT team_id
-            FROM {{tables.agents}}
-            WHERE deleted_at IS NULL
-              AND (did_aw = $1 OR did_key = $1)
-            """,
-            (recipient_agent.get("did_aw") or recipient_agent.get("did_key") or "").strip(),
-        )
-    ]
-    if not recipient_team_ids:
-        raise ForbiddenError("Recipient team context is unavailable")
+    if registry_client is None:
+        raise ForbiddenError("Recipient policy requires team membership verification")
 
-    sender_rows = await aweb_db.fetch_all(
+    aweb_db = db.get_manager("aweb")
+    recipient_team_rows = await aweb_db.fetch_all(
         """
-        SELECT a.team_id, t.namespace
+        SELECT DISTINCT a.team_id, t.namespace, t.team_name
         FROM {{tables.agents}} a
         JOIN {{tables.teams}} t ON t.team_id = a.team_id
         WHERE a.deleted_at IS NULL
           AND (a.did_aw = $1 OR a.did_key = $1)
         """,
-        sender_did,
+        (recipient_agent.get("did_aw") or recipient_agent.get("did_key") or "").strip(),
     )
-    if not sender_rows:
-        raise ForbiddenError("Recipient policy requires shared team or org")
+    recipient_team_ids = [str(row["team_id"]) for row in recipient_team_rows]
+    if not recipient_team_ids:
+        raise ForbiddenError("Recipient team context is unavailable")
+
+    async def _sender_has_active_cert_for(row: dict) -> bool:
+        certs = await registry_client.list_team_certificates(
+            row["namespace"],
+            row["team_name"],
+            active_only=True,
+        )
+        for cert in certs:
+            member_did_aw = (cert.member_did_aw or "").strip()
+            member_did_key = (cert.member_did_key or "").strip()
+            if sender_did == member_did_aw or sender_did == member_did_key:
+                return True
+        return False
 
     if policy == "team":
-        sender_team_ids = {str(row["team_id"]) for row in sender_rows}
-        if sender_team_ids.intersection(recipient_team_ids):
-            return
+        for row in recipient_team_rows:
+            if await _sender_has_active_cert_for(row):
+                return
         raise ForbiddenError("Recipient only accepts messages from shared-team members")
 
     if policy == "org":
-        recipient_namespaces = {
-            row["namespace"]
-            for row in await aweb_db.fetch_all(
-                """
-                SELECT DISTINCT t.namespace
-                FROM {{tables.agents}} a
-                JOIN {{tables.teams}} t ON t.team_id = a.team_id
-                WHERE a.deleted_at IS NULL
-                  AND (a.did_aw = $1 OR a.did_key = $1)
-                """,
-                (recipient_agent.get("did_aw") or recipient_agent.get("did_key") or "").strip(),
-            )
-        }
-        sender_namespaces = {row["namespace"] for row in sender_rows}
-        if sender_namespaces.intersection(recipient_namespaces):
-            return
+        recipient_namespaces = {row["namespace"] for row in recipient_team_rows}
+        namespace_rows = await aweb_db.fetch_all(
+            """
+            SELECT team_id, namespace, team_name
+            FROM {{tables.teams}}
+            WHERE namespace = ANY($1::text[])
+            """,
+            list(recipient_namespaces),
+        )
+        for row in namespace_rows:
+            if await _sender_has_active_cert_for(row):
+                return
         raise ForbiddenError("Recipient only accepts messages from the same org")
 
     raise ForbiddenError(f"Unsupported messaging policy: {policy}")
@@ -167,6 +166,7 @@ async def evaluate_messaging_policy(
 async def deliver_message(
     db,
     *,
+    registry_client=None,
     from_did: str,
     to_did: str,
     from_alias: str | None,
@@ -198,6 +198,7 @@ async def deliver_message(
 
     await evaluate_messaging_policy(
         db,
+        registry_client=registry_client,
         recipient_agent=recipient,
         sender_did=sender_did,
         sender_address=sender_address,

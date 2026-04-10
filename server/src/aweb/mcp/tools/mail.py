@@ -70,6 +70,7 @@ async def send_mail(
     try:
         message_id, created_at = await deliver_message(
             db_infra,
+            registry_client=registry_client,
             from_did=(auth.did_aw or auth.did_key or "").strip(),
             to_did=recipient_did,
             team_id=auth.team_id,

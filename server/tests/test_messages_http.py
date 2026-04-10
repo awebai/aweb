@@ -125,6 +125,18 @@ def _build_test_app(aweb_db, registry):
     return app
 
 
+def _cert(certificate_id: str, member_did_aw: str, member_did_key: str, alias: str = "alice"):
+    return {
+        "certificate_id": certificate_id,
+        "member_did_aw": member_did_aw,
+        "member_did_key": member_did_key,
+        "member_address": "",
+        "alias": alias,
+        "lifetime": "persistent",
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @pytest.mark.asyncio
 async def test_messages_inbox_accepts_identity_auth(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
@@ -239,6 +251,7 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
             )
         ]
     )
+    registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
     payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
@@ -298,6 +311,9 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.list_team_certificates = AsyncMock(
+        return_value=[_cert("cert-1", "did:aw:alice", alice_did_key, "alice")]
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
     payload = {"to_alias": "bob", "subject": "hello", "body": "hi"}
@@ -310,3 +326,54 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_send_message_returns_403_for_policy_violation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'nobody'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_did": "did:aw:bob", "subject": "blocked", "body": "hi"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 403, resp.text

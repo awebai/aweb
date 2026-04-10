@@ -30,6 +30,30 @@ class _DbShim:
         return self._db
 
 
+class _RegistryStub:
+    def __init__(self, team_members: dict[tuple[str, str], list[dict[str, str]]]):
+        self.team_members = team_members
+
+    async def list_team_certificates(self, domain: str, name: str, *, active_only: bool = True):
+        del active_only
+        return [
+            type(
+                "TeamCertificate",
+                (),
+                {
+                    "certificate_id": item.get("certificate_id", "cert-1"),
+                    "member_did_key": item.get("member_did_key", ""),
+                    "member_did_aw": item.get("member_did_aw"),
+                    "member_address": item.get("member_address"),
+                    "alias": item.get("alias", ""),
+                    "lifetime": item.get("lifetime", "persistent"),
+                    "issued_at": item.get("issued_at", "2026-01-01T00:00:00Z"),
+                },
+            )()
+            for item in self.team_members.get((domain, name), [])
+        ]
+
+
 async def _insert_team(aweb_db, team_id: str):
     name, domain = team_id.split(":", 1)
     await aweb_db.execute(
@@ -199,14 +223,150 @@ async def test_deliver_message_team_policy_requires_shared_team(aweb_cloud_db):
         messaging_policy="team",
     )
 
+    registry = _RegistryStub({})
+
     with pytest.raises(ForbiddenError, match="shared-team"):
         await deliver_message(
             db_shim,
+            registry_client=registry,
             from_did=alice_did_aw,
             to_did=bob_did_aw,
             from_alias="alice",
             to_alias="bob",
             sender_address="acme.com/alice",
+            subject="Hello",
+            body="Hi Bob!",
+            priority="normal",
+        )
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_team_policy_allows_active_shared_team_cert(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+
+    alice_did_key = _make_did_key()
+    alice_did_aw = "did:aw:alice"
+    bob_did_aw = "did:aw:bob"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        messaging_policy="team",
+    )
+    registry = _RegistryStub(
+        {
+            ("acme.com", "backend"): [
+                {
+                    "member_did_aw": alice_did_aw,
+                    "member_did_key": alice_did_key,
+                    "alias": "alice",
+                }
+            ]
+        }
+    )
+
+    msg_id, _ = await deliver_message(
+        db_shim,
+        registry_client=registry,
+        from_did=alice_did_aw,
+        to_did=bob_did_aw,
+        from_alias="alice",
+        to_alias="bob",
+        sender_address="acme.com/alice",
+        subject="Hello",
+        body="Hi Bob!",
+        priority="normal",
+    )
+    assert msg_id is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_org_policy_allows_same_namespace_active_cert(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:acme.com")
+
+    alice_did_key = _make_did_key()
+    alice_did_aw = "did:aw:alice"
+    bob_did_aw = "did:aw:bob"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        messaging_policy="org",
+    )
+    registry = _RegistryStub(
+        {
+            ("acme.com", "backend"): [
+                {
+                    "member_did_aw": alice_did_aw,
+                    "member_did_key": alice_did_key,
+                    "alias": "alice",
+                }
+            ]
+        }
+    )
+
+    msg_id, _ = await deliver_message(
+        db_shim,
+        registry_client=registry,
+        from_did=alice_did_aw,
+        to_did=bob_did_aw,
+        from_alias="alice",
+        to_alias="bob",
+        sender_address="acme.com/alice",
+        subject="Hello",
+        body="Hi Bob!",
+        priority="normal",
+    )
+    assert msg_id is not None
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_org_policy_blocks_other_namespace(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:otherco.com")
+
+    alice_did_aw = "did:aw:alice"
+    bob_did_aw = "did:aw:bob"
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:acme.com",
+        alias="bob",
+        did_key=_make_did_key(),
+        did_aw=bob_did_aw,
+        address="acme.com/bob",
+        messaging_policy="org",
+    )
+    registry = _RegistryStub(
+        {
+            ("otherco.com", "backend"): [
+                {
+                    "member_did_aw": alice_did_aw,
+                    "member_did_key": _make_did_key(),
+                    "alias": "alice",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(ForbiddenError, match="same org"):
+        await deliver_message(
+            db_shim,
+            registry_client=registry,
+            from_did=alice_did_aw,
+            to_did=bob_did_aw,
+            from_alias="alice",
+            to_alias="bob",
+            sender_address="otherco.com/alice",
             subject="Hello",
             body="Hi Bob!",
             priority="normal",

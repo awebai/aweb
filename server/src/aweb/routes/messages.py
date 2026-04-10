@@ -156,6 +156,7 @@ async def send_message(
     try:
         message_id, created_at = await deliver_message(
             db,
+            registry_client=registry_client,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
