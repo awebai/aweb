@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',
+    messaging_policy TEXT NOT NULL DEFAULT 'everyone'
+                    CHECK (messaging_policy IN ('everyone', 'contacts', 'team', 'org', 'nobody')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -53,15 +55,16 @@ CREATE INDEX IF NOT EXISTS idx_agents_did_aw
 
 CREATE TABLE IF NOT EXISTS {{tables.messages}} (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
-    from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
-    to_agent_id     UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    from_did        TEXT NOT NULL,
+    to_did          TEXT NOT NULL,
     from_alias      TEXT NOT NULL,
     to_alias        TEXT NOT NULL,
     subject         TEXT NOT NULL DEFAULT '',
     body            TEXT NOT NULL,
     priority        TEXT NOT NULL DEFAULT 'normal',
-    from_did        TEXT,
+    team_id    TEXT REFERENCES {{tables.teams}}(team_id),
+    from_agent_id   UUID REFERENCES {{tables.agents}}(agent_id),
+    to_agent_id     UUID REFERENCES {{tables.agents}}(agent_id),
     signature       TEXT,
     signed_payload  TEXT,
     read_at         TIMESTAMPTZ,
@@ -69,7 +72,7 @@ CREATE TABLE IF NOT EXISTS {{tables.messages}} (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_inbox
-    ON {{tables.messages}} (team_id, to_agent_id, created_at)
+    ON {{tables.messages}} (to_did, created_at)
     WHERE read_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -78,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_inbox
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_sessions}} (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
+    team_id    TEXT REFERENCES {{tables.teams}}(team_id),
     created_by      TEXT NOT NULL,
     wait_seconds    INTEGER,
     wait_started_at TIMESTAMPTZ,
@@ -88,22 +91,23 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_sessions}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_participants}} (
     session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
-    agent_id        UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    did             TEXT NOT NULL,
+    agent_id        UUID REFERENCES {{tables.agents}}(agent_id),
     alias           TEXT NOT NULL,
     joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (session_id, agent_id)
+    PRIMARY KEY (session_id, did)
 );
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_messages}} (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
-    from_agent_id   UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    from_agent_id   UUID REFERENCES {{tables.agents}}(agent_id),
+    from_did        TEXT NOT NULL,
     from_alias      TEXT NOT NULL,
     body            TEXT NOT NULL,
     reply_to        UUID,
     sender_leaving  BOOLEAN NOT NULL DEFAULT FALSE,
     hang_on         BOOLEAN NOT NULL DEFAULT FALSE,
-    from_did        TEXT,
     signature       TEXT,
     signed_payload  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -114,10 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session
 
 CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
     session_id      UUID NOT NULL REFERENCES {{tables.chat_sessions}}(session_id),
-    agent_id        UUID NOT NULL REFERENCES {{tables.agents}}(agent_id),
+    did             TEXT NOT NULL,
+    agent_id        UUID REFERENCES {{tables.agents}}(agent_id),
     last_read_message_id UUID REFERENCES {{tables.chat_messages}}(message_id),
     last_read_at    TIMESTAMPTZ,
-    PRIMARY KEY (session_id, agent_id)
+    PRIMARY KEY (session_id, did)
 );
 
 -- ---------------------------------------------------------------------------
@@ -126,12 +131,12 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_read_receipts}} (
 
 CREATE TABLE IF NOT EXISTS {{tables.contacts}} (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES {{tables.teams}}(team_id),
+    owner_did       TEXT NOT NULL,
     contact_address TEXT NOT NULL,
     label           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_id, contact_address)
+    UNIQUE (owner_did, contact_address)
 );
 
 -- ---------------------------------------------------------------------------

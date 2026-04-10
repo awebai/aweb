@@ -63,8 +63,8 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
     )
 
     return (
-        {"agent_id": alice["agent_id"], "team_id": team_id, "alias": "alice"},
-        {"agent_id": bob["agent_id"], "team_id": team_id, "alias": "bob"},
+        {"agent_id": alice["agent_id"], "team_id": team_id, "alias": "alice", "did_key": alice_did},
+        {"agent_id": bob["agent_id"], "team_id": team_id, "alias": "bob", "did_key": bob_did},
     )
 
 

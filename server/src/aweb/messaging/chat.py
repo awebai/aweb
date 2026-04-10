@@ -17,7 +17,7 @@ async def get_agent_by_id(db, *, team_id: str, agent_id: str) -> dict[str, Any] 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias
+        SELECT agent_id, team_id, alias, did_key, did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
@@ -33,7 +33,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias
+        SELECT agent_id, team_id, alias, did_key, did_aw
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
@@ -52,7 +52,7 @@ async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias
+        SELECT agent_id, team_id, alias, did_key, did_aw
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
         """,
@@ -129,11 +129,14 @@ async def ensure_session(
         for agent in agent_rows:
             await tx.execute(
                 """
-                INSERT INTO {{tables.chat_participants}} (session_id, agent_id, alias)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
+                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (session_id, did) DO UPDATE
+                SET agent_id = EXCLUDED.agent_id,
+                    alias = EXCLUDED.alias
                 """,
                 session_id,
+                (agent.get("did_aw") or agent.get("did_key") or "").strip(),
                 UUID(str(agent["agent_id"])),
                 agent["alias"],
             )
@@ -165,7 +168,7 @@ async def send_in_session(
 
     participant = await aweb_db.fetch_one(
         """
-        SELECT alias
+        SELECT alias, did
         FROM {{tables.chat_participants}}
         WHERE session_id = $1 AND agent_id = $2
         """,
@@ -181,21 +184,20 @@ async def send_in_session(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_alias, body,
-             sender_leaving, hang_on, reply_to,
-             from_did, signature, signed_payload, created_at)
+            (message_id, session_id, from_agent_id, from_did, from_alias, body,
+             sender_leaving, hang_on, reply_to, signature, signed_payload, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
         effective_message_id,
         session_id,
         agent_uuid,
+        participant["did"],
         participant["alias"],
         body,
         bool(leaving),
         bool(hang_on),
         reply_to,
-        from_did,
         signature,
         signed_payload,
         effective_created_at,
@@ -205,15 +207,17 @@ async def send_in_session(
     await aweb_db.execute(
         """
         INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
+            (session_id, did, agent_id, last_read_message_id, last_read_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (session_id, did) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
+            agent_id = EXCLUDED.agent_id,
             last_read_at = EXCLUDED.last_read_at
         WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
            OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_id,
+        participant["did"],
         agent_uuid,
         msg_row["message_id"],
         msg_row["created_at"],

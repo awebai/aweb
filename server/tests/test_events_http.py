@@ -161,16 +161,18 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}}
-            (team_id, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
-        "backend:acme.com",
-        alice["agent_id"],
-        bob["agent_id"],
+        alice_did_key,
+        bob_did_key,
         "alice",
         "bob",
         "",
         "hello from alice",
+        "backend:acme.com",
+        alice["agent_id"],
+        bob["agent_id"],
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)

@@ -11,7 +11,7 @@ CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 async def add_contact(
     db,
     *,
-    team_id: str,
+    owner_did: str,
     contact_address: str,
     label: str,
 ) -> dict:
@@ -27,12 +27,12 @@ async def add_contact(
 
     row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.contacts}} (team_id, contact_address, label)
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
         VALUES ($1, $2, $3)
-        ON CONFLICT (team_id, contact_address) DO NOTHING
+        ON CONFLICT (owner_did, contact_address) DO NOTHING
         RETURNING contact_id, contact_address, label, created_at
         """,
-        team_id,
+        owner_did,
         addr,
         label,
     )
@@ -47,18 +47,18 @@ async def add_contact(
     }
 
 
-async def list_contacts(db, *, team_id: str) -> list[dict]:
-    """List all contacts for a team."""
+async def list_contacts(db, *, owner_did: str) -> list[dict]:
+    """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
         """
         SELECT contact_id, contact_address, label, created_at
         FROM {{tables.contacts}}
-        WHERE team_id = $1
+        WHERE owner_did = $1
         ORDER BY contact_address
         """,
-        team_id,
+        owner_did,
     )
 
     return [
@@ -72,12 +72,12 @@ async def list_contacts(db, *, team_id: str) -> list[dict]:
     ]
 
 
-async def get_contact_addresses(db, *, team_id: str) -> set[str]:
-    """Return all contact_address values for a team."""
+async def get_contact_addresses(db, *, owner_did: str) -> set[str]:
+    """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
-        "SELECT contact_address FROM {{tables.contacts}} WHERE team_id = $1",
-        team_id,
+        "SELECT contact_address FROM {{tables.contacts}} WHERE owner_did = $1",
+        owner_did,
     )
     return {r["contact_address"] for r in rows}
 
@@ -107,7 +107,7 @@ async def check_access(db, **kwargs) -> bool:
     return True
 
 
-async def remove_contact(db, *, team_id: str, contact_id: str) -> None:
+async def remove_contact(db, *, owner_did: str, contact_id: str) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -119,7 +119,7 @@ async def remove_contact(db, *, team_id: str, contact_id: str) -> None:
 
     aweb_db = db.get_manager("aweb")
     await aweb_db.execute(
-        "DELETE FROM {{tables.contacts}} WHERE contact_id = $1 AND team_id = $2",
+        "DELETE FROM {{tables.contacts}} WHERE contact_id = $1 AND owner_did = $2",
         contact_uuid,
-        team_id,
+        owner_did,
     )

@@ -30,7 +30,7 @@ async def get_agent_by_id(db, *, team_id: str, agent_id: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, status, deleted_at
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
         """,
@@ -47,7 +47,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, did_aw, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
@@ -93,6 +93,12 @@ async def deliver_message(
     recipient = await get_agent_by_id(db, team_id=team_id, agent_id=str(to_uuid))
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
+    sender_did = (from_did or sender.get("did_aw") or sender.get("did_key") or "").strip()
+    recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+    if not sender_did:
+        raise ValidationError("sender is missing a routing did")
+    if not recipient_did:
+        raise ValidationError("recipient is missing a routing did")
 
     if created_at is None:
         created_at = datetime.now(timezone.utc)
@@ -103,22 +109,22 @@ async def deliver_message(
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (message_id, team_id, from_agent_id, to_agent_id,
-             from_alias, to_alias, subject, body, priority,
-             from_did, signature, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority,
+             team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING message_id, created_at
         """,
         message_id,
-        team_id,
-        from_uuid,
-        to_uuid,
+        sender_did,
+        recipient_did,
         from_alias,
         to_alias,
         subject,
         body,
         priority,
-        from_did,
+        team_id,
+        from_uuid,
+        to_uuid,
         signature,
         signed_payload,
         created_at,

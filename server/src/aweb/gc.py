@@ -51,10 +51,9 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
                 AND m.created_at >= $1
           )
           AND NOT EXISTS (
-              SELECT 1 FROM {{tables.chat_participants}} cp
-              JOIN {{tables.chat_messages}} cm ON cm.session_id = cp.session_id
-              JOIN {{tables.agents}} a ON a.agent_id = cp.agent_id
-              WHERE a.team_id = t.team_id
+              SELECT 1 FROM {{tables.chat_sessions}} cs
+              JOIN {{tables.chat_messages}} cm ON cm.session_id = cs.session_id
+              WHERE cs.team_id = t.team_id
                 AND cm.created_at >= $1
           )
         """,
@@ -74,8 +73,9 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
     async with aweb_db.transaction() as tx:
         await tx.execute(
             """
-            DELETE FROM {{tables.chat_read_receipts}}
-            WHERE agent_id IN (
+            UPDATE {{tables.messages}}
+            SET from_agent_id = NULL
+            WHERE from_agent_id IN (
                 SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
             )
             """,
@@ -83,17 +83,9 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
         )
         await tx.execute(
             """
-            DELETE FROM {{tables.chat_messages}}
-            WHERE session_id IN (
-                SELECT session_id FROM {{tables.chat_sessions}} WHERE team_id = $1
-            )
-            """,
-            team_id,
-        )
-        await tx.execute(
-            """
-            DELETE FROM {{tables.chat_participants}}
-            WHERE agent_id IN (
+            UPDATE {{tables.messages}}
+            SET to_agent_id = NULL
+            WHERE to_agent_id IN (
                 SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
             )
             """,
@@ -101,21 +93,52 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
         )
         await tx.execute(
             """
-            DELETE FROM {{tables.chat_sessions}}
+            UPDATE {{tables.messages}}
+            SET team_id = NULL
             WHERE team_id = $1
             """,
             team_id,
         )
         await tx.execute(
-            "DELETE FROM {{tables.messages}} WHERE team_id = $1",
+            """
+            UPDATE {{tables.chat_read_receipts}}
+            SET agent_id = NULL
+            WHERE agent_id IN (
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
+            )
+            """,
+            team_id,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.chat_messages}}
+            SET from_agent_id = NULL
+            WHERE from_agent_id IN (
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
+            )
+            """,
+            team_id,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.chat_participants}}
+            SET agent_id = NULL
+            WHERE agent_id IN (
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
+            )
+            """,
+            team_id,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.chat_sessions}}
+            SET team_id = NULL
+            WHERE team_id = $1
+            """,
             team_id,
         )
         await tx.execute(
             "DELETE FROM {{tables.control_signals}} WHERE team_id = $1",
-            team_id,
-        )
-        await tx.execute(
-            "DELETE FROM {{tables.contacts}} WHERE team_id = $1",
             team_id,
         )
         await tx.execute(
