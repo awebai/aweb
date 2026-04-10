@@ -173,13 +173,29 @@ var mailInboxCmd = &cobra.Command{
 			if msg.ReadAt != nil {
 				continue
 			}
+			from := preferredIdentityLabel(
+				msg.FromAlias,
+				msg.FromAddress,
+				preferredIdentityLabel("", "", strings.TrimSpace(msg.FromStableID)),
+			)
+			if from == "" {
+				from = strings.TrimSpace(msg.FromDID)
+			}
+			to := preferredIdentityLabel(
+				msg.ToAlias,
+				msg.ToAddress,
+				preferredIdentityLabel("", "", strings.TrimSpace(msg.ToStableID)),
+			)
+			if to == "" {
+				to = strings.TrimSpace(msg.ToDID)
+			}
 			appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 				Timestamp:    msg.CreatedAt,
 				Dir:          "recv",
 				Channel:      "mail",
 				MessageID:    msg.MessageID,
-				From:         msg.FromAddress,
-				To:           msg.ToAddress,
+				From:         from,
+				To:           to,
 				Subject:      msg.Subject,
 				Body:         msg.Body,
 				FromDID:      msg.FromDID,
@@ -194,8 +210,8 @@ var mailInboxCmd = &cobra.Command{
 				Timestamp: msg.CreatedAt,
 				Kind:      interactionKindMailIn,
 				MessageID: msg.MessageID,
-				From:      msg.FromAddress,
-				To:        msg.ToAddress,
+				From:      from,
+				To:        to,
 				Subject:   msg.Subject,
 				Text:      msg.Body,
 			})
