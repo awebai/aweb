@@ -167,6 +167,30 @@ func TestFormatChatPendingFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestFormatChatPendingPrefersParticipantStableIDOverLastFromCurrentDID(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{""},
+				ParticipantDIDs:      []string{"did:aw:carol"},
+				ParticipantAddresses: []string{""},
+				LastFrom:             "",
+				LastFromDID:          "did:key:z6MkCarolCurrent",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT: did:aw:carol") {
+		t.Fatalf("pending output should prefer participant stable identity over last-from current did:\n%s", out)
+	}
+	if strings.Contains(out, "did:key:z6MkCarolCurrent") {
+		t.Fatalf("pending output should not leak current did when participant stable identity is known:\n%s", out)
+	}
+}
+
 func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 	result := &chat.HistoryResult{
 		Messages: []chat.Event{

@@ -222,6 +222,34 @@ func TestFormatNotifyOutputSkipsSelfCurrentDIDParticipant(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputPrefersParticipantStableIDOverLastFromCurrentDID(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"", ""},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "",
+				LastFromDID:          "did:key:z6MkRoseCurrent",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy", "did:aw:wendy", "did:key:self-wendy")
+	if !strings.Contains(out, "Unread message from did:aw:rose") {
+		t.Fatalf("notify output should prefer participant stable identity over last-from current did:\n%s", out)
+	}
+	if strings.Contains(out, "did:key:z6MkRoseCurrent") {
+		t.Fatalf("notify output should not surface current did when participant stable identity is known:\n%s", out)
+	}
+}
+
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 

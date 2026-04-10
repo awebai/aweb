@@ -110,11 +110,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 	var urgent []string
 	var regular []string
 	for _, pending := range result.Pending {
-		from := preferredIdentityLabel(
-			strings.TrimSpace(pending.LastFrom),
-			strings.TrimSpace(pending.LastFromAddress),
-			strings.TrimSpace(pending.LastFromDID),
-		)
+		from := preferredPendingSenderLabel(pending, selfAlias, selfDIDs...)
 		if from == "" {
 			for idx, participant := range pending.Participants {
 				participant = preferredIdentityLabel(
