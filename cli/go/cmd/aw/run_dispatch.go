@@ -218,13 +218,17 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if pendingChatSenderFromSelf(pending, selfAlias, selfIdentityDIDs(client)...) {
 			return runWakeResolution{Skip: true}, nil
 		}
+		displayFrom := preferredPendingSenderLabel(chat.PendingConversation{
+			Participants:         pending.Participants,
+			ParticipantDIDs:      pending.ParticipantDIDs,
+			ParticipantAddresses: pending.ParticipantAddresses,
+			LastFrom:             alias,
+			LastFromDID:          pending.LastFromDID,
+			LastFromAddress:      displayFromAddress,
+		}, selfAlias, selfIdentityDIDs(client)...)
 		return runWakeResolution{
 			CycleContext: formatIncomingChatContext(
-				preferredIdentityLabel(
-					alias,
-					displayFromAddress,
-					strings.TrimSpace(pending.LastFromDID),
-				),
+				displayFrom,
 				pending.LastMessage,
 			),
 		}, nil
