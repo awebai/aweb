@@ -1390,6 +1390,48 @@ func TestFindSessionFallbackUsesParticipantAddress(t *testing.T) {
 	}
 }
 
+func TestFindSessionStableDIDHandleOnlyErrorsOnAmbiguousAliasMatches(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{SessionID: "s-1", Participants: []string{"monitor"}},
+					{SessionID: "s-2", Participants: []string{"monitor"}},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &awid.ResolvedIdentity{
+				DID:         "did:key:z6MkMonitor",
+				StableID:    "did:aw:monitor",
+				Handle:      "monitor",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
+
+	_, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+	if !strings.Contains(err.Error(), "multiple conversations match monitor") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestFindSessionNotFound(t *testing.T) {
 	t.Parallel()
 
