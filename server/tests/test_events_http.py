@@ -429,3 +429,50 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
         "22222222-2222-4222-8222-222222222222",
     }
     assert all(item["sender_waiting"] is True for item in actionable)
+
+
+@pytest.mark.asyncio
+async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_cloud_db):
+    created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    for i in range(50):
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.messages}}
+                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', $2, $3, $4)
+            """,
+            f"00000000-0000-4000-8000-{i + 1:012d}",
+            f"old-{i}",
+            f"old-body-{i}",
+            created_at + timedelta(minutes=i),
+        )
+
+    previous = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob"],
+    )
+    assert len(previous) == 50
+
+    newest_message_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+        VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'newest', 'newest-body', $2)
+        """,
+        newest_message_id,
+        created_at + timedelta(hours=2),
+    )
+
+    current = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob"],
+    )
+    changed = events_module._new_or_changed_events(
+        current,
+        events_module._index_events(previous, key_field="message_id"),
+        key_field="message_id",
+    )
+
+    assert newest_message_id in {item["message_id"] for item in current}
+    assert newest_message_id in {item["message_id"] for item in changed}
