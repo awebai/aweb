@@ -143,6 +143,44 @@ func TestResolveMailWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
 	}
 }
 
+func TestResolveMailWakeSkipsSelfAuthoredMessageByAddress(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/messages/inbox":
+			json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID:   "msg-self-mail",
+						FromAlias:   "",
+						FromAddress: "example.com/rose",
+						Subject:     "note",
+						Body:        "self reminder",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-self-mail"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveMailWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableMail,
+		MessageID: "msg-self-mail",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored mail wake to skip, got %+v", result)
+	}
+}
+
 func TestFormatFallbackCommsContextPrefersFromAddress(t *testing.T) {
 	t.Parallel()
 
