@@ -6,11 +6,15 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -18,11 +22,18 @@ from awid.team_ids import parse_team_id
 from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.config import get_settings
-from aweb.deps import get_db
+from aweb.deps import get_db, get_redis
+from aweb.events import team_events_channel_name
+from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
 router = APIRouter(tags=["dashboard"])
+logger = logging.getLogger(__name__)
+
+DASHBOARD_KEEPALIVE_SECONDS = 30.0
+DASHBOARD_PRESENCE_POLL_SECONDS = 5.0
+DASHBOARD_PUBSUB_POLL_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +184,127 @@ class DashboardClaimSummary(BaseModel):
     workspace_id: str
     alias: str
     claimed_at: str
+
+
+class DashboardEventSnapshot(BaseModel):
+    team_id: str
+    online_aliases: list[str]
+    active_claims: list[DashboardClaimSummary]
+    timestamp: str
+
+
+# ---------------------------------------------------------------------------
+# Dashboard SSE helpers
+# ---------------------------------------------------------------------------
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _format_sse(event_name: str, payload: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _list_online_aliases(redis, *, team_id: str) -> list[str]:
+    workspace_ids = await get_workspace_ids_by_team_id(redis, team_id)
+    if not workspace_ids:
+        return []
+    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+    aliases = {
+        str(p.get("alias", "")).strip()
+        for p in presences
+        if str(p.get("alias", "")).strip() and str(p.get("team_id", "")).strip() == team_id
+    }
+    return sorted(aliases)
+
+
+async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any]:
+    online_aliases = await _list_online_aliases(redis, team_id=team_id)
+    claim_rows = await list_active_claims(db, team_id=team_id, limit=200)
+    snapshot = DashboardEventSnapshot(
+        team_id=team_id,
+        online_aliases=online_aliases,
+        active_claims=[
+            DashboardClaimSummary(
+                task_ref=row["task_ref"],
+                workspace_id=str(row["workspace_id"]),
+                alias=row["alias"],
+                claimed_at=row["claimed_at"].isoformat(),
+            )
+            for row in claim_rows
+        ],
+        timestamp=_utc_now_iso(),
+    )
+    return snapshot.model_dump()
+
+
+async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
+    channel = team_events_channel_name(team_id)
+    async with redis.pubsub() as pubsub:
+        await pubsub.subscribe(channel)
+
+        yield ": keepalive\n\n"
+        yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
+
+        snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
+        yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
+
+        previous_online_aliases = set(snapshot["online_aliases"])
+        loop = asyncio.get_running_loop()
+        last_keepalive = loop.time()
+        last_presence_poll = loop.time()
+
+        while True:
+            if await request.is_disconnected():
+                return
+
+            try:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
+                )
+            except Exception:
+                logger.warning("Dashboard team-events pubsub read failed", exc_info=True)
+                return
+
+            now = loop.time()
+
+            if message and message.get("type") == "message":
+                raw_payload = message.get("data")
+                if isinstance(raw_payload, bytes):
+                    raw_payload = raw_payload.decode("utf-8")
+                payload = json.loads(raw_payload)
+                yield _format_sse(str(payload.get("type", "message")), payload)
+
+            if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
+                current_online_aliases = set(await _list_online_aliases(redis, team_id=team_id))
+                for alias in sorted(current_online_aliases - previous_online_aliases):
+                    yield _format_sse(
+                        "agent.online",
+                        {
+                            "type": "agent.online",
+                            "team_id": team_id,
+                            "alias": alias,
+                            "timestamp": _utc_now_iso(),
+                        },
+                    )
+                for alias in sorted(previous_online_aliases - current_online_aliases):
+                    yield _format_sse(
+                        "agent.offline",
+                        {
+                            "type": "agent.offline",
+                            "team_id": team_id,
+                            "alias": alias,
+                            "timestamp": _utc_now_iso(),
+                        },
+                    )
+                previous_online_aliases = current_online_aliases
+                last_presence_poll = now
+
+            if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +538,28 @@ async def list_team_tasks(
         has_more=has_more,
         next_cursor=next_cursor,
     ).model_dump()
+
+
+@router.get("/v1/teams/{team_id:path}/events/stream")
+async def stream_team_events(
+    request: Request,
+    team_id: str,
+    db=Depends(get_db),
+    redis=Depends(get_redis),
+):
+    await _require_dashboard_auth(request, team_id)
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    return StreamingResponse(
+        _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")

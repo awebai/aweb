@@ -157,9 +157,72 @@ class TaskUnclaimedEvent(Event):
     title: str | None = None
 
 
+@dataclass
+class TeamEvent:
+    """Minimal dashboard-facing event payload."""
+
+    team_id: str
+    type: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
+
+@dataclass
+class TeamTaskCreatedEvent(TeamEvent):
+    type: str = field(default="task.created", init=False)
+    task_ref: str = ""
+    title: str = ""
+    status: str = "open"
+
+
+@dataclass
+class TeamTaskStatusChangedEvent(TeamEvent):
+    type: str = field(default="task.status_changed", init=False)
+    task_ref: str = ""
+    title: str = ""
+    old_status: str = ""
+    new_status: str = ""
+
+
+@dataclass
+class TeamTaskClaimedEvent(TeamEvent):
+    type: str = field(default="task.claimed", init=False)
+    task_ref: str = ""
+    alias: str = ""
+    title: str = ""
+
+
+@dataclass
+class TeamTaskUnclaimedEvent(TeamEvent):
+    type: str = field(default="task.unclaimed", init=False)
+    task_ref: str = ""
+    alias: str = ""
+    title: str = ""
+
+
+@dataclass
+class TeamMessageSentEvent(TeamEvent):
+    type: str = field(default="message.sent", init=False)
+    message_id: str = ""
+    from_alias: str = ""
+    to_alias: str = ""
+    subject: str = ""
+    priority: str = "normal"
+
+
 def _channel_name(workspace_id: str) -> str:
     """Generate Redis channel name for a workspace."""
     return f"events:{workspace_id}"
+
+
+def team_events_channel_name(team_id: str) -> str:
+    """Generate Redis channel name for dashboard team events."""
+    return f"team-events:{team_id}"
 
 
 def chat_session_channel_name(session_id: str) -> str:
@@ -181,6 +244,15 @@ async def publish_event(redis: Redis, event: Event) -> int:
     message = event.to_json()
     count = await redis.publish(channel, message)
     logger.debug(f"Published {event.type} to {channel}, {count} subscribers")
+    return count
+
+
+async def publish_team_event(redis: Redis, event: TeamEvent) -> int:
+    """Publish a dashboard-shaped event to the team pub/sub channel."""
+    channel = team_events_channel_name(event.team_id)
+    message = event.to_json()
+    count = await redis.publish(channel, message)
+    logger.debug("Published %s to %s, %s subscribers", event.type, channel, count)
     return count
 
 

@@ -238,6 +238,7 @@ async def update_task_route(
             "task.status_changed",
             {
                 "task_id": result["task_id"],
+                "team_id": identity.team_id,
                 "task_ref": result["task_ref"],
                 "title": result["title"],
                 "old_status": old_status,

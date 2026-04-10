@@ -28,7 +28,7 @@ from ...presence import (
 )
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from ...events import TaskUnclaimedEvent, publish_event
+from ...events import TaskUnclaimedEvent, TeamTaskUnclaimedEvent, publish_event, publish_team_event
 from ..roles import (
     ROLE_MAX_LENGTH,
 )
@@ -481,6 +481,15 @@ async def delete_workspace(
                         workspace_id=validated_id,
                         task_ref=row["task_ref"],
                         alias=existing["alias"],
+                    ),
+                )
+                await publish_team_event(
+                    redis,
+                    TeamTaskUnclaimedEvent(
+                        team_id=team_id,
+                        task_ref=row["task_ref"],
+                        alias=existing["alias"],
+                        title="",
                     ),
                 )
             await clear_workspace_presence(redis, [validated_id])
