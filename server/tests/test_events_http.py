@@ -13,6 +13,7 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
+import aweb.routes.events as events_module
 from aweb.routes.events import router as events_router
 
 
@@ -361,3 +362,70 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
     assert resp.status_code == 200
     assert "event: actionable_chat" in resp.text
     assert '"from_alias": "alice"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_cloud_db, monkeypatch):
+    class _DbShim:
+        def __init__(self, aweb_db):
+            self._aweb_db = aweb_db
+
+        def get_manager(self, name="aweb"):
+            assert name == "aweb"
+            return self._aweb_db
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES
+            ('11111111-1111-4111-8111-111111111111', 'backend:acme.com', 'did:aw:alice'),
+            ('22222222-2222-4222-8222-222222222222', 'backend:acme.com', 'did:aw:carol')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ('11111111-1111-4111-8111-111111111111', 'did:aw:bob', 'bob'),
+            ('11111111-1111-4111-8111-111111111111', 'did:aw:alice', 'alice'),
+            ('22222222-2222-4222-8222-222222222222', 'did:aw:bob', 'bob'),
+            ('22222222-2222-4222-8222-222222222222', 'did:aw:carol', 'carol')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body)
+        VALUES
+            ('11111111-1111-4111-8111-111111111111', 'did:aw:alice', 'alice', 'hello from alice'),
+            ('22222222-2222-4222-8222-222222222222', 'did:aw:carol', 'carol', 'hello from carol')
+        """
+    )
+
+    seen: dict[str, list[str]] = {}
+
+    async def _fake_get_waiting_agents(_redis, session_id: str, participant_dids: list[str]):
+        seen[session_id] = list(participant_dids)
+        return list(participant_dids)
+
+    monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
+
+    actionable = await events_module._current_actionable_chat(
+        _DbShim(aweb_cloud_db.aweb_db),
+        None,
+        participant_dids=["did:aw:bob", "did:key:bob"],
+        participant_agent_id=None,
+    )
+
+    assert seen["11111111-1111-4111-8111-111111111111"] == ["did:aw:alice"]
+    assert seen["22222222-2222-4222-8222-222222222222"] == ["did:aw:carol"]
+    assert {item["session_id"] for item in actionable} == {
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    }
+    assert all(item["sender_waiting"] is True for item in actionable)

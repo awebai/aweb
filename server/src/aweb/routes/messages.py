@@ -34,6 +34,7 @@ class SendMessageRequest(BaseModel):
     body: str
     priority: MessagePriority = "normal"
     message_id: Optional[str] = None
+    timestamp: Optional[str] = None
     from_did: Optional[str] = Field(default=None, max_length=256)
     signature: Optional[str] = Field(default=None, max_length=512)
     signed_payload: Optional[str] = None
@@ -88,6 +89,19 @@ class InboxResponse(BaseModel):
 class AckResponse(BaseModel):
     message_id: str
     acknowledged_at: str
+
+
+def _parse_signed_timestamp(value: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid timestamp format")
+    if dt.tzinfo is None:
+        raise HTTPException(status_code=422, detail="timestamp must be timezone-aware")
+    dt = dt.astimezone(timezone.utc)
+    if dt.microsecond != 0:
+        raise HTTPException(status_code=422, detail="timestamp must be second precision")
+    return dt
 
 
 def _identity_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -160,6 +174,18 @@ async def send_message(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
+    created_at = None
+    if payload.signature is not None:
+        if payload.from_did is None or not payload.from_did.strip():
+            raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+        if payload.from_did.strip() not in set(_identity_dids(auth)):
+            raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+        if payload.message_id is None or payload.timestamp is None:
+            raise HTTPException(
+                status_code=422,
+                detail="message_id and timestamp are required when signature is provided",
+            )
+        created_at = _parse_signed_timestamp(payload.timestamp)
 
     try:
         message_id, created_at = await deliver_message(
@@ -178,6 +204,7 @@ async def send_message(
             priority=payload.priority,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
+            created_at=created_at,
             message_id=msg_uuid,
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
