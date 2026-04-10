@@ -763,8 +763,9 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 			}
 			return false, true
 		}
-		for _, target := range targets {
-			if chatEventMatchesTarget(ev, target) {
+		eventNames := normalizedChatEventNames(ev, resp.Participants)
+		for _, targetNames := range targetStatusNames {
+			if chatTargetNameListsOverlap(targetNames, eventNames) {
 				return true, false
 			}
 		}
@@ -978,6 +979,52 @@ func chatEventMatchesTarget(ev Event, target string) bool {
 		}
 	}
 	return false
+}
+
+func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []string {
+	names := []string{}
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range names {
+			if existing == value {
+				return
+			}
+		}
+		names = append(names, value)
+	}
+
+	for _, value := range []string{
+		ev.FromAgent,
+		ev.FromAddress,
+		ev.FromStableID,
+		ev.FromDID,
+		addressHandle(ev.FromAddress),
+	} {
+		appendUnique(value)
+	}
+
+	for _, participant := range participants {
+		for _, candidate := range []string{
+			strings.TrimSpace(ev.FromAgent),
+			strings.TrimSpace(ev.FromAddress),
+			strings.TrimSpace(ev.FromStableID),
+			strings.TrimSpace(ev.FromDID),
+		} {
+			if candidate == "" {
+				continue
+			}
+			if chatParticipantMatchesTarget(participant, candidate) {
+				appendUnique(strings.TrimSpace(participant.Alias))
+				appendUnique(strings.TrimSpace(participant.Address))
+				appendUnique(strings.TrimSpace(participant.DID))
+			}
+		}
+	}
+
+	return names
 }
 
 func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target string, participants []awid.ChatParticipant) []string {
