@@ -670,6 +670,83 @@ func TestShowPendingCarriesLastFromAddress(t *testing.T) {
 	}
 }
 
+func TestShowPendingCarriesLastFromStableID(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{""},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						LastMessage:     "help!",
+						LastFrom:        "",
+						LastFromDID:     "did:aw:monitor",
+						SenderWaiting:   true,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d", len(result.Events))
+	}
+	if result.Events[0].FromStableID != "did:aw:monitor" {
+		t.Fatalf("from_stable_id=%q", result.Events[0].FromStableID)
+	}
+}
+
+func TestHistorySupportsStableDIDTargetViaParticipantDIDs(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{""},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2026-03-20T00:00:00Z",
+					},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{
+						MessageID: "m1",
+						FromDID:   "did:aw:monitor",
+						Body:      "hello",
+						Timestamp: "2026-03-20T00:00:01Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := History(context.Background(), mustClient(t, server.URL), "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%q", result.SessionID)
+	}
+}
+
 func TestSendWithLeaving(t *testing.T) {
 	t.Parallel()
 

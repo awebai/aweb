@@ -1179,6 +1179,7 @@ async def send_message(
 class SessionListItem(BaseModel):
     session_id: str
     participants: list[str]
+    participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
     created_at: str
     sender_waiting: bool = False
@@ -1258,6 +1259,11 @@ async def list_sessions(
                 session_id=str(row["session_id"]),
                 participants=[
                     participant["alias"]
+                    for participant in session_participants
+                    if (participant.get("did") or "").strip() not in set(actor_dids)
+                ],
+                participant_dids=[
+                    (participant.get("did") or "").strip()
                     for participant in session_participants
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],

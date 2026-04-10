@@ -698,6 +698,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
         {
             "session_id": str(session_id),
             "participants": ["bob"],
+            "participant_dids": ["did:aw:bob"],
             "participant_addresses": ["acme.com/bob"],
             "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "sender_waiting": False,
