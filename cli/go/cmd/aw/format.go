@@ -251,7 +251,7 @@ func formatChatPending(v any) string {
 
 	for _, p := range result.Pending {
 		openHint := ""
-		if p.LastFrom != "" {
+		if p.LastFrom != "" && len(p.Participants) == 1 && p.Participants[0] == p.LastFrom {
 			openHint = fmt.Sprintf(" — Run \"aw chat open %s\"", p.LastFrom)
 		}
 

@@ -330,9 +330,12 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 	if gotPath != "/api/v1/chat/sessions" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	addrs, ok := gotBody["to_aliases"].([]any)
+	addrs, ok := gotBody["to_addresses"].([]any)
 	if !ok || len(addrs) != 1 || addrs[0] != "acme/bot" {
-		t.Fatalf("to_aliases=%v", gotBody["to_aliases"])
+		t.Fatalf("to_addresses=%v", gotBody["to_addresses"])
+	}
+	if aliases, ok := gotBody["to_aliases"].([]any); ok && len(aliases) != 0 {
+		t.Fatalf("to_aliases=%v, want empty", gotBody["to_aliases"])
 	}
 	if gotBody["message"] != "hello network" {
 		t.Fatalf("message=%v", gotBody["message"])
