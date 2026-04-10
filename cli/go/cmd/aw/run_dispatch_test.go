@@ -675,6 +675,56 @@ func TestResolveChatWakeForAliasPendingFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestResolveChatWakeForAliasPendingPrefersParticipantStableIDOverLastFromCurrentDID(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"", ""},
+						ParticipantDIDs: []string{"did:aw:rose", "did:aw:carol"},
+						LastMessage:     "follow up",
+						LastFrom:        "",
+						LastFromDID:     "did:key:z6MkCarolCurrent",
+						UnreadCount:     1,
+						SenderWaiting:   true,
+					},
+				},
+				MessagesWaiting: 1,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		MessageID:   "chat-msg-1",
+		FromAlias:   "",
+		FromAddress: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from did:aw:carol (chat)") {
+		t.Fatalf("expected pending wake context to prefer participant stable identity, got %q", result.CycleContext)
+	}
+	if strings.Contains(result.CycleContext, "did:key:z6MkCarolCurrent") {
+		t.Fatalf("pending wake context should not leak current did, got %q", result.CycleContext)
+	}
+}
+
 func TestResolveChatWakeForAliasSkipsSelfAuthoredAddressMessage(t *testing.T) {
 	t.Parallel()
 
