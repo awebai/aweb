@@ -41,7 +41,7 @@ func formatContactTag(isContact *bool) string {
 // formatChatEventLine formats a single chat event as "[HH:MM:SS] agent: body" with tags.
 func formatChatEventLine(m chat.Event) string {
 	tags := formatVerificationTag(m.VerificationStatus) + formatContactTag(m.IsContact)
-	from := preferredIdentityLabel(m.FromAgent, m.FromAddress, "")
+	from := preferredIdentityDisplayLabel(m.FromAgent, m.FromAddress, m.FromStableID, m.FromDID, "")
 	ts := ""
 	if m.Timestamp != "" {
 		if t, err := time.Parse(time.RFC3339, m.Timestamp); err == nil {
@@ -52,6 +52,22 @@ func formatChatEventLine(m chat.Event) string {
 		return fmt.Sprintf("[%s] %s%s: %s\n", ts, from, tags, m.Body)
 	}
 	return fmt.Sprintf("%s%s: %s\n", from, tags, m.Body)
+}
+
+func preferredIdentityDisplayLabel(alias string, address string, stableID string, did string, fallback string) string {
+	label := preferredIdentityLabel(alias, address, "")
+	if label != "" {
+		return label
+	}
+	stableID = strings.TrimSpace(stableID)
+	if stableID != "" {
+		return stableID
+	}
+	did = strings.TrimSpace(did)
+	if did != "" {
+		return did
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // --- introspect/whoami ---
@@ -107,7 +123,7 @@ func formatMailInbox(v any) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityLabel(msg.FromAlias, msg.FromAddress, ""), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, ""), subj, tags, msg.Body))
 	}
 	return sb.String()
 }
@@ -164,7 +180,7 @@ func formatChatSend(v any) string {
 		timestamp = tagEvent.Timestamp
 		tags = formatVerificationTag(tagEvent.VerificationStatus) + formatContactTag(tagEvent.IsContact)
 	}
-	replyFrom := preferredIdentityLabel(
+	replyFrom := preferredIdentityDisplayLabel(
 		func() string {
 			if tagEvent == nil {
 				return ""
@@ -176,6 +192,18 @@ func formatChatSend(v any) string {
 				return ""
 			}
 			return tagEvent.FromAddress
+		}(),
+		func() string {
+			if tagEvent == nil {
+				return ""
+			}
+			return tagEvent.FromStableID
+		}(),
+		func() string {
+			if tagEvent == nil {
+				return ""
+			}
+			return tagEvent.FromDID
 		}(),
 		result.TargetAgent,
 	)
@@ -250,7 +278,7 @@ func formatChatSend(v any) string {
 			sb.WriteString("\n---\n\n")
 		}
 		tags := formatVerificationTag(event.VerificationStatus) + formatContactTag(event.IsContact)
-		writeChatLine("Chat from", preferredIdentityLabel(event.FromAgent, event.FromAddress, "")+tags, event.Timestamp)
+		writeChatLine("Chat from", preferredIdentityDisplayLabel(event.FromAgent, event.FromAddress, event.FromStableID, event.FromDID, "")+tags, event.Timestamp)
 		sb.WriteString(fmt.Sprintf("Body: %s\n", event.Body))
 		messageIndex++
 	}
