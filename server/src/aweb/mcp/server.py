@@ -167,6 +167,7 @@ def register_tools(
     ) -> str:
         return await _send_mail_impl(
             db_infra,
+            registry_client=registry_client,
             to=to,
             subject=subject,
             body=body,

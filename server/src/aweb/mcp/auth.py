@@ -1,14 +1,8 @@
-"""MCP authentication middleware.
-
-Resolves the calling agent's identity and makes it available to MCP tool
-handlers via a contextvar. Authenticates using team certificates.
-"""
+"""MCP authentication middleware."""
 
 from __future__ import annotations
 
-import base64
 import contextvars
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -18,10 +12,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from awid.dns_auth import parse_didkey_auth
-from awid.signing import canonical_json_bytes, verify_did_key_signature
-from awid.team_ids import parse_team_id
-from aweb.team_auth import parse_and_verify_certificate
+from aweb.identity_auth_deps import resolve_identity_auth
+from aweb.team_auth_deps import verify_request_certificate
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +22,12 @@ logger = logging.getLogger(__name__)
 class AuthContext:
     """Resolved identity for the current MCP request."""
 
-    team_id: str
-    agent_id: str
-    alias: str
+    team_id: str | None
+    agent_id: str | None
+    alias: str | None
     did_key: str
+    did_aw: str | None = None
+    address: str | None = None
 
 
 _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
@@ -53,10 +47,7 @@ def get_auth() -> AuthContext:
 
 
 class MCPAuthMiddleware:
-    """ASGI middleware that resolves agent identity for MCP requests.
-
-    Authenticates via team certificate (DIDKey signature + X-AWID-Team-Certificate).
-    """
+    """ASGI middleware that resolves identity for MCP requests."""
 
     def __init__(self, app: ASGIApp, db_infra: Any) -> None:
         self.app = app
@@ -70,7 +61,7 @@ class MCPAuthMiddleware:
         request = Request(scope)
 
         try:
-            ctx = await self._resolve_certificate_auth(request)
+            ctx = await self._resolve_auth(request)
         except HTTPException as exc:
             response = JSONResponse(
                 {"error": exc.detail},
@@ -94,89 +85,29 @@ class MCPAuthMiddleware:
         finally:
             _auth_context.reset(cv_token)
 
-    async def _resolve_certificate_auth(self, request: Request) -> AuthContext | None:
-        """Resolve auth from team certificate headers."""
+    async def _resolve_auth(self, request: Request) -> AuthContext | None:
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("DIDKey "):
             return None
 
         cert_header = request.headers.get("x-awid-team-certificate", "")
         if not cert_header:
-            return None
-
-        did_key, signature_b64 = parse_didkey_auth(auth_header)
-
-        # Verify DIDKey signature over {team_id, timestamp}
-        timestamp = request.headers.get("x-aweb-timestamp", "")
-        if not timestamp:
-            raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp header")
-
-        try:
-            cert_data = json.loads(base64.b64decode(cert_header))
-        except Exception:
-            raise HTTPException(status_code=401, detail="Malformed certificate")
-
-        cert_team_id = cert_data.get("team_id", "")
-
-        import hashlib as _hashlib
-        body_sha256 = getattr(request.state, "body_sha256", None)
-        if body_sha256 is None:
-            body_sha256 = _hashlib.sha256(b"").hexdigest()
-        sig_payload = canonical_json_bytes({
-            "body_sha256": body_sha256,
-            "team_id": cert_team_id,
-            "timestamp": timestamp,
-        })
-        try:
-            verify_did_key_signature(did_key=did_key, payload=sig_payload, signature_b64=signature_b64)
-        except ValueError:
-            raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
-
-        # Resolve team key from awid registry
-        registry_client = getattr(request.app.state, "awid_registry_client", None)
-        team_did_key = ""
-        if registry_client is not None:
-            try:
-                domain, team_name = parse_team_id(cert_team_id)
-            except ValueError:
-                domain, team_name = "", ""
-            if domain and team_name:
-                try:
-                    team_did_key = await registry_client.get_team_public_key(domain, team_name) or ""
-                except Exception:
-                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
-
-        if not team_did_key:
-            raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_id}")
-
-        # Check revocations
-        revoked_certs: set[str] = set()
-        if registry_client is not None:
-            try:
-                domain, team_name = parse_team_id(cert_team_id)
-            except ValueError:
-                domain, team_name = "", ""
-            if domain and team_name:
-                try:
-                    revoked_certs = await registry_client.get_team_revocations(domain, team_name)
-                except Exception:
-                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
-
-        try:
-            cert_info = parse_and_verify_certificate(
-                cert_header,
-                request_did_key=did_key,
-                team_public_key_resolver=lambda _ta: team_did_key,
-                revocation_checker=lambda _ta, cid: cid in revoked_certs,
+            identity = await resolve_identity_auth(request)
+            return AuthContext(
+                team_id=None,
+                agent_id=None,
+                alias=None,
+                did_key=identity.did_key,
+                did_aw=identity.did_aw,
+                address=identity.address,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc))
 
-        # Look up agent
+        cert_info = await verify_request_certificate(request, self.db_infra)
+
         aweb_db = self.db_infra.get_manager("aweb")
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, alias FROM {{tables.agents}}
+            SELECT agent_id, alias, did_aw, address FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
             cert_info["team_id"],
@@ -190,4 +121,6 @@ class MCPAuthMiddleware:
             agent_id=str(row["agent_id"]),
             alias=row["alias"],
             did_key=cert_info["did_key"],
+            did_aw=row.get("did_aw"),
+            address=row.get("address"),
         )
