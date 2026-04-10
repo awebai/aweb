@@ -660,6 +660,74 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 	}
 }
 
+func TestChatSendMessageRemovesOneSelfAddressFromDeterministicTo(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotSend ChatSendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{
+					{
+						SessionID:            "sess-1",
+						Participants:         []string{"", ""},
+						ParticipantAddresses: []string{"example.com/rose", "otherco/monitor"},
+						CreatedAt:            "2026-02-01T00:00:00Z",
+					},
+				},
+			})
+		case "/v1/chat/sessions/sess-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotSend); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID:          "msg-2",
+				Delivered:          true,
+				ExtendsWaitSeconds: 0,
+			})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("example.com/rose")
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{Body: "ping"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := &MessageEnvelope{
+		From:      "rose",
+		FromDID:   did,
+		To:        "otherco/monitor",
+		Type:      "chat",
+		Body:      "ping",
+		Timestamp: gotSend.Timestamp,
+		MessageID: gotSend.MessageID,
+		Signature: gotSend.Signature,
+	}
+	status, verifyErr := VerifyMessage(env)
+	if verifyErr != nil {
+		t.Fatalf("VerifyMessage: %v", verifyErr)
+	}
+	if status != Verified {
+		t.Fatalf("status=%s, want verified (self address should be removed from deterministic To)", status)
+	}
+}
+
 func TestChatSendMessageRetainsForeignParticipantWithSameAliasAsSelf(t *testing.T) {
 	t.Parallel()
 
