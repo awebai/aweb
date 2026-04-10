@@ -30,14 +30,18 @@ func (c *Client) alias() string {
 }
 
 func (c *Client) toAddressForAliases(aliases []string) string {
-	if len(aliases) == 0 {
+	return deterministicTargetList(aliases)
+}
+
+func deterministicTargetList(values []string) string {
+	if len(values) == 0 {
 		return ""
 	}
-	clean := make([]string, 0, len(aliases))
-	for _, a := range aliases {
-		a = strings.TrimSpace(a)
-		if a != "" {
-			clean = append(clean, a)
+	clean := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			clean = append(clean, value)
 		}
 	}
 	if len(clean) == 0 {
@@ -45,11 +49,11 @@ func (c *Client) toAddressForAliases(aliases []string) string {
 	}
 	sort.Strings(clean)
 	var b strings.Builder
-	for i, a := range clean {
+	for i, value := range clean {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(a)
+		b.WriteString(value)
 	}
 	return b.String()
 }
@@ -68,6 +72,9 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		}
 		if toAddr := c.toAddressForAliases(s.ParticipantAddresses); toAddr != "" {
 			return toAddr, nil
+		}
+		if toDIDs := deterministicTargetList(s.ParticipantDIDs); toDIDs != "" {
+			return toDIDs, nil
 		}
 		selfAlias := c.alias()
 		if selfAlias == "" {
