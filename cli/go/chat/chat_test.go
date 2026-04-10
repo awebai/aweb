@@ -3292,6 +3292,62 @@ func TestSendAcceptsAddressTargetReplyByStableDID(t *testing.T) {
 	}
 }
 
+func TestSendDoesNotMarkStableTargetDisconnectedWhenCurrentDIDIsConnected(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetStableID := "did:aw:bob"
+	targetCurrentDID := "did:key:z6MkBobCurrent"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:key:z6MkAliceCurrent"},
+					{DID: targetCurrentDID},
+				},
+				TargetsConnected: []string{targetCurrentDID},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case targetStableID, targetCurrentDID:
+				return &awid.ResolvedIdentity{DID: targetCurrentDID, StableID: targetStableID}, nil
+			default:
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+	})
+
+	result, err := Send(context.Background(), client, "alice", []string{targetStableID}, "hello", SendOptions{Wait: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TargetNotConnected {
+		t.Fatalf("target_not_connected=%v, want false", result.TargetNotConnected)
+	}
+}
+
 func TestSendTreatsAddressTargetAsLeftWhenAliasLeft(t *testing.T) {
 	t.Parallel()
 
