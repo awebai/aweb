@@ -34,11 +34,8 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 func logChatEvent(logsDir, logName, myAddress string, ev chat.Event, selfDIDs ...string) {
 	dir := "recv"
 	kind := interactionKindChatIn
-	from := ev.FromAddress
-	if from == "" {
-		from = ev.FromAgent
-	}
-	to := ev.ToAddress
+	from := preferredIdentityDisplayLabel(ev.FromAgent, ev.FromAddress, ev.FromStableID, ev.FromDID, "")
+	to := preferredIdentityDisplayLabel("", ev.ToAddress, ev.ToStableID, ev.ToDID, "")
 	if chatEventIsFromSelf(ev, myAddress, selfDIDs...) {
 		dir = "send"
 		kind = interactionKindChatOut
