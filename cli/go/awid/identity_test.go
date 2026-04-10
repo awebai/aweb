@@ -387,7 +387,7 @@ func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 				"name":            "alice",
 				"did_aw":          stableID,
 				"current_did_key": did,
-				"reachability":    "private",
+				"reachability":    "nobody",
 				"created_at":      "2026-04-04T00:00:00Z",
 			})
 		case "/v1/did/" + stableID + "/key":

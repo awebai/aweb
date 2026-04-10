@@ -138,8 +138,8 @@ An **address** is the stable handle for a persistent identity:
 - Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
 - Public trust semantics attach to the persistent address, not to ephemeral
   aliases
-- Address assignment is separate from reachability (`private` /
-  `org-visible` / `contacts-only` / `public`)
+- Address assignment is separate from reachability (`nobody` /
+  `org_only` / `team_members_only` / `public`)
 
 ### Lifecycle: Delete vs Archive vs Replace
 

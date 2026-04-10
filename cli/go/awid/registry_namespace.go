@@ -17,10 +17,11 @@ type namespaceRegisterRequest struct {
 }
 
 type addressRegisterRequest struct {
-	Name          string `json:"name"`
-	DIDAW         string `json:"did_aw"`
-	CurrentDIDKey string `json:"current_did_key"`
-	Reachability  string `json:"reachability"`
+	Name            string  `json:"name"`
+	DIDAW           string  `json:"did_aw"`
+	CurrentDIDKey   string  `json:"current_did_key"`
+	Reachability    string  `json:"reachability"`
+	VisibleToTeamID *string `json:"visible_to_team_id,omitempty"`
 }
 
 type deleteReasonRequest struct {
@@ -173,12 +174,13 @@ func (c *RegistryClient) RegisterAddress(
 	currentDIDKey string,
 	reachability string,
 	controllerSigningKey ed25519.PrivateKey,
+	visibleToTeamID string,
 ) (*RegistryAddress, string, error) {
 	registryURL, err := c.DiscoverRegistry(ctx, domain)
 	if err != nil {
 		return nil, "", err
 	}
-	address, err := c.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, reachability, controllerSigningKey)
+	address, err := c.RegisterAddressAt(ctx, registryURL, domain, name, didAW, currentDIDKey, reachability, controllerSigningKey, visibleToTeamID)
 	return address, registryURL, err
 }
 
@@ -191,12 +193,14 @@ func (c *RegistryClient) RegisterAddressAt(
 	currentDIDKey string,
 	reachability string,
 	controllerSigningKey ed25519.PrivateKey,
+	visibleToTeamID string,
 ) (*RegistryAddress, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	didAW = strings.TrimSpace(didAW)
 	currentDIDKey = strings.TrimSpace(currentDIDKey)
 	reachability = strings.TrimSpace(reachability)
+	visibleToTeamID = strings.TrimSpace(visibleToTeamID)
 	if domain == "" {
 		return nil, fmt.Errorf("domain is required")
 	}
@@ -210,7 +214,7 @@ func (c *RegistryClient) RegisterAddressAt(
 		return nil, fmt.Errorf("currentDIDKey must start with did:key:")
 	}
 	if reachability == "" {
-		reachability = "private"
+		reachability = "nobody"
 	}
 	if controllerSigningKey == nil {
 		return nil, fmt.Errorf("controller signing key is required")
@@ -218,6 +222,10 @@ func (c *RegistryClient) RegisterAddressAt(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses"
 	var out RegistryAddress
+	var requestVisibleToTeamID *string
+	if visibleToTeamID != "" {
+		requestVisibleToTeamID = &visibleToTeamID
+	}
 	if err := c.requestJSON(
 		ctx,
 		http.MethodPost,
@@ -225,10 +233,11 @@ func (c *RegistryClient) RegisterAddressAt(
 		path,
 		signedAddressHeaders(domain, name, "register_address", controllerSigningKey),
 		addressRegisterRequest{
-			Name:          name,
-			DIDAW:         didAW,
-			CurrentDIDKey: currentDIDKey,
-			Reachability:  reachability,
+			Name:            name,
+			DIDAW:           didAW,
+			CurrentDIDKey:   currentDIDKey,
+			Reachability:    reachability,
+			VisibleToTeamID: requestVisibleToTeamID,
 		},
 		&out,
 	); err != nil {

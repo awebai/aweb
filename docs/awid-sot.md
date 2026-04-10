@@ -94,9 +94,20 @@ Identity handles within namespaces. `acme.com/alice`.
 POST   /v1/namespaces/{domain}/addresses          Create (controller auth)
 GET    /v1/namespaces/{domain}/addresses           List (public, paginated)
 GET    /v1/namespaces/{domain}/addresses/{name}    Read (public)
-PATCH  /v1/namespaces/{domain}/addresses/{name}    Update reachability
+PUT    /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
+
+**Reachability enforcement:**
+- `public` — any caller, anonymous or authenticated
+- `nobody` — owner only; the caller's `did:aw` must match the address `did_aw`
+- `org_only` — owner, or any caller holding an active persistent team certificate for a team in the same namespace domain
+- `team_members_only` — owner, or any caller holding an active persistent team certificate for the specific team in `visible_to_team_id`
+
+Ephemeral team certificates (`lifetime='ephemeral'`) do not satisfy
+`org_only` or `team_members_only` checks. Anonymous callers see only
+public addresses; non-public addresses return `404`, not `403`, to avoid
+leaking existence.
 
 ## DID registry
 
@@ -413,7 +424,13 @@ CREATE TABLE public_addresses (
     name            TEXT NOT NULL,
     did_aw          TEXT NOT NULL,
     current_did_key TEXT NOT NULL,
-    reachability    TEXT NOT NULL DEFAULT 'public',
+    reachability    TEXT NOT NULL DEFAULT 'nobody'
+                    CHECK (reachability IN ('nobody', 'org_only', 'team_members_only', 'public')),
+    visible_to_team_id TEXT
+                    CHECK (
+                        (reachability = 'team_members_only' AND visible_to_team_id IS NOT NULL)
+                        OR (reachability != 'team_members_only' AND visible_to_team_id IS NULL)
+                    ),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
