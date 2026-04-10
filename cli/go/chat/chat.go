@@ -631,6 +631,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			chatEvent := parseSSEEvent(sr.event)
 			tofuFrom := chatEventTrustAddress(chatEvent, participants)
 			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeSenderTrust(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
+			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID)
 
 			if chatEvent.Type == "read_receipt" {
 				result.Events = append(result.Events, chatEvent)
