@@ -191,9 +191,17 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 				return runWakeResolution{Skip: true}, nil
 			}
 		}
+		displayFromAddress := strings.TrimSpace(pending.LastFromAddress)
+		if displayFromAddress == "" {
+			displayFromAddress = strings.TrimSpace(evt.FromAddress)
+		}
 		return runWakeResolution{
 			CycleContext: formatIncomingChatContext(
-				preferredIdentityLabel(alias, strings.TrimSpace(pending.LastFromAddress), ""),
+				preferredIdentityLabel(
+					alias,
+					displayFromAddress,
+					strings.TrimSpace(evt.FromAlias),
+				),
 				pending.LastMessage,
 			),
 		}, nil
