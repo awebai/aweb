@@ -190,12 +190,16 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 			from = c.alias()
 		}
 	}
-	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
+	env := &MessageEnvelope{
 		From: from,
 		To:   to,
 		Type: "chat",
 		Body: payload.Message,
-	})
+	}
+	if len(payload.ToDIDs) == 1 {
+		env.ToDID = strings.TrimSpace(payload.ToDIDs[0])
+	}
+	sf, err := c.signEnvelope(ctx, env)
 	if err != nil {
 		return nil, err
 	}
