@@ -111,6 +111,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
             "type": "actionable_mail",
             "message_id": str(r["message_id"]),
             "from_alias": r["from_alias"],
+            "from_did": (r.get("from_did") or "").strip(),
             "from_address": address_map.get((r.get("from_did") or "").strip(), r["from_alias"] or ""),
             "subject": r["subject"] or "",
             "priority": (r.get("priority") or "normal").strip().lower(),
@@ -186,6 +187,7 @@ async def _current_actionable_chat(
                     if (did or "").strip() not in viewer_did_set
                 ],
                 "from_alias": item.get("last_from") or "",
+                "from_did": (item.get("last_from_did") or "").strip(),
                 "from_address": participant_address_map.get(
                     (item.get("last_from_did") or "").strip(),
                     item.get("last_from") or "",
