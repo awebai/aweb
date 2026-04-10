@@ -1212,6 +1212,9 @@ func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string 
 				if value := strings.TrimSpace(participant.Alias); value != "" {
 					return value
 				}
+				if value := strings.TrimSpace(ev.FromStableID); value != "" {
+					return value
+				}
 				if value := strings.TrimSpace(participant.DID); value != "" {
 					return value
 				}

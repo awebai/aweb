@@ -1179,6 +1179,76 @@ func TestSendWithExtendWaitReceived(t *testing.T) {
 	}
 }
 
+func TestSendWithExtendWaitPrefersStableIDOverParticipantDIDInCallbacks(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	senderDID := "did:key:z6MkBobCurrent"
+	stableID := "did:aw:bob"
+	var callbackCalls []string
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:key:z6MkAliceCurrent"},
+					{DID: senderDID},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			hangOnData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": "msg-hangon", "from_did": senderDID, "from_stable_id": stableID,
+				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 300,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", hangOnData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	callback := func(kind, msg string) {
+		callbackCalls = append(callbackCalls, kind+": "+msg)
+	}
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{stableID}, "hello", SendOptions{Wait: 1}, callback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "timeout" {
+		t.Fatalf("status=%s, want timeout", result.Status)
+	}
+
+	foundStable := false
+	for _, c := range callbackCalls {
+		if c == "extend_wait: did:aw:bob: thinking..." {
+			foundStable = true
+		}
+		if strings.Contains(c, senderDID) {
+			t.Fatalf("callback should not use participant did:key label: %v", callbackCalls)
+		}
+	}
+	if !foundStable {
+		t.Fatalf("missing stable-id callback, got %v", callbackCalls)
+	}
+}
+
 func TestSendWithExtendWaitUsesFromAddressInCallbacks(t *testing.T) {
 	t.Parallel()
 
