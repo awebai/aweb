@@ -580,10 +580,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			}
 
 			chatEvent := parseSSEEvent(sr.event)
-			tofuFrom := chatEvent.FromAgent
-			if chatEvent.FromAddress != "" {
-				tofuFrom = chatEvent.FromAddress
-			}
+			tofuFrom := chatEventTrustAddress(chatEvent, participants)
 			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeSenderTrust(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
 
 			if chatEvent.Type == "read_receipt" {
@@ -1118,6 +1115,33 @@ func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string 
 		return value
 	}
 	return strings.TrimSpace(ev.FromDID)
+}
+
+func chatEventTrustAddress(ev Event, participants []awid.ChatParticipant) string {
+	for _, participant := range participants {
+		for _, candidate := range []string{
+			strings.TrimSpace(ev.FromAddress),
+			strings.TrimSpace(ev.FromAgent),
+			strings.TrimSpace(ev.FromStableID),
+			strings.TrimSpace(ev.FromDID),
+		} {
+			if candidate == "" {
+				continue
+			}
+			if chatParticipantMatchesTarget(participant, candidate) {
+				if value := strings.TrimSpace(participant.Address); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(participant.Alias); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	if value := strings.TrimSpace(ev.FromAddress); value != "" {
+		return value
+	}
+	return strings.TrimSpace(ev.FromAgent)
 }
 
 func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
