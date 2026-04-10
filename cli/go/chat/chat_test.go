@@ -550,6 +550,72 @@ func TestShowPending(t *testing.T) {
 	}
 }
 
+func TestShowPendingSupportsAddressTargetViaUniqueHandleMatch(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "monitor"}, LastMessage: "help!", LastFrom: "monitor", SenderWaiting: true},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%s", result.SessionID)
+	}
+	if result.TargetAgent != "otherco/monitor" {
+		t.Fatalf("target=%s", result.TargetAgent)
+	}
+}
+
+func TestShowPendingSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "monitor"}, LastMessage: "help!", LastFrom: "monitor", SenderWaiting: true},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(&stubIdentityResolver{
+		resolve: func(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &awid.ResolvedIdentity{
+				DID:         "did:key:z6MkMonitor",
+				StableID:    "did:aw:monitor",
+				Address:     "otherco/monitor",
+				Handle:      "monitor",
+				RegistryURL: server.URL,
+			}, nil
+		},
+	})
+
+	result, err := ShowPending(context.Background(), client, "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%s", result.SessionID)
+	}
+	if result.TargetAgent != "did:aw:monitor" {
+		t.Fatalf("target=%s", result.TargetAgent)
+	}
+}
+
 func TestSendWithLeaving(t *testing.T) {
 	t.Parallel()
 
