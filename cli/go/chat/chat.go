@@ -491,7 +491,7 @@ type messageAcceptor func(ev Event) (accept, skip bool)
 // waitForMessage opens an SSE stream and waits for a message matching the acceptor.
 // Handles read receipts, extend-wait messages, and wait extensions.
 // after controls SSE replay: non-nil replays messages after that timestamp; nil skips replay.
-func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
+func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
 	result := &SendResult{
 		SessionID: sessionID,
 		Status:    "timeout",
@@ -605,7 +605,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				}
 
 				if chatEvent.ExtendWait {
-					from := chatEventSenderLabel(chatEvent)
+					from := chatEventSenderLabel(chatEvent, participants)
 					if callback != nil {
 						callback("extend_wait", fmt.Sprintf("%s: %s", from, chatEvent.Body))
 					}
@@ -772,7 +772,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		return false, false
 	}
 
-	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resolvedWait, after, callback, acceptor)
+	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, resolvedWait, after, callback, acceptor)
 	if err != nil {
 		return nil, err
 	}
@@ -797,7 +797,7 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 
 	acceptAll := func(ev Event) (bool, bool) { return true, false }
 
-	result, err := waitForMessage(ctx, client, client.ChatStream, sessionID, waitSeconds, nil, callback, acceptAll)
+	result, err := waitForMessage(ctx, client, client.ChatStream, sessionID, nil, waitSeconds, nil, callback, acceptAll)
 	if err != nil {
 		return nil, err
 	}
@@ -1079,11 +1079,40 @@ func chatTargetNameListsOverlap(left []string, right []string) bool {
 	return false
 }
 
-func chatEventSenderLabel(ev Event) string {
+func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string {
+	for _, participant := range participants {
+		for _, candidate := range []string{
+			strings.TrimSpace(ev.FromAddress),
+			strings.TrimSpace(ev.FromAgent),
+			strings.TrimSpace(ev.FromStableID),
+			strings.TrimSpace(ev.FromDID),
+		} {
+			if candidate == "" {
+				continue
+			}
+			if chatParticipantMatchesTarget(participant, candidate) {
+				if value := strings.TrimSpace(participant.Address); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(participant.Alias); value != "" {
+					return value
+				}
+				if value := strings.TrimSpace(participant.DID); value != "" {
+					return value
+				}
+			}
+		}
+	}
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
 		return value
 	}
-	return strings.TrimSpace(ev.FromAgent)
+	if value := strings.TrimSpace(ev.FromAgent); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(ev.FromStableID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(ev.FromDID)
 }
 
 func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
