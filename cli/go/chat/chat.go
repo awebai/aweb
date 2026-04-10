@@ -229,6 +229,44 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	return ev
 }
 
+func addressHandle(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "did:") {
+		return ""
+	}
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func exactParticipantMatch(participants []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, participant := range participants {
+		if strings.TrimSpace(participant) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueHandleParticipantMatch(participants []string, target string) bool {
+	handle := addressHandle(target)
+	if handle == "" {
+		return false
+	}
+	for _, participant := range participants {
+		if strings.TrimSpace(participant) == handle {
+			return true
+		}
+	}
+	return false
+}
+
 // findSession finds the session ID for a conversation with targetAlias.
 // Checks pending first (captures sender_waiting), falls back to listing sessions.
 //
@@ -246,15 +284,17 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
 
-	var bestPendingID string
-	var bestPendingWaiting bool
-	var bestPendingActivity string
-	bestPendingSize := 0
-	for _, p := range pendingResp.Pending {
-		for _, participant := range p.Participants {
-			if participant != targetAlias {
+	selectPending := func(match func([]string, string) bool, requireUnique bool) (string, bool, error) {
+		var bestPendingID string
+		var bestPendingWaiting bool
+		var bestPendingActivity string
+		bestPendingSize := 0
+		matchCount := 0
+		for _, p := range pendingResp.Pending {
+			if !match(p.Participants, targetAlias) {
 				continue
 			}
+			matchCount++
 			better := bestPendingSize == 0
 			if !better {
 				// Prefer sender_waiting over non-waiting.
@@ -274,8 +314,25 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 				bestPendingSize = len(p.Participants)
 				bestPendingActivity = p.LastActivity
 			}
-			break
 		}
+		if requireUnique && matchCount > 1 {
+			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		}
+		if bestPendingID != "" {
+			return bestPendingID, bestPendingWaiting, nil
+		}
+		return "", false, nil
+	}
+	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, false)
+	if err != nil {
+		return "", false, err
+	}
+	if bestPendingID != "" {
+		return bestPendingID, bestPendingWaiting, nil
+	}
+	bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true)
+	if err != nil {
+		return "", false, err
 	}
 	if bestPendingID != "" {
 		return bestPendingID, bestPendingWaiting, nil
@@ -286,14 +343,16 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	var bestSessionID string
-	var bestSessionCreated string
-	bestSessionSize := 0
-	for _, s := range sessionsResp.Sessions {
-		for _, participant := range s.Participants {
-			if participant != targetAlias {
+	selectSession := func(match func([]string, string) bool, requireUnique bool) (string, error) {
+		var bestSessionID string
+		var bestSessionCreated string
+		bestSessionSize := 0
+		matchCount := 0
+		for _, s := range sessionsResp.Sessions {
+			if !match(s.Participants, targetAlias) {
 				continue
 			}
+			matchCount++
 			better := bestSessionSize == 0
 			if !better {
 				if len(s.Participants) < bestSessionSize {
@@ -307,8 +366,22 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 				bestSessionSize = len(s.Participants)
 				bestSessionCreated = s.CreatedAt
 			}
-			break
 		}
+		if requireUnique && matchCount > 1 {
+			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		}
+		return bestSessionID, nil
+	}
+	bestSessionID, err := selectSession(exactParticipantMatch, false)
+	if err != nil {
+		return "", false, err
+	}
+	if bestSessionID != "" {
+		return bestSessionID, false, nil
+	}
+	bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true)
+	if err != nil {
+		return "", false, err
 	}
 	if bestSessionID != "" {
 		return bestSessionID, false, nil
