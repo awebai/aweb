@@ -263,6 +263,50 @@ func TestResolveChatWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
 	}
 }
 
+func TestResolveChatWakePendingFallsBackToEventFromAddress(t *testing.T) {
+	_ = deliveredIDsTestPath(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:     "s1",
+						Participants:  []string{"alice", "carol"},
+						LastMessage:   "hey",
+						LastFrom:      "carol",
+						SenderWaiting: true,
+						UnreadCount:   1,
+					},
+				},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustWebClient(t, server.URL)
+	result, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:        awid.AgentEventActionableChat,
+		SessionID:   "s1",
+		FromAlias:   "carol",
+		FromAddress: "otherco/carol",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected wake, got %+v", result)
+	}
+	if !strings.Contains(result.CycleContext, "from otherco/carol (chat)") {
+		t.Fatalf("expected pending wake context to fall back to event from_address, got %q", result.CycleContext)
+	}
+}
+
 func TestResolveChatWakeForAliasSkipsSelfAuthoredExactMessage(t *testing.T) {
 	t.Parallel()
 
