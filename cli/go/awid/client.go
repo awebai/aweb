@@ -201,6 +201,9 @@ func (c *Client) SigningKey() ed25519.PrivateKey { return c.signingKey }
 // DID returns the client's DID, or empty for legacy/custodial clients.
 func (c *Client) DID() string { return c.did }
 
+// Address returns the client's address, if configured.
+func (c *Client) Address() string { return c.address }
+
 // SetAddress sets the client's agent address (namespace/alias) for use in
 // signed message envelopes.
 func (c *Client) SetAddress(address string) { c.address = address }

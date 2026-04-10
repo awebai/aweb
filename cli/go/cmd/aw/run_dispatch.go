@@ -83,7 +83,7 @@ func newRunWakeValidator(client *aweb.Client, selfAlias string) runWakeResolver 
 		case awid.AgentEventActionableChat:
 			return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
 		case awid.AgentEventActionableMail:
-			return resolveMailWake(ctx, client, evt)
+			return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
 		case awid.AgentEventWorkAvailable, awid.AgentEventClaimUpdate, awid.AgentEventClaimRemoved:
 			return runWakeResolution{CycleContext: formatWorkWakePrompt(evt)}, nil
 		default:
@@ -93,7 +93,19 @@ func newRunWakeValidator(client *aweb.Client, selfAlias string) runWakeResolver 
 }
 
 func resolveChatWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
-	return resolveChatWakeForAlias(ctx, client, "", evt)
+	selfAlias := ""
+	if client != nil && client.Client != nil {
+		selfAlias = handleFromAddress(client.Address())
+	}
+	return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
+}
+
+func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+	selfAlias := ""
+	if client != nil && client.Client != nil {
+		selfAlias = handleFromAddress(client.Address())
+	}
+	return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
 }
 
 func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
@@ -273,7 +285,7 @@ func preferredIdentityLabel(alias string, address string, fallback string) strin
 	return preferredSenderLabel(alias, address, fallback)
 }
 
-func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
 	messageID := strings.TrimSpace(evt.MessageID)
 	resp, err := client.Inbox(ctx, awid.InboxParams{UnreadOnly: true})
 	if err != nil {
@@ -282,6 +294,12 @@ func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEve
 	for _, msg := range resp.Messages {
 		if messageID != "" && strings.TrimSpace(msg.MessageID) != messageID {
 			continue
+		}
+		if mailMessageFromSelf(msg, selfAlias, selfIdentityDIDs(client)...) {
+			if msg.MessageID != "" {
+				_, _ = client.AckMessage(ctx, msg.MessageID)
+			}
+			return runWakeResolution{Skip: true}, nil
 		}
 		// Mark as read — seeing the full content means it's read.
 		if msg.MessageID != "" {
@@ -307,6 +325,26 @@ func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEve
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil
 	}
 	return runWakeResolution{Skip: true}, nil
+}
+
+func mailMessageFromSelf(msg awid.InboxMessage, selfAlias string, selfDIDs ...string) bool {
+	hasMessageIdentity := strings.TrimSpace(msg.FromStableID) != "" || strings.TrimSpace(msg.FromDID) != ""
+	for _, did := range selfDIDs {
+		if did != "" && (strings.EqualFold(strings.TrimSpace(msg.FromStableID), did) || strings.EqualFold(strings.TrimSpace(msg.FromDID), did)) {
+			return true
+		}
+	}
+	if len(selfDIDs) > 0 && hasMessageIdentity {
+		return false
+	}
+	selfAlias = strings.TrimSpace(selfAlias)
+	if selfAlias == "" {
+		return false
+	}
+	if strings.EqualFold(handleFromAddress(strings.TrimSpace(msg.FromAddress)), selfAlias) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(msg.FromAlias), selfAlias)
 }
 
 func joinPromptSections(parts ...string) string {
