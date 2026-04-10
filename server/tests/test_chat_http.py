@@ -485,9 +485,9 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
     seen: dict[str, str] = {}
 
-    async def _fake_sse_events(*, viewer_did: str, contact_owner_did: str, **kwargs):
+    async def _fake_sse_events(*, viewer_did: str, contact_owner_dids: list[str], **kwargs):
         seen["viewer_did"] = viewer_did
-        seen["contact_owner_did"] = contact_owner_did
+        seen["contact_owner_dids"] = contact_owner_dids
         yield ": keepalive\n\n"
 
     monkeypatch.setattr(chat_routes, "_sse_events", _fake_sse_events)
@@ -499,7 +499,7 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
     assert "keepalive" in resp.text
     assert seen == {
         "viewer_did": "did:key:z6MkAliceCurrent",
-        "contact_owner_did": "did:aw:alice",
+        "contact_owner_dids": ["did:aw:alice", "did:key:z6MkAliceCurrent"],
     }
 
 

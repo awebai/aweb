@@ -7,12 +7,17 @@ from aweb.messaging.contacts import (
     CONTACT_ADDRESS_PATTERN,
     add_contact,
     list_contacts,
+    normalize_owner_dids,
     remove_contact,
 )
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 
 router = APIRouter(prefix="/v1/contacts", tags=["aweb-contacts"])
+
+
+def _owner_dids(identity: MessagingAuth) -> list[str]:
+    return normalize_owner_dids(owner_dids=[identity.did_aw, identity.did_key])
 
 
 class CreateContactRequest(BaseModel):
@@ -48,7 +53,8 @@ async def create_contact(
     request: Request, payload: CreateContactRequest, db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ContactView:
-    owner_did = (identity.did_aw or identity.did_key or "").strip()
+    owner_keys = _owner_dids(identity)
+    owner_did = owner_keys[0] if owner_keys else ""
     result = await add_contact(
         db,
         owner_did=owner_did,
@@ -63,8 +69,7 @@ async def list_contacts_route(
     request: Request, db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ListContactsResponse:
-    owner_did = (identity.did_aw or identity.did_key or "").strip()
-    contacts = await list_contacts(db, owner_did=owner_did)
+    contacts = await list_contacts(db, owner_dids=_owner_dids(identity))
     return ListContactsResponse(contacts=[ContactView(**c) for c in contacts])
 
 
@@ -73,6 +78,5 @@ async def delete_contact(
     request: Request, contact_id: str, db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict:
-    owner_did = (identity.did_aw or identity.did_key or "").strip()
-    await remove_contact(db, owner_did=owner_did, contact_id=contact_id)
+    await remove_contact(db, owner_dids=_owner_dids(identity), contact_id=contact_id)
     return {"deleted": True}

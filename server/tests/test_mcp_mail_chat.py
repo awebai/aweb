@@ -9,6 +9,7 @@ from starlette.requests import Request
 
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
+from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import mail as mail_tools
 
@@ -259,3 +260,44 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
         )
     )
     assert read["messages_marked"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, monkeypatch):
+    contact_id = uuid4()
+    did_key = "did:key:z6MkAliceCurrent"
+    did_aw = "did:aw:alice"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.contacts}} (contact_id, owner_did, contact_address, label, created_at)
+        VALUES ($1, $2, 'acme.com/bob', 'Bob', NOW())
+        """,
+        contact_id,
+        did_key,
+    )
+
+    monkeypatch.setattr(
+        contacts_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=None,
+            agent_id=None,
+            alias="alice",
+            did_key=did_key,
+            did_aw=did_aw,
+            address="acme.com/alice",
+        ),
+    )
+
+    listed = json.loads(await contacts_tools.contacts_list(DBInfra(aweb_cloud_db.aweb_db)))
+    assert [item["contact_address"] for item in listed["contacts"]] == ["acme.com/bob"]
+
+    removed = json.loads(await contacts_tools.contacts_remove(DBInfra(aweb_cloud_db.aweb_db), contact_id=str(contact_id)))
+    assert removed["status"] == "removed"
+
+    remaining = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.contacts}} WHERE owner_did = $1",
+        did_key,
+    )
+    assert remaining == 0

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from aweb.messaging.contacts import add_contact, list_contacts, remove_contact
+from aweb.messaging.contacts import add_contact, list_contacts, normalize_owner_dids, remove_contact
 from aweb.mcp.auth import get_auth
 from aweb.service_errors import ServiceError
 
@@ -13,9 +13,9 @@ from aweb.service_errors import ServiceError
 async def contacts_list(db_infra) -> str:
     """List all contacts for the authenticated identity."""
     auth = get_auth()
-    owner_did = (auth.did_aw or auth.did_key or "").strip()
+    owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
     try:
-        contacts = await list_contacts(db_infra, owner_did=owner_did)
+        contacts = await list_contacts(db_infra, owner_dids=owner_dids)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"contacts": contacts})
@@ -24,7 +24,8 @@ async def contacts_list(db_infra) -> str:
 async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> str:
     """Add a contact for the authenticated identity."""
     auth = get_auth()
-    owner_did = (auth.did_aw or auth.did_key or "").strip()
+    owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
+    owner_did = owner_dids[0] if owner_dids else ""
     try:
         result = await add_contact(
             db_infra,
@@ -42,9 +43,9 @@ async def contacts_add(db_infra, *, contact_address: str, label: str = "") -> st
 async def contacts_remove(db_infra, *, contact_id: str) -> str:
     """Remove a contact for the authenticated identity."""
     auth = get_auth()
-    owner_did = (auth.did_aw or auth.did_key or "").strip()
+    owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
     try:
-        await remove_contact(db_infra, owner_did=owner_did, contact_id=contact_id)
+        await remove_contact(db_infra, owner_dids=owner_dids, contact_id=contact_id)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 

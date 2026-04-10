@@ -594,8 +594,8 @@ async def history(
 ) -> HistoryResponse:
     del request
     actor_dids = _actor_dids(auth)
-    owner_did = _actor_did(auth)
-    if not owner_did:
+    owner_dids = _actor_dids(auth)
+    if not owner_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     try:
@@ -629,7 +629,7 @@ async def history(
         unread_only=unread_only,
         limit=limit,
     )
-    contact_addrs = await get_contact_addresses(db, owner_did=owner_did)
+    contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
     address_map = await _lookup_addresses_by_did(
         db,
         [m["from_did"] for m in messages if m.get("from_did")],
@@ -733,7 +733,7 @@ async def _sse_events(
     redis,
     session_id: UUID,
     viewer_did: str,
-    contact_owner_did: str,
+    contact_owner_dids: list[str],
     deadline: datetime,
     after: datetime | None = None,
 ) -> AsyncIterator[str]:
@@ -769,7 +769,7 @@ async def _sse_events(
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
 
-        contact_addrs = await get_contact_addresses(db, owner_did=contact_owner_did)
+        contact_addrs = await get_contact_addresses(db, owner_dids=contact_owner_dids)
 
         async def _connect_pubsub() -> PubSub:
             ps: PubSub = redis.pubsub()
@@ -978,8 +978,8 @@ async def stream(
 ):
     del request
     actor_dids = _actor_dids(auth)
-    owner_did = _actor_did(auth)
-    if not owner_did:
+    owner_dids = _actor_dids(auth)
+    if not owner_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     try:
@@ -1010,7 +1010,7 @@ async def stream(
             redis=redis,
             session_id=session_uuid,
             viewer_did=actor_did,
-            contact_owner_did=owner_did,
+            contact_owner_dids=owner_dids,
             deadline=deadline_dt,
             after=after_dt,
         ),
