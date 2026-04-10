@@ -53,6 +53,12 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
             FROM {{tables.messages}}
             WHERE to_did = ANY($1::text[])
               AND read_at IS NULL
+        ),
+        windowed AS (
+            SELECT message_id, from_alias, subject, priority, created_at
+            FROM unread
+            ORDER BY created_at DESC, message_id DESC
+            LIMIT 50
         )
         SELECT
             message_id,
@@ -61,9 +67,8 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
             priority,
             created_at,
             (SELECT COUNT(*)::int FROM unread) AS unread_count
-        FROM unread
-        ORDER BY created_at ASC
-        LIMIT 50
+        FROM windowed
+        ORDER BY created_at ASC, message_id ASC
         """,
         inbox_dids,
     )
