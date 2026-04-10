@@ -68,7 +68,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 		target := strings.TrimSpace(env.ToStableID)
 		if target == "" && env.Type == "mail" {
 			target = c.canonicalTrustAddress(env.To)
-		} else if target == "" && env.Type == "chat" && !strings.Contains(env.To, ",") && strings.Contains(env.To, "/") {
+		} else if target == "" && env.Type == "chat" && !strings.Contains(env.To, ",") {
 			target = c.canonicalTrustAddress(env.To)
 		}
 		if target != "" {
