@@ -84,6 +84,8 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 
 type ChatCreateSessionRequest struct {
 	ToAliases     []string `json:"to_aliases"`
+	ToDIDs        []string `json:"to_dids,omitempty"`
+	ToAddresses   []string `json:"to_addresses,omitempty"`
 	Message       string   `json:"message"`
 	Leaving       bool     `json:"leaving,omitempty"`
 	WaitSeconds   *int     `json:"wait_seconds,omitempty"`
@@ -116,12 +118,30 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	payload := *req
 
 	to := strings.Join(payload.ToAliases, ",")
+	directIdentityTargets := len(payload.ToDIDs) > 0 || len(payload.ToAddresses) > 0
+	if len(payload.ToDIDs) > 0 {
+		targets := append([]string(nil), payload.ToDIDs...)
+		sort.Strings(targets)
+		to = strings.Join(targets, ",")
+	} else if len(payload.ToAddresses) > 0 {
+		targets := append([]string(nil), payload.ToAddresses...)
+		sort.Strings(targets)
+		to = strings.Join(targets, ",")
+	}
 	from := c.address
 	if c.signingKey != nil {
-		if toAddr := c.toAddressForAliases(payload.ToAliases); toAddr != "" {
+		if len(payload.ToAddresses) > 0 {
+			targets := append([]string(nil), payload.ToAddresses...)
+			sort.Strings(targets)
+			to = strings.Join(targets, ",")
+		} else if toAddr := c.toAddressForAliases(payload.ToAliases); toAddr != "" {
 			to = toAddr
 		}
-		from = c.alias()
+		if strings.TrimSpace(from) == "" {
+			from = c.did
+		} else if !directIdentityTargets {
+			from = c.alias()
+		}
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From: from,
@@ -218,6 +238,26 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
+			if meta.FromDID != "" {
+				m.FromDID = meta.FromDID
+			}
+			if meta.ToDID != "" {
+				m.ToDID = meta.ToDID
+			}
+			if m.FromStableID == "" {
+				m.FromStableID = meta.FromStableID
+			}
+			if m.ToStableID == "" {
+				m.ToStableID = meta.ToStableID
+			}
+			if m.FromAddress == "" && meta.From != "" {
+				m.FromAddress = meta.From
+			}
+			if m.ToAddress == "" && meta.To != "" {
+				m.ToAddress = meta.To
+			}
+		}
 		from := m.FromAgent
 		if m.FromAddress != "" {
 			from = m.FromAddress

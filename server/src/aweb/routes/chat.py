@@ -84,6 +84,14 @@ def _actor_did(auth: MessagingAuth) -> str:
     return (auth.did_aw or auth.did_key or "").strip()
 
 
+def _actor_dids(auth: MessagingAuth) -> list[str]:
+    dids: list[str] = []
+    for value in ((auth.did_aw or "").strip(), (auth.did_key or "").strip()):
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
 def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
     return (
         (auth.alias or "").strip()
@@ -342,7 +350,7 @@ async def create_or_send(
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
-        if payload.from_did.strip() != actor_did:
+        if payload.from_did.strip() not in set(_actor_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
@@ -1035,7 +1043,7 @@ async def send_message(
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
-        if payload.from_did.strip() != actor_did:
+        if payload.from_did.strip() not in set(_actor_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(

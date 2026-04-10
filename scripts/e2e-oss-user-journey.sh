@@ -54,11 +54,13 @@ E2E_HOME="$(make_temp_dir aw-e2e-home)"
 E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
+CAROL_DIR="$E2E_CWD/carol"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
+CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
@@ -223,6 +225,16 @@ if start >= 0:
 else:
     print('')
 "
+}
+
+set_messaging_policy() {
+  local did_aw="$1" policy="$2"
+  (
+    cd "$SERVER_DIR"
+    docker compose --env-file .env.e2e exec -T postgres \
+      psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
+      -c "UPDATE aweb.agents SET messaging_policy = '${policy}' WHERE did_aw = '${did_aw}';" >/dev/null
+  )
 }
 
 yaml_field() {
@@ -559,6 +571,84 @@ bob_msg_body="$(echo "$bob_inbox" | python3 -c "import sys,json; msgs=json.load(
 
 assert_eq "bob has 1 message" "1" "$bob_msg_count"
 assert_eq "message body" "Hello from alice" "$bob_msg_body"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 11b: Cross-identity messaging via contacts
+# ---------------------------------------------------------------------------
+echo "=== Phase 11b: Cross-identity messaging via contacts ==="
+
+carol_create="$(run_aw_in "$CAROL_DIR" id create \
+  --name carol \
+  --domain test.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+CAROL_DID_AW="$(echo "$carol_create" | jq_field did_aw)"
+assert_not_empty "carol did_aw" "$CAROL_DID_AW"
+
+run_aw_in "$ALICE_DIR" id team create \
+  --name ops \
+  --namespace test.local \
+  --registry "$AWID_URL" \
+  --json 2>/dev/null >/dev/null
+ops_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+  --team ops \
+  --namespace test.local \
+  --json 2>/dev/null)"
+OPS_INVITE_TOKEN="$(echo "$ops_invite_out" | jq_field token)"
+assert_not_empty "ops invite token" "$OPS_INVITE_TOKEN"
+
+carol_accept="$(run_aw_in "$CAROL_DIR" id team accept-invite "$OPS_INVITE_TOKEN" \
+  --alias carol \
+  --json 2>/dev/null)"
+CAROL_ACCEPT_STATUS="$(echo "$carol_accept" | jq_field status)"
+assert_eq "carol accepted" "accepted" "$CAROL_ACCEPT_STATUS"
+
+run_aw_in "$CAROL_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+carol_init_exit=$?
+assert_eq "carol init exit" "0" "$carol_init_exit"
+
+set_messaging_policy "$ALICE_DID_AW" "contacts"
+run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>&1
+contacts_add_exit=$?
+assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
+
+run_aw_in "$BOB_DIR" mail send \
+  --to-did "$ALICE_DID_AW" \
+  --body "Direct hello from bob" >/dev/null 2>&1
+bob_direct_exit=$?
+assert_eq "bob direct mail to alice did" "0" "$bob_direct_exit"
+
+alice_contacts_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json 2>/dev/null)"
+alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from bob'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives bob direct message" "Direct hello from bob" "$alice_bob_message"
+
+if carol_direct_out="$(run_aw_in "$CAROL_DIR" mail send \
+  --to-did "$ALICE_DID_AW" \
+  --body 'Blocked hello from carol' 2>&1)"; then
+  carol_direct_exit=0
+else
+  carol_direct_exit=$?
+fi
+if [[ "$carol_direct_exit" != "0" ]] && echo "$carol_direct_out" | grep -qi "contacts\|403\|forbidden"; then
+  echo "  PASS: carol blocked by alice contacts policy"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: carol should be blocked by alice contacts policy (exit=$carol_direct_exit output=${carol_direct_out:0:160})"
+  fail=$((fail + 1))
+fi
+
+set_messaging_policy "$ALICE_DID_AW" "everyone"
+run_aw_in "$CAROL_DIR" mail send \
+  --to-did "$ALICE_DID_AW" \
+  --body "Direct hello from carol" >/dev/null 2>&1
+carol_retry_exit=$?
+assert_eq "carol direct mail succeeds after policy change" "0" "$carol_retry_exit"
+
+alice_all_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_carol_message="$(echo "$alice_all_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from carol'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives carol direct message" "Direct hello from carol" "$alice_carol_message"
 echo ""
 
 # ---------------------------------------------------------------------------

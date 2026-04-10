@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespace string) string {
@@ -133,8 +136,14 @@ func TestResolveWorkingBaseURLContextHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestMailSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
+func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
 
 	var gotPath string
 	var gotBody map[string]any
@@ -171,9 +180,20 @@ func TestMailSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL + "/api",
+		TeamID:      "backend:demo",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    awid.ComputeStableID(pub),
+		Address:     "demo/eve",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "acme/researcher", "--body", "hello network", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", "acme/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -184,8 +204,8 @@ func TestMailSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 	if gotPath != "/api/v1/messages" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if gotBody["to_alias"] != "acme/researcher" {
-		t.Fatalf("to_alias=%v", gotBody["to_alias"])
+	if gotBody["to_address"] != "acme/researcher" {
+		t.Fatalf("to_address=%v", gotBody["to_address"])
 	}
 	if gotBody["body"] != "hello network" {
 		t.Fatalf("body=%v", gotBody["body"])

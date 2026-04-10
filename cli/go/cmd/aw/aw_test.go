@@ -796,9 +796,7 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 // flow was part of the old API-key architecture. In the team architecture,
 // aw whoami reads local state and there is no server-side email gate.
 
-// TestAwMailSendPassesThroughAllAddressFormats verifies that mail send accepts
-// the supported address forms and delivers through POST /v1/messages.
-func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
+func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 	t.Parallel()
 
 	var gotPath string
@@ -841,32 +839,26 @@ func TestAwMailSendPassesThroughAllAddressFormats(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	// All address formats should go through /v1/messages.
-	for _, addr := range []string{"alice", "myteam.aweb.ai/deploy-bot", "@juanre"} {
-		gotPath = ""
-		gotBody = nil
-
-		run := exec.CommandContext(ctx, bin, "mail", "send",
-			"--to", addr,
-			"--body", "hello",
-			"--json",
-		)
-		run.Env = testCommandEnv(tmp)
-		run.Dir = tmp
-		out, err := run.CombinedOutput()
-		if err != nil {
-			t.Fatalf("addr=%q: run failed: %v\n%s", addr, err, string(out))
-		}
-		if gotPath != "/v1/messages" {
-			t.Fatalf("addr=%q: expected /v1/messages, got %s", addr, gotPath)
-		}
-		if gotBody["to_alias"] != addr {
-			t.Fatalf("addr=%q: to_alias=%v", addr, gotBody["to_alias"])
-		}
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to", "alice",
+		"--body", "hello",
+		"--json",
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if gotPath != "/v1/messages" {
+		t.Fatalf("expected /v1/messages, got %s", gotPath)
+	}
+	if gotBody["to_alias"] != "alice" {
+		t.Fatalf("to_alias=%v", gotBody["to_alias"])
 	}
 }
 
-func TestAwMailSendSignsWithIdentity(t *testing.T) {
+func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -874,11 +866,19 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	recipientDID := "did:aw:recipient-123"
 
 	var gotBody map[string]any
+	var gotAuth string
+	var gotTeamCert string
+	var gotStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages":
+			gotAuth = r.Header.Get("Authorization")
+			gotTeamCert = r.Header.Get("X-AWID-Team-Certificate")
+			gotStableID = r.Header.Get("X-AWEB-DID-AW")
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatalf("decode request body: %v", err)
 			}
@@ -919,6 +919,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 		Alias:       "agent",
 		WorkspaceID: "workspace-1",
 		DID:         did,
+		StableID:    stableID,
 		Address:     address,
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
@@ -926,7 +927,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
-		"--to", "monitor",
+		"--to-did", recipientDID,
 		"--body", "hello from identity",
 	)
 	run.Env = testCommandEnv(tmp)
@@ -940,7 +941,18 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	// to_did not sent in team architecture — server resolves by alias.
+	if gotBody["to_did"] != recipientDID {
+		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientDID)
+	}
+	if gotTeamCert != "" {
+		t.Fatalf("expected identity auth without team certificate, got %q", gotTeamCert)
+	}
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
+	}
+	if !strings.HasPrefix(gotAuth, "DIDKey ") {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing or empty")
@@ -953,7 +965,7 @@ func TestAwMailSendSignsWithIdentity(t *testing.T) {
 	_ = msgID
 }
 
-func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
+func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -1006,6 +1018,7 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 		Alias:       "bot",
 		WorkspaceID: "workspace-1",
 		DID:         did,
+		StableID:    stableIDFromDidForTest(t, did),
 		Address:     address,
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
@@ -1013,8 +1026,8 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
-		"--to", "monitor",
-		"--body", "hello from namespace",
+		"--to-address", "test.local/monitor",
+		"--body", "hello from address",
 	)
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
@@ -1027,6 +1040,9 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
+	if gotBody["to_address"] != "test.local/monitor" {
+		t.Fatalf("to_address=%v", gotBody["to_address"])
+	}
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing")
@@ -1036,6 +1052,33 @@ func TestAwMailSendSignsWithIdentityNamespace(t *testing.T) {
 	// allows recipients to verify the sender independently.
 	if gotBody["from_did"] == nil || gotBody["from_did"] == "" {
 		t.Fatal("from_did missing")
+	}
+}
+
+func TestAwMailSendRejectsMultipleRecipientFlags(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, "http://127.0.0.1:1")
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to", "alice",
+		"--to-did", "did:aw:alice",
+		"--body", "hello",
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected failure, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got:\n%s", string(out))
 	}
 }
 

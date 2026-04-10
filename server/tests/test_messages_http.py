@@ -329,6 +329,44 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_inbox_matches_stable_and_current_identity_dids(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority
+        )
+        VALUES (
+            '11111111-1111-1111-1111-111111111111',
+            'did:aw:alice',
+            $1,
+            'alice',
+            'bob',
+            'hello',
+            'hi',
+            'normal'
+        )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/messages/inbox", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    messages = resp.json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["body"] == "hi"
+
+
+@pytest.mark.asyncio
 async def test_send_message_returns_403_for_policy_violation(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

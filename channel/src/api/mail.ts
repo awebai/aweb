@@ -54,7 +54,26 @@ export async function fetchInbox(
 function hydrateAddressesFromSignedPayload(msg: InboxMessage): void {
   if (!msg.signed_payload) return;
   try {
-    const payload = JSON.parse(msg.signed_payload) as { from?: string; to?: string };
+    const payload = JSON.parse(msg.signed_payload) as {
+      from?: string;
+      to?: string;
+      from_did?: string;
+      to_did?: string;
+      from_stable_id?: string;
+      to_stable_id?: string;
+    };
+    if (typeof payload.from_did === "string" && payload.from_did.trim()) {
+      msg.from_did = payload.from_did;
+    }
+    if (typeof payload.to_did === "string" && payload.to_did.trim()) {
+      msg.to_did = payload.to_did;
+    }
+    if (!msg.from_stable_id && typeof payload.from_stable_id === "string") {
+      msg.from_stable_id = payload.from_stable_id;
+    }
+    if (!msg.to_stable_id && typeof payload.to_stable_id === "string") {
+      msg.to_stable_id = payload.to_stable_id;
+    }
     if (!msg.from_address && typeof payload.from === "string") {
       msg.from_address = payload.from;
     }

@@ -45,6 +45,7 @@ async function main() {
 
   const client = new APIClient(config.baseURL, {
     did: config.did,
+    stableID: config.stableID,
     signingKey: config.signingKey,
     teamID: config.teamID,
     teamCertificateHeader: config.teamCertificateHeader,

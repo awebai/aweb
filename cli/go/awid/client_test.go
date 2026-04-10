@@ -1037,6 +1037,102 @@ func TestSendMessageSignsWithToAgentID(t *testing.T) {
 	}
 }
 
+func TestSendMessageByIdentityUsesToDID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	recipientDID := "did:aw:recipient-123"
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message_id":   "msg-1",
+			"status":       "delivered",
+			"delivered_at": "2026-04-10T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+	c.SetStableID(stableID)
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToDID: recipientDID,
+		Body:  "hello direct",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["to_did"] != recipientDID {
+		t.Fatalf("to_did=%v", gotBody["to_did"])
+	}
+	if gotBody["to_address"] != nil {
+		t.Fatalf("to_address should be absent, got %v", gotBody["to_address"])
+	}
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	sig := gotBody["signature"].(string)
+	status, err := VerifySignedPayload(sp, sig, did, did)
+	if err != nil {
+		t.Fatalf("VerifySignedPayload: %v", err)
+	}
+	if status != Verified {
+		t.Fatalf("status=%s, want verified", status)
+	}
+}
+
+func TestSendMessageByIdentityUsesToAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message_id":   "msg-1",
+			"status":       "delivered",
+			"delivered_at": "2026-04-10T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToAddress: "otherco/monitor",
+		Body:      "hello address",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["to_address"] != "otherco/monitor" {
+		t.Fatalf("to_address=%v", gotBody["to_address"])
+	}
+}
+
 func TestSendMessageDoesNotMutateInput(t *testing.T) {
 	t.Parallel()
 
@@ -1123,6 +1219,57 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing or empty in request body")
 	}
+	status, err := VerifySignedPayload(sp, sig, did, did)
+	if err != nil {
+		t.Fatalf("VerifySignedPayload: %v", err)
+	}
+	if status != Verified {
+		t.Fatalf("status=%s, want verified", status)
+	}
+}
+
+func TestChatCreateSessionSupportsIdentityTargets(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess-1",
+			"message_id": "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToDIDs:  []string{"did:aw:b", "did:aw:a"},
+		Message: "hello direct chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dids, ok := gotBody["to_dids"].([]any)
+	if !ok || len(dids) != 2 {
+		t.Fatalf("to_dids=%v", gotBody["to_dids"])
+	}
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	sig := gotBody["signature"].(string)
 	status, err := VerifySignedPayload(sp, sig, did, did)
 	if err != nil {
 		t.Fatalf("VerifySignedPayload: %v", err)
