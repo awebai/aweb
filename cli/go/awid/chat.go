@@ -58,6 +58,34 @@ func deterministicTargetList(values []string) string {
 	return b.String()
 }
 
+func removeOneSelfIdentifier(values []string, selfIDs ...string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(values))
+	removedSelf := false
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if !removedSelf {
+			for _, selfID := range selfIDs {
+				selfID = strings.TrimSpace(selfID)
+				if selfID != "" && strings.EqualFold(value, selfID) {
+					removedSelf = true
+					value = ""
+					break
+				}
+			}
+		}
+		if value != "" {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
+}
+
 func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", nil
@@ -73,7 +101,7 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		if toAddr := c.toAddressForAliases(s.ParticipantAddresses); toAddr != "" {
 			return toAddr, nil
 		}
-		if toDIDs := deterministicTargetList(s.ParticipantDIDs); toDIDs != "" {
+		if toDIDs := deterministicTargetList(removeOneSelfIdentifier(s.ParticipantDIDs, c.stableID, c.did)); toDIDs != "" {
 			return toDIDs, nil
 		}
 		selfAlias := c.alias()
@@ -190,18 +218,18 @@ type ChatPendingResponse struct {
 }
 
 type ChatPendingItem struct {
-    SessionID            string   `json:"session_id"`
-    Participants         []string `json:"participants"`
-    ParticipantDIDs      []string `json:"participant_dids,omitempty"`
-    ParticipantAddresses []string `json:"participant_addresses,omitempty"`
-    LastMessage          string   `json:"last_message"`
-    LastFrom             string   `json:"last_from"`
-    LastFromDID          string   `json:"last_from_did,omitempty"`
-    LastFromAddress      string   `json:"last_from_address,omitempty"`
-    UnreadCount          int      `json:"unread_count"`
-    LastActivity         string   `json:"last_activity"`
-    SenderWaiting        bool     `json:"sender_waiting"`
-    TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
+	SessionID            string   `json:"session_id"`
+	Participants         []string `json:"participants"`
+	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
+	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
+	LastMessage          string   `json:"last_message"`
+	LastFrom             string   `json:"last_from"`
+	LastFromDID          string   `json:"last_from_did,omitempty"`
+	LastFromAddress      string   `json:"last_from_address,omitempty"`
+	UnreadCount          int      `json:"unread_count"`
+	LastActivity         string   `json:"last_activity"`
+	SenderWaiting        bool     `json:"sender_waiting"`
+	TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
 }
 
 func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
