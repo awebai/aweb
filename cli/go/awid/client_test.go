@@ -774,6 +774,9 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
+	if ts, ok := gotBody["timestamp"].(string); !ok || ts == "" {
+		t.Fatal("timestamp missing or empty")
+	}
 	sig, ok := gotBody["signature"].(string)
 	if !ok || sig == "" {
 		t.Fatal("signature missing or empty")

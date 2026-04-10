@@ -109,10 +109,12 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             """,
             team_identity.agent_id,
         )
+        row_did_aw = (row.get("did_aw") if row else None) or None
+        row_address = (row.get("address") if row else None) or None
         return MessagingAuth(
             did_key=team_identity.did_key,
-            did_aw=(row.get("did_aw") if row else None),
-            address=(row.get("address") if row else None),
+            did_aw=team_identity.did_aw or row_did_aw,
+            address=team_identity.address or row_address,
             team_id=team_identity.team_id,
             alias=team_identity.alias,
             agent_id=team_identity.agent_id,
