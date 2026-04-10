@@ -49,8 +49,22 @@ func mustClient(t *testing.T, url string) *awid.Client {
 	return c
 }
 
+func mustIdentityClient(t *testing.T, url string) *awid.Client {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := awid.NewWithIdentity(url, priv, awid.ComputeDIDKey(pub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 type stubIdentityResolver struct {
 	resolve func(context.Context, string) (*awid.ResolvedIdentity, error)
+	verify  func(context.Context, string, string) *awid.StableIdentityVerification
 }
 
 func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
@@ -58,6 +72,13 @@ func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*
 		return nil, errors.New("no resolver configured")
 	}
 	return r.resolve(ctx, identifier)
+}
+
+func (r stubIdentityResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *awid.StableIdentityVerification {
+	if r.verify == nil {
+		return nil
+	}
+	return r.verify(ctx, address, stableID)
 }
 
 func jsonResponse(w http.ResponseWriter, v any) {
@@ -1923,6 +1944,247 @@ func TestSendSuppressesContactTagForEphemeralStableDIDSSESender(t *testing.T) {
 	}
 	if result.Events[0].IsContact != nil {
 		t.Fatalf("ephemeral stable-DID SSE sender should suppress contact tag, got %v", *result.Events[0].IsContact)
+	}
+}
+
+func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := awid.ComputeDIDKey(senderPub)
+	stableID := "did:aw:architect"
+	sentMsgID := "msg-sent-1"
+	replyMsgID := "msg-reply-1"
+	replyTimestamp := "2026-04-10T00:00:00Z"
+
+	replyEnv := &awid.MessageEnvelope{
+		From:         "myteam/architect",
+		FromDID:      senderDID,
+		Type:         "chat",
+		Body:         "hi back!",
+		Timestamp:    replyTimestamp,
+		FromStableID: stableID,
+		MessageID:    replyMsgID,
+	}
+	replySig, err := awid.SignMessage(senderPriv, replyEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replySignedPayload := awid.CanonicalJSON(replyEnv)
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			var req awid.ChatCreateSessionRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "implementer", DID: "did:aw:implementer", Address: "myteam/implementer"},
+					{Alias: "architect", DID: stableID, Address: "myteam/architect"},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "implementer", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type":           "message",
+				"message_id":     replyMsgID,
+				"from_agent":     "architect",
+				"from_address":   "myteam/architect",
+				"body":           "hi back!",
+				"from_did":       senderDID,
+				"signature":      replySig,
+				"signing_key_id": senderDID,
+				"signed_payload": replySignedPayload,
+				"timestamp":      replyTimestamp,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetAddress("myteam/implementer")
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case "myteam/architect":
+				return &awid.ResolvedIdentity{
+					DID:         senderDID,
+					StableID:    stableID,
+					Address:     identifier,
+					Lifetime:    awid.LifetimePersistent,
+					Custody:     awid.CustodySelf,
+					ResolvedVia: "registry",
+				}, nil
+			case "myteam/implementer":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkSelf",
+					Address:     identifier,
+					Lifetime:    awid.LifetimePersistent,
+					Custody:     awid.CustodySelf,
+					ResolvedVia: "registry",
+				}, nil
+			default:
+				t.Fatalf("identifier=%q", identifier)
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+		verify: func(_ context.Context, address, gotStableID string) *awid.StableIdentityVerification {
+			if address != "myteam/architect" {
+				t.Fatalf("address=%q", address)
+			}
+			if gotStableID != stableID {
+				t.Fatalf("stable_id=%q, want %q", gotStableID, stableID)
+			}
+			return &awid.StableIdentityVerification{
+				Outcome:       awid.StableIdentityVerified,
+				CurrentDIDKey: "did:key:z6MkDifferentCurrent",
+			}
+		},
+	})
+
+	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d, want 1", len(result.Events))
+	}
+	if result.Events[0].FromStableID != stableID {
+		t.Fatalf("from_stable_id=%q, want %q", result.Events[0].FromStableID, stableID)
+	}
+	if result.Events[0].VerificationStatus != awid.IdentityMismatch {
+		t.Fatalf("verification_status=%s, want identity_mismatch", result.Events[0].VerificationStatus)
+	}
+}
+
+func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := awid.ComputeDIDKey(senderPub)
+
+	wrongRecipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongRecipientDID := awid.ComputeDIDKey(wrongRecipientPub)
+
+	sentMsgID := "msg-sent-1"
+	replyMsgID := "msg-reply-1"
+	replyTimestamp := "2026-04-10T00:00:00Z"
+
+	replyEnv := &awid.MessageEnvelope{
+		From:      "myteam/architect",
+		FromDID:   senderDID,
+		To:        "myteam/implementer",
+		ToDID:     wrongRecipientDID,
+		Type:      "chat",
+		Body:      "hi back!",
+		Timestamp: replyTimestamp,
+		MessageID: replyMsgID,
+	}
+	replySig, err := awid.SignMessage(senderPriv, replyEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replySignedPayload := awid.CanonicalJSON(replyEnv)
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			var req awid.ChatCreateSessionRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "implementer", DID: "did:aw:implementer", Address: "myteam/implementer"},
+					{Alias: "architect", DID: "did:aw:architect", Address: "myteam/architect"},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "implementer", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type":           "message",
+				"message_id":     replyMsgID,
+				"from_agent":     "architect",
+				"from_address":   "myteam/architect",
+				"body":           "hi back!",
+				"from_did":       senderDID,
+				"signature":      replySig,
+				"signing_key_id": senderDID,
+				"signed_payload": replySignedPayload,
+				"timestamp":      replyTimestamp,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustIdentityClient(t, server.URL)
+	client.SetAddress("myteam/implementer")
+
+	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d, want 1", len(result.Events))
+	}
+	if result.Events[0].ToDID != wrongRecipientDID {
+		t.Fatalf("to_did=%q, want %q", result.Events[0].ToDID, wrongRecipientDID)
+	}
+	if result.Events[0].VerificationStatus != awid.IdentityMismatch {
+		t.Fatalf("verification_status=%s, want identity_mismatch", result.Events[0].VerificationStatus)
 	}
 }
 

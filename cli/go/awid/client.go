@@ -319,6 +319,12 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	return status, isContact
 }
 
+// NormalizeRecipientBinding applies the local recipient-binding check after
+// signature verification and any sender-side trust normalization.
+func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID string) VerificationStatus {
+	return c.checkRecipientBinding(status, toDID)
+}
+
 func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) VerificationStatus {
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
 		return status
