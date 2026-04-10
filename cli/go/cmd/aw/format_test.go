@@ -78,3 +78,92 @@ func TestFormatChatPendingKeepsOpenHintForDirectSession(t *testing.T) {
 		t.Fatalf("direct pending output should keep open hint:\n%s", out)
 	}
 }
+
+func TestFormatMailInboxPrefersFromAddress(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{
+				FromAlias:   "carol",
+				FromAddress: "otherco/carol",
+				Subject:     "hello",
+				Body:        "world",
+			},
+		},
+	}
+
+	out := formatMailInbox(resp)
+	if !strings.Contains(out, "- otherco/carol") {
+		t.Fatalf("mail inbox should prefer address labels:\n%s", out)
+	}
+	if strings.Contains(out, "- carol") {
+		t.Fatalf("mail inbox should not collapse to alias-only label:\n%s", out)
+	}
+}
+
+func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{"carol"},
+				ParticipantAddresses: []string{"otherco/carol"},
+				LastFrom:             "carol",
+				LastFromAddress:      "otherco/carol",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT WAITING: otherco/carol") {
+		t.Fatalf("pending output should prefer sender address:\n%s", out)
+	}
+	if strings.Contains(out, "CHAT WAITING: carol") {
+		t.Fatalf("pending output should not use alias-only sender label:\n%s", out)
+	}
+}
+
+func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
+	result := &chat.HistoryResult{
+		Messages: []chat.Event{
+			{
+				Type:        "message",
+				FromAgent:   "carol",
+				FromAddress: "otherco/carol",
+				Body:        "hello",
+			},
+		},
+	}
+
+	out := formatChatHistory(result)
+	if !strings.Contains(out, "otherco/carol: hello") {
+		t.Fatalf("chat history should prefer sender address:\n%s", out)
+	}
+	if strings.Contains(out, "\ncarol: hello") {
+		t.Fatalf("chat history should not use alias-only sender label:\n%s", out)
+	}
+}
+
+func TestFormatChatSendPrefersFromAddress(t *testing.T) {
+	result := &chat.SendResult{
+		Status:      "replied",
+		TargetAgent: "carol",
+		Reply:       "hello",
+		Events: []chat.Event{
+			{
+				Type:        "message",
+				FromAgent:   "carol",
+				FromAddress: "otherco/carol",
+				Body:        "hello",
+			},
+		},
+	}
+
+	out := formatChatSend(result)
+	if !strings.Contains(out, "Chat from: otherco/carol") {
+		t.Fatalf("chat send output should prefer sender address:\n%s", out)
+	}
+	if strings.Contains(out, "Chat from: carol") {
+		t.Fatalf("chat send output should not use alias-only sender label:\n%s", out)
+	}
+}

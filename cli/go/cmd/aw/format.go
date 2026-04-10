@@ -41,6 +41,7 @@ func formatContactTag(isContact *bool) string {
 // formatChatEventLine formats a single chat event as "[HH:MM:SS] agent: body" with tags.
 func formatChatEventLine(m chat.Event) string {
 	tags := formatVerificationTag(m.VerificationStatus) + formatContactTag(m.IsContact)
+	from := preferredIdentityLabel(m.FromAgent, m.FromAddress, "")
 	ts := ""
 	if m.Timestamp != "" {
 		if t, err := time.Parse(time.RFC3339, m.Timestamp); err == nil {
@@ -48,9 +49,9 @@ func formatChatEventLine(m chat.Event) string {
 		}
 	}
 	if ts != "" {
-		return fmt.Sprintf("[%s] %s%s: %s\n", ts, m.FromAgent, tags, m.Body)
+		return fmt.Sprintf("[%s] %s%s: %s\n", ts, from, tags, m.Body)
 	}
-	return fmt.Sprintf("%s%s: %s\n", m.FromAgent, tags, m.Body)
+	return fmt.Sprintf("%s%s: %s\n", from, tags, m.Body)
 }
 
 // --- introspect/whoami ---
@@ -106,7 +107,7 @@ func formatMailInbox(v any) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", msg.FromAlias, subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityLabel(msg.FromAlias, msg.FromAddress, ""), subj, tags, msg.Body))
 	}
 	return sb.String()
 }
@@ -163,27 +164,49 @@ func formatChatSend(v any) string {
 		timestamp = tagEvent.Timestamp
 		tags = formatVerificationTag(tagEvent.VerificationStatus) + formatContactTag(tagEvent.IsContact)
 	}
+	replyFrom := preferredIdentityLabel(
+		func() string {
+			if tagEvent == nil {
+				return ""
+			}
+			return tagEvent.FromAgent
+		}(),
+		func() string {
+			if tagEvent == nil {
+				return ""
+			}
+			return tagEvent.FromAddress
+		}(),
+		result.TargetAgent,
+	)
 
 	switch result.Status {
 	case "replied":
-		writeChatLine("Chat from", result.TargetAgent+tags, timestamp)
+		writeChatLine("Chat from", replyFrom+tags, timestamp)
 		sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
 		return sb.String()
 
 	case "sender_left":
-		writeChatLine("Chat from", result.TargetAgent+tags, timestamp)
+		writeChatLine("Chat from", replyFrom+tags, timestamp)
 		sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
 		sb.WriteString(fmt.Sprintf("Note: %s has left the exchange\n", result.TargetAgent))
 		return sb.String()
 
 	case "pending":
-		lastFrom := result.TargetAgent
-		if tagEvent != nil && tagEvent.FromAgent != "" {
-			lastFrom = tagEvent.FromAgent
+		incomingReply := true
+		if tagEvent != nil {
+			incomingReply = false
+			target := strings.TrimSpace(result.TargetAgent)
+			if target == "" {
+				incomingReply = true
+			}
+			if strings.EqualFold(strings.TrimSpace(tagEvent.FromAgent), target) || strings.EqualFold(strings.TrimSpace(tagEvent.FromAddress), target) {
+				incomingReply = true
+			}
 		}
 
-		if lastFrom == result.TargetAgent {
-			writeChatLine("Chat from", result.TargetAgent+tags, timestamp)
+		if incomingReply {
+			writeChatLine("Chat from", replyFrom+tags, timestamp)
 			if result.SenderWaiting {
 				sb.WriteString("Status: WAITING for your reply\n")
 			}
@@ -228,7 +251,7 @@ func formatChatSend(v any) string {
 			sb.WriteString("\n---\n\n")
 		}
 		tags := formatVerificationTag(event.VerificationStatus) + formatContactTag(event.IsContact)
-		writeChatLine("Chat from", event.FromAgent+tags, event.Timestamp)
+		writeChatLine("Chat from", preferredIdentityLabel(event.FromAgent, event.FromAddress, "")+tags, event.Timestamp)
 		sb.WriteString(fmt.Sprintf("Body: %s\n", event.Body))
 		messageIndex++
 	}
@@ -251,7 +274,7 @@ func formatChatPending(v any) string {
 
 	for _, p := range result.Pending {
 		openHint := ""
-		displayFrom := preferredSenderLabel(p.LastFrom, p.LastFromAddress, "")
+		displayFrom := preferredIdentityLabel(p.LastFrom, p.LastFromAddress, "")
 		openTarget := ""
 		if len(p.Participants) == 1 {
 			openTarget = strings.TrimSpace(p.Participants[0])
