@@ -137,6 +137,7 @@ class TaskSummary(BaseModel):
     status: str
     priority: int
     task_type: str
+    created_by_alias: str = ""
     assignee_alias: Optional[str]
     created_at: str
 
@@ -388,6 +389,7 @@ async def list_team_tasks(
                 status=r["status"],
                 priority=r["priority"],
                 task_type=r["task_type"],
+                created_by_alias=r.get("created_by_alias") or "",
                 assignee_alias=r.get("assignee_alias"),
                 created_at=r["created_at"],
             )
