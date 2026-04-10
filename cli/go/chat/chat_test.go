@@ -483,6 +483,36 @@ func TestSendNoWait(t *testing.T) {
 	}
 }
 
+func TestSendUsesAddressTargetsForIdentityRecipients(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			var req awid.ChatCreateSessionRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if len(req.ToAddresses) != 1 || req.ToAddresses[0] != "otherco/monitor" {
+				t.Fatalf("to_addresses=%v", req.ToAddresses)
+			}
+			if len(req.ToAliases) != 0 {
+				t.Fatalf("to_aliases=%v, want empty", req.ToAliases)
+			}
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1", MessageID: "m1",
+				SSEURL: "/v1/chat/sessions/s1/stream",
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"otherco/monitor"}, "hello", SendOptions{Wait: 0}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "sent" {
+		t.Fatalf("status=%s", result.Status)
+	}
+}
+
 func TestSendTargetsLeft(t *testing.T) {
 	t.Parallel()
 

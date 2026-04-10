@@ -26,6 +26,24 @@ const maxStreamDeadline = 15 * time.Minute
 // accounting for all possible wait extensions.
 const MaxSendTimeout = 16 * time.Minute
 
+func classifyChatTargets(targets []string) (aliases []string, dids []string, addresses []string) {
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(target, "did:"):
+			dids = append(dids, target)
+		case strings.Contains(target, "/"):
+			addresses = append(addresses, target)
+		default:
+			aliases = append(aliases, target)
+		}
+	}
+	return aliases, dids, addresses
+}
+
 // sseResult wraps an SSE event or error for channel-based processing.
 type sseResult struct {
 	event *awid.SSEEvent
@@ -546,9 +564,12 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		waitSeconds = 300
 	}
 
+	aliases, dids, addresses := classifyChatTargets(targets)
 	req := &awid.ChatCreateSessionRequest{
-		ToAliases: targets,
-		Message:   message,
+		ToAliases:   aliases,
+		ToDIDs:      dids,
+		ToAddresses: addresses,
+		Message:     message,
 		Leaving:   opts.Leaving,
 	}
 	if waitSeconds > 0 {
