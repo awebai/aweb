@@ -119,6 +119,30 @@ func TestFormatNotifyOutputFallbackSkipsSelfAddress(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputSkipsDirectSelfAddressSender(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"wendy", "rose"},
+				ParticipantAddresses: []string{"acme.com/wendy", "otherco/rose"},
+				LastFrom:             "wendy",
+				LastFromAddress:      "acme.com/wendy",
+				LastMessage:          "note to self",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if out != "" {
+		t.Fatalf("notify output should skip direct self-authored sender labels:\n%s", out)
+	}
+}
+
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 

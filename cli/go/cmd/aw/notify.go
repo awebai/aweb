@@ -134,6 +134,9 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 				break
 			}
 		}
+		if notifyIdentityMatchesSelf(from, selfAlias) {
+			continue
+		}
 		if from == "" {
 			continue
 		}
