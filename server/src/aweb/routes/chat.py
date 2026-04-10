@@ -1146,26 +1146,33 @@ async def list_sessions(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SessionListResponse:
     del request
-    actor_did = _actor_did(auth)
+    actor_dids = _actor_dids(auth)
+    actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT s.session_id, s.created_at,
-               array_agg(p2.alias ORDER BY p2.alias) AS participants,
-               array_agg(p2.did ORDER BY p2.alias) AS participant_dids
-        FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_participants}} p
-          ON p.session_id = s.session_id AND p.did = $1
-        JOIN {{tables.chat_participants}} p2
-          ON p2.session_id = s.session_id
-        GROUP BY s.session_id, s.created_at
-        ORDER BY s.created_at DESC
-        """,
-        actor_did,
-    )
+    rows_by_session: dict[str, Any] = {}
+    for participant_did in actor_dids:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT s.session_id, s.created_at,
+                   array_agg(p2.alias ORDER BY p2.alias) AS participants,
+                   array_agg(p2.did ORDER BY p2.alias) AS participant_dids
+            FROM {{tables.chat_sessions}} s
+            JOIN {{tables.chat_participants}} p
+              ON p.session_id = s.session_id AND p.did = $1
+            JOIN {{tables.chat_participants}} p2
+              ON p2.session_id = s.session_id
+            GROUP BY s.session_id, s.created_at
+            ORDER BY s.created_at DESC
+            """,
+            participant_did,
+        )
+        for row in rows:
+            rows_by_session.setdefault(str(row["session_id"]), row)
+    rows = list(rows_by_session.values())
+    rows.sort(key=lambda row: row["created_at"], reverse=True)
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
@@ -1183,7 +1190,7 @@ async def list_sessions(
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            str(row["session_id"]): [did for did in (row["participant_dids"] or []) if did != actor_did]
+            str(row["session_id"]): [did for did in (row["participant_dids"] or []) if did not in set(actor_dids)]
             for row in rows
         },
     )
@@ -1198,7 +1205,7 @@ async def list_sessions(
                 participants=[
                     participant["alias"]
                     for participant in session_participants
-                    if (participant.get("did") or "").strip() != actor_did
+                    if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
                 created_at=_utc_iso(row["created_at"]),
                 sender_waiting=len(waiting) > 0,
