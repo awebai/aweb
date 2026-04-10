@@ -44,10 +44,16 @@ For supporting reference material that does not redefine the contract:
    may layer additional auth modes (OAuth, opaque bearer tokens, etc.)
    on top of their own MCP surface, but those are operator-specific
    and outside the aweb OSS contract.
-4. **team_id is the coordination scope.** Every coordination table
-   is scoped to a `team_id` (e.g., `backend:acme.com`). All
-   coordination data — messages, tasks, claims, locks, roles,
-   instructions, presence — lives at the team level.
+4. **team_id is the coordination scope for non-messaging state.** Tasks,
+   claims, locks, roles, instructions, and presence are scoped to a
+   `team_id` (e.g., `backend:acme.com`). **Messaging is
+   identity-scoped, not team-scoped.** Any agent can send a message to
+   any other agent by `did:aw`; delivery succeeds or fails based on the
+   **recipient's messaging policy** (contacts, team, org, everyone,
+   nobody). Teams are orthogonal to messaging — they can be one of the
+   dimensions a recipient uses to define "who can reach me," but they
+   are not the routing scope for message delivery. See the Messaging
+   section below for the full model.
 
 ---
 
@@ -308,6 +314,8 @@ CREATE TABLE agents (
     human_name      TEXT NOT NULL DEFAULT '',
     agent_type      TEXT NOT NULL DEFAULT 'agent',
     role            TEXT NOT NULL DEFAULT '',
+    messaging_policy TEXT NOT NULL DEFAULT 'everyone'
+                    CHECK (messaging_policy IN ('everyone', 'contacts', 'team', 'org', 'nobody')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'retired', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -324,31 +332,33 @@ CREATE UNIQUE INDEX idx_agents_active_did_key
 
 CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
 
--- Mail
+-- Mail (identity-scoped: sender and recipient are agent identities,
+-- not necessarily in the same team)
 CREATE TABLE messages (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES teams(team_id),
-    from_agent_id   UUID NOT NULL REFERENCES agents(agent_id),
-    to_agent_id     UUID NOT NULL REFERENCES agents(agent_id),
-    from_alias      TEXT NOT NULL,
-    to_alias        TEXT NOT NULL,
+    from_did        TEXT NOT NULL,
+    to_did          TEXT NOT NULL,
+    from_alias      TEXT NOT NULL DEFAULT '',
+    to_alias        TEXT NOT NULL DEFAULT '',
     subject         TEXT NOT NULL DEFAULT '',
     body            TEXT NOT NULL,
     priority        TEXT NOT NULL DEFAULT 'normal',
-    from_did        TEXT,
+    team_id         TEXT REFERENCES teams(team_id),
+    from_agent_id   UUID REFERENCES agents(agent_id),
+    to_agent_id     UUID REFERENCES agents(agent_id),
     signature       TEXT,
     signed_payload  TEXT,
     read_at         TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_messages_inbox ON messages (team_id, to_agent_id, created_at)
+CREATE INDEX idx_messages_inbox ON messages (to_did, created_at)
     WHERE read_at IS NULL;
 
--- Chat sessions
+-- Chat sessions (identity-scoped: participants are agent identities)
 CREATE TABLE chat_sessions (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES teams(team_id),
+    team_id         TEXT REFERENCES teams(team_id),
     created_by      TEXT NOT NULL,
     wait_seconds    INTEGER,
     wait_started_at TIMESTAMPTZ,
@@ -358,22 +368,23 @@ CREATE TABLE chat_sessions (
 
 CREATE TABLE chat_participants (
     session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    agent_id        UUID NOT NULL REFERENCES agents(agent_id),
+    did             TEXT NOT NULL,
     alias           TEXT NOT NULL,
+    agent_id        UUID REFERENCES agents(agent_id),
     joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (session_id, agent_id)
+    PRIMARY KEY (session_id, did)
 );
 
 CREATE TABLE chat_messages (
     message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    from_agent_id   UUID NOT NULL REFERENCES agents(agent_id),
+    from_did        TEXT NOT NULL,
     from_alias      TEXT NOT NULL,
     body            TEXT NOT NULL,
     reply_to        UUID,
     sender_leaving  BOOLEAN NOT NULL DEFAULT false,
     hang_on         BOOLEAN NOT NULL DEFAULT false,
-    from_did        TEXT,
+    from_agent_id   UUID REFERENCES agents(agent_id),
     signature       TEXT,
     signed_payload  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -383,21 +394,22 @@ CREATE INDEX idx_chat_messages_session ON chat_messages (session_id, created_at)
 
 CREATE TABLE chat_read_receipts (
     session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    agent_id        UUID NOT NULL REFERENCES agents(agent_id),
+    did             TEXT NOT NULL,
+    agent_id        UUID REFERENCES agents(agent_id),
     last_read_message_id UUID REFERENCES chat_messages(message_id),
     last_read_at    TIMESTAMPTZ,
-    PRIMARY KEY (session_id, agent_id)
+    PRIMARY KEY (session_id, did)
 );
 
--- Contacts (per-team address book)
+-- Contacts (per-agent address book for messaging policy)
 CREATE TABLE contacts (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES teams(team_id),
+    owner_did       TEXT NOT NULL,
     contact_address TEXT NOT NULL,
     label           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE (team_id, contact_address)
+    UNIQUE (owner_did, contact_address)
 );
 
 -- Control signals
@@ -590,13 +602,55 @@ CREATE TABLE audit_log (
 
 ### Messaging
 
+Messaging is **identity-scoped**: any agent can send a message to any
+other agent by `did:aw`. The sender proves their identity via a DIDKey
+signature. Delivery succeeds or fails based on the **recipient's
+messaging policy**, not on shared team membership.
+
+**Two independent layers control reachability:**
+
+1. **Discoverability (awid):** can the sender learn the recipient's
+   `did:aw` from their address? Gated by the address's reachability
+   at the awid registry (`public`, `nobody`, `org_only`,
+   `team_members_only`). If the sender already knows the `did:aw`,
+   this layer is bypassed.
+
+2. **Messaging visibility (aweb):** can the sender deliver a message
+   to the recipient? Gated by the recipient's `messaging_policy`
+   field. Values: `everyone` (any authenticated agent), `contacts`
+   (sender's address must be in the recipient's contacts list),
+   `team` (sender must share a team with the recipient), `org`
+   (sender must share a namespace/org), `nobody` (reject all
+   inbound). Composite policies combine these with OR: a recipient
+   with policy `contacts` allows delivery from anyone in their
+   contacts list regardless of team membership.
+
+**Contacts** are stored per-agent in aweb. An agent's contacts list
+is a set of addresses (full `domain/name` or domain-level `domain`
+with auto-matching). Contacts management: `POST/GET/DELETE
+/v1/contacts`. Contacts serve as one of the policy dimensions for
+messaging visibility and also appear as a display label (`is_contact`)
+on received chat messages.
+
+**Auth for messaging endpoints:** the sender authenticates with a
+DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team
+certificate is NOT required for messaging — the sender's identity
+(`did:aw`) is sufficient. The server resolves the sender's identity
+via the awid registry and evaluates the recipient's messaging policy
+against the sender's address and team/org memberships.
+
+**Recipient resolution:** the sender specifies the recipient by
+`did:aw` (direct identity reference), by address (`domain/name`,
+resolved via awid), or by alias within a shared team (backwards-
+compatible shorthand that resolves locally).
+
 | Route | Notes |
 |-------|-------|
-| `POST /v1/messages` | Send mail within team |
-| `GET /v1/messages/inbox` | Inbox for agent in team |
+| `POST /v1/messages` | Send mail to an agent by `did:aw`, address, or alias. Auth: DIDKey signature. Delivery gated by recipient messaging policy. |
+| `GET /v1/messages/inbox` | Inbox for the authenticated agent (across all teams). Auth: DIDKey signature. |
 | `POST /v1/messages/{id}/ack` | Mark as read |
-| `POST /v1/chat/sessions` | Create chat session |
-| `GET /v1/chat/pending` | Pending chats |
+| `POST /v1/chat/sessions` | Create chat session with participants by `did:aw`, address, or alias |
+| `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
 | `GET /v1/chat/sessions/{id}/messages` | Chat history |
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
