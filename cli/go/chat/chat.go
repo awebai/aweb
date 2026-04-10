@@ -313,6 +313,35 @@ func chatIdentityMatchesTarget(candidate string, target string) bool {
 	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
 		return true
 	}
+	if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
+		return true
+	}
+	if handle := addressHandle(target); handle != "" && strings.EqualFold(handle, candidate) {
+		return true
+	}
+	return false
+}
+
+func chatSessionIdentityMatchesTarget(candidate string, target string) bool {
+	candidate = strings.TrimSpace(candidate)
+	target = strings.TrimSpace(target)
+	if candidate == "" || target == "" {
+		return false
+	}
+	if strings.EqualFold(candidate, target) {
+		return true
+	}
+	if alias := stableAlias(candidate); alias != "" && strings.EqualFold(alias, target) {
+		return true
+	}
+	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
+		return true
+	}
+	if !strings.HasPrefix(target, "did:") && !strings.Contains(target, "/") {
+		if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -322,17 +351,17 @@ func exactParticipantMatch(participants []string, participantDIDs []string, part
 		return false
 	}
 	for _, participant := range participants {
-		if chatIdentityMatchesTarget(participant, target) {
+		if chatSessionIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
 	for _, participant := range participantAddresses {
-		if chatIdentityMatchesTarget(participant, target) {
+		if chatSessionIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
 	for _, participant := range participantDIDs {
-		if chatIdentityMatchesTarget(participant, target) {
+		if chatSessionIdentityMatchesTarget(participant, target) {
 			return true
 		}
 	}
