@@ -106,6 +106,7 @@ class AgentSummary(BaseModel):
     agent_id: str
     alias: str
     did_key: str
+    human_name: str
     address: Optional[str]
     agent_type: str
     role: str
@@ -321,7 +322,7 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.address, a.agent_type,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, a.address, a.agent_type,
                a.role, a.status, a.lifetime, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
@@ -344,6 +345,7 @@ async def list_team_agents(
                 agent_id=str(r["agent_id"]),
                 alias=r["alias"],
                 did_key=r["did_key"],
+                human_name=r["human_name"],
                 address=r.get("address"),
                 agent_type=r["agent_type"],
                 role=r["role"],

@@ -247,27 +247,6 @@ async def _seed(aweb_db):
     return str(alice_id), str(bob_id)
 
 
-async def _read_sse_event(line_iter):
-    event_name = None
-    data_lines: list[str] = []
-
-    async for line in line_iter:
-        if line == "":
-            if event_name is None and not data_lines:
-                continue
-            payload = json.loads("".join(data_lines)) if data_lines else {}
-            return event_name, payload
-        if line.startswith(":"):
-            continue
-        if line.startswith("event: "):
-            event_name = line[7:]
-            continue
-        if line.startswith("data: "):
-            data_lines.append(line[6:])
-
-    raise AssertionError("SSE stream ended before a complete event was received")
-
-
 class _FakeStreamRequest:
     async def is_disconnected(self) -> bool:
         return False
@@ -334,10 +313,12 @@ async def test_list_agents(aweb_cloud_db):
     assert set(agents) == {"alice", "bob"}
     assert agents["alice"]["workspace_path"] == "/Users/alice/project"
     assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
+    assert agents["alice"]["human_name"] == "Alice"
     assert agents["alice"]["address"] == "acme.com/alice"
     assert agents["alice"]["agent_type"] == "coder"
     assert agents["bob"]["workspace_path"] is None
     assert agents["bob"]["last_seen"] is None
+    assert agents["bob"]["human_name"] == "Bob"
     assert agents["bob"]["address"] is None
     assert agents["bob"]["agent_type"] == "reviewer"
 
@@ -862,6 +843,21 @@ async def test_events_stream_missing_token_returns_401(aweb_cloud_db):
         resp = await client.get("/v1/teams/backend:acme.com/events/stream")
 
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_events_stream_unauthorized_team_returns_403(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db, redis=_FakeRedis())
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["team:other.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/events/stream",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
