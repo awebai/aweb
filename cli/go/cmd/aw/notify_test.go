@@ -168,6 +168,33 @@ func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputSkipsSelfStableIDParticipant(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"", ""},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if strings.Contains(out, "Unread message from did:aw:wendy") {
+		t.Fatalf("notify output should not surface self stable identity as sender:\n%s", out)
+	}
+	if !strings.Contains(out, "Unread message from did:aw:rose") {
+		t.Fatalf("notify output should skip self stable identity and fall through to the other participant:\n%s", out)
+	}
+}
+
 func TestFormatHookOutputValidJSON(t *testing.T) {
 	t.Parallel()
 
