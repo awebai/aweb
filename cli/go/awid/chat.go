@@ -58,10 +58,6 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 	if sessionID == "" {
 		return "", nil
 	}
-	selfAlias := c.alias()
-	if selfAlias == "" {
-		return "", nil
-	}
 	resp, err := c.ChatListSessions(ctx)
 	if err != nil {
 		return "", err
@@ -69,6 +65,13 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 	for _, s := range resp.Sessions {
 		if s.SessionID != sessionID {
 			continue
+		}
+		if toAddr := c.toAddressForAliases(s.ParticipantAddresses); toAddr != "" {
+			return toAddr, nil
+		}
+		selfAlias := c.alias()
+		if selfAlias == "" {
+			return "", nil
 		}
 		others := make([]string, 0, len(s.Participants))
 		for _, a := range s.Participants {
