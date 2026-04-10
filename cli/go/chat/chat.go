@@ -695,6 +695,10 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		TargetAgent: strings.Join(targets, ", "),
 		Events:      []Event{},
 	}
+	targetStatusNames := make([][]string, 0, len(targets))
+	for _, target := range targets {
+		targetStatusNames = append(targetStatusNames, normalizedChatTargetNames(ctx, client, target))
+	}
 
 	if opts.Leaving {
 		return result, nil
@@ -707,8 +711,8 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	// Check if any target has left
 	targetHasLeft := false
 	for _, leftAlias := range resp.TargetsLeft {
-		for _, target := range targets {
-			if leftAlias == target {
+		for _, targetNames := range targetStatusNames {
+			if chatTargetNameListContains(targetNames, leftAlias) {
 				targetHasLeft = true
 				break
 			}
@@ -725,10 +729,10 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 
 	// Check target connection status (informational)
 	allTargetsConnected := true
-	for _, target := range targets {
+	for _, targetNames := range targetStatusNames {
 		found := false
 		for _, alias := range resp.TargetsConnected {
-			if alias == target {
+			if chatTargetNameListContains(targetNames, alias) {
 				found = true
 				break
 			}
@@ -965,6 +969,42 @@ func chatEventMatchesTarget(ev Event, target string) bool {
 		strings.TrimSpace(ev.FromDID),
 	} {
 		if candidate != "" && candidate == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target string) []string {
+	names := []string{}
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range names {
+			if existing == value {
+				return
+			}
+		}
+		names = append(names, value)
+	}
+
+	appendUnique(target)
+	normalized := normalizeSessionTarget(ctx, client, target)
+	appendUnique(normalized)
+	appendUnique(addressHandle(target))
+	appendUnique(addressHandle(normalized))
+	return names
+}
+
+func chatTargetNameListContains(candidates []string, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if candidate == value {
 			return true
 		}
 	}
