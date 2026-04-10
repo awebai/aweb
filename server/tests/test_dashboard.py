@@ -395,6 +395,106 @@ async def test_tasks_filters_and_paginates(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_tasks_empty_result_set(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"status": "closed"},
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"tasks": [], "has_more": False, "next_cursor": None}
+
+
+@pytest.mark.asyncio
+async def test_tasks_unknown_assignee_returns_empty_results(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"assignee_alias": "someone-who-left"},
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"tasks": [], "has_more": False, "next_cursor": None}
+
+
+@pytest.mark.asyncio
+async def test_tasks_invalid_cursor_returns_422(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"cursor": "not-base64"},
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Invalid cursor"
+
+
+@pytest.mark.asyncio
+async def test_tasks_filters_in_isolation(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.tasks}} (
+            task_id, team_id, task_number, root_task_seq, task_ref_suffix, title, description,
+            status, priority, task_type, labels, assignee_alias, created_at
+        )
+        VALUES
+            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
+             'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
+            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Document claims', 'Write pagination docs',
+             'open', 1, 'chore', ARRAY['docs']::text[], NULL, TIMESTAMPTZ '2026-04-08T12:04:00Z')
+        """,
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        status_resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"status": "in_progress"},
+            headers={"X-Dashboard-Token": token},
+        )
+        assignee_resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"assignee_alias": "alice"},
+            headers={"X-Dashboard-Token": token},
+        )
+        priority_resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"priority": "P0"},
+            headers={"X-Dashboard-Token": token},
+        )
+        q_resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"q": "pagination docs"},
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert [task["title"] for task in status_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in assignee_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in priority_resp.json()["tasks"]] == ["Build dashboard"]
+    assert [task["title"] for task in q_resp.json()["tasks"]] == ["Document claims"]
+
+
+@pytest.mark.asyncio
 async def test_tasks_cursor_pagination(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)

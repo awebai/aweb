@@ -19,6 +19,7 @@ from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.config import get_settings
 from aweb.deps import get_db
+from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
 router = APIRouter(tags=["dashboard"])
@@ -331,7 +332,10 @@ async def list_team_tasks(
     db=Depends(get_db),
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
-    validated_limit, cursor_data = validate_pagination_params(limit, cursor)
+    try:
+        validated_limit, cursor_data = validate_pagination_params(limit, cursor)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid cursor")
     label_list = [s.strip() for s in labels.split(",") if s.strip()] if labels else None
     priority_value = None
     if priority is not None:
@@ -348,19 +352,22 @@ async def list_team_tasks(
         except (KeyError, TypeError, ValueError) as e:
             raise HTTPException(status_code=422, detail=f"Invalid cursor: {e}")
 
-    rows = await list_tasks_paginated(
-        db,
-        team_id=team_id,
-        status=status,
-        assignee_alias=assignee_alias,
-        task_type=task_type,
-        priority=priority_value,
-        labels=label_list,
-        q=q,
-        limit=validated_limit + 1,
-        created_before=cursor_created_at,
-        task_id_before=cursor_task_id,
-    )
+    try:
+        rows = await list_tasks_paginated(
+            db,
+            team_id=team_id,
+            status=status,
+            assignee_alias=assignee_alias,
+            task_type=task_type,
+            priority=priority_value,
+            labels=label_list,
+            q=q,
+            limit=validated_limit + 1,
+            created_before=cursor_created_at,
+            task_id_before=cursor_task_id,
+        )
+    except ValidationError:
+        return TaskListResponse(tasks=[], has_more=False, next_cursor=None).model_dump()
 
     has_more = len(rows) > validated_limit
     rows = rows[:validated_limit]
@@ -383,7 +390,7 @@ async def list_team_tasks(
                 task_type=r["task_type"],
                 assignee_alias=r.get("assignee_alias"),
                 created_at=r["created_at"],
-            ).model_dump()
+            )
             for r in rows
         ],
         has_more=has_more,

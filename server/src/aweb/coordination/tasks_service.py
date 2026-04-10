@@ -456,10 +456,11 @@ async def list_tasks_paginated(
         q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         q_pattern = f"%{q_escaped}%"
         conditions.append(
-            f"(title ILIKE ${idx} ESCAPE '\\' OR description ILIKE ${idx} ESCAPE '\\')"
+            f"(title ILIKE ${idx} ESCAPE '\\' OR description ILIKE ${idx + 1} ESCAPE '\\')"
         )
         params.append(q_pattern)
-        idx += 1
+        params.append(q_pattern)
+        idx += 2
     if created_before is not None and task_id_before is not None:
         conditions.append(
             f"(created_at < ${idx} OR (created_at = ${idx} AND task_id < ${idx + 1}))"
