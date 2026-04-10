@@ -1930,6 +1930,68 @@ func TestChatCreateSessionSingleStableTargetWithoutResolverOmitsCurrentRecipient
 	}
 }
 
+func TestChatCreateSessionSingleAddressTargetSignsResolvedRecipientBinding(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientAddress := "otherco/monitor"
+	recipientCurrentDID := "did:key:z6MkrRecipientCurrent"
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess-1",
+			"message_id": "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != recipientAddress {
+				t.Fatalf("resolve identifier=%q", identifier)
+			}
+			return &ResolvedIdentity{
+				Address: recipientAddress,
+				DID:     recipientCurrentDID,
+			}, nil
+		},
+	})
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAddresses: []string{recipientAddress},
+		Message:     "hello direct chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env MessageEnvelope
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	if env.ToDID != recipientCurrentDID {
+		t.Fatalf("signed payload to_did=%q, want resolved current did %q", env.ToDID, recipientCurrentDID)
+	}
+	if env.To != recipientAddress {
+		t.Fatalf("signed payload to=%q, want %q", env.To, recipientAddress)
+	}
+}
+
 func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 	t.Parallel()
 
