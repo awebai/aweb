@@ -41,3 +41,38 @@ func TestFormatChatSendUsesReplyMessageTagsNotReadReceipt(t *testing.T) {
 	}
 }
 
+func TestFormatChatPendingOmitsOpenHintForGroupSession(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:  []string{"bob", "carol"},
+				LastFrom:      "carol",
+				UnreadCount:   1,
+				SenderWaiting: true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if strings.Contains(out, `aw chat open carol`) {
+		t.Fatalf("group pending output should not suggest ambiguous open hint:\n%s", out)
+	}
+}
+
+func TestFormatChatPendingKeepsOpenHintForDirectSession(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:  []string{"carol"},
+				LastFrom:      "carol",
+				UnreadCount:   1,
+				SenderWaiting: true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, `aw chat open carol`) {
+		t.Fatalf("direct pending output should keep open hint:\n%s", out)
+	}
+}
