@@ -98,6 +98,17 @@ PUT    /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
+**Reachability enforcement:**
+- `public` — any caller, anonymous or authenticated
+- `nobody` — owner only; the caller's `did:aw` must match the address `did_aw`
+- `org_only` — owner, or any caller holding an active persistent team certificate for a team in the same namespace domain
+- `team_members_only` — owner, or any caller holding an active persistent team certificate for the specific team in `visible_to_team_id`
+
+Ephemeral team certificates (`lifetime='ephemeral'`) do not satisfy
+`org_only` or `team_members_only` checks. Anonymous callers see only
+public addresses; non-public addresses return `404`, not `403`, to avoid
+leaking existence.
+
 ## DID registry
 
 Stable identity mappings. `did:aw` → `did:key`.

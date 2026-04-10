@@ -378,6 +378,7 @@ def _address_visibility_sql(
                 JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
                 WHERE tc.member_did_aw = {caller_ref}
                   AND tc.revoked_at IS NULL
+                  AND tc.lifetime = 'persistent'
                   AND t.domain = {namespace_alias}.domain
                   AND t.deleted_at IS NULL
                 LIMIT 1
@@ -391,6 +392,7 @@ def _address_visibility_sql(
                 JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
                 WHERE tc.member_did_aw = {caller_ref}
                   AND tc.revoked_at IS NULL
+                  AND tc.lifetime = 'persistent'
                   AND (t.name || ':' || t.domain) = {address_alias}.visible_to_team_id
                   AND t.deleted_at IS NULL
                 LIMIT 1
