@@ -15,6 +15,26 @@ import (
 	awid "github.com/awebai/aw/awid"
 )
 
+type signedEnvelopeMetadata struct {
+	From         string `json:"from"`
+	To           string `json:"to"`
+	FromDID      string `json:"from_did"`
+	ToDID        string `json:"to_did"`
+	FromStableID string `json:"from_stable_id"`
+	ToStableID   string `json:"to_stable_id"`
+}
+
+func parseSignedEnvelopeMetadata(payload string) (signedEnvelopeMetadata, bool) {
+	if payload == "" {
+		return signedEnvelopeMetadata{}, false
+	}
+	var meta signedEnvelopeMetadata
+	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
+		return signedEnvelopeMetadata{}, false
+	}
+	return meta, true
+}
+
 const DefaultWait = 120 // Default wait timeout in seconds for replies
 
 // maxStreamDeadline is the server-side SSE connection safety net.
@@ -90,6 +110,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: sseEvent.Event,
 	}
+	signedPayload := ""
 
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
@@ -164,6 +185,9 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	if v, ok := data["signing_key_id"].(string); ok {
 		ev.SigningKeyID = v
 	}
+	if v, ok := data["signed_payload"].(string); ok {
+		signedPayload = v
+	}
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
 	}
@@ -204,6 +228,27 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
+	if meta, ok := parseSignedEnvelopeMetadata(signedPayload); ok {
+		if ev.FromDID == "" {
+			ev.FromDID = meta.FromDID
+		}
+		if ev.ToDID == "" {
+			ev.ToDID = meta.ToDID
+		}
+		if ev.FromStableID == "" {
+			ev.FromStableID = meta.FromStableID
+		}
+		if ev.ToStableID == "" {
+			ev.ToStableID = meta.ToStableID
+		}
+		if ev.FromAddress == "" {
+			ev.FromAddress = meta.From
+		}
+		if ev.ToAddress == "" {
+			ev.ToAddress = meta.To
+		}
+	}
+
 	// Verify message signature when identity fields are present.
 	from := ev.FromAgent
 	if ev.FromAddress != "" {
@@ -224,7 +269,11 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		SigningKeyID: ev.SigningKeyID,
 	}
 	// Error is encoded in VerificationStatus; discard it.
-	ev.VerificationStatus, _ = awid.VerifyMessage(env)
+	if signedPayload != "" {
+		ev.VerificationStatus, _ = awid.VerifySignedPayload(signedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
+	} else {
+		ev.VerificationStatus, _ = awid.VerifyMessage(env)
+	}
 
 	return ev
 }
