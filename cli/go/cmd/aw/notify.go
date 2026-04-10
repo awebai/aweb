@@ -67,7 +67,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	output := formatNotifyOutput(result, sel.Alias)
+	output := formatNotifyOutput(result, sel.Alias, sel.StableID, sel.DID)
 	if output == "" {
 		return nil
 	}
@@ -102,7 +102,7 @@ func touchNotifyStamp(stampPath string) {
 	f.Close()
 }
 
-func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
+func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs ...string) string {
 	if result == nil || len(result.Pending) == 0 {
 		return ""
 	}
@@ -132,14 +132,14 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 						return ""
 					}(),
 				)
-				if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias) {
+				if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias, selfDIDs...) {
 					continue
 				}
 				from = participant
 				break
 			}
 		}
-		if notifyIdentityMatchesSelf(from, selfAlias) {
+		if notifyIdentityMatchesSelf(from, selfAlias, selfDIDs...) {
 			continue
 		}
 		if from == "" {
@@ -174,10 +174,19 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string) string {
 	return sb.String()
 }
 
-func notifyIdentityMatchesSelf(value string, selfAlias string) bool {
+func notifyIdentityMatchesSelf(value string, selfAlias string, selfDIDs ...string) bool {
 	value = strings.TrimSpace(value)
 	selfAlias = strings.TrimSpace(selfAlias)
-	if value == "" || selfAlias == "" {
+	if value == "" {
+		return false
+	}
+	for _, selfDID := range selfDIDs {
+		selfDID = strings.TrimSpace(selfDID)
+		if selfDID != "" && strings.EqualFold(value, selfDID) {
+			return true
+		}
+	}
+	if selfAlias == "" {
 		return false
 	}
 	if strings.EqualFold(value, selfAlias) {
