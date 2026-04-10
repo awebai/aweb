@@ -116,10 +116,10 @@ async def _current_actionable_chat(
             pending_by_session.setdefault(item["session_id"], item)
     actionable: list[dict[str, Any]] = []
     for item in pending_by_session.values():
-        participant_dids = [
+        other_dids = [
             did for did in item.get("participant_dids", []) if did not in viewer_did_set
         ]
-        waiting = await get_waiting_agents(redis, item["session_id"], participant_dids)
+        waiting = await get_waiting_agents(redis, item["session_id"], other_dids)
         sender_waiting = bool(waiting)
         last_activity = item.get("last_activity")
         actionable.append(
