@@ -283,6 +283,32 @@ async def test_claims(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_claims_unauthorized_returns_403(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    token = _make_jwt(["team:other.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/claims",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_claims_missing_token_returns_401(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/teams/backend:acme.com/claims")
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_messages(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)

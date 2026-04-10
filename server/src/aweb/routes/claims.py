@@ -11,7 +11,7 @@ from uuid import UUID
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
-from ..claims import list_active_claims as list_active_claim_rows
+from ..claims import list_active_claims
 from awid.pagination import encode_cursor, validate_pagination_params
 
 router = APIRouter(prefix="/v1", tags=["claims"])
@@ -84,7 +84,7 @@ async def list_claims(
             cursor_timestamp = datetime.fromisoformat(cursor_data["claimed_at"])
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=f"Invalid cursor timestamp: {e}")
-    rows = await list_active_claim_rows(
+    rows = await list_active_claims(
         db_infra,
         team_id=team_id,
         workspace_id=validated_workspace_id,

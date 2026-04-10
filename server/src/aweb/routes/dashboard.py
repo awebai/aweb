@@ -213,10 +213,13 @@ async def list_team_agents(
 
 @router.get("/v1/teams/{team_id:path}/claims")
 async def list_team_claims(
-    request: Request, team_id: str, db=Depends(get_db)
+    request: Request,
+    team_id: str,
+    limit: int = Query(default=200, ge=1, le=200),
+    db=Depends(get_db),
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
-    rows = await list_active_claims(db, team_id=team_id)
+    rows = await list_active_claims(db, team_id=team_id, limit=limit)
     return {
         "claims": [
             DashboardClaimSummary(
@@ -428,15 +431,7 @@ async def get_team_status(
     )
     online_agents = [r["alias"] for r in online_rows]
 
-    claim_rows = await aweb_db.fetch_all(
-        """
-        SELECT task_ref, alias, claimed_at
-        FROM {{tables.task_claims}}
-        WHERE team_id = $1
-        ORDER BY claimed_at DESC
-        """,
-        team_id,
-    )
+    claim_rows = await list_active_claims(db, team_id=team_id)
 
     lock_rows = await aweb_db.fetch_all(
         """
