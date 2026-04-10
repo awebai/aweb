@@ -685,6 +685,219 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 	}
 }
 
+func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T) {
+	t.Parallel()
+
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	address := "acme.com/alice"
+	registryURL := ""
+	logHead := testDidLogEntry(t, stableID, oldPriv, oldDID, "create", nil, nil, 1, strings.Repeat("b", 64))
+
+	var rotated atomic.Bool
+	var seenPut atomic.Bool
+	var newDID string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/key":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": oldDID,
+				"log_head":        didLogJSON(logHead),
+			})
+		case "/v1/did/" + stableID + "/full":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			authDID := didFromRegistryAuthHeader(t, r)
+			currentDID := oldDID
+			if rotated.Load() {
+				currentDID = newDID
+				if authDID != newDID {
+					t.Fatalf("post-rotation auth did=%q want %q", authDID, newDID)
+				}
+			} else if authDID != oldDID {
+				t.Fatalf("pre-rotation auth did=%q want %q", authDID, oldDID)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": currentDID,
+				"server":          "",
+				"address":         address,
+				"handle":          "alice",
+				"created_at":      "2026-04-05T00:00:00Z",
+				"updated_at":      "2026-04-05T00:00:00Z",
+			})
+		case "/v1/did/" + stableID:
+			if r.Method != http.MethodPut {
+				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["operation"] != "rotate_key" {
+				t.Fatalf("operation=%v", payload["operation"])
+			}
+			if payload["authorized_by"] != oldDID {
+				t.Fatalf("authorized_by=%v", payload["authorized_by"])
+			}
+			if int(payload["seq"].(float64)) != 2 {
+				t.Fatalf("seq=%v", payload["seq"])
+			}
+			if payload["prev_entry_hash"] != logHead.EntryHash {
+				t.Fatalf("prev_entry_hash=%v want %s", payload["prev_entry_hash"], logHead.EntryHash)
+			}
+			newDID, _ = payload["new_did_key"].(string)
+			if strings.TrimSpace(newDID) == "" || newDID == oldDID {
+				t.Fatalf("new_did_key=%q", newDID)
+			}
+			entry := &awid.DidKeyEvidence{
+				Seq:            2,
+				Operation:      "rotate_key",
+				PreviousDIDKey: stringPtr(oldDID),
+				NewDIDKey:      newDID,
+				PrevEntryHash:  stringPtr(logHead.EntryHash),
+				StateHash:      payload["state_hash"].(string),
+				AuthorizedBy:   oldDID,
+				Timestamp:      payload["timestamp"].(string),
+			}
+			sig, err := base64.RawStdEncoding.DecodeString(payload["signature"].(string))
+			if err != nil {
+				t.Fatalf("decode signature: %v", err)
+			}
+			if !ed25519.Verify(oldPub, []byte(awid.CanonicalDidLogPayload(stableID, entry)), sig) {
+				t.Fatal("invalid rotation signature")
+			}
+			rotated.Store(true)
+			seenPut.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{"updated": true})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	registryURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, address, oldDID, stableID, registryURL, oldPriv)
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id rotate-key failed: %v\n%s", err, string(out))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "rotated" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["old_did"] != oldDID {
+		t.Fatalf("old_did=%v want %s", got["old_did"], oldDID)
+	}
+	if got["new_did"] != newDID {
+		t.Fatalf("new_did=%v want %s", got["new_did"], newDID)
+	}
+	if !seenPut.Load() {
+		t.Fatal("rotation PUT was not sent")
+	}
+
+	identity := loadIdentityForTest(t, tmp)
+	if identity.DID != newDID {
+		t.Fatalf("identity did=%q want %q", identity.DID, newDID)
+	}
+	if identity.RegistryStatus != "registered" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+	activeKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := awid.ComputeDIDKey(activeKey.Public().(ed25519.PublicKey)); got != newDID {
+		t.Fatalf("active signing key did=%q want %q", got, newDID)
+	}
+	archivedKey := filepath.Join(tmp, ".aw", "rotated", pendingFileBase(oldDID)+".key")
+	if _, err := os.Stat(archivedKey); err != nil {
+		t.Fatalf("archived key missing: %v", err)
+	}
+	if pending, err := loadPendingRotationState(filepath.Join(tmp, ".aw", "rotation"), stableID); err != nil {
+		t.Fatal(err)
+	} else if pending != nil {
+		t.Fatalf("pending rotation state still present: %+v", pending)
+	}
+}
+
+func TestAwIDRotateKeyRefusesWhenPendingRotationExists(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	registryURL := "https://registry.example"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, registryURL, priv)
+
+	rotationDir := filepath.Join(tmp, ".aw", "rotation")
+	if err := os.MkdirAll(filepath.Join(rotationDir, "pending"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pendingPub, pendingPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingDID := awid.ComputeDIDKey(pendingPub)
+	pendingKeyPath, err := savePendingRotationKeypair(rotationDir, pendingDID, pendingPub, pendingPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := savePendingRotationState(rotationDir, &pendingRotationState{
+		StableID:    stableID,
+		OldDID:      did,
+		NewDID:      pendingDID,
+		RegistryURL: registryURL,
+		PendingKey:  pendingKeyPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected rotate-key to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "pending rotation exists") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+}
+
 func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 	t.Parallel()
 

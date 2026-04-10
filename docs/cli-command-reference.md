@@ -130,6 +130,7 @@ Subcommands:
 - `log` Show an identity log
 - `namespace` Inspect a namespace and its registered addresses
 - `register` Register the current persistent identity at awid.ai
+- `rotate-key` Rotate the current persistent identity signing key at the registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `show` Show the current identity and registry status
@@ -200,6 +201,15 @@ Register the current persistent identity at awid.ai
 
 Flags:
 - `-h, --help help for register`
+
+## `id rotate-key`
+
+### `id rotate-key`
+
+Rotate the current persistent identity signing key at the registry
+
+Flags:
+- `-h, --help help for rotate-key`
 
 ## `id request`
 
