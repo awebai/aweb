@@ -911,31 +911,35 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 
 // ShowPending shows the pending conversation with a specific agent.
 func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (*SendResult, error) {
+	sessionID, _, err := findSession(ctx, client, targetAlias)
+	if err != nil {
+		return nil, err
+	}
+
 	pendingResp, err := client.ChatPending(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting pending chats: %w", err)
 	}
 
 	for _, p := range pendingResp.Pending {
-		for _, participant := range p.Participants {
-			if participant == targetAlias {
-				return &SendResult{
-					SessionID:     p.SessionID,
-					Status:        "pending",
-					TargetAgent:   targetAlias,
-					Reply:         p.LastMessage,
-					SenderWaiting: p.SenderWaiting,
-					Events: []Event{
-						{
-							Type:      "message",
-							FromAgent: p.LastFrom,
-							Body:      p.LastMessage,
-							Timestamp: p.LastActivity,
-						},
-					},
-				}, nil
-			}
+		if p.SessionID != sessionID {
+			continue
 		}
+		return &SendResult{
+			SessionID:     p.SessionID,
+			Status:        "pending",
+			TargetAgent:   targetAlias,
+			Reply:         p.LastMessage,
+			SenderWaiting: p.SenderWaiting,
+			Events: []Event{
+				{
+					Type:      "message",
+					FromAgent: p.LastFrom,
+					Body:      p.LastMessage,
+					Timestamp: p.LastActivity,
+				},
+			},
+		}, nil
 	}
 
 	return nil, fmt.Errorf("no pending conversation with %s", targetAlias)
