@@ -81,9 +81,12 @@ async def _seed(aweb_db):
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role, status)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'alice', 'persistent', 'developer', 'active'),
-               ($2, 'backend:acme.com', 'did:key:z6Mkbob', 'bob', 'ephemeral', 'reviewer', 'active')
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, human_name, agent_type
+        )
+        VALUES
+            ($1, 'backend:acme.com', 'did:key:z6Mkalice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'active', 'Alice', 'coder'),
+            ($2, 'backend:acme.com', 'did:key:z6Mkbob', NULL, NULL, 'bob', 'ephemeral', 'reviewer', 'active', 'Bob', 'reviewer')
         """,
         alice_id, bob_id,
     )
@@ -153,8 +156,12 @@ async def test_list_agents(aweb_cloud_db):
     assert set(agents) == {"alice", "bob"}
     assert agents["alice"]["workspace_path"] == "/Users/alice/project"
     assert agents["alice"]["last_seen"] == "2026-04-08T12:00:00+00:00"
+    assert agents["alice"]["address"] == "acme.com/alice"
+    assert agents["alice"]["agent_type"] == "coder"
     assert agents["bob"]["workspace_path"] is None
     assert agents["bob"]["last_seen"] is None
+    assert agents["bob"]["address"] is None
+    assert agents["bob"]["agent_type"] == "reviewer"
 
 
 @pytest.mark.asyncio
@@ -220,6 +227,59 @@ async def test_agent_detail(aweb_cloud_db):
     data = resp.json()
     assert data["alias"] == "alice"
     assert data["role"] == "developer"
+    assert data["address"] == "acme.com/alice"
+    assert data["agent_type"] == "coder"
+
+
+@pytest.mark.asyncio
+async def test_claims(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    alice_id, _ = await _seed(aweb_cloud_db.aweb_db)
+    workspace_id = uuid.uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, workspace_path
+        )
+        VALUES (
+            $1, 'backend:acme.com', $2, 'alice', '/Users/alice/project'
+        )
+        """,
+        workspace_id,
+        uuid.UUID(alice_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (
+            team_id, workspace_id, alias, human_name, task_ref, claimed_at
+        )
+        VALUES (
+            'backend:acme.com', $1, 'alice', 'Alice', 'backend-aaaa',
+            TIMESTAMPTZ '2026-04-08T12:15:00Z'
+        )
+        """,
+        workspace_id,
+    )
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/claims",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {
+        "claims": [
+            {
+                "task_ref": "backend-aaaa",
+                "workspace_id": str(workspace_id),
+                "alias": "alice",
+                "claimed_at": "2026-04-08T12:15:00+00:00",
+            }
+        ]
+    }
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from awid.team_ids import parse_team_id, team_slug
+from aweb.claims import list_active_claims
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_auth import verify_dashboard_token
@@ -90,6 +91,8 @@ class AgentSummary(BaseModel):
     agent_id: str
     alias: str
     did_key: str
+    address: Optional[str]
+    agent_type: str
     role: str
     status: str
     lifetime: str
@@ -150,6 +153,13 @@ class UsageMetrics(BaseModel):
     until: Optional[str]
 
 
+class DashboardClaimSummary(BaseModel):
+    task_ref: str
+    workspace_id: str
+    alias: str
+    claimed_at: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -164,7 +174,8 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.role, a.status, a.lifetime, a.created_at,
+        SELECT a.agent_id, a.alias, a.did_key, a.address, a.agent_type,
+               a.role, a.status, a.lifetime, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
         LEFT JOIN LATERAL (
@@ -186,6 +197,8 @@ async def list_team_agents(
                 agent_id=str(r["agent_id"]),
                 alias=r["alias"],
                 did_key=r["did_key"],
+                address=r.get("address"),
+                agent_type=r["agent_type"],
                 role=r["role"],
                 status=r["status"],
                 lifetime=r["lifetime"],
@@ -194,6 +207,25 @@ async def list_team_agents(
                 created_at=r["created_at"].isoformat(),
             ).model_dump()
             for r in rows
+        ]
+    }
+
+
+@router.get("/v1/teams/{team_id:path}/claims")
+async def list_team_claims(
+    request: Request, team_id: str, db=Depends(get_db)
+) -> dict:
+    await _require_dashboard_auth(request, team_id)
+    rows = await list_active_claims(db, team_id=team_id)
+    return {
+        "claims": [
+            DashboardClaimSummary(
+                task_ref=row["task_ref"],
+                workspace_id=str(row["workspace_id"]),
+                alias=row["alias"],
+                claimed_at=row["claimed_at"].isoformat(),
+            ).model_dump()
+            for row in rows
         ]
     }
 

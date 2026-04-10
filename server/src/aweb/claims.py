@@ -38,6 +38,50 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def list_active_claims(
+    db_infra: "DatabaseInfra",
+    *,
+    team_id: str,
+    workspace_id: str | None = None,
+    claimed_before: datetime | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """List active task claims ordered by most recent first."""
+    aweb_db = db_infra.get_manager("aweb")
+
+    conditions: list[str] = ["team_id = $1"]
+    params: list[object] = [team_id]
+    param_idx = 2
+
+    if workspace_id:
+        conditions.append(f"workspace_id = ${param_idx}")
+        params.append(UUID(workspace_id))
+        param_idx += 1
+
+    if claimed_before is not None:
+        conditions.append(f"claimed_at < ${param_idx}")
+        params.append(claimed_before)
+        param_idx += 1
+
+    where_clause = f"WHERE {' AND '.join(conditions)}"
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = f"LIMIT ${param_idx}"
+        params.append(limit)
+
+    rows = await aweb_db.fetch_all(
+        f"""
+        SELECT task_ref, workspace_id, alias, human_name, claimed_at, team_id
+        FROM {{{{tables.task_claims}}}}
+        {where_clause}
+        ORDER BY claimed_at DESC
+        {limit_clause}
+        """,
+        *params,
+    )
+    return [dict(row) for row in rows]
+
+
 def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
     """Prefer apex_task_ref for workspace focus, falling back to the claimed task."""
     return apex_task_ref or task_ref

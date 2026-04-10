@@ -713,6 +713,7 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 | `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
 | `GET /v1/teams/{team_id}/messages` | Message history |
 | `GET /v1/teams/{team_id}/tasks` | Task list |
+| `GET /v1/teams/{team_id}/claims` | Active task claims |
 | `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
 | `GET /v1/teams/{team_id}/instructions/active` | Active instructions |
 | `GET /v1/teams/{team_id}/status` | Team status (online agents, locks, claims) |
