@@ -241,7 +241,7 @@ func addressHandle(value string) string {
 	return strings.TrimSpace(parts[1])
 }
 
-func exactParticipantMatch(participants []string, target string) bool {
+func exactParticipantMatch(participants []string, participantAddresses []string, target string) bool {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return false
@@ -251,10 +251,15 @@ func exactParticipantMatch(participants []string, target string) bool {
 			return true
 		}
 	}
+	for _, participant := range participantAddresses {
+		if strings.TrimSpace(participant) == target {
+			return true
+		}
+	}
 	return false
 }
 
-func uniqueHandleParticipantMatch(participants []string, target string) bool {
+func uniqueHandleParticipantMatch(participants []string, _ []string, target string) bool {
 	handle := addressHandle(target)
 	if handle == "" {
 		return false
@@ -303,14 +308,14 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
 
-	selectPending := func(match func([]string, string) bool, requireUnique bool) (string, bool, error) {
+	selectPending := func(match func([]string, []string, string) bool, requireUnique bool) (string, bool, error) {
 		var bestPendingID string
 		var bestPendingWaiting bool
 		var bestPendingActivity string
 		bestPendingSize := 0
 		matchCount := 0
 		for _, p := range pendingResp.Pending {
-			if !match(p.Participants, targetAlias) {
+			if !match(p.Participants, p.ParticipantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++
@@ -362,13 +367,13 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	selectSession := func(match func([]string, string) bool, requireUnique bool) (string, error) {
+	selectSession := func(match func([]string, []string, string) bool, requireUnique bool) (string, error) {
 		var bestSessionID string
 		var bestSessionCreated string
 		bestSessionSize := 0
 		matchCount := 0
 		for _, s := range sessionsResp.Sessions {
-			if !match(s.Participants, targetAlias) {
+			if !match(s.Participants, s.ParticipantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++

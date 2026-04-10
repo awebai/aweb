@@ -431,6 +431,12 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await aweb_cloud_db.aweb_db.execute(
         """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
         INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
         VALUES ($1, 'alice', $2)
         """,
@@ -445,6 +451,13 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob')
+        """,
+        uuid4(),
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
@@ -583,6 +596,12 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     await aweb_cloud_db.aweb_db.execute(
         """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
         INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
         VALUES ($1, 'alice', $2)
         """,
@@ -597,6 +616,13 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob')
+        """,
+        uuid4(),
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
@@ -618,6 +644,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
         {
             "session_id": str(session_id),
             "participants": ["bob"],
+            "participant_addresses": ["acme.com/bob"],
             "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "sender_waiting": False,
         }

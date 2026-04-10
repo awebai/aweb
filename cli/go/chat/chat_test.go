@@ -1173,6 +1173,39 @@ func TestFindSessionFallback(t *testing.T) {
 	}
 }
 
+func TestFindSessionFallbackUsesParticipantAddress(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-fallback",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"otherco/monitor"},
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-fallback" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
 func TestFindSessionNotFound(t *testing.T) {
 	t.Parallel()
 
