@@ -1163,10 +1163,29 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 		}
 		names = append(names, value)
 	}
+	appendResolved := func(identifier string) {
+		identifier = strings.TrimSpace(identifier)
+		if identifier == "" || client == nil {
+			return
+		}
+		if !strings.HasPrefix(identifier, "did:") && !strings.Contains(identifier, "/") {
+			return
+		}
+		identity, err := client.ResolveIdentity(ctx, identifier)
+		if err != nil || identity == nil {
+			return
+		}
+		appendUnique(strings.TrimSpace(identity.Address))
+		appendUnique(strings.TrimSpace(identity.Handle))
+		appendUnique(strings.TrimSpace(identity.StableID))
+		appendUnique(strings.TrimSpace(identity.DID))
+	}
 
 	appendUnique(target)
 	normalized := normalizeSessionTarget(ctx, client, target)
 	appendUnique(normalized)
+	appendResolved(target)
+	appendResolved(normalized)
 	appendUnique(addressHandle(target))
 	appendUnique(addressHandle(normalized))
 	for _, participant := range participants {
