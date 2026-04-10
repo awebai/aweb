@@ -1155,6 +1155,7 @@ async def send_message(
 class SessionListItem(BaseModel):
     session_id: str
     participants: list[str]
+    participant_addresses: list[str] = Field(default_factory=list)
     created_at: str
     sender_waiting: bool = False
 
@@ -1212,6 +1213,10 @@ async def list_sessions(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
+    address_map = await _lookup_addresses_by_did(
+        db,
+        [(row.get("did") or "").strip() for row in participant_rows if (row.get("did") or "").strip()],
+    )
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
@@ -1229,6 +1234,11 @@ async def list_sessions(
                 session_id=str(row["session_id"]),
                 participants=[
                     participant["alias"]
+                    for participant in session_participants
+                    if (participant.get("did") or "").strip() not in set(actor_dids)
+                ],
+                participant_addresses=[
+                    address_map.get((participant.get("did") or "").strip(), participant["alias"])
                     for participant in session_participants
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],

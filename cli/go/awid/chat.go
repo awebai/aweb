@@ -414,10 +414,11 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 
 // ChatListSessions lists chat sessions the authenticated agent participates in.
 type ChatSessionItem struct {
-	SessionID     string   `json:"session_id"`
-	Participants  []string `json:"participants"`
-	CreatedAt     string   `json:"created_at"`
-	SenderWaiting bool     `json:"sender_waiting,omitempty"`
+	SessionID            string   `json:"session_id"`
+	Participants         []string `json:"participants"`
+	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
+	CreatedAt            string   `json:"created_at"`
+	SenderWaiting        bool     `json:"sender_waiting,omitempty"`
 }
 
 type ChatListSessionsResponse struct {
