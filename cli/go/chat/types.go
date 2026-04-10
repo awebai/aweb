@@ -77,9 +77,11 @@ type PendingResult struct {
 type PendingConversation struct {
 	SessionID            string   `json:"session_id"`
 	Participants         []string `json:"participants"`
+	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	LastMessage          string   `json:"last_message"`
 	LastFrom             string   `json:"last_from"`
+	LastFromDID          string   `json:"last_from_did,omitempty"`
 	LastFromAddress      string   `json:"last_from_address,omitempty"`
 	UnreadCount          int      `json:"unread_count"`
 	LastActivity         string   `json:"last_activity"`

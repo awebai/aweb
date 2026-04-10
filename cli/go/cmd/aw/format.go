@@ -358,12 +358,14 @@ func formatChatPending(v any) string {
 
 	for _, p := range result.Pending {
 		openHint := ""
-		displayFrom := preferredIdentityLabel(p.LastFrom, p.LastFromAddress, "")
+		displayFrom := preferredIdentityLabel(p.LastFrom, p.LastFromAddress, strings.TrimSpace(p.LastFromDID))
 		openTarget := ""
 		if len(p.Participants) == 1 {
 			openTarget = strings.TrimSpace(p.Participants[0])
 			if len(p.ParticipantAddresses) == 1 && strings.TrimSpace(p.ParticipantAddresses[0]) != "" {
 				openTarget = strings.TrimSpace(p.ParticipantAddresses[0])
+			} else if len(p.ParticipantDIDs) == 1 && strings.TrimSpace(p.ParticipantDIDs[0]) != "" {
+				openTarget = strings.TrimSpace(p.ParticipantDIDs[0])
 			}
 		}
 		if openTarget != "" {

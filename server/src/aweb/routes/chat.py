@@ -605,9 +605,15 @@ async def pending(
             {
                 "session_id": item["session_id"],
                 "participants": participants,
+                "participant_dids": [
+                    (row.get("did") or "").strip()
+                    for row in session_participants
+                    if (row.get("did") or "").strip() not in set(actor_dids)
+                ],
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_from": item["last_from"],
+                "last_from_did": (item.get("last_from_did") or "").strip(),
                 "last_from_address": address_map.get(
                     (item.get("last_from_did") or "").strip(),
                     item["last_from"],

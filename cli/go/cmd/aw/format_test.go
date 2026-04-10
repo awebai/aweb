@@ -142,6 +142,31 @@ func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
 	}
 }
 
+func TestFormatChatPendingFallsBackToStableID(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{""},
+				ParticipantDIDs:      []string{"did:aw:carol"},
+				ParticipantAddresses: []string{""},
+				LastFrom:             "",
+				LastFromDID:          "did:aw:carol",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT WAITING: did:aw:carol") {
+		t.Fatalf("pending output should preserve stable identity fallback:\n%s", out)
+	}
+	if !strings.Contains(out, `aw chat open did:aw:carol`) {
+		t.Fatalf("pending output should use participant stable identity in direct-session open hint:\n%s", out)
+	}
+}
+
 func TestFormatChatHistoryPrefersFromAddress(t *testing.T) {
 	result := &chat.HistoryResult{
 		Messages: []chat.Event{

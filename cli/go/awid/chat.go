@@ -183,16 +183,18 @@ type ChatPendingResponse struct {
 }
 
 type ChatPendingItem struct {
-	SessionID            string   `json:"session_id"`
-	Participants         []string `json:"participants"`
-	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
-	LastMessage          string   `json:"last_message"`
-	LastFrom             string   `json:"last_from"`
-	LastFromAddress      string   `json:"last_from_address,omitempty"`
-	UnreadCount          int      `json:"unread_count"`
-	LastActivity         string   `json:"last_activity"`
-	SenderWaiting        bool     `json:"sender_waiting"`
-	TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
+    SessionID            string   `json:"session_id"`
+    Participants         []string `json:"participants"`
+    ParticipantDIDs      []string `json:"participant_dids,omitempty"`
+    ParticipantAddresses []string `json:"participant_addresses,omitempty"`
+    LastMessage          string   `json:"last_message"`
+    LastFrom             string   `json:"last_from"`
+    LastFromDID          string   `json:"last_from_did,omitempty"`
+    LastFromAddress      string   `json:"last_from_address,omitempty"`
+    UnreadCount          int      `json:"unread_count"`
+    LastActivity         string   `json:"last_activity"`
+    SenderWaiting        bool     `json:"sender_waiting"`
+    TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
 }
 
 func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
