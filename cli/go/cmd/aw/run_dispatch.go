@@ -360,6 +360,23 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			}
 			return runWakeResolution{Skip: true}, nil
 		}
+		if strings.TrimSpace(msg.FromAlias) == "" &&
+			strings.TrimSpace(msg.FromAddress) == "" &&
+			strings.TrimSpace(msg.FromStableID) == "" &&
+			strings.TrimSpace(msg.FromDID) == "" &&
+			identityMatchesSelf(
+				strings.TrimSpace(evt.FromAlias),
+				strings.TrimSpace(evt.FromAddress),
+				"",
+				strings.TrimSpace(evt.FromDID),
+				selfAlias,
+				selfIdentityDIDs(client)...,
+			) {
+			if msg.MessageID != "" {
+				_, _ = client.AckMessage(ctx, msg.MessageID)
+			}
+			return runWakeResolution{Skip: true}, nil
+		}
 		// Mark as read — seeing the full content means it's read.
 		if msg.MessageID != "" {
 			_, _ = client.AckMessage(ctx, msg.MessageID)

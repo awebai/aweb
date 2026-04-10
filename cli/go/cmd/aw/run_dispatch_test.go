@@ -227,6 +227,45 @@ func TestResolveMailWakeFallsBackToEventStableIDWhenInboxIdentityMissing(t *test
 	}
 }
 
+func TestResolveMailWakeSkipsSelfWhenOnlyEventCarriesStableID(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/messages/inbox":
+			json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID:   "msg-1",
+						FromAlias:   "",
+						FromAddress: "",
+						Subject:     "hello",
+						Body:        "world",
+					},
+				},
+			})
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveMailWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableMail,
+		MessageID: "msg-1",
+		FromDID:   "did:aw:self-rose",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored mail wake to skip when only event carries stable id, got %+v", result)
+	}
+}
+
 func TestResolveMailWakeSkipsSelfAuthoredMessageByAddress(t *testing.T) {
 	t.Parallel()
 
