@@ -237,6 +237,9 @@ func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...str
 	if selfAlias == "" {
 		return false
 	}
+	if strings.EqualFold(handleFromAddress(strings.TrimSpace(msg.FromAddress)), selfAlias) {
+		return true
+	}
 	return strings.EqualFold(strings.TrimSpace(msg.FromAgent), selfAlias)
 }
 

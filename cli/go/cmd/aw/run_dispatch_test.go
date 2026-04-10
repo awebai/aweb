@@ -341,6 +341,39 @@ func TestResolveChatWakeForAliasSkipsSelfAuthoredExactMessage(t *testing.T) {
 	}
 }
 
+func TestResolveChatWakeForAliasSkipsSelfAuthoredAddressMessage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			json.NewEncoder(w).Encode(awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "chat-msg-self-address", FromAgent: "", FromAddress: "example.com/rose", Body: "thanks, got it"},
+				},
+			})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
+			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveChatWake(context.Background(), client, awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		MessageID: "chat-msg-self-address",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored address chat wake to skip, got %+v", result)
+	}
+}
+
 func TestResolveChatWakeForAliasDoesNotSkipDifferentIdentityWithSameAlias(t *testing.T) {
 	t.Parallel()
 	_ = deliveredIDsTestPath(t)
