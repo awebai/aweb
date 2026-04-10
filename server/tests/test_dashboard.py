@@ -90,8 +90,9 @@ async def _seed(aweb_db):
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.messages}} (team_id, from_agent_id, to_agent_id, from_alias, to_alias, subject, body)
-        VALUES ('backend:acme.com', $1, $2, 'alice', 'bob', 'Hello', 'Hi Bob!')
+        INSERT INTO {{tables.messages}}
+            (from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id)
+        VALUES ('did:key:z6Mkalice', 'did:key:z6Mkbob', 'alice', 'bob', 'Hello', 'Hi Bob!', 'backend:acme.com', $1, $2)
         """,
         alice_id, bob_id,
     )

@@ -1775,6 +1775,100 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 	}
 }
 
+func TestSendMessageUsesIdentityAuthHeadersWithoutTeamCert(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:test-alice"
+
+	var gotAuth string
+	var gotTimestamp string
+	var gotStableID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		gotStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message_id":   "msg-1",
+			"status":       "delivered",
+			"delivered_at": "2026-02-22T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(stableID)
+	c.SetAddress("myco/agent")
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToAlias: "otherco/monitor",
+		Body:    "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotAuth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	if gotTimestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp header")
+	}
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
+	}
+}
+
+func TestInboxUsesIdentityAuthHeadersWithoutTeamCert(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:test-alice"
+
+	var gotAuth string
+	var gotTimestamp string
+	var gotStableID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		gotStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{}})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(stableID)
+
+	_, err = c.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotAuth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	if gotTimestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp header")
+	}
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
+	}
+}
+
 func TestInboxRecipientBindingMismatch(t *testing.T) {
 	t.Parallel()
 

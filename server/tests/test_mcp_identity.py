@@ -125,3 +125,55 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
         "did_aw": "",
         "address": "",
     }
+
+
+@pytest.mark.asyncio
+async def test_whoami_identity_only_auth_looks_up_by_did_key(aweb_cloud_db, monkeypatch):
+    did_key = "did:key:z6MkIdentityOnly"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "ops:otherco.com",
+        "otherco.com",
+        "ops",
+        "did:key:z6MkTeam",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_id, did_key, did_aw, address, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, $5, 'persistent', 'active')
+        """,
+        "ops:otherco.com",
+        did_key,
+        "did:aw:alice",
+        "otherco.com/alice",
+        "alice",
+    )
+
+    monkeypatch.setattr(
+        identity_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=None,
+            agent_id=None,
+            alias=None,
+            did_key=did_key,
+            did_aw="did:aw:alice",
+            address="otherco.com/alice",
+        ),
+    )
+
+    data = json.loads(await identity_tools.whoami(DBInfra(aweb_cloud_db.aweb_db)))
+
+    assert data == {
+        "team_id": None,
+        "agent_id": None,
+        "alias": None,
+        "did_key": did_key,
+        "did_aw": "did:aw:alice",
+        "address": "otherco.com/alice",
+    }

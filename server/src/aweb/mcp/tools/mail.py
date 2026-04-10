@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 from typing import cast
-from uuid import UUID
 
 from aweb.mcp.auth import get_auth
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
     get_agent_by_alias,
-    get_agent_by_id,
+    resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
 
@@ -21,36 +20,65 @@ VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-
 async def send_mail(
     db_infra,
     *,
+    registry_client,
     to: str,
     subject: str = "",
     body: str,
     priority: str = "normal",
 ) -> str:
-    """Send an async message to an alias within the team."""
+    """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
     if priority not in VALID_PRIORITIES:
         return json.dumps(
             {"error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"}
         )
 
-    recipient_alias = (to or "").strip()
-    if not recipient_alias:
+    recipient_ref = (to or "").strip()
+    if not recipient_ref:
         return json.dumps({"error": "Recipient is required"})
 
-    recipient = await get_agent_by_alias(
-        db_infra, team_id=auth.team_id, alias=recipient_alias,
-    )
+    recipient = None
+    recipient_did = ""
+    recipient_alias = ""
+    if recipient_ref.startswith("did:aw:") or recipient_ref.startswith("did:key:"):
+        recipient_did = recipient_ref
+        recipient = await resolve_agent_by_did(db_infra, recipient_did)
+    elif "/" in recipient_ref:
+        if registry_client is None:
+            return json.dumps({"error": "AWID registry unavailable"})
+        domain, name = recipient_ref.split("/", 1)
+        resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        if resolved is None:
+            return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+        recipient_did = resolved.did_aw
+        recipient = await resolve_agent_by_did(db_infra, recipient_did)
+    else:
+        if not auth.team_id:
+            return json.dumps({"error": "Alias delivery requires team context"})
+        recipient = await get_agent_by_alias(
+            db_infra, team_id=auth.team_id, alias=recipient_ref,
+        )
+        if recipient is not None:
+            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+            recipient_alias = recipient["alias"]
+
     if recipient is None:
-        return json.dumps({"error": f"Agent '{recipient_alias}' not found"})
+        return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
+    if not recipient_alias:
+        recipient_alias = recipient.get("alias") or recipient_ref
 
     try:
         message_id, created_at = await deliver_message(
             db_infra,
+            registry_client=registry_client,
+            from_did=(auth.did_aw or auth.did_key or "").strip(),
+            to_did=recipient_did,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
+            sender_address=auth.address,
             to_agent_id=str(recipient["agent_id"]),
-            to_alias=recipient["alias"],
+            to_alias=recipient_alias,
             subject=subject,
             body=body,
             priority=cast(MessagePriority, priority),
@@ -79,12 +107,7 @@ async def check_inbox(
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
-
-    owner = await get_agent_by_id(
-        db_infra, team_id=auth.team_id, agent_id=auth.agent_id,
-    )
-    if owner is None:
-        return json.dumps({"error": "Agent not found"})
+    inbox_did = (auth.did_aw or auth.did_key or "").strip()
 
     try:
         limit_value = max(1, min(int(limit), 500))
@@ -95,16 +118,14 @@ async def check_inbox(
         """
         SELECT message_id, from_agent_id, from_alias, to_alias,
                subject, body, priority, read_at, created_at,
-               from_did, signature, signed_payload
+               from_did, to_did, signature, signed_payload
         FROM {{tables.messages}}
-        WHERE team_id = $1
-          AND to_agent_id = $2
-          AND ($3::bool IS FALSE OR read_at IS NULL)
+        WHERE to_did = $1
+          AND ($2::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
-        LIMIT $4
+        LIMIT $3
         """,
-        auth.team_id,
-        UUID(auth.agent_id),
+        inbox_did,
         bool(unread_only),
         limit_value,
     )
@@ -116,12 +137,10 @@ async def check_inbox(
             """
             UPDATE {{tables.messages}}
             SET read_at = COALESCE(read_at, NOW())
-            WHERE team_id = $1
-              AND to_agent_id = $2
-              AND message_id = ANY($3::uuid[])
+            WHERE to_did = $1
+              AND message_id = ANY($2::uuid[])
             """,
-            auth.team_id,
-            UUID(auth.agent_id),
+            inbox_did,
             unread_message_ids,
         )
 
@@ -130,7 +149,7 @@ async def check_inbox(
         read_at = _utc_iso(r["read_at"]) if r["read_at"] is not None else None
         msg: dict = {
             "message_id": str(r["message_id"]),
-            "from_agent_id": str(r["from_agent_id"]),
+            "from_agent_id": (str(r["from_agent_id"]) if r.get("from_agent_id") else None),
             "from_alias": r["from_alias"],
             "to_alias": r["to_alias"],
             "subject": r["subject"],
@@ -138,6 +157,7 @@ async def check_inbox(
             "read": read_at is not None or r["message_id"] in unread_message_ids,
             "read_at": read_at,
             "created_at": _utc_iso(r["created_at"]),
+            "to_did": r.get("to_did"),
         }
         if include_bodies:
             msg["body"] = r["body"]

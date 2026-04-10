@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 
 from aweb.coordination.routes.team_roles import get_active_team_roles
-from aweb.mcp.auth import get_auth
+from aweb.mcp.tools._common import require_team_context
 
 
 async def roles_show(db_infra, *, only_selected: bool = False) -> str:
     """Show the active team roles for the authenticated team and current agent role."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
     agent = await aweb_db.fetch_one(
         """
@@ -66,7 +68,9 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
 
 async def roles_list(db_infra) -> str:
     """List available roles from the active team roles bundle plus the agent's current role."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     agent = await aweb_db.fetch_one(

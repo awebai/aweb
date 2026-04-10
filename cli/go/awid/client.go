@@ -657,6 +657,15 @@ func (c *Client) DoRaw(ctx context.Context, method, path, accept string, in any)
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.signingKey != nil {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signPayload := identityAuthSignPayload(c.stableID, timestamp, bodyBytes)
+		sig := ed25519.Sign(c.signingKey, signPayload)
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		if c.stableID != "" {
+			req.Header.Set("X-AWEB-DID-AW", c.stableID)
+		}
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -683,6 +692,20 @@ func certAuthSignPayload(teamID, timestamp string, body []byte) []byte {
 	})
 	if err != nil {
 		panic(fmt.Sprintf("certAuthSignPayload: %v", err))
+	}
+	return []byte(payload)
+}
+
+func identityAuthSignPayload(didAW, timestamp string, body []byte) []byte {
+	h := sha256.Sum256(body)
+	bodyHash := hex.EncodeToString(h[:])
+	payload, err := CanonicalJSONValue(map[string]string{
+		"body_sha256": bodyHash,
+		"did_aw":      didAW,
+		"timestamp":   timestamp,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("identityAuthSignPayload: %v", err))
 	}
 	return []byte(payload)
 }

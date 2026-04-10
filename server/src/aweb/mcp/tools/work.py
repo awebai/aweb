@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from aweb.coordination.tasks_service import list_blocked_tasks, list_ready_tasks, list_tasks
-from aweb.mcp.auth import get_auth
+from aweb.mcp.tools._common import require_team_context
 
 
 async def _claim_rows(aweb_db, *, team_id: str) -> list[dict]:
@@ -22,7 +22,9 @@ async def _claim_rows(aweb_db, *, team_id: str) -> list[dict]:
 
 async def work_ready(db_infra) -> str:
     """List ready tasks not already claimed by another workspace."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     claim_rows = await _claim_rows(aweb_db, team_id=auth.team_id)
@@ -39,7 +41,9 @@ async def work_ready(db_infra) -> str:
 
 async def work_active(db_infra) -> str:
     """List active in-progress work across the team."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     aweb_db = db_infra.get_manager("aweb")
 
     tasks = await list_tasks(db_infra, team_id=auth.team_id, status="in_progress")
@@ -71,6 +75,8 @@ async def work_active(db_infra) -> str:
 
 async def work_blocked(db_infra) -> str:
     """List blocked tasks in the authenticated team."""
-    auth = get_auth()
+    auth, error = require_team_context()
+    if auth is None:
+        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     tasks = await list_blocked_tasks(db_infra, team_id=auth.team_id)
     return json.dumps({"kind": "blocked", "tasks": tasks})

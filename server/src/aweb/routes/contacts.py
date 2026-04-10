@@ -10,7 +10,7 @@ from aweb.messaging.contacts import (
     remove_contact,
 )
 from aweb.deps import get_db
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 
 router = APIRouter(prefix="/v1/contacts", tags=["aweb-contacts"])
 
@@ -46,11 +46,12 @@ class ListContactsResponse(BaseModel):
 @router.post("", response_model=ContactView)
 async def create_contact(
     request: Request, payload: CreateContactRequest, db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ContactView:
+    owner_did = (identity.did_aw or identity.did_key or "").strip()
     result = await add_contact(
         db,
-        team_id=identity.team_id,
+        owner_did=owner_did,
         contact_address=payload.contact_address,
         label=payload.label,
     )
@@ -60,16 +61,18 @@ async def create_contact(
 @router.get("", response_model=ListContactsResponse)
 async def list_contacts_route(
     request: Request, db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ListContactsResponse:
-    contacts = await list_contacts(db, team_id=identity.team_id)
+    owner_did = (identity.did_aw or identity.did_key or "").strip()
+    contacts = await list_contacts(db, owner_did=owner_did)
     return ListContactsResponse(contacts=[ContactView(**c) for c in contacts])
 
 
 @router.delete("/{contact_id}")
 async def delete_contact(
     request: Request, contact_id: str, db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict:
-    await remove_contact(db, team_id=identity.team_id, contact_id=contact_id)
+    owner_did = (identity.did_aw or identity.did_key or "").strip()
+    await remove_contact(db, owner_did=owner_did, contact_id=contact_id)
     return {"deleted": True}

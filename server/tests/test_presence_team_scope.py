@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from aweb.coordination.routes import workspaces as workspace_routes
+from aweb.mcp.tools import _common as common_tools
 from aweb.mcp.tools import agents as mcp_agents
 from aweb.routes import agents as agent_routes
 
@@ -34,7 +35,7 @@ async def test_mcp_heartbeat_passes_team_id(monkeypatch):
     seen: dict[str, str] = {}
 
     monkeypatch.setattr(
-        mcp_agents,
+        common_tools,
         "get_auth",
         lambda: SimpleNamespace(agent_id="agent-1", team_id="default:acme.com"),
     )

@@ -18,6 +18,7 @@ from aweb.coordination.routes.team_instructions import (
     TeamInstructionsHistoryResponse,
 )
 from aweb.mcp.auth import AuthContext
+from aweb.mcp.tools import _common as common_tools
 from aweb.mcp.tools import team_instructions as team_instructions_tools
 from aweb.mcp.tools import team_roles as team_roles_tools
 
@@ -203,7 +204,7 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
         return _FakeTeamRolesVersion()
 
     monkeypatch.setattr(
-        team_roles_tools,
+        common_tools,
         "get_auth",
         lambda: AuthContext(
             team_id="backend:acme.com",
@@ -230,7 +231,7 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_missing(monkeypatch):
     monkeypatch.setattr(
-        team_instructions_tools,
+        common_tools,
         "get_auth",
         lambda: AuthContext(
             team_id="backend:acme.com",

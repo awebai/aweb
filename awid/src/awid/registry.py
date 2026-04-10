@@ -30,6 +30,7 @@ _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
 _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
+_TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
@@ -97,6 +98,18 @@ class Team:
     team_did_key: str
     visibility: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class TeamCertificate:
+    certificate_id: str
+    member_did_key: str
+    member_did_aw: str | None
+    member_address: str | None
+    alias: str
+    lifetime: str
+    issued_at: str
+    revoked_at: str | None = None
 
 
 class RegistryError(Exception):
@@ -630,6 +643,23 @@ class RegistryClient:
             raise
         return {r["certificate_id"] for r in data.get("revocations", [])}
 
+    async def list_team_certificates(
+        self,
+        domain: str,
+        name: str,
+        *,
+        active_only: bool = True,
+    ) -> list[TeamCertificate]:
+        path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
+        if active_only:
+            path += "?active_only=true"
+        data = await self._request_json(
+            "GET",
+            path,
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+        return [_team_certificate_from_json(item) for item in data.get("certificates", [])]
+
     async def update_address(
         self,
         domain: str,
@@ -981,6 +1011,23 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: set(payload),
         )
         return result if isinstance(result, set) else set()
+
+    async def list_team_certificates(
+        self,
+        domain: str,
+        name: str,
+        *,
+        active_only: bool = True,
+    ) -> list[TeamCertificate]:
+        return await self._cached_read(
+            cache_key=self._team_certificates_cache_key(domain, name, active_only=active_only),
+            ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
+            fetcher=lambda: super(CachedRegistryClient, self).list_team_certificates(
+                domain, name, active_only=active_only
+            ),
+            encode=lambda value: [_team_certificate_to_json(item) for item in value],
+            decode=lambda payload: [_team_certificate_from_json(item) for item in payload],
+        )
 
     async def register_did(
         self,
@@ -1350,6 +1397,10 @@ class CachedRegistryClient(RegistryClient):
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
 
+    def _team_certificates_cache_key(self, domain: str, name: str, *, active_only: bool) -> str:
+        suffix = "active" if active_only else "all"
+        return f"awid:registry_cache:v1:team_certificates:{self.registry_url}:{domain}/{name}:{suffix}"
+
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -1474,4 +1525,21 @@ def _address_to_json(value: Address) -> dict[str, Any]:
 
 
 def _team_to_json(value: Team) -> dict[str, Any]:
+    return asdict(value)
+
+
+def _team_certificate_from_json(data: dict[str, Any]) -> TeamCertificate:
+    return TeamCertificate(
+        certificate_id=data["certificate_id"],
+        member_did_key=data["member_did_key"],
+        member_did_aw=data.get("member_did_aw"),
+        member_address=data.get("member_address"),
+        alias=data["alias"],
+        lifetime=data["lifetime"],
+        issued_at=data["issued_at"],
+        revoked_at=data.get("revoked_at"),
+    )
+
+
+def _team_certificate_to_json(value: TeamCertificate) -> dict[str, Any]:
     return asdict(value)

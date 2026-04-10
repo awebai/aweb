@@ -13,62 +13,92 @@ logger = logging.getLogger(__name__)
 HANG_ON_EXTENSION_SECONDS = 300
 
 
-async def get_agent_by_id(db, *, team_id: str, agent_id: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, alias
-        FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-        """,
-        UUID(agent_id),
-        team_id,
-    )
-    if not row:
+def _uuid_or_none(value: str | UUID | None) -> UUID | None:
+    if value is None:
         return None
-    return dict(row)
+    if isinstance(value, UUID):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    return UUID(text)
+
+
+def _participant_did(row: dict[str, Any]) -> str:
+    return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
+
+
+async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
+    aweb_db = db.get_manager("aweb")
+    if team_id is None:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
+            FROM {{tables.agents}}
+            WHERE agent_id = $1 AND deleted_at IS NULL
+            """,
+            _uuid_or_none(agent_id),
+        )
+    else:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
+            FROM {{tables.agents}}
+            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+            """,
+            _uuid_or_none(agent_id),
+            team_id,
+        )
+    return None if not row else dict(row)
 
 
 async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
         """,
         team_id,
         alias,
     )
-    if not row:
-        return None
-    return dict(row)
+    return None if not row else dict(row)
 
 
 async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list[dict[str, Any]]:
-    """Resolve multiple aliases to agents in a single query."""
     if not aliases:
         return []
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
         """,
         team_id,
         aliases,
     )
-    return [dict(r) for r in rows]
+    return [dict(row) for row in rows]
 
 
-async def find_session_between(
-    db,
-    *,
-    agent_id_a: UUID,
-    agent_id_b: UUID,
-) -> UUID | None:
-    """Find an existing chat session between two agents."""
+async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND (did_aw = $1 OR did_key = $1)
+        ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1
+        """,
+        did,
+    )
+    return None if not row else dict(row)
+
+
+async def find_session_between(db, *, did_a: str, did_b: str) -> UUID | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
@@ -76,42 +106,49 @@ async def find_session_between(
         FROM {{tables.chat_participants}} cp1
         JOIN {{tables.chat_participants}} cp2
           ON cp2.session_id = cp1.session_id
-        WHERE cp1.agent_id = $1 AND cp2.agent_id = $2
+        WHERE cp1.did = $1 AND cp2.did = $2
         LIMIT 1
         """,
-        agent_id_a,
-        agent_id_b,
+        did_a,
+        did_b,
     )
-    if not row:
-        return None
-    return row["session_id"]
+    return None if not row else row["session_id"]
 
 
 async def ensure_session(
     db,
     *,
-    team_id: str,
-    agent_rows: list[dict[str, Any]],
-    created_by_alias: str,
+    team_id: str | None,
+    participant_rows: list[dict[str, Any]],
+    created_by: str,
 ) -> UUID:
-    """Create or find a chat session for a set of participants.
-
-    For 2-party sessions, finds an existing session between the agents.
-    For multi-party, always creates a new session.
-    """
     aweb_db = db.get_manager("aweb")
+    normalized_participants: list[dict[str, Any]] = []
+    seen_dids: set[str] = set()
+    for row in participant_rows:
+        did = _participant_did(row)
+        if not did or did in seen_dids:
+            continue
+        seen_dids.add(did)
+        normalized_participants.append(
+            {
+                "did": did,
+                "agent_id": _uuid_or_none(row.get("agent_id")),
+                "alias": (row.get("alias") or row.get("address") or did).strip(),
+            }
+        )
+    if len(normalized_participants) < 2:
+        raise ServiceError("Chat session requires at least two participants")
 
-    # For 2-party sessions, try to find an existing one
-    if len(agent_rows) == 2:
+    if len(normalized_participants) == 2:
         existing = await find_session_between(
             db,
-            agent_id_a=UUID(str(agent_rows[0]["agent_id"])),
-            agent_id_b=UUID(str(agent_rows[1]["agent_id"])),
+            did_a=normalized_participants[0]["did"],
+            did_b=normalized_participants[1]["did"],
         )
         if existing is not None:
             return existing
 
-    # Create session
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
@@ -120,22 +157,25 @@ async def ensure_session(
             RETURNING session_id
             """,
             team_id,
-            created_by_alias,
+            created_by,
         )
         if not row:
             raise ServiceError("Failed to create chat session")
         session_id = row["session_id"]
 
-        for agent in agent_rows:
+        for participant in normalized_participants:
             await tx.execute(
                 """
-                INSERT INTO {{tables.chat_participants}} (session_id, agent_id, alias)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (session_id, agent_id) DO UPDATE SET alias = EXCLUDED.alias
+                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (session_id, did) DO UPDATE
+                SET agent_id = EXCLUDED.agent_id,
+                    alias = EXCLUDED.alias
                 """,
                 session_id,
-                UUID(str(agent["agent_id"])),
-                agent["alias"],
+                participant["did"],
+                participant["agent_id"],
+                participant["alias"],
             )
 
     return UUID(str(session_id))
@@ -145,76 +185,71 @@ async def send_in_session(
     db,
     *,
     session_id: UUID,
-    agent_id: str,
+    sender_did: str,
     body: str,
+    sender_agent_id: str | UUID | None = None,
     reply_to: UUID | None = None,
     leaving: bool = False,
     hang_on: bool = False,
-    from_did: str | None = None,
     signature: str | None = None,
     signed_payload: str | None = None,
     created_at: datetime | None = None,
     message_id: UUID | None = None,
-) -> dict | None:
-    """Send a message in an existing session. Returns message row dict or None.
-
-    Returns None if the agent is not a participant in the session.
-    """
+) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
-    agent_uuid = UUID(agent_id)
-
     participant = await aweb_db.fetch_one(
         """
-        SELECT alias
+        SELECT alias, did, agent_id
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND agent_id = $2
+        WHERE session_id = $1 AND did = $2
         """,
         session_id,
-        agent_uuid,
+        sender_did,
     )
     if not participant:
         return None
 
     effective_created_at = created_at if created_at is not None else datetime.now(timezone.utc)
     effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
+    sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
 
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_alias, body,
-             sender_leaving, hang_on, reply_to,
-             from_did, signature, signed_payload, created_at)
+            (message_id, session_id, from_agent_id, from_did, from_alias, body,
+             sender_leaving, hang_on, reply_to, signature, signed_payload, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING message_id, created_at
         """,
         effective_message_id,
         session_id,
-        agent_uuid,
+        sender_agent_uuid,
+        participant["did"],
         participant["alias"],
         body,
         bool(leaving),
         bool(hang_on),
         reply_to,
-        from_did,
         signature,
         signed_payload,
         effective_created_at,
     )
 
-    # Advance sender's read receipt.
     await aweb_db.execute(
         """
         INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
+            (session_id, did, agent_id, last_read_message_id, last_read_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (session_id, did) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
+            agent_id = EXCLUDED.agent_id,
             last_read_at = EXCLUDED.last_read_at
         WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
            OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         """,
         session_id,
-        agent_uuid,
+        participant["did"],
+        sender_agent_uuid,
         msg_row["message_id"],
         msg_row["created_at"],
     )
@@ -225,19 +260,20 @@ async def send_in_session(
 async def get_pending_conversations(
     db,
     *,
-    agent_id: str,
+    participant_did: str,
+    participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Get conversations with unread messages or active waits for an agent."""
     aweb_db = db.get_manager("aweb")
-
+    participant_agent_uuid = _uuid_or_none(participant_agent_id)
     rows = await aweb_db.fetch_all(
         """
         SELECT
             s.session_id,
             array_agg(p2.alias ORDER BY p2.alias) AS participants,
-            array_agg(p2.agent_id::text ORDER BY p2.alias) AS participant_ids,
+            array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
             lm.body AS last_message,
             lm.from_alias AS last_from,
+            lm.from_did AS last_from_did,
             lm.from_agent_id AS last_from_agent_id,
             lm.hang_on AS last_message_hang_on,
             lm.created_at AS last_activity,
@@ -248,25 +284,25 @@ async def get_pending_conversations(
             COALESCE(wait_ext.total_seconds, 0) AS extended_wait_seconds
         FROM {{tables.chat_sessions}} s
         JOIN {{tables.chat_participants}} p
-          ON p.session_id = s.session_id AND p.agent_id = $1
+          ON p.session_id = s.session_id AND p.did = $1
         JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
-            SELECT body, from_alias, from_agent_id, hang_on, created_at
+            SELECT body, from_alias, from_did, from_agent_id, hang_on, created_at
             FROM {{tables.chat_messages}}
             WHERE session_id = s.session_id
             ORDER BY created_at DESC
             LIMIT 1
         ) lm ON TRUE
         LEFT JOIN {{tables.chat_read_receipts}} rr
-          ON rr.session_id = s.session_id AND rr.agent_id = $1
+          ON rr.session_id = s.session_id AND rr.did = $1
         LEFT JOIN {{tables.chat_messages}} last_read_msg
           ON last_read_msg.message_id = rr.last_read_message_id
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS cnt
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = s.session_id
-              AND m.from_agent_id <> $1
+              AND m.from_did <> $1
               AND m.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
         ) unread ON TRUE
         LEFT JOIN LATERAL (
@@ -276,11 +312,11 @@ async def get_pending_conversations(
               AND m.hang_on = TRUE
               AND (s.wait_started_at IS NULL OR m.created_at >= s.wait_started_at)
         ) wait_ext ON TRUE
-        WHERE p.agent_id = $1
         GROUP BY
             s.session_id,
             lm.body,
             lm.from_alias,
+            lm.from_did,
             lm.from_agent_id,
             lm.hang_on,
             lm.created_at,
@@ -293,11 +329,14 @@ async def get_pending_conversations(
             OR (
                 s.wait_started_at IS NOT NULL
                 AND s.wait_seconds IS NOT NULL
-                AND s.wait_started_by IS NOT NULL
-                AND s.wait_started_by <> $1
                 AND (
-                    lm.from_agent_id IS NULL
-                    OR lm.from_agent_id <> $1
+                    $3::uuid IS NULL
+                    OR s.wait_started_by IS NULL
+                    OR s.wait_started_by <> $3
+                )
+                AND (
+                    lm.from_did IS NULL
+                    OR lm.from_did <> $1
                     OR COALESCE(lm.hang_on, FALSE) = TRUE
                 )
                 AND s.wait_started_at
@@ -306,29 +345,32 @@ async def get_pending_conversations(
             )
         ORDER BY lm.created_at DESC
         """,
-        UUID(agent_id),
+        participant_did,
         HANG_ON_EXTENSION_SECONDS,
+        participant_agent_uuid,
     )
 
     return [
         {
-            "session_id": str(r["session_id"]),
-            "participants": list(r["participants"] or []),
-            "participant_ids": list(r["participant_ids"] or []),
-            "last_message": r["last_message"] or "",
-            "last_from": r["last_from"] or "",
-            "unread_count": int(r["unread_count"] or 0),
-            "last_activity": r["last_activity"],
-            "wait_seconds": int(r["wait_seconds"]) if r.get("wait_seconds") is not None else None,
-            "wait_started_at": r.get("wait_started_at"),
-            "wait_started_by": (
-                str(r["wait_started_by"])
-                if r.get("wait_started_by") is not None
-                else None
+            "session_id": str(row["session_id"]),
+            "participants": list(row["participants"] or []),
+            "participant_dids": list(row["participant_dids"] or []),
+            "last_message": row["last_message"] or "",
+            "last_from": row["last_from"] or "",
+            "last_from_did": row.get("last_from_did"),
+            "last_from_agent_id": (
+                str(row["last_from_agent_id"]) if row.get("last_from_agent_id") else None
             ),
-            "extended_wait_seconds": int(r["extended_wait_seconds"] or 0),
+            "unread_count": int(row["unread_count"] or 0),
+            "last_activity": row["last_activity"],
+            "wait_seconds": int(row["wait_seconds"]) if row.get("wait_seconds") is not None else None,
+            "wait_started_at": row.get("wait_started_at"),
+            "wait_started_by": (
+                str(row["wait_started_by"]) if row.get("wait_started_by") is not None else None
+            ),
+            "extended_wait_seconds": int(row["extended_wait_seconds"] or 0),
         }
-        for r in rows
+        for row in rows
     ]
 
 
@@ -336,25 +378,19 @@ async def get_message_history(
     db,
     *,
     session_id: UUID,
-    agent_id: str,
+    participant_did: str,
     unread_only: bool = False,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """Get messages for a chat session.
-
-    Raises ForbiddenError if the agent is not a participant.
-    """
     aweb_db = db.get_manager("aweb")
-    agent_uuid = UUID(agent_id)
-
     is_participant = await aweb_db.fetch_one(
         """
         SELECT 1
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND agent_id = $2
+        WHERE session_id = $1 AND did = $2
         """,
         session_id,
-        agent_uuid,
+        participant_did,
     )
     if not is_participant:
         raise ForbiddenError("Not a participant in this session")
@@ -366,50 +402,53 @@ async def get_message_history(
         LEFT JOIN {{tables.chat_messages}} last_read_msg
           ON last_read_msg.message_id = {{tables.chat_read_receipts}}.last_read_message_id
         WHERE {{tables.chat_read_receipts}}.session_id = $1
-          AND {{tables.chat_read_receipts}}.agent_id = $2
+          AND {{tables.chat_read_receipts}}.did = $2
         """,
         session_id,
-        agent_uuid,
+        participant_did,
     )
     last_read_message_at = rr["last_read_message_at"] if rr else None
 
     rows = await aweb_db.fetch_all(
         """
         SELECT message_id, from_alias, body, created_at, sender_leaving,
-               from_agent_id, reply_to,
-               from_did, signature, signed_payload
+               from_agent_id, reply_to, from_did, signature, signed_payload
         FROM {{tables.chat_messages}}
         WHERE session_id = $1
-          AND ($2::bool IS FALSE OR (created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz) AND from_agent_id <> $4))
+          AND (
+            $2::bool IS FALSE
+            OR (
+                created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
+                AND from_did <> $4
+            )
+          )
         ORDER BY created_at DESC
         LIMIT $5
         """,
         session_id,
         bool(unread_only),
         last_read_message_at,
-        agent_uuid,
+        participant_did,
         int(limit),
     )
     rows = list(reversed(rows))
 
     return [
         {
-            "message_id": str(r["message_id"]),
-            "from_agent_id": str(r["from_agent_id"]),
-            "from_alias": r["from_alias"],
-            "body": r["body"],
-            "created_at": r["created_at"],
-            "sender_leaving": bool(r["sender_leaving"]),
-            "reply_to": (
-                str(r["reply_to"])
-                if r.get("reply_to") is not None
-                else None
+            "message_id": str(row["message_id"]),
+            "from_agent_id": (
+                str(row["from_agent_id"]) if row.get("from_agent_id") is not None else None
             ),
-            "from_did": r.get("from_did"),
-            "signature": r.get("signature"),
-            "signed_payload": r.get("signed_payload"),
+            "from_did": row.get("from_did"),
+            "from_alias": row["from_alias"],
+            "body": row["body"],
+            "created_at": row["created_at"],
+            "sender_leaving": bool(row["sender_leaving"]),
+            "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
+            "signature": row.get("signature"),
+            "signed_payload": row.get("signed_payload"),
         }
-        for r in rows
+        for row in rows
     ]
 
 
@@ -417,26 +456,22 @@ async def mark_messages_read(
     db,
     *,
     session_id: UUID,
-    agent_id: str,
+    participant_did: str,
     up_to_message_id: str,
+    participant_agent_id: str | None = None,
 ) -> dict[str, Any]:
-    """Mark messages as read up to a given message.
-
-    Raises ForbiddenError if the agent is not a participant.
-    Raises NotFoundError if the message is not found.
-    """
     aweb_db = db.get_manager("aweb")
-    agent_uuid = UUID(agent_id)
+    participant_agent_uuid = _uuid_or_none(participant_agent_id)
     up_to_uuid = UUID(up_to_message_id)
 
     is_participant = await aweb_db.fetch_one(
         """
         SELECT 1
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND agent_id = $2
+        WHERE session_id = $1 AND did = $2
         """,
         session_id,
-        agent_uuid,
+        participant_did,
     )
     if not is_participant:
         raise ForbiddenError("Not a participant in this session")
@@ -463,10 +498,10 @@ async def mark_messages_read(
         LEFT JOIN {{tables.chat_messages}} last_read_msg
           ON last_read_msg.message_id = {{tables.chat_read_receipts}}.last_read_message_id
         WHERE {{tables.chat_read_receipts}}.session_id = $1
-          AND {{tables.chat_read_receipts}}.agent_id = $2
+          AND {{tables.chat_read_receipts}}.did = $2
         """,
         session_id,
-        agent_uuid,
+        participant_did,
     )
     old_last_message_at = old["last_read_message_at"] if old else None
 
@@ -475,25 +510,26 @@ async def mark_messages_read(
         SELECT COUNT(*)::int
         FROM {{tables.chat_messages}}
         WHERE session_id = $1
-          AND from_agent_id <> $2
+          AND from_did <> $2
           AND created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
           AND created_at <= $4
         """,
         session_id,
-        agent_uuid,
+        participant_did,
         old_last_message_at,
         up_to_time,
     )
 
-    # Only advance cursor if the target message is newer than the stored one.
     upserted = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.chat_read_receipts}} (session_id, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_id, agent_id) DO UPDATE
+        INSERT INTO {{tables.chat_read_receipts}}
+            (session_id, did, agent_id, last_read_message_id, last_read_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (session_id, did) DO UPDATE
         SET last_read_message_id = EXCLUDED.last_read_message_id,
+            agent_id = EXCLUDED.agent_id,
             last_read_at = EXCLUDED.last_read_at
-        WHERE $5 > COALESCE(
+        WHERE $6 > COALESCE(
             (SELECT created_at FROM {{tables.chat_messages}}
              WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
             'epoch'::timestamptz
@@ -501,7 +537,8 @@ async def mark_messages_read(
         RETURNING 1
         """,
         session_id,
-        agent_uuid,
+        participant_did,
+        participant_agent_uuid,
         up_to_uuid,
         read_time,
         up_to_time,

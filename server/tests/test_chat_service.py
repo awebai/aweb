@@ -1,4 +1,4 @@
-"""Tests for the chat service layer against the team-based schema."""
+"""Tests for the chat service layer against the identity-scoped schema."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from uuid import UUID
 from awid.did import did_from_public_key
 from aweb.messaging.chat import (
     ensure_session,
-    get_agent_by_alias,
     send_in_session,
     get_message_history,
 )
@@ -47,24 +46,36 @@ async def _setup_team_and_agents(aweb_db, team_id="backend:acme.com"):
 
     alice = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
-        VALUES ($1, $2, 'alice', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'persistent')
         RETURNING agent_id
         """,
         team_id, alice_did,
     )
     bob = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
-        VALUES ($1, $2, 'bob', 'persistent')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
+        VALUES ($1, $2, 'did:aw:bob', 'bob', 'persistent')
         RETURNING agent_id
         """,
         team_id, bob_did,
     )
 
     return (
-        {"agent_id": alice["agent_id"], "team_id": team_id, "alias": "alice"},
-        {"agent_id": bob["agent_id"], "team_id": team_id, "alias": "bob"},
+        {
+            "agent_id": alice["agent_id"],
+            "team_id": team_id,
+            "alias": "alice",
+            "did_key": alice_did,
+            "did_aw": "did:aw:alice",
+        },
+        {
+            "agent_id": bob["agent_id"],
+            "team_id": team_id,
+            "alias": "bob",
+            "did_key": bob_did,
+            "did_aw": "did:aw:bob",
+        },
     )
 
 
@@ -76,8 +87,8 @@ async def test_ensure_session_creates_session(aweb_cloud_db):
     session_id = await ensure_session(
         db_shim,
         team_id="backend:acme.com",
-        agent_rows=[alice, bob],
-        created_by_alias="alice",
+        participant_rows=[alice, bob],
+        created_by="alice",
     )
 
     assert isinstance(session_id, UUID)
@@ -90,11 +101,11 @@ async def test_ensure_session_idempotent(aweb_cloud_db):
 
     s1 = await ensure_session(
         db_shim, team_id="backend:acme.com",
-        agent_rows=[alice, bob], created_by_alias="alice",
+        participant_rows=[alice, bob], created_by="alice",
     )
     s2 = await ensure_session(
         db_shim, team_id="backend:acme.com",
-        agent_rows=[alice, bob], created_by_alias="alice",
+        participant_rows=[alice, bob], created_by="alice",
     )
 
     assert s1 == s2
@@ -107,13 +118,14 @@ async def test_send_and_read_message(aweb_cloud_db):
 
     session_id = await ensure_session(
         db_shim, team_id="backend:acme.com",
-        agent_rows=[alice, bob], created_by_alias="alice",
+        participant_rows=[alice, bob], created_by="alice",
     )
 
     msg = await send_in_session(
         db_shim,
         session_id=session_id,
-        agent_id=str(alice["agent_id"]),
+        sender_did="did:aw:alice",
+        sender_agent_id=str(alice["agent_id"]),
         body="Hello Bob!",
     )
 
@@ -122,7 +134,7 @@ async def test_send_and_read_message(aweb_cloud_db):
 
     history = await get_message_history(
         db_shim, session_id=session_id,
-        agent_id=str(bob["agent_id"]),
+        participant_did="did:aw:bob",
     )
 
     assert len(history) == 1
@@ -137,15 +149,15 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
 
     session_id = await ensure_session(
         db_shim, team_id="backend:acme.com",
-        agent_rows=[alice, bob], created_by_alias="alice",
+        participant_rows=[alice, bob], created_by="alice",
     )
 
     # Create a third agent not in the session
     charlie_did = _make_did_key()
     charlie = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.agents}} (team_id, did_key, alias, lifetime)
-        VALUES ('backend:acme.com', $1, 'charlie', 'ephemeral')
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
+        VALUES ('backend:acme.com', $1, 'did:aw:charlie', 'charlie', 'ephemeral')
         RETURNING agent_id
         """,
         charlie_did,
@@ -154,8 +166,45 @@ async def test_send_non_participant_returns_none(aweb_cloud_db):
     result = await send_in_session(
         db_shim,
         session_id=session_id,
-        agent_id=str(charlie["agent_id"]),
+        sender_did="did:aw:charlie",
+        sender_agent_id=str(charlie["agent_id"]),
         body="I shouldn't be here",
     )
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_reuses_identity_pair_across_teams(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    alice, _ = await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="backend:acme.com")
+    await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="ops:acme.com")
+    bob_other = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT agent_id, did_key
+        FROM {{tables.agents}}
+        WHERE team_id = 'ops:acme.com' AND alias = 'bob'
+        """
+    )
+    bob = {
+        "agent_id": bob_other["agent_id"],
+        "team_id": "ops:acme.com",
+        "alias": "bob",
+        "did_key": bob_other["did_key"],
+        "did_aw": "did:aw:bob",
+    }
+
+    s1 = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+    s2 = await ensure_session(
+        db_shim,
+        team_id="ops:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+
+    assert s1 == s2

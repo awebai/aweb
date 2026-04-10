@@ -167,6 +167,7 @@ def register_tools(
     ) -> str:
         return await _send_mail_impl(
             db_infra,
+            registry_client=registry_client,
             to=to,
             subject=subject,
             body=body,
@@ -216,6 +217,8 @@ def register_tools(
     async def chat_send(
         message: str,
         to_alias: str = "",
+        to_did: str = "",
+        to_address: str = "",
         session_id: str = "",
         wait: bool = False,
         wait_seconds: int = 120,
@@ -225,8 +228,11 @@ def register_tools(
         return await _chat_send_impl(
             db_infra,
             redis,
+            registry_client=registry_client,
             message=message,
             to_alias=to_alias,
+            to_did=to_did,
+            to_address=to_address,
             session_id=session_id,
             wait=wait,
             wait_seconds=wait_seconds,

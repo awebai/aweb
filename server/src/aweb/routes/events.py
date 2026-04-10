@@ -44,15 +44,14 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
-async def _current_actionable_mail(aweb_db, *, team_id: str, agent_id: UUID) -> list[dict[str, Any]]:
-    """Return the current actionable unread mail state for an agent."""
+async def _current_actionable_mail(aweb_db, *, inbox_did: str) -> list[dict[str, Any]]:
+    """Return the current actionable unread mail state for an identity."""
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
             SELECT message_id, from_alias, subject, priority, created_at
             FROM {{tables.messages}}
-            WHERE team_id = $1
-              AND to_agent_id = $2
+            WHERE to_did = $1
               AND read_at IS NULL
         )
         SELECT
@@ -66,8 +65,7 @@ async def _current_actionable_mail(aweb_db, *, team_id: str, agent_id: UUID) -> 
         ORDER BY created_at ASC
         LIMIT 50
         """,
-        team_id,
-        agent_id,
+        inbox_did,
     )
     return [
         {
@@ -88,14 +86,19 @@ async def _current_actionable_chat(
     db,
     redis,
     *,
-    agent_id: UUID,
+    participant_did: str,
+    participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the current actionable unread chat state for an agent."""
-    pending = await get_pending_conversations(db, agent_id=str(agent_id))
+    """Return the current actionable unread chat state for an identity."""
+    pending = await get_pending_conversations(
+        db,
+        participant_did=participant_did,
+        participant_agent_id=participant_agent_id,
+    )
     actionable: list[dict[str, Any]] = []
     for item in pending:
-        participant_ids = [pid for pid in item.get("participant_ids", []) if pid != str(agent_id)]
-        waiting = await get_waiting_agents(redis, item["session_id"], participant_ids)
+        participant_dids = [did for did in item.get("participant_dids", []) if did != participant_did]
+        waiting = await get_waiting_agents(redis, item["session_id"], participant_dids)
         sender_waiting = bool(waiting)
         last_activity = item.get("last_activity")
         actionable.append(
@@ -181,14 +184,35 @@ async def _sse_agent_events(
     """Generate per-agent SSE actionable coordination events."""
     aweb_db = db.get_manager("aweb")
     aid = UUID(agent_id)
+    viewer = await aweb_db.fetch_one(
+        """
+        SELECT did_aw, did_key
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND deleted_at IS NULL
+        """,
+        aid,
+    )
+    viewer_did = (
+        (viewer.get("did_aw") if viewer else None)
+        or (viewer.get("did_key") if viewer else None)
+        or ""
+    ).strip()
+    if not viewer_did:
+        yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'identity incomplete'})}\n\n"
+        return
 
     yield ": keepalive\n\n"
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
     # Initial snapshot
-    mail_events = await _current_actionable_mail(aweb_db, team_id=team_id, agent_id=aid)
-    chat_events = await _current_actionable_chat(db, redis, agent_id=aid)
+    mail_events = await _current_actionable_mail(aweb_db, inbox_did=viewer_did)
+    chat_events = await _current_actionable_chat(
+        db,
+        redis,
+        participant_did=viewer_did,
+        participant_agent_id=agent_id,
+    )
     control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
@@ -211,8 +235,13 @@ async def _sse_agent_events(
             break
 
         try:
-            current_mail = await _current_actionable_mail(aweb_db, team_id=team_id, agent_id=aid)
-            current_chat = await _current_actionable_chat(db, redis, agent_id=aid)
+            current_mail = await _current_actionable_mail(aweb_db, inbox_did=viewer_did)
+            current_chat = await _current_actionable_chat(
+                db,
+                redis,
+                participant_did=viewer_did,
+                participant_agent_id=agent_id,
+            )
             control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
