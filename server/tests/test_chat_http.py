@@ -352,6 +352,62 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
 
 
 @pytest.mark.asyncio
+async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, 'did:aw:bob', 'bob', 'ping', $2)
+        """,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    captured: dict[str, list[str]] = {}
+
+    async def _fake_waiting_by_session(_redis, wanted):
+        captured.update(wanted)
+        return {key: [] for key in wanted}
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+    monkeypatch.setattr(chat_routes, "get_waiting_agents_by_session", _fake_waiting_by_session)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/chat/pending")
+
+    assert resp.status_code == 200, resp.text
+    assert captured == {str(session_id): ["did:aw:bob"]}
+
+
+@pytest.mark.asyncio
 async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_cloud_db):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)

@@ -238,6 +238,7 @@ async def test_ensure_session_reuses_identity_pair_across_stable_and_current_did
                 "team_id": alice["team_id"],
                 "alias": alice["alias"],
                 "did_aw": alice["did_aw"],
+                "did_key": alice["did_key"],
             },
             bob,
         ],
@@ -245,3 +246,71 @@ async def test_ensure_session_reuses_identity_pair_across_stable_and_current_did
     )
 
     assert session_from_current == session_from_stable
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    _, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="backend:acme.com")
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6Mkteam-ops')
+        ON CONFLICT DO NOTHING
+        """
+    )
+
+    shared_did_aw = "did:aw:alice"
+    alice_old_did_key = _make_did_key()
+    alice_new_did_key = _make_did_key()
+    old_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
+        VALUES ('backend:acme.com', $1, $2, 'alice-old', 'persistent')
+        RETURNING agent_id
+        """,
+        alice_old_did_key,
+        shared_did_aw,
+    )
+    new_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, lifetime)
+        VALUES ('ops:acme.com', $1, $2, 'alice-new', 'persistent')
+        RETURNING agent_id
+        """,
+        alice_new_did_key,
+        shared_did_aw,
+    )
+
+    old_session = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[
+            {
+                "agent_id": old_row["agent_id"],
+                "team_id": "backend:acme.com",
+                "alias": "alice-old",
+                "did_aw": shared_did_aw,
+                "did_key": alice_old_did_key,
+            },
+            bob,
+        ],
+        created_by="alice-old",
+    )
+    new_session = await ensure_session(
+        db_shim,
+        team_id="ops:acme.com",
+        participant_rows=[
+            {
+                "agent_id": new_row["agent_id"],
+                "team_id": "ops:acme.com",
+                "alias": "alice-new",
+                "did_aw": shared_did_aw,
+                "did_key": alice_new_did_key,
+            },
+            bob,
+        ],
+        created_by="alice-new",
+    )
+
+    assert new_session != old_session

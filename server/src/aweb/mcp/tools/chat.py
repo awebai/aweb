@@ -221,9 +221,10 @@ async def chat_send(
                 db_infra,
                 team_id=auth.team_id,
                 participant_rows=[
-                    {"did": actor_did, "agent_id": actor_agent_id, "alias": actor_alias},
+                    {"did": actor_did, "did_key": auth.did_key, "agent_id": actor_agent_id, "alias": actor_alias},
                     {
                         "did": target_did,
+                        "did_key": (target.get("did_key") or "").strip() or None,
                         "agent_id": str(target["agent_id"]) if target.get("agent_id") else None,
                         "alias": (target.get("alias") or target.get("address") or target_did).strip(),
                     },

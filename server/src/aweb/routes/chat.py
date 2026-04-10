@@ -356,12 +356,14 @@ async def create_or_send(
     participant_rows = [
         {
             "did": actor_did,
+            "did_key": auth.did_key,
             "agent_id": actor_agent_id,
             "alias": actor_alias,
         }
     ] + [
         {
             "did": (row.get("did_aw") or row.get("did_key") or "").strip(),
+            "did_key": (row.get("did_key") or "").strip() or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
             "alias": (row.get("alias") or row.get("address") or "").strip()
             or (row.get("did_aw") or row.get("did_key") or "").strip(),
@@ -537,7 +539,7 @@ async def pending(
     waiting_by_session = await get_waiting_agents_by_session(
         redis,
         {
-            item["session_id"]: [did for did in item.get("participant_dids", []) if did != actor_did]
+            item["session_id"]: [did for did in item.get("participant_dids", []) if did not in set(actor_dids)]
             for item in conversations
         },
     )
