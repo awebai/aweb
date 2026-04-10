@@ -430,6 +430,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 type ChatSessionItem struct {
 	SessionID            string   `json:"session_id"`
 	Participants         []string `json:"participants"`
+	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	CreatedAt            string   `json:"created_at"`
 	SenderWaiting        bool     `json:"sender_waiting,omitempty"`
