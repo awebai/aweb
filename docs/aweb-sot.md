@@ -712,7 +712,7 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 | `GET /v1/teams/{team_id}/agents` | List active agents in team |
 | `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
 | `GET /v1/teams/{team_id}/messages` | Message history |
-| `GET /v1/teams/{team_id}/tasks` | Task list |
+| `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
 | `GET /v1/teams/{team_id}/claims` | Active task claims |
 | `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
 | `GET /v1/teams/{team_id}/instructions/active` | Active instructions |

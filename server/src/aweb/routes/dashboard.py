@@ -7,13 +7,16 @@ All endpoints are read-only.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from awid.team_ids import parse_team_id, team_slug
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.team_ids import parse_team_id
 from aweb.claims import list_active_claims
+from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.team_auth import verify_dashboard_token
@@ -135,6 +138,12 @@ class TaskSummary(BaseModel):
     task_type: str
     assignee_alias: Optional[str]
     created_at: str
+
+
+class TaskListResponse(BaseModel):
+    tasks: list[TaskSummary]
+    has_more: bool
+    next_cursor: Optional[str] = None
 
 
 class TeamStatus(BaseModel):
@@ -311,42 +320,75 @@ async def list_team_messages(
 async def list_team_tasks(
     request: Request,
     team_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
+    status: Optional[str] = Query(default=None),
+    assignee_alias: Optional[str] = Query(default=None),
+    task_type: Optional[str] = Query(default=None),
+    priority: Optional[str] = Query(default=None, pattern="^P[0-4]$"),
+    labels: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+    cursor: Optional[str] = Query(default=None),
     db=Depends(get_db),
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
-    aweb_db = db.get_manager("aweb")
+    validated_limit, cursor_data = validate_pagination_params(limit, cursor)
+    label_list = [s.strip() for s in labels.split(",") if s.strip()] if labels else None
+    priority_value = None
+    if priority is not None:
+        priority_value = int(priority[1:])
 
-    slug = team_slug(team_id)
+    cursor_created_at = None
+    cursor_task_id = None
+    if cursor_data is not None:
+        try:
+            cursor_created_at_raw = cursor_data["created_at"]
+            cursor_task_id_raw = cursor_data["task_id"]
+            cursor_created_at = datetime.fromisoformat(cursor_created_at_raw)
+            cursor_task_id = UUID(cursor_task_id_raw)
+        except (KeyError, TypeError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=f"Invalid cursor: {e}")
 
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT task_id, task_ref_suffix, title, status, priority, task_type,
-               assignee_alias, created_at
-        FROM {{tables.tasks}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT $2
-        """,
-        team_id,
-        limit,
+    rows = await list_tasks_paginated(
+        db,
+        team_id=team_id,
+        status=status,
+        assignee_alias=assignee_alias,
+        task_type=task_type,
+        priority=priority_value,
+        labels=label_list,
+        q=q,
+        limit=validated_limit + 1,
+        created_before=cursor_created_at,
+        task_id_before=cursor_task_id,
     )
 
-    return {
-        "tasks": [
+    has_more = len(rows) > validated_limit
+    rows = rows[:validated_limit]
+
+    next_cursor = None
+    if has_more and rows:
+        last_row = rows[-1]
+        next_cursor = encode_cursor(
+            {"created_at": last_row["created_at"], "task_id": last_row["task_id"]}
+        )
+
+    return TaskListResponse(
+        tasks=[
             TaskSummary(
-                task_id=str(r["task_id"]),
-                task_ref=f"{slug}-{r['task_ref_suffix']}",
+                task_id=r["task_id"],
+                task_ref=r["task_ref"],
                 title=r["title"],
                 status=r["status"],
                 priority=r["priority"],
                 task_type=r["task_type"],
                 assignee_alias=r.get("assignee_alias"),
-                created_at=r["created_at"].isoformat(),
+                created_at=r["created_at"],
             ).model_dump()
             for r in rows
-        ]
-    }
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    ).model_dump()
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")

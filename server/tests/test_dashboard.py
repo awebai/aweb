@@ -102,8 +102,13 @@ async def _seed(aweb_db):
 
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.tasks}} (team_id, task_number, task_ref_suffix, title, status, priority, task_type)
-        VALUES ('backend:acme.com', 1, 'aaaa', 'Fix bug', 'open', 2, 'task')
+        INSERT INTO {{tables.tasks}} (
+            team_id, task_number, root_task_seq, task_ref_suffix, title, status, priority, task_type, created_at
+        )
+        VALUES (
+            'backend:acme.com', 1, 1, 'aaaa', 'Fix bug', 'open', 2, 'task',
+            TIMESTAMPTZ '2026-04-08T12:03:00Z'
+        )
         """,
     )
 
@@ -342,6 +347,95 @@ async def test_tasks(aweb_cloud_db):
     data = resp.json()
     assert len(data["tasks"]) == 1
     assert data["tasks"][0]["title"] == "Fix bug"
+    assert data["has_more"] is False
+    assert data["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_tasks_filters_and_paginates(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.tasks}} (
+            task_id, team_id, task_number, root_task_seq, task_ref_suffix, title, description,
+            status, priority, task_type, labels, assignee_alias, created_at
+        )
+        VALUES
+            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
+             'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
+            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Document claims', 'Write pagination docs',
+             'open', 1, 'chore', ARRAY['docs']::text[], NULL, TIMESTAMPTZ '2026-04-08T12:04:00Z')
+        """,
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={
+                "status": "in_progress",
+                "assignee_alias": "alice",
+                "task_type": "feature",
+                "priority": "P0",
+                "labels": "dashboard,backend",
+                "q": "dashboard filters",
+                "limit": 1,
+            },
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [task["title"] for task in data["tasks"]] == ["Build dashboard"]
+    assert data["has_more"] is False
+    assert data["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_tasks_cursor_pagination(aweb_cloud_db):
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.tasks}} (
+            task_id, team_id, task_number, root_task_seq, task_ref_suffix, title,
+            status, priority, task_type, created_at
+        )
+        VALUES
+            ($1, 'backend:acme.com', 2, 2, 'aaab', 'Second task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
+            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Third task', 'open', 2, 'task', TIMESTAMPTZ '2026-04-08T12:04:00Z')
+        """,
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"limit": 2},
+            headers={"X-Dashboard-Token": token},
+        )
+        assert first.status_code == 200
+        first_data = first.json()
+        assert [task["title"] for task in first_data["tasks"]] == ["Second task", "Third task"]
+        assert first_data["has_more"] is True
+        assert first_data["next_cursor"] is not None
+
+        second = await client.get(
+            "/v1/teams/backend:acme.com/tasks",
+            params={"limit": 2, "cursor": first_data["next_cursor"]},
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert second.status_code == 200
+    second_data = second.json()
+    assert [task["title"] for task in second_data["tasks"]] == ["Fix bug"]
+    assert second_data["has_more"] is False
+    assert second_data["next_cursor"] is None
 
 
 @pytest.mark.asyncio
