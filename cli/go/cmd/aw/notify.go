@@ -183,6 +183,9 @@ func notifyIdentityMatchesSelf(value string, selfAlias string) bool {
 	if strings.EqualFold(value, selfAlias) {
 		return true
 	}
+	if strings.EqualFold(value, "did:aw:"+selfAlias) {
+		return true
+	}
 	return strings.EqualFold(handleFromAddress(value), selfAlias)
 }
 
