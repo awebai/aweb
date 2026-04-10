@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -38,12 +39,7 @@ func logChatEvent(logsDir, logName, myAddress string, ev chat.Event) {
 		from = ev.FromAgent
 	}
 	to := ev.ToAddress
-	if ev.FromAddress != "" {
-		if ev.FromAddress == myAddress {
-			dir = "send"
-			kind = interactionKindChatOut
-		}
-	} else if ev.FromAgent == myAddress {
+	if chatEventIsFromSelf(ev, myAddress) {
 		dir = "send"
 		kind = interactionKindChatOut
 	}
@@ -73,6 +69,21 @@ func logChatEvent(logsDir, logName, myAddress string, ev chat.Event) {
 		To:        to,
 		Text:      ev.Body,
 	})
+}
+
+func chatEventIsFromSelf(ev chat.Event, myAddress string) bool {
+	myAddress = strings.TrimSpace(myAddress)
+	if myAddress == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(ev.FromAddress), myAddress) {
+		return true
+	}
+	selfHandle := handleFromAddress(myAddress)
+	if selfHandle == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(ev.FromAgent), selfHandle)
 }
 
 // logChatEvents logs all message events from a list.

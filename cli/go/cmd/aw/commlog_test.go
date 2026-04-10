@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/chat"
 )
 
 func TestAppendCommLog(t *testing.T) {
@@ -215,6 +217,31 @@ func TestFormatLogEntry(t *testing.T) {
 	s = formatLogLine(&entry)
 	if !strings.Contains(s, "←") {
 		t.Fatalf("recv should contain ←: %q", s)
+	}
+}
+
+func TestLogChatEventTreatsSelfAliasAsSentWhenAddressMissing(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	logDir := filepath.Join(tmp, "logs")
+
+	logChatEvent(logDir, "acct-test", "acme.com/wendy", chat.Event{
+		Type:      "message",
+		MessageID: "msg-self-1",
+		FromAgent: "wendy",
+		Body:      "self echo",
+	})
+
+	entries, err := readCommLog(filepath.Join(logDir, "acct-test.jsonl"), 0)
+	if err != nil {
+		t.Fatalf("readCommLog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d, want 1", len(entries))
+	}
+	if entries[0].Dir != "send" {
+		t.Fatalf("dir=%q, want send", entries[0].Dir)
 	}
 }
 
