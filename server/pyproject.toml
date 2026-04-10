@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-awid-service = { path = "../awid" }
+awid-service = { path = "../awid", editable = true }
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb"

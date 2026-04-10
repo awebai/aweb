@@ -453,6 +453,37 @@ class RegistryClient:
         )
         return None if data is None else _namespace_from_json(data)
 
+    async def register_team(
+        self,
+        *,
+        domain: str,
+        name: str,
+        display_name: str,
+        team_did_key: str,
+        visibility: str,
+        namespace_controller_signing_key: bytes,
+    ) -> Team:
+        registry_url = await self._registry_url_for_domain(domain)
+        return _team_from_json(
+            await self._request_json(
+                "POST",
+                f"/v1/namespaces/{domain}/teams",
+                headers=self._signed_team_headers(
+                    domain=domain,
+                    name=name,
+                    operation="create_team",
+                    signing_key=namespace_controller_signing_key,
+                ),
+                json={
+                    "name": name,
+                    "display_name": display_name,
+                    "team_did_key": team_did_key,
+                    "visibility": visibility,
+                },
+                registry_url=registry_url,
+            )
+        )
+
     async def rotate_namespace_controller(
         self,
         domain: str,
@@ -755,6 +786,28 @@ class RegistryClient:
             "X-AWEB-Timestamp": timestamp,
         }
 
+    def _signed_team_headers(
+        self,
+        *,
+        domain: str,
+        name: str,
+        operation: str,
+        signing_key: bytes,
+    ) -> dict[str, str]:
+        timestamp = _utc_timestamp()
+        payload = canonical_json_bytes(
+            {
+                "domain": domain,
+                "name": name,
+                "operation": operation,
+                "timestamp": timestamp,
+            }
+        )
+        return {
+            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
+            "X-AWEB-Timestamp": timestamp,
+        }
+
     def _signed_parent_namespace_headers(
         self,
         *,
@@ -980,6 +1033,34 @@ class CachedRegistryClient(RegistryClient):
         )
         await self._invalidate_namespace_cache(domain)
         return namespace
+
+    async def register_team(
+        self,
+        *,
+        domain: str,
+        name: str,
+        display_name: str,
+        team_did_key: str,
+        visibility: str,
+        namespace_controller_signing_key: bytes,
+    ) -> Team:
+        await self._invalidate_keys(
+            self._team_metadata_cache_key(domain, name),
+            self._team_revocations_cache_key(domain, name),
+        )
+        team = await super().register_team(
+            domain=domain,
+            name=name,
+            display_name=display_name,
+            team_did_key=team_did_key,
+            visibility=visibility,
+            namespace_controller_signing_key=namespace_controller_signing_key,
+        )
+        await self._invalidate_keys(
+            self._team_metadata_cache_key(domain, name),
+            self._team_revocations_cache_key(domain, name),
+        )
+        return team
 
     async def rotate_namespace_controller(
         self,
