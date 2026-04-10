@@ -472,12 +472,19 @@ async def list_tasks_paginated(
     params.append(limit)
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT task_id, task_number, task_ref_suffix, title, description, status, priority, task_type,
-               assignee_alias, created_by_alias, parent_task_id, labels,
-               created_at, updated_at
-        FROM {{{{tables.tasks}}}}
+        SELECT t.task_id, t.task_number, t.task_ref_suffix, t.title, t.description, t.status,
+               t.priority, t.task_type, t.assignee_alias, t.created_by_alias, t.parent_task_id,
+               t.labels, t.created_at, t.updated_at,
+               (
+                   SELECT COUNT(*)
+                   FROM {{{{tables.task_dependencies}}}} d
+                   JOIN {{{{tables.tasks}}}} blocker ON blocker.task_id = d.depends_on_id
+                   WHERE d.task_id = t.task_id
+                     AND blocker.deleted_at IS NULL
+               ) AS blocker_count
+        FROM {{{{tables.tasks}}}} t
         WHERE {' AND '.join(conditions)}
-        ORDER BY created_at DESC, task_id DESC
+        ORDER BY t.created_at DESC, t.task_id DESC
         LIMIT ${idx}
         """,
         *params,
@@ -498,6 +505,7 @@ async def list_tasks_paginated(
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
             "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            "blocker_count": r["blocker_count"],
         }
         for r in rows
     ]

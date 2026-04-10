@@ -11,7 +11,7 @@ from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.team_ids import parse_team_id
@@ -137,6 +137,10 @@ class TaskSummary(BaseModel):
     status: str
     priority: int
     task_type: str
+    parent_task_id: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    updated_at: Optional[str] = None
+    blocker_count: int = 0
     created_by_alias: str = ""
     assignee_alias: Optional[str]
     created_at: str
@@ -389,6 +393,10 @@ async def list_team_tasks(
                 status=r["status"],
                 priority=r["priority"],
                 task_type=r["task_type"],
+                parent_task_id=r.get("parent_task_id"),
+                labels=r.get("labels") or [],
+                updated_at=r.get("updated_at"),
+                blocker_count=r.get("blocker_count", 0),
                 created_by_alias=r.get("created_by_alias") or "",
                 assignee_alias=r.get("assignee_alias"),
                 created_at=r["created_at"],

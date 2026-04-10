@@ -355,20 +355,37 @@ async def test_tasks(aweb_cloud_db):
 async def test_tasks_filters_and_paginates(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
+    parent_task_id = uuid.uuid4()
+    blocked_task_id = uuid.uuid4()
+    blocker_task_id = uuid.uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.tasks}} (
             task_id, team_id, task_number, root_task_seq, task_ref_suffix, title, description,
-            status, priority, task_type, labels, assignee_alias, created_at
+            status, priority, task_type, labels, assignee_alias, parent_task_id, created_at, updated_at
         )
         VALUES
             ($1, 'backend:acme.com', 2, 2, 'aaab', 'Build dashboard', 'Add dashboard filters',
-             'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', TIMESTAMPTZ '2026-04-08T12:05:00Z'),
-            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Document claims', 'Write pagination docs',
-             'open', 1, 'chore', ARRAY['docs']::text[], NULL, TIMESTAMPTZ '2026-04-08T12:04:00Z')
+             'in_progress', 0, 'feature', ARRAY['dashboard','backend']::text[], 'alice', $2,
+             TIMESTAMPTZ '2026-04-08T12:05:00Z', TIMESTAMPTZ '2026-04-08T12:06:00Z'),
+            ($2, 'backend:acme.com', 3, 3, 'aaac', 'Parent task', 'Parent for dashboard task',
+             'open', 1, 'epic', ARRAY['backend']::text[], NULL, NULL,
+             TIMESTAMPTZ '2026-04-08T12:04:30Z', TIMESTAMPTZ '2026-04-08T12:04:45Z'),
+            ($3, 'backend:acme.com', 4, 4, 'aaad', 'Blocked task', 'Blocked by dashboard task',
+             'open', 1, 'chore', ARRAY['docs']::text[], NULL, NULL,
+             TIMESTAMPTZ '2026-04-08T12:04:00Z', TIMESTAMPTZ '2026-04-08T12:04:10Z')
         """,
-        uuid.uuid4(),
-        uuid.uuid4(),
+        blocked_task_id,
+        parent_task_id,
+        blocker_task_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_dependencies}} (task_id, depends_on_id, team_id)
+        VALUES ($1, $2, 'backend:acme.com')
+        """,
+        blocked_task_id,
+        blocker_task_id,
     )
     token = _make_jwt(["backend:acme.com"])
 
@@ -390,6 +407,10 @@ async def test_tasks_filters_and_paginates(aweb_cloud_db):
     assert resp.status_code == 200
     data = resp.json()
     assert [task["title"] for task in data["tasks"]] == ["Build dashboard"]
+    assert data["tasks"][0]["parent_task_id"] == str(parent_task_id)
+    assert data["tasks"][0]["labels"] == ["dashboard", "backend"]
+    assert data["tasks"][0]["updated_at"] == "2026-04-08T12:06:00+00:00"
+    assert data["tasks"][0]["blocker_count"] == 1
     assert data["has_more"] is False
     assert data["next_cursor"] is None
 
