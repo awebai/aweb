@@ -1073,13 +1073,18 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if fromStableID == "" {
+			candidate := ""
 			for _, participantDID := range p.ParticipantDIDs {
 				participantDID = strings.TrimSpace(participantDID)
 				if strings.HasPrefix(participantDID, "did:aw:") {
-					fromStableID = participantDID
-					break
+					if candidate != "" && !strings.EqualFold(candidate, participantDID) {
+						candidate = ""
+						break
+					}
+					candidate = participantDID
 				}
 			}
+			fromStableID = candidate
 		}
 		return &SendResult{
 			SessionID:     p.SessionID,
