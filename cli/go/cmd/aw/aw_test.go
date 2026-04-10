@@ -1082,6 +1082,86 @@ func TestAwMailSendRejectsMultipleRecipientFlags(t *testing.T) {
 	}
 }
 
+func TestAwMailInboxLogsAliasWhenAddressMissing(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID:    "msg-1",
+						FromAlias:    "monitor",
+						FromAddress:  "",
+						FromStableID: "did:aw:monitor",
+						Subject:      "status",
+						Body:         "done",
+						CreatedAt:    "2026-04-10T00:00:00Z",
+					},
+				},
+			})
+		case "/v1/messages/msg-1/ack":
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "msg-1"})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "backend:acme",
+		Alias:       "bot",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "acme.com/bot",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+	})
+
+	run := exec.CommandContext(ctx, bin, "mail", "inbox")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	entries, err := readInteractionLog(interactionLogPath(tmp), 0)
+	if err != nil {
+		t.Fatalf("readInteractionLog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d, want 1", len(entries))
+	}
+	if got := entries[0].From; got != "monitor" {
+		t.Fatalf("interaction from=%q want monitor", got)
+	}
+
+	recap := formatInteractionRecap(entries, 10)
+	if !strings.Contains(recap, "from monitor (mail)") {
+		t.Fatalf("interaction recap lost sender identity:\n%s", recap)
+	}
+}
+
 func TestAwResetLocal(t *testing.T) {
 	t.Parallel()
 
