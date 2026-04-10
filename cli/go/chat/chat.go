@@ -302,7 +302,12 @@ func normalizeSessionTarget(ctx context.Context, client *awid.Client, target str
 //  1. smallest participant count
 //  2. most recent CreatedAt (tiebreaker)
 func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	targetAlias = normalizeSessionTarget(ctx, client, targetAlias)
+	rawTarget := strings.TrimSpace(targetAlias)
+	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
+	requireUniqueExact := strings.HasPrefix(rawTarget, "did:") &&
+		targetAlias != "" &&
+		targetAlias != rawTarget &&
+		!strings.Contains(targetAlias, "/")
 	pendingResp, err := client.ChatPending(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
@@ -347,7 +352,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		}
 		return "", false, nil
 	}
-	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, false)
+	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, requireUniqueExact)
 	if err != nil {
 		return "", false, err
 	}
@@ -396,7 +401,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		}
 		return bestSessionID, nil
 	}
-	bestSessionID, err := selectSession(exactParticipantMatch, false)
+	bestSessionID, err := selectSession(exactParticipantMatch, requireUniqueExact)
 	if err != nil {
 		return "", false, err
 	}
