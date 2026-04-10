@@ -81,7 +81,7 @@ func TestFormatNotifyOutputUrgentAndFallback(t *testing.T) {
 		},
 	}
 
-	out := formatNotifyOutput(result, "wendy")
+	out := formatNotifyOutput(result, "wendy", "did:aw:wendy", "did:key:self-wendy")
 	for _, want := range []string{
 		"URGENT",
 		"rose",
@@ -110,7 +110,7 @@ func TestFormatNotifyOutputFallbackSkipsSelfAddress(t *testing.T) {
 		},
 	}
 
-	out := formatNotifyOutput(result, "wendy")
+	out := formatNotifyOutput(result, "wendy", "did:aw:wendy", "did:key:self-wendy")
 	if !strings.Contains(out, "Unread message from otherco/rose") {
 		t.Fatalf("notify output should fall back to the non-self participant address:\n%s", out)
 	}
@@ -192,6 +192,33 @@ func TestFormatNotifyOutputSkipsSelfStableIDParticipant(t *testing.T) {
 	}
 	if !strings.Contains(out, "Unread message from did:aw:rose") {
 		t.Fatalf("notify output should skip self stable identity and fall through to the other participant:\n%s", out)
+	}
+}
+
+func TestFormatNotifyOutputSkipsSelfCurrentDIDParticipant(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"", ""},
+				ParticipantDIDs:      []string{"did:key:self-wendy", "did:aw:rose"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy", "did:aw:wendy", "did:key:self-wendy")
+	if strings.Contains(out, "Unread message from did:key:self-wendy") {
+		t.Fatalf("notify output should not surface self current did as sender:\n%s", out)
+	}
+	if !strings.Contains(out, "Unread message from did:aw:rose") {
+		t.Fatalf("notify output should skip self current did and fall through to the other participant:\n%s", out)
 	}
 }
 
