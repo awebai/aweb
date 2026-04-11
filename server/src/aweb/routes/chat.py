@@ -156,7 +156,6 @@ async def _lookup_identity_metadata_by_did(db, dids: list[str]) -> dict[str, dic
         SELECT did_aw, did_key, address
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND address IS NOT NULL
           AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
         """,
         list(set(dids)),
@@ -698,14 +697,15 @@ async def history(
         limit=limit,
     )
     contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
-    address_map = await _lookup_addresses_by_did(
+    identity_map = await _lookup_identity_metadata_by_did(
         db,
         [m["from_did"] for m in messages if m.get("from_did")],
     )
 
     history_items: list[dict[str, Any]] = []
     for msg in messages:
-        from_address = address_map.get(msg.get("from_did") or "", msg["from_alias"])
+        from_did = (msg.get("from_did") or "").strip()
+        from_address = identity_map.get(from_did, {}).get("address") or msg["from_alias"]
         history_items.append(
             {
                 "message_id": msg["message_id"],
@@ -715,8 +715,9 @@ async def history(
                 "timestamp": _utc_iso(msg["created_at"]),
                 "sender_leaving": msg["sender_leaving"],
                 "reply_to": msg.get("reply_to"),
-                "to_address": _chat_to_address(participant_rows, from_did=msg.get("from_did") or ""),
-                "from_did": msg.get("from_did"),
+                "to_address": _chat_to_address(participant_rows, from_did=from_did),
+                "from_did": from_did or None,
+                "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
