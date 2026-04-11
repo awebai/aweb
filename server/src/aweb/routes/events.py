@@ -44,7 +44,7 @@ def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
 
 
-async def _lookup_addresses_by_did(db_or_manager, dids: list[str]) -> dict[str, str]:
+async def _lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dict[str, dict[str, str]]:
     unique_dids = sorted({(did or "").strip() for did in dids if (did or "").strip()})
     if not unique_dids:
         return {}
@@ -61,15 +61,19 @@ async def _lookup_addresses_by_did(db_or_manager, dids: list[str]) -> dict[str, 
         """,
         unique_dids,
     )
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     for row in rows:
+        stable_id = (row.get("did_aw") or "").strip()
+        current_did = (row.get("did_key") or "").strip()
         address = (row.get("address") or "").strip()
-        if not address:
-            continue
-        if row.get("did_aw"):
-            result[str(row["did_aw"]).strip()] = address
-        if row.get("did_key"):
-            result[str(row["did_key"]).strip()] = address
+        for did in (stable_id, current_did):
+            if not did:
+                continue
+            meta = result.setdefault(did, {})
+            if stable_id:
+                meta["stable_id"] = stable_id
+            if address:
+                meta["address"] = address
     return result
 
 
@@ -102,7 +106,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         """,
         inbox_dids,
     )
-    address_map = await _lookup_addresses_by_did(
+    sender_map = await _lookup_identity_metadata_by_did(
         aweb_db,
         [str(row["from_did"]).strip() for row in rows if row.get("from_did")],
     )
@@ -112,7 +116,10 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
             "message_id": str(r["message_id"]),
             "from_alias": r["from_alias"],
             "from_did": (r.get("from_did") or "").strip(),
-            "from_address": address_map.get((r.get("from_did") or "").strip(), r["from_alias"] or ""),
+            "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get("stable_id", ""),
+            "from_address": sender_map.get((r.get("from_did") or "").strip(), {}).get(
+                "address", r["from_alias"] or ""
+            ),
             "subject": r["subject"] or "",
             "priority": (r.get("priority") or "normal").strip().lower(),
             "unread_count": int(r.get("unread_count") or 0),
@@ -156,7 +163,7 @@ async def _current_actionable_chat(
         for item in pending:
             pending_by_session.setdefault(item["session_id"], item)
     actionable: list[dict[str, Any]] = []
-    participant_address_map = await _lookup_addresses_by_did(
+    participant_identity_map = await _lookup_identity_metadata_by_did(
         db,
         [
             did
@@ -178,7 +185,7 @@ async def _current_actionable_chat(
                 "session_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
                 "participant_addresses": [
-                    participant_address_map.get((did or "").strip(), alias or "")
+                    participant_identity_map.get((did or "").strip(), {}).get("address", alias or "")
                     for did, alias in zip(
                         list(item.get("participant_dids") or []),
                         list(item.get("participants") or []),
@@ -188,13 +195,20 @@ async def _current_actionable_chat(
                 ],
                 "from_alias": item.get("last_from") or "",
                 "from_did": (item.get("last_from_did") or "").strip(),
-                "from_address": participant_address_map.get(
-                    (item.get("last_from_did") or "").strip(),
+                "from_stable_id": participant_identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get("stable_id", ""),
+                "from_address": participant_identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get(
+                    "address",
                     item.get("last_from") or "",
                 ),
                 "last_from": item.get("last_from") or "",
-                "last_from_address": participant_address_map.get(
-                    (item.get("last_from_did") or "").strip(),
+                "last_from_address": participant_identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get(
+                    "address",
                     item.get("last_from") or "",
                 ),
                 "last_message": item.get("last_message") or "",
