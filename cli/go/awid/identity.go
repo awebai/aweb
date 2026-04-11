@@ -32,6 +32,21 @@ type StableIdentityVerifier interface {
 	VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification
 }
 
+// HandleFromAddress extracts the handle/name portion from a public address.
+func HandleFromAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" || strings.HasPrefix(address, "did:") {
+		return ""
+	}
+	if idx := strings.LastIndexByte(address, '/'); idx >= 0 && idx+1 < len(address) {
+		return strings.TrimSpace(address[idx+1:])
+	}
+	if idx := strings.LastIndexByte(address, '~'); idx >= 0 && idx+1 < len(address) {
+		return strings.TrimSpace(address[idx+1:])
+	}
+	return address
+}
+
 // DIDKeyResolver extracts the public key from a did:key string.
 // No network call required.
 type DIDKeyResolver struct{}
@@ -47,20 +62,6 @@ func (r *DIDKeyResolver) Resolve(_ context.Context, identifier string) (*Resolve
 		ResolvedAt:  time.Now().UTC(),
 		ResolvedVia: "did:key",
 	}, nil
-}
-
-func resolveHandleFromAddress(address string) string {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return ""
-	}
-	if idx := strings.LastIndexByte(address, '/'); idx >= 0 && idx+1 < len(address) {
-		return strings.TrimSpace(address[idx+1:])
-	}
-	if idx := strings.LastIndexByte(address, '~'); idx >= 0 && idx+1 < len(address) {
-		return strings.TrimSpace(address[idx+1:])
-	}
-	return address
 }
 
 // PinResolver looks up identity from the local TOFU pin store.

@@ -438,6 +438,7 @@ async def get_message_history(
     participant_did: str,
     unread_only: bool = False,
     limit: int = 200,
+    message_id: str | None = None,
 ) -> list[dict[str, Any]]:
     aweb_db = db.get_manager("aweb")
     is_participant = await aweb_db.fetch_one(
@@ -466,28 +467,45 @@ async def get_message_history(
     )
     last_read_message_at = rr["last_read_message_at"] if rr else None
 
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT message_id, from_alias, body, created_at, sender_leaving,
-               from_agent_id, reply_to, from_did, signature, signed_payload
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-          AND (
-            $2::bool IS FALSE
-            OR (
-                created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
-                AND from_did <> $4
-            )
-          )
-        ORDER BY created_at DESC
-        LIMIT $5
-        """,
-        session_id,
-        bool(unread_only),
-        last_read_message_at,
-        participant_did,
-        int(limit),
-    )
+    message_uuid = _uuid_or_none(message_id)
+
+    if message_uuid is not None:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT message_id, from_alias, body, created_at, sender_leaving,
+                   from_agent_id, reply_to, from_did, signature, signed_payload
+            FROM {{tables.chat_messages}}
+            WHERE session_id = $1
+              AND message_id = $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            session_id,
+            message_uuid,
+        )
+    else:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT message_id, from_alias, body, created_at, sender_leaving,
+                   from_agent_id, reply_to, from_did, signature, signed_payload
+            FROM {{tables.chat_messages}}
+            WHERE session_id = $1
+              AND (
+                $2::bool IS FALSE
+                OR (
+                    created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
+                    AND from_did <> $4
+                )
+              )
+            ORDER BY created_at DESC
+            LIMIT $5
+            """,
+            session_id,
+            bool(unread_only),
+            last_read_message_at,
+            participant_did,
+            int(limit),
+        )
     rows = list(reversed(rows))
 
     return [

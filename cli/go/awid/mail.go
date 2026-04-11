@@ -212,6 +212,9 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 	return &out, nil
 }
 
+// signedMailPriority normalizes "" and "normal" to the same empty signed value.
+// Any verifier that reconstructs a mail envelope from display fields must apply
+// the exact same normalization or signature verification will drift.
 func signedMailPriority(priority MessagePriority) string {
 	switch priority {
 	case "", PriorityNormal:

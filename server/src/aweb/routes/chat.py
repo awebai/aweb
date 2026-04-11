@@ -778,6 +778,7 @@ async def history(
     session_id: str = Path(..., min_length=1),
     unread_only: bool = Query(False),
     limit: int = Query(200, ge=1, le=2000),
+    message_id: str | None = Query(default=None),
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
@@ -817,6 +818,7 @@ async def history(
         participant_did=actor_did,
         unread_only=unread_only,
         limit=limit,
+        message_id=message_id,
     )
     contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
     identity_map = await lookup_identity_metadata_by_did(

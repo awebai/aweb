@@ -1545,6 +1545,66 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
 
 
 @pytest.mark.asyncio
+async def test_chat_history_filters_by_message_id(aweb_cloud_db):
+    session_id = uuid4()
+    first_message_id = uuid4()
+    second_message_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:aw:alice', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, created_at)
+        VALUES
+            ($1, $2, 'did:aw:alice', 'alice', 'first', $3),
+            ($4, $2, 'did:aw:bob', 'bob', 'second', $5)
+        """,
+        first_message_id,
+        session_id,
+        created_at + timedelta(minutes=1),
+        second_message_id,
+        created_at + timedelta(minutes=2),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(
+            f"/v1/chat/sessions/{session_id}/messages?unread_only=true&message_id={second_message_id}"
+        )
+
+    assert history.status_code == 200, history.text
+    body = history.json()
+    assert [item["message_id"] for item in body["messages"]] == [str(second_message_id)]
+    assert [item["body"] for item in body["messages"]] == ["second"]
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
