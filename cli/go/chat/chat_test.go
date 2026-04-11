@@ -1731,6 +1731,26 @@ func TestInferReadReceiptLabelDoesNotTreatDifferentAddressHandleAsSelf(t *testin
 	}
 }
 
+func TestChatEventTrustAddressPrefersStableIdentityOverAliasCollision(t *testing.T) {
+	t.Parallel()
+
+	trust := chatEventTrustAddress(
+		Event{
+			FromAgent:    "rose",
+			FromDID:      "did:aw:other-rose",
+			FromStableID: "did:aw:other-rose",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "rose", Address: "acme.com/rose", DID: "did:aw:self-rose"},
+			{Alias: "rose", Address: "otherco/rose", DID: "did:aw:other-rose"},
+		},
+	)
+
+	if trust != "otherco/rose" {
+		t.Fatalf("trust=%q, want otherco/rose", trust)
+	}
+}
+
 func TestDefaultWaitIs120(t *testing.T) {
 	t.Parallel()
 
