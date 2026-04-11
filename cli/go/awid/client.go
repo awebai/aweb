@@ -24,6 +24,7 @@ import (
 type signedFields struct {
 	FromDID       string
 	ToDID         string
+	ToStableID    string
 	FromStableID  string
 	Signature     string
 	SigningKeyID  string
@@ -52,10 +53,29 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	}
 	env.MessageID = msgID
 
-	// Resolve recipient DID for to_did binding (mail only).
-	if env.Type == "mail" && c.resolver != nil && env.To != "" && env.ToDID == "" {
-		if identity, err := c.resolver.Resolve(ctx, c.canonicalTrustAddress(env.To)); err == nil && identity.DID != "" {
-			env.ToDID = identity.DID
+	// Stable did:aw targets belong in to_stable_id; to_did is reserved for the
+	// recipient's current did:key binding.
+	if strings.HasPrefix(strings.TrimSpace(env.ToDID), "did:aw:") {
+		env.ToStableID = strings.TrimSpace(env.ToDID)
+		env.ToDID = ""
+	}
+	if strings.TrimSpace(env.ToStableID) == "" && strings.HasPrefix(strings.TrimSpace(env.To), "did:aw:") {
+		env.ToStableID = strings.TrimSpace(env.To)
+	}
+
+	// Resolve recipient DID for recipient binding when we have a stable
+	// identity target, or for mail when we only have a routable address.
+	if c.resolver != nil && env.ToDID == "" {
+		target := strings.TrimSpace(env.ToStableID)
+		if target == "" && env.Type == "mail" {
+			target = c.canonicalTrustAddress(env.To)
+		} else if target == "" && env.Type == "chat" && !strings.Contains(env.To, ",") {
+			target = c.canonicalTrustAddress(env.To)
+		}
+		if target != "" {
+			if identity, err := c.resolver.Resolve(ctx, target); err == nil && identity.DID != "" {
+				env.ToDID = identity.DID
+			}
 		}
 	}
 
@@ -66,6 +86,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	return signedFields{
 		FromDID:       c.did,
 		ToDID:         env.ToDID,
+		ToStableID:    env.ToStableID,
 		FromStableID:  c.stableID,
 		Signature:     sig,
 		SigningKeyID:  c.did,

@@ -942,8 +942,11 @@ func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["to_did"] != recipientDID {
-		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientDID)
+	if gotBody["to_did"] != nil {
+		t.Fatalf("to_did=%v, want absent without current recipient binding", gotBody["to_did"])
+	}
+	if gotBody["to_stable_id"] != recipientDID {
+		t.Fatalf("to_stable_id=%v, want %s", gotBody["to_stable_id"], recipientDID)
 	}
 	if gotTeamCert != "" {
 		t.Fatalf("expected identity auth without team certificate, got %q", gotTeamCert)
