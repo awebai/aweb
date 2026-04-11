@@ -181,27 +181,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 }
 
 func notifyIdentityMatchesSelf(value string, selfAlias string, selfDIDs ...string) bool {
-	value = strings.TrimSpace(value)
-	selfAlias = strings.TrimSpace(selfAlias)
-	if value == "" {
-		return false
-	}
-	for _, selfDID := range selfDIDs {
-		selfDID = strings.TrimSpace(selfDID)
-		if selfDID != "" && strings.EqualFold(value, selfDID) {
-			return true
-		}
-	}
-	if selfAlias == "" {
-		return false
-	}
-	if strings.EqualFold(value, selfAlias) {
-		return true
-	}
-	if strings.EqualFold(value, "did:aw:"+selfAlias) {
-		return true
-	}
-	return strings.EqualFold(handleFromAddress(value), selfAlias)
+	return identityValueMatchesSelf(value, selfAlias, selfDIDs...)
 }
 
 func padNotifyLine(line string) string {

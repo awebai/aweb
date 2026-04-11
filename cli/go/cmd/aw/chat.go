@@ -69,31 +69,15 @@ func logChatEvent(logsDir, logName, myAddress string, ev chat.Event, selfDIDs ..
 }
 
 func chatEventIsFromSelf(ev chat.Event, myAddress string, selfDIDs ...string) bool {
-	hasEventIdentity := strings.TrimSpace(ev.FromStableID) != "" || strings.TrimSpace(ev.FromDID) != ""
-	for _, did := range selfDIDs {
-		did = strings.TrimSpace(did)
-		if did == "" {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(ev.FromStableID), did) || strings.EqualFold(strings.TrimSpace(ev.FromDID), did) {
-			return true
-		}
-	}
-	if len(selfDIDs) > 0 && hasEventIdentity {
-		return false
-	}
-	myAddress = strings.TrimSpace(myAddress)
-	if myAddress == "" {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(ev.FromAddress), myAddress) {
-		return true
-	}
-	selfHandle := handleFromAddress(myAddress)
-	if selfHandle == "" {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(ev.FromAgent), selfHandle)
+	return identityMatchesSelf(
+		strings.TrimSpace(ev.FromAgent),
+		strings.TrimSpace(ev.FromAddress),
+		strings.TrimSpace(ev.FromStableID),
+		strings.TrimSpace(ev.FromDID),
+		handleFromAddress(myAddress),
+		myAddress,
+		selfDIDs...,
+	)
 }
 
 // logChatEvents logs all message events from a list.
@@ -110,23 +94,7 @@ func selectionIdentityDIDs(sel *awconfig.Selection) []string {
 	if sel == nil {
 		return nil
 	}
-	dids := make([]string, 0, 2)
-	for _, value := range []string{strings.TrimSpace(sel.StableID), strings.TrimSpace(sel.DID)} {
-		if value == "" {
-			continue
-		}
-		duplicate := false
-		for _, existing := range dids {
-			if strings.EqualFold(existing, value) {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
-			dids = append(dids, value)
-		}
-	}
-	return dids
+	return uniqueIdentityDIDs(sel.StableID, sel.DID)
 }
 
 // chat send-and-wait
