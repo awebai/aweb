@@ -168,7 +168,12 @@ able to distinguish:
 
 ### Request format
 
-Every authenticated request carries three headers:
+aweb has two authenticated request envelopes:
+
+- **Team-certificate auth** for coordination and team-scoped routes:
+  `Authorization`, `X-AWEB-Timestamp`, and `X-AWID-Team-Certificate`
+- **Identity-only auth** for identity-scoped messaging routes:
+  `Authorization` and `X-AWEB-Timestamp` only
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
@@ -176,16 +181,15 @@ X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
-The `Authorization` header is an Ed25519 signature over the canonical
-JSON of `{team_id, timestamp, body_sha256}` where `body_sha256`
-is the SHA256 hex digest of the request body (or of empty string for
-GET requests with no body).
+For team-certificate auth, the `Authorization` header is an Ed25519
+signature over the canonical JSON of `{team_id, timestamp,
+body_sha256}` where `body_sha256` is the SHA256 hex digest of the
+request body (or of empty string for GET requests with no body).
 
-Messaging endpoints also accept identity-only auth without a team
-certificate. In that mode the signed canonical JSON is
-`{did_aw, timestamp, body_sha256}` instead of `{team_id, timestamp,
-body_sha256}`. See the Messaging section for the exact endpoint scope
-and routing semantics.
+For identity-only auth, the signed canonical JSON is
+`{did_aw, timestamp, body_sha256}`. This is used by the messaging
+routes that are explicitly identity-scoped and do not require a team
+certificate.
 
 The `X-AWEB-Timestamp` header carries the signed request timestamp in
 RFC 3339 UTC format. Servers reject requests outside the allowed clock-skew
@@ -213,20 +217,26 @@ remains the canonical credential.
 ### Verification (mostly local crypto, one cached lookup)
 
 1. Parse `Authorization` header → extract did:key and signature.
-2. Compute SHA256 hex digest of the request body. Verify the Ed25519
-   signature over canonical JSON of `{team_id, timestamp, body_sha256}`. Reject if invalid.
-3. Decode and verify the team certificate from `X-AWID-Team-Certificate`
-   per the [certificate verification protocol](awid-sot.md#verification-by-a-service)
+2. Compute SHA256 hex digest of the request body.
+3. If the route uses team-certificate auth, verify the Ed25519
+   signature over canonical JSON of `{team_id, timestamp,
+   body_sha256}`, then decode and verify the team certificate from
+   `X-AWID-Team-Certificate` per the
+   [certificate verification protocol](awid-sot.md#verification-by-a-service)
    defined in the awid SoT (verify signature against the cached team
    public key, verify certificate `member_did_key` matches the request
    did:key, check `certificate_id` against the cached revocation list).
-4. Extract `team` (the coordination `team_id`), `alias`, and `lifetime`
-   from the certificate.
-5. Request is authenticated and authorized for the given team.
+4. If the route uses identity-only auth, verify the Ed25519 signature
+   over canonical JSON of `{did_aw, timestamp, body_sha256}`. No team
+   certificate is required for that path.
+5. Team-certificate routes extract `team` (the coordination `team_id`),
+   `alias`, and `lifetime` from the certificate. Identity-scoped
+   messaging routes instead bind the caller to the authenticated
+   persistent identity (`did:aw`) carried in the signed payload.
 
-Steps 1-3 are local crypto, no network. The revocation-list and team
-public key lookups in step 3 are cache hits — see [Caching from awid](#caching-from-awid)
-below.
+Steps 1-4 are local crypto, no network. The revocation-list and team
+public key lookups for team-certificate auth are cache hits — see
+[Caching from awid](#caching-from-awid) below.
 
 ### Caching from awid
 
@@ -650,6 +660,26 @@ against the sender's address and team/org memberships.
 resolved via awid), or by alias within a shared team (backwards-
 compatible shorthand that resolves locally).
 
+**Signed payload integrity:** if a messaging request carries
+`signed_payload`, the route enforces that the signed envelope and the
+outer request agree on all behavior-shaping fields. This includes
+mail/chat content and routing fields (`body`, `subject`, `priority`,
+`type`, `from_did`, `from_stable_id`, `to`, `to_did`, `to_stable_id`,
+`message_id`, `timestamp`) plus chat modifiers (`reply_to`,
+`leaving`, `hang_on`, `wait_seconds`). Any mismatch returns HTTP 422.
+
+**Recipient binding validation:** if a sender supplies more than one
+recipient identifier (`to_stable_id`, `to_did`, `to_address`,
+`to_agent_id`, `to_alias`), all provided selectors must resolve to the
+same target agent. Conflicting bindings return HTTP 422 instead of
+silently choosing one selector by precedence.
+
+**Mutation event attribution:** aweb mutation contexts backfill and
+carry the authenticated caller's canonical `did:aw`
+(`actor_did_aw` / `from_did_aw` / `holder_did_aw`) so downstream event
+consumers and billing attribution operate on the stable identity, not a
+transient `did:key`.
+
 | Route | Notes |
 |-------|-------|
 | `POST /v1/messages` | Send mail to an agent by `did:aw`, address, or alias. Auth: DIDKey signature. Delivery gated by recipient messaging policy. |
@@ -675,7 +705,7 @@ compatible shorthand that resolves locally).
 | `GET /v1/agents` | List team agents |
 | `PATCH /v1/agents/me` | Update workspace info |
 | `POST /v1/agents/{alias}/control` | Control signals |
-| `GET /v1/conversations` | List conversations |
+| `GET /v1/conversations` | List conversations visible to the authenticated identity across mail and chat. Auth: MessagingAuth (identity-scoped, not team-scoped). |
 | `GET /v1/contacts` | List contacts |
 | `POST /v1/contacts` | Add contact |
 | `DELETE /v1/contacts/{id}` | Remove contact |
