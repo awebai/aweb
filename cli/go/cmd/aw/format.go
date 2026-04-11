@@ -351,19 +351,36 @@ func chatEventMatchesDisplayTarget(ev *chat.Event, target string) bool {
 }
 
 func pendingParticipantLabel(p chat.PendingConversation, idx int) string {
-	alias := ""
+	alias, address, did := pendingParticipantIdentityAt(p, idx)
+	stableID := ""
+	currentDID := did
+	if strings.HasPrefix(did, "did:aw:") {
+		stableID = did
+		currentDID = ""
+	}
+	if address != "" {
+		return address
+	}
+	if stableID != "" {
+		return stableID
+	}
+	if currentDID != "" {
+		return currentDID
+	}
+	return alias
+}
+
+func pendingParticipantIdentityAt(p chat.PendingConversation, idx int) (alias, address, did string) {
 	if idx < len(p.Participants) {
 		alias = strings.TrimSpace(p.Participants[idx])
 	}
-	address := ""
 	if idx < len(p.ParticipantAddresses) {
 		address = strings.TrimSpace(p.ParticipantAddresses[idx])
 	}
-	did := ""
 	if idx < len(p.ParticipantDIDs) {
 		did = strings.TrimSpace(p.ParticipantDIDs[idx])
 	}
-	return preferredIdentityDisplayLabel(alias, address, "", did, "")
+	return alias, address, did
 }
 
 func pendingParticipantCount(p chat.PendingConversation) int {
@@ -397,6 +414,35 @@ func pendingIdentityStrength(address string, stableID string, did string, alias 
 	return 0
 }
 
+func pendingParticipantIdentityByLastFrom(p chat.PendingConversation) (label string, strength int) {
+	lastFrom := strings.TrimSpace(p.LastFrom)
+	if lastFrom == "" {
+		return "", 0
+	}
+	matches := 0
+	for idx := 0; idx < pendingParticipantCount(p); idx++ {
+		alias, address, did := pendingParticipantIdentityAt(p, idx)
+		if !strings.EqualFold(alias, lastFrom) &&
+			!strings.EqualFold(handleFromAddress(address), lastFrom) &&
+			!strings.EqualFold(pendingStableAlias(did), lastFrom) {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return "", 0
+		}
+		stableID := ""
+		currentDID := did
+		if strings.HasPrefix(did, "did:aw:") {
+			stableID = did
+			currentDID = ""
+		}
+		label = pendingParticipantLabel(p, idx)
+		strength = pendingIdentityStrength(address, stableID, currentDID, alias)
+	}
+	return label, strength
+}
+
 func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, selfDIDs ...string) string {
 	lastFrom := preferredIdentityDisplayLabel(
 		strings.TrimSpace(p.LastFrom),
@@ -411,24 +457,16 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 		p.LastFromDID,
 		p.LastFrom,
 	)
+	if mappedLabel, mappedStrength := pendingParticipantIdentityByLastFrom(p); mappedStrength > lastFromStrength {
+		return mappedLabel
+	}
 
 	count := pendingParticipantCount(p)
 
 	candidate := ""
 	candidateStrength := 0
 	for idx := 0; idx < count; idx++ {
-		alias := ""
-		if idx < len(p.Participants) {
-			alias = strings.TrimSpace(p.Participants[idx])
-		}
-		address := ""
-		if idx < len(p.ParticipantAddresses) {
-			address = strings.TrimSpace(p.ParticipantAddresses[idx])
-		}
-		did := ""
-		if idx < len(p.ParticipantDIDs) {
-			did = strings.TrimSpace(p.ParticipantDIDs[idx])
-		}
+		alias, address, did := pendingParticipantIdentityAt(p, idx)
 		participant := pendingParticipantLabel(p, idx)
 		if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias, selfDIDs...) {
 			continue

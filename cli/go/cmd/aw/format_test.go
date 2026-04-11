@@ -165,6 +165,53 @@ func TestFormatChatPendingPrefersParticipantAddressWhenLastFromIsAliasOnly(t *te
 	}
 }
 
+func TestFormatChatPendingMapsLastFromAliasToParticipantAddress(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{"alice", "carol"},
+				ParticipantAddresses: []string{"acme/alice", "otherco/carol"},
+				LastFrom:             "carol",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT WAITING: otherco/carol") {
+		t.Fatalf("pending output should map last_from alias to participant address:\n%s", out)
+	}
+	if strings.Contains(out, "CHAT WAITING: carol") {
+		t.Fatalf("pending output should not collapse to alias-only sender label when participant address is aligned:\n%s", out)
+	}
+}
+
+func TestFormatChatPendingMapsLastFromAliasToParticipantStableID(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{"alice", "carol"},
+				ParticipantDIDs:      []string{"did:aw:alice", "did:aw:carol"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "carol",
+				LastFromDID:          "",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT WAITING: did:aw:carol") {
+		t.Fatalf("pending output should map last_from alias to participant stable id:\n%s", out)
+	}
+	if strings.Contains(out, "CHAT WAITING: carol") {
+		t.Fatalf("pending output should not collapse to alias-only sender label when participant stable id is aligned:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingUsesAddressOpenHintWhenAliasSliceIsEmpty(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{
