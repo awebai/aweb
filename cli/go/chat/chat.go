@@ -13,6 +13,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/identityutil"
 )
 
 type signedEnvelopeMetadata struct {
@@ -279,15 +280,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 }
 
 func addressHandle(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.HasPrefix(value, "did:") {
-		return ""
-	}
-	parts := strings.SplitN(value, "/", 2)
-	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
-		return ""
-	}
-	return strings.TrimSpace(parts[1])
+	return identityutil.HandleFromAddress(value)
 }
 
 func stableAlias(value string) string {
@@ -512,6 +505,36 @@ func pendingParticipantIdentityByLastFrom(participants []string, participantDIDs
 		}
 	}
 	return matchAddress, matchStableID, matchDID
+}
+
+func unanimousChatRowValue(rows []chatParticipantRow, pick func(chatParticipantRow) string) string {
+	candidate := ""
+	for _, row := range rows {
+		value := strings.TrimSpace(pick(row))
+		if value == "" {
+			continue
+		}
+		if candidate != "" && !strings.EqualFold(candidate, value) {
+			return ""
+		}
+		candidate = value
+	}
+	return candidate
+}
+
+func unanimousPendingParticipantIdentity(participants []string, participantDIDs []string, participantAddresses []string) (address, stableID, did string) {
+	rows := chatParticipantRows(participants, participantDIDs, participantAddresses)
+	address = unanimousChatRowValue(rows, func(row chatParticipantRow) string { return row.Address })
+	stableID = unanimousChatRowValue(rows, func(row chatParticipantRow) string { return row.StableID })
+	if stableID == "" {
+		did = unanimousChatRowValue(rows, func(row chatParticipantRow) string {
+			if row.StableID != "" {
+				return ""
+			}
+			return row.DID
+		})
+	}
+	return address, stableID, did
 }
 
 func matchedParticipantIdentityKeys(participants []string, participantDIDs []string, participantAddresses []string, target string) []string {
@@ -1366,19 +1389,12 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 			fromAddress = mappedAddress
 		}
 		if fromAddress == "" {
-			candidate := ""
-			for _, participantAddress := range p.ParticipantAddresses {
-				participantAddress = strings.TrimSpace(participantAddress)
-				if participantAddress == "" {
-					continue
-				}
-				if candidate != "" && !strings.EqualFold(candidate, participantAddress) {
-					candidate = ""
-					break
-				}
-				candidate = participantAddress
-			}
-			fromAddress = candidate
+			unanimousAddress, _, _ := unanimousPendingParticipantIdentity(
+				p.Participants,
+				p.ParticipantDIDs,
+				p.ParticipantAddresses,
+			)
+			fromAddress = unanimousAddress
 		}
 		fromStableID := ""
 		fromDID := ""
@@ -1399,18 +1415,12 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if fromStableID == "" {
-			candidate := ""
-			for _, participantDID := range p.ParticipantDIDs {
-				participantDID = strings.TrimSpace(participantDID)
-				if strings.HasPrefix(participantDID, "did:aw:") {
-					if candidate != "" && !strings.EqualFold(candidate, participantDID) {
-						candidate = ""
-						break
-					}
-					candidate = participantDID
-				}
-			}
-			fromStableID = candidate
+			_, unanimousStableID, _ := unanimousPendingParticipantIdentity(
+				p.Participants,
+				p.ParticipantDIDs,
+				p.ParticipantAddresses,
+			)
+			fromStableID = unanimousStableID
 		}
 		return &SendResult{
 			SessionID:     p.SessionID,
@@ -1725,20 +1735,17 @@ func chatParticipantMatchesSelf(participant awid.ChatParticipant, client *awid.C
 		selfStableID = strings.TrimSpace(client.StableID())
 		selfDID = strings.TrimSpace(client.DID())
 	}
-	if selfAddress != "" && strings.EqualFold(strings.TrimSpace(participant.Address), selfAddress) {
-		return true
-	}
-	if selfStableID != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), selfStableID) {
-		return true
-	}
-	if selfDID != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), selfDID) {
-		return true
-	}
-	participantHasStrongIdentity := strings.TrimSpace(participant.Address) != "" || strings.TrimSpace(participant.DID) != ""
-	if participantHasStrongIdentity && (selfAddress != "" || selfStableID != "" || selfDID != "") {
-		return false
-	}
-	return selfAlias != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.Alias), selfAlias)
+	row := chatParticipantRowFromParticipant(participant)
+	return identityutil.MatchesSelfStrict(
+		row.Alias,
+		row.Address,
+		row.StableID,
+		row.DID,
+		selfAlias,
+		selfAddress,
+		selfStableID,
+		selfDID,
+	)
 }
 
 func chatParticipantLabel(ctx context.Context, client *awid.Client, participant awid.ChatParticipant) string {

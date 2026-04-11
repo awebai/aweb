@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/awebai/aw/internal/identityutil"
+)
 
 type pendingIdentityRow struct {
 	Alias    string
@@ -155,52 +159,9 @@ func uniqueIdentityDIDs(values ...string) []string {
 }
 
 func identityValueMatchesSelf(value string, selfAlias string, selfDIDs ...string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	for _, selfDID := range selfDIDs {
-		selfDID = strings.TrimSpace(selfDID)
-		if selfDID != "" && strings.EqualFold(value, selfDID) {
-			return true
-		}
-	}
-	selfAlias = strings.TrimSpace(selfAlias)
-	if selfAlias == "" {
-		return false
-	}
-	if strings.EqualFold(value, selfAlias) {
-		return true
-	}
-	if strings.EqualFold(value, "did:aw:"+selfAlias) {
-		return true
-	}
-	return strings.EqualFold(handleFromAddress(value), selfAlias)
+	return identityutil.ValueMatchesSelf(value, selfAlias, selfDIDs...)
 }
 
 func identityMatchesSelf(alias, address, stableID, did, selfAlias, selfAddress string, selfDIDs ...string) bool {
-	stableID = strings.TrimSpace(stableID)
-	did = strings.TrimSpace(did)
-	for _, selfDID := range selfDIDs {
-		selfDID = strings.TrimSpace(selfDID)
-		if selfDID != "" && (strings.EqualFold(stableID, selfDID) || strings.EqualFold(did, selfDID)) {
-			return true
-		}
-	}
-	if len(selfDIDs) > 0 && (stableID != "" || did != "") {
-		return false
-	}
-	selfAddress = strings.TrimSpace(selfAddress)
-	address = strings.TrimSpace(address)
-	if selfAddress != "" && strings.EqualFold(address, selfAddress) {
-		return true
-	}
-	selfAlias = strings.TrimSpace(selfAlias)
-	if selfAlias == "" {
-		return false
-	}
-	if strings.EqualFold(handleFromAddress(address), selfAlias) {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(alias), selfAlias)
+	return identityutil.MatchesSelf(alias, address, stableID, did, selfAlias, selfAddress, selfDIDs...)
 }
