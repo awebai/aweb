@@ -1,5 +1,89 @@
 # Changelog
 
+## v1.8.0
+
+This release note covers the user-visible changes between the `v1.7.0`
+entry above and `main` at `ec5db2c` on 2026-04-11.
+
+### Upgrade checklist
+
+- Reinitialize or migrate any legacy single-team `.aw/workspace.yaml`
+  into the canonical multi-team workspace shape before relying on
+  cross-team identity-scoped messaging.
+- If you store or validate awid reachability values, update them to the
+  canonical set: `nobody`, `org_only`, `team_members_only`, `public`.
+- If you construct signed messaging payloads outside the shipped CLI,
+  update them to match the enforced signed envelope and recipient
+  binding rules described below.
+- Regenerate any vendored CLI help or scripted `aw --help` snapshots
+  against the current Cobra tree.
+
+### Breaking changes
+
+- Messaging is now identity-scoped end to end. Mail, chat, pending,
+  conversations, MCP mail/chat, and channel wake behavior are bound to
+  persistent identity (`did:aw`) instead of team-local agent rows.
+- Messaging routes now fail closed on signed-payload mismatches. Mail
+  and chat reject requests when the outer request disagrees with the
+  signed envelope for content, sender identity, recipient identity, or
+  chat behavior modifiers.
+- Messaging routes now fail closed on conflicting recipient selectors.
+  If `to_stable_id`, `to_did`, `to_address`, `to_agent_id`, or
+  `to_alias` do not resolve to the same target, the request returns 422
+  instead of accepting a precedence override.
+- Public address reachability uses the cleaned-up awid enum model:
+  `nobody`, `org_only`, `team_members_only`, `public`.
+
+### New features and user-visible behavior changes
+
+- Multi-team workspaces are now the canonical CLI model. Workspaces can
+  carry the new team-binding shape, legacy worktrees can be migrated in
+  place, and docs/help were updated around the team-scoped workspace
+  model.
+- Dashboard reads now expose the full team event stream via
+  `GET /v1/teams/{team_id}/events/stream`, including `task.created`,
+  `task.status_changed`, `task.claimed`, `task.unclaimed`,
+  `message.sent`, `agent.online`, and `agent.offline`.
+- Dashboard task and agent surfaces were extended with the fields needed
+  by the hosted dashboard: claims route, task filtering/pagination,
+  creator/assignee detail, parent task IDs, labels, blocker counts,
+  updated timestamps, richer agent summaries, and consistent event
+  snapshots.
+- `GET /v1/conversations` is now identity-scoped under MessagingAuth,
+  so human `did:key` / `did:aw` traffic shows up consistently across
+  mail and chat instead of disappearing behind team-local filtering.
+- Mutation event contexts now carry canonical caller `did:aw` for
+  downstream billing and audit attribution.
+
+### Fixes worth calling out
+
+- Signed messaging behavior is now consistent across CLI, REST, SSE,
+  MCP, and channel consumers. That includes wait/reply modifiers,
+  stable/current DID handling, exact-message wake fetches, and
+  second-precision signing timestamps in channel clients.
+- Recipient binding now survives local key rotation and current-DID
+  targeting, so inbox/history/pending surfaces keep stable sender and
+  recipient identity labels across rotation.
+- CLI chat/session resolution was hardened to fail closed on ambiguous
+  alias/address collisions while still accepting equivalent rows for the
+  same identity. Pending, notify, wake, formatter, and session lookup
+  paths now share one identity model.
+- More than 133 identity-routing and identity-labeling bugs were fixed
+  across mail, chat, pending/wake handling, awid transport, and channel
+  dispatch.
+- Task and conversation routes were tightened to the current schema and
+  auth contracts, including null-guarded task timestamps and
+  identity-scoped conversation listing.
+
+### Operator and deployment changes
+
+- Team dashboard presence events now publish through the shared
+  `team-events:{team_id}` Redis channel instead of being emitted only
+  inside a single SSE consumer.
+- The OSS docs were updated to describe both team-certificate auth and
+  identity-only messaging auth, plus the current signed-payload and
+  recipient-binding invariants.
+
 ## v1.7.0
 
 This release note covers the user-visible changes between the last deployed
