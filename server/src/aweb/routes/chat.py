@@ -84,6 +84,7 @@ def _parse_signed_timestamp(value: str) -> datetime:
 def _validate_signed_chat_payload(
     *,
     signed_payload: str | None,
+    recipient_rows: list[dict[str, Any]] | None = None,
     body: str,
     from_did: str,
     message_id: str,
@@ -103,6 +104,42 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
     if payload.get("type") != "chat":
         raise HTTPException(status_code=422, detail="signed_payload type must be chat")
+    recipient_rows = recipient_rows or []
+    allowed_to_values: set[str] = set()
+    if recipient_rows:
+        candidate_lists = (
+            [(row.get("alias") or "").strip() for row in recipient_rows],
+            [(row.get("address") or "").strip() for row in recipient_rows],
+            [(row.get("did_aw") or "").strip() for row in recipient_rows],
+            [(row.get("did_key") or "").strip() for row in recipient_rows],
+            [(row.get("did") or "").strip() for row in recipient_rows],
+        )
+        for values in candidate_lists:
+            cleaned = sorted(value for value in values if value)
+            if cleaned:
+                allowed_to_values.add(",".join(cleaned))
+    signed_to = str(payload.get("to") or "").strip()
+    if signed_to and signed_to not in allowed_to_values:
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
+    allowed_to_dids = {
+        value
+        for row in recipient_rows
+        for value in (
+            str(row.get("did") or "").strip(),
+            str(row.get("did_aw") or "").strip(),
+            str(row.get("did_key") or "").strip(),
+        )
+        if value
+    }
+    signed_to_did = str(payload.get("to_did") or "").strip()
+    if signed_to_did and signed_to_did not in allowed_to_dids:
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
+    allowed_to_stable_ids = {
+        value for row in recipient_rows for value in (str(row.get("did_aw") or "").strip(),) if value
+    }
+    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
+    if signed_to_stable_id and signed_to_stable_id not in allowed_to_stable_ids:
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
     if payload.get("body") != body:
         raise HTTPException(status_code=422, detail="signed_payload body must match the chat message")
     if payload.get("from_did") != from_did:
@@ -296,6 +333,40 @@ async def _resolve_chat_targets(
     return list(resolved.values())
 
 
+async def _resolve_session_recipient_rows(
+    db,
+    *,
+    session_id: UUID,
+    actor_dids: list[str],
+) -> list[dict[str, Any]]:
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT did, alias
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+          AND NOT (did = ANY($2::text[]))
+        ORDER BY alias, did
+        """,
+        session_id,
+        actor_dids,
+    )
+    recipient_rows: list[dict[str, Any]] = []
+    for row in rows:
+        participant = dict(row)
+        resolved = await resolve_agent_by_did(db, participant.get("did") or "")
+        recipient_rows.append(
+            {
+                "did": (participant.get("did") or "").strip(),
+                "alias": (participant.get("alias") or "").strip(),
+                "address": ((resolved or {}).get("address") or "").strip(),
+                "did_aw": ((resolved or {}).get("did_aw") or "").strip(),
+                "did_key": ((resolved or {}).get("did_key") or "").strip(),
+            }
+        )
+    return recipient_rows
+
+
 class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -427,6 +498,7 @@ async def create_or_send(
             )
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
+            recipient_rows=target_rows,
             body=payload.message,
             from_did=from_did,
             message_id=payload.message_id,
@@ -1168,6 +1240,7 @@ async def send_message(
     actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
+    recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
 
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()
@@ -1184,6 +1257,7 @@ async def send_message(
             )
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
+            recipient_rows=recipient_rows,
             body=payload.body,
             from_did=from_did,
             message_id=payload.message_id,
