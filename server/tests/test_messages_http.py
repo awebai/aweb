@@ -682,6 +682,64 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_stable_id(aweb_cl
 
 
 @pytest.mark.asyncio
+async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-1",
+            domain="otherco.com",
+            name="carol",
+            did_aw="did:aw:carol",
+            current_did_key="did:key:carol-current",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": "did:aw:bob",
+        "to_address": "otherco.com/carol",
+        "subject": "mismatch",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 422
+    assert "to_address" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_send_message_contacts_policy_accepts_equivalent_owner_did(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
