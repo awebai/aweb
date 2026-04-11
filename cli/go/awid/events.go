@@ -124,6 +124,15 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
 		req.Header.Set("X-AWEB-Timestamp", timestamp)
 		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	} else if c.signingKey != nil {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signPayload := identityAuthSignPayload(c.stableID, timestamp, nil)
+		sig := ed25519.Sign(c.signingKey, signPayload)
+		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
+		req.Header.Set("X-AWEB-Timestamp", timestamp)
+		if c.stableID != "" {
+			req.Header.Set("X-AWEB-DID-AW", c.stableID)
+		}
 	}
 
 	resp, err := c.sseClient.Do(req)
