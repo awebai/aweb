@@ -366,6 +366,17 @@ func pendingParticipantLabel(p chat.PendingConversation, idx int) string {
 	return preferredIdentityDisplayLabel(alias, address, "", did, "")
 }
 
+func pendingParticipantCount(p chat.PendingConversation) int {
+	count := len(p.Participants)
+	if len(p.ParticipantAddresses) > count {
+		count = len(p.ParticipantAddresses)
+	}
+	if len(p.ParticipantDIDs) > count {
+		count = len(p.ParticipantDIDs)
+	}
+	return count
+}
+
 func pendingIdentityStrength(address string, stableID string, did string, alias string) int {
 	if strings.TrimSpace(address) != "" {
 		return 4
@@ -401,13 +412,7 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 		p.LastFrom,
 	)
 
-	count := len(p.Participants)
-	if len(p.ParticipantAddresses) > count {
-		count = len(p.ParticipantAddresses)
-	}
-	if len(p.ParticipantDIDs) > count {
-		count = len(p.ParticipantDIDs)
-	}
+	count := pendingParticipantCount(p)
 
 	candidate := ""
 	candidateStrength := 0
@@ -440,6 +445,22 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 	return lastFrom
 }
 
+func pendingOpenTarget(p chat.PendingConversation) string {
+	if pendingParticipantCount(p) != 1 {
+		return ""
+	}
+	if len(p.ParticipantAddresses) == 1 && strings.TrimSpace(p.ParticipantAddresses[0]) != "" {
+		return strings.TrimSpace(p.ParticipantAddresses[0])
+	}
+	if len(p.ParticipantDIDs) == 1 && strings.TrimSpace(p.ParticipantDIDs[0]) != "" {
+		return strings.TrimSpace(p.ParticipantDIDs[0])
+	}
+	if len(p.Participants) == 1 {
+		return strings.TrimSpace(p.Participants[0])
+	}
+	return ""
+}
+
 func formatChatPending(v any) string {
 	result := v.(*chat.PendingResult)
 	if len(result.Pending) == 0 {
@@ -452,15 +473,7 @@ func formatChatPending(v any) string {
 	for _, p := range result.Pending {
 		openHint := ""
 		displayFrom := preferredPendingSenderLabel(p, "")
-		openTarget := ""
-		if len(p.Participants) == 1 {
-			openTarget = strings.TrimSpace(p.Participants[0])
-			if len(p.ParticipantAddresses) == 1 && strings.TrimSpace(p.ParticipantAddresses[0]) != "" {
-				openTarget = strings.TrimSpace(p.ParticipantAddresses[0])
-			} else if len(p.ParticipantDIDs) == 1 && strings.TrimSpace(p.ParticipantDIDs[0]) != "" {
-				openTarget = strings.TrimSpace(p.ParticipantDIDs[0])
-			}
-		}
+		openTarget := pendingOpenTarget(p)
 		if openTarget != "" {
 			openHint = fmt.Sprintf(" — Run \"aw chat open %s\"", openTarget)
 		}
