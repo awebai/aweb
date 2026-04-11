@@ -257,62 +257,14 @@ func selfIdentityDIDs(client *aweb.Client) []string {
 }
 
 func pendingIdentityCount(pending awid.ChatPendingItem) int {
-	count := len(pending.Participants)
-	if len(pending.ParticipantAddresses) > count {
-		count = len(pending.ParticipantAddresses)
-	}
-	if len(pending.ParticipantDIDs) > count {
-		count = len(pending.ParticipantDIDs)
-	}
-	return count
-}
-
-func pendingStableAlias(value string) string {
-	value = strings.TrimSpace(value)
-	if !strings.HasPrefix(value, "did:aw:") {
-		return ""
-	}
-	return strings.TrimSpace(strings.TrimPrefix(value, "did:aw:"))
+	return len(pendingIdentityRows(pending.Participants, pending.ParticipantAddresses, pending.ParticipantDIDs))
 }
 
 func pendingIdentityByAlias(pending awid.ChatPendingItem, alias string) (address, stableID, did string) {
-	alias = strings.TrimSpace(alias)
-	if alias == "" {
-		return "", "", ""
+	if row, ok := pendingIdentityByAliasSlices(pending.Participants, pending.ParticipantAddresses, pending.ParticipantDIDs, alias); ok {
+		return row.Address, row.StableID, row.DID
 	}
-	matches := 0
-	for idx := 0; idx < pendingIdentityCount(pending); idx++ {
-		participantAlias := ""
-		if idx < len(pending.Participants) {
-			participantAlias = strings.TrimSpace(pending.Participants[idx])
-		}
-		participantAddress := ""
-		if idx < len(pending.ParticipantAddresses) {
-			participantAddress = strings.TrimSpace(pending.ParticipantAddresses[idx])
-		}
-		participantDID := ""
-		if idx < len(pending.ParticipantDIDs) {
-			participantDID = strings.TrimSpace(pending.ParticipantDIDs[idx])
-		}
-		if !strings.EqualFold(participantAlias, alias) &&
-			!strings.EqualFold(handleFromAddress(participantAddress), alias) &&
-			!strings.EqualFold(pendingStableAlias(participantDID), alias) {
-			continue
-		}
-		matches++
-		if matches > 1 {
-			return "", "", ""
-		}
-		address = participantAddress
-		if strings.HasPrefix(participantDID, "did:aw:") {
-			stableID = participantDID
-			did = ""
-		} else {
-			stableID = ""
-			did = participantDID
-		}
-	}
-	return address, stableID, did
+	return "", "", ""
 }
 
 func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...string) bool {
