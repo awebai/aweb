@@ -165,6 +165,68 @@ func TestPendingReturnsConversations(t *testing.T) {
 	}
 }
 
+func TestPendingMapsLastFromAliasToParticipantAddress(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "bob"},
+						ParticipantAddresses: []string{"acme/alice", "otherco/bob"},
+						LastMessage:          "hi",
+						LastFrom:             "bob",
+						LastFromAddress:      "",
+						UnreadCount:          1,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Pending(context.Background(), mustClient(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Pending[0].LastFromAddress; got != "otherco/bob" {
+		t.Fatalf("last_from_address=%q", got)
+	}
+}
+
+func TestPendingMapsLastFromAliasToParticipantStableID(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"alice", "bob"},
+						ParticipantDIDs: []string{"did:aw:alice", "did:aw:bob"},
+						LastMessage:     "hi",
+						LastFrom:        "bob",
+						LastFromDID:     "",
+						UnreadCount:     1,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Pending(context.Background(), mustClient(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Pending[0].LastFromStableID; got != "did:aw:bob" {
+		t.Fatalf("last_from_stable_id=%q", got)
+	}
+}
+
 func TestExtendWait(t *testing.T) {
 	t.Parallel()
 
