@@ -165,6 +165,26 @@ func TestFormatChatPendingPrefersParticipantAddressWhenLastFromIsAliasOnly(t *te
 	}
 }
 
+func TestFormatChatPendingUsesAddressOpenHintWhenAliasSliceIsEmpty(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         nil,
+				ParticipantAddresses: []string{"otherco/carol"},
+				LastFrom:             "",
+				LastFromAddress:      "otherco/carol",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, `aw chat open otherco/carol`) {
+		t.Fatalf("pending output should use concrete address open hint even when alias slice is empty:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingFallsBackToStableID(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{
