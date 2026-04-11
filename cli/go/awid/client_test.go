@@ -253,6 +253,56 @@ func TestChatCreateSessionDoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestChatCreateSessionUnsignedPreservesCallerSignatureFields(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/sessions" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(ChatCreateSessionResponse{SessionID: "sess-1", MessageID: "msg-1"})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAliases:     []string{"bob"},
+		Message:       "hello",
+		FromDID:       "did:key:z6MkCaller",
+		Signature:     "sig-123",
+		Timestamp:     "2026-04-11T00:00:00Z",
+		MessageID:     "11111111-1111-4111-8111-111111111111",
+		SignedPayload: "{\"type\":\"chat\"}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["from_did"] != "did:key:z6MkCaller" {
+		t.Fatalf("from_did=%v, want caller value", gotBody["from_did"])
+	}
+	if gotBody["signature"] != "sig-123" {
+		t.Fatalf("signature=%v, want caller value", gotBody["signature"])
+	}
+	if gotBody["timestamp"] != "2026-04-11T00:00:00Z" {
+		t.Fatalf("timestamp=%v, want caller value", gotBody["timestamp"])
+	}
+	if gotBody["message_id"] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("message_id=%v, want caller value", gotBody["message_id"])
+	}
+	if gotBody["signed_payload"] != "{\"type\":\"chat\"}" {
+		t.Fatalf("signed_payload=%v, want caller value", gotBody["signed_payload"])
+	}
+}
+
 func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 	t.Parallel()
 
@@ -836,6 +886,61 @@ func TestChatSendMessageDoesNotMutateInput(t *testing.T) {
 	}
 	if !req.ExtendWait {
 		t.Fatal("extend_wait flag changed on input")
+	}
+}
+
+func TestChatSendMessageUnsignedPreservesCallerSignatureFields(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions/sess-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID:          "msg-2",
+				Delivered:          true,
+				ExtendsWaitSeconds: 0,
+			})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{
+		Body:          "ping",
+		FromDID:       "did:key:z6MkCaller",
+		Signature:     "sig-123",
+		Timestamp:     "2026-04-11T00:00:00Z",
+		MessageID:     "11111111-1111-4111-8111-111111111111",
+		SignedPayload: "{\"type\":\"chat\"}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["from_did"] != "did:key:z6MkCaller" {
+		t.Fatalf("from_did=%v, want caller value", gotBody["from_did"])
+	}
+	if gotBody["signature"] != "sig-123" {
+		t.Fatalf("signature=%v, want caller value", gotBody["signature"])
+	}
+	if gotBody["timestamp"] != "2026-04-11T00:00:00Z" {
+		t.Fatalf("timestamp=%v, want caller value", gotBody["timestamp"])
+	}
+	if gotBody["message_id"] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("message_id=%v, want caller value", gotBody["message_id"])
+	}
+	if gotBody["signed_payload"] != "{\"type\":\"chat\"}" {
+		t.Fatalf("signed_payload=%v, want caller value", gotBody["signed_payload"])
 	}
 }
 
