@@ -29,10 +29,12 @@ export async function fetchHistory(
   sessionId: string,
   unreadOnly: boolean = false,
   limit: number = 50,
+  messageID?: string,
 ): Promise<ChatMessage[]> {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
   if (limit > 0) params.set("limit", String(limit));
+  if ((messageID || "").trim()) params.set("message_id", messageID!.trim());
 
   const resp = await client.get<{ messages: ChatMessage[] }>(
     `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?${params}`,

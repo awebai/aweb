@@ -53,6 +53,13 @@ async function signedInboxMail(messageID: string) {
 }
 
 describe("dispatchEvent", () => {
+  const self = {
+    alias: "eve",
+    address: "acme.com/eve",
+    did: "did:key:self-eve",
+    stableID: "did:aw:self-eve",
+  };
+
   test("notifies claim_update events", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
@@ -62,7 +69,7 @@ describe("dispatchEvent", () => {
       {} as never,
       new PinStore(),
       { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
-      "eve",
+      self,
       new Set(),
       {
         type: "claim_update",
@@ -95,7 +102,7 @@ describe("dispatchEvent", () => {
       {} as never,
       new PinStore(),
       { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
-      "eve",
+      self,
       new Set(),
       {
         type: "claim_removed",
@@ -139,7 +146,7 @@ describe("dispatchEvent", () => {
       client as never,
       pinStore,
       trust,
-      "eve",
+      self,
       new Set(),
       { type: "mail_message", message_id: "msg-degraded" } satisfies AgentEvent,
     );
@@ -177,7 +184,7 @@ describe("dispatchEvent", () => {
       client as never,
       pinStore,
       trust,
-      "eve",
+      self,
       new Set(),
       { type: "mail_message", message_id: "msg-local-trust" } satisfies AgentEvent,
     );
@@ -225,7 +232,7 @@ describe("dispatchEvent", () => {
       client as never,
       pinStore,
       trust,
-      "eve",
+      self,
       new Set(),
       { type: "mail_message", message_id: "msg-hard-error" } satisfies AgentEvent,
     );
@@ -244,5 +251,148 @@ describe("dispatchEvent", () => {
       },
     });
     expect(pinStore.pins.size).toBe(0);
+  });
+
+  test("fetches mail by triggering message_id instead of a latest-10 window", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-windowed")] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      new Set(),
+      { type: "mail_message", message_id: "msg-windowed" } satisfies AgentEvent,
+    );
+
+    expect(client.get).toHaveBeenCalledWith(
+      "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
+    );
+    expect(notification).toHaveBeenCalledTimes(1);
+  });
+
+  test("fetches chat by triggering message_id instead of a latest-10 window", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            message_id: "chat-msg-windowed",
+            from_agent: "alice",
+            from_address: "acme.com/alice",
+            body: "hello",
+            timestamp: "2025-01-01T00:00:00Z",
+            sender_leaving: false,
+            from_did: vectors.did,
+            from_stable_id: vectors.stableID,
+            verification_status: "verified",
+          },
+        ],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      new Set(),
+      { type: "chat_message", session_id: "sess-1", message_id: "chat-msg-windowed" } satisfies AgentEvent,
+    );
+
+    expect(client.get).toHaveBeenCalledWith(
+      "/v1/chat/sessions/sess-1/messages?unread_only=true&limit=2000&message_id=chat-msg-windowed",
+    );
+    expect(notification).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips self-authored mail by concrete address", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "msg-self-address",
+          from_agent_id: "agent-self",
+          from_alias: "",
+          from_address: "acme.com/eve",
+          subject: "note",
+          body: "self",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+          verification_status: "verified",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      new Set(),
+      { type: "mail_message", message_id: "msg-self-address" } satisfies AgentEvent,
+    );
+
+    expect(notification).not.toHaveBeenCalled();
+  });
+
+  test("skips self-authored chat by stable identity when alias differs", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-msg-self-stable",
+          from_agent: "someone-else",
+          body: "self",
+          timestamp: "2025-01-01T00:00:00Z",
+          sender_leaving: false,
+          from_did: "did:key:self-eve",
+          from_stable_id: "did:aw:self-eve",
+          verification_status: "verified",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      new Set(),
+      { type: "chat_message", session_id: "sess-1", message_id: "chat-msg-self-stable" } satisfies AgentEvent,
+    );
+
+    expect(notification).not.toHaveBeenCalled();
   });
 });

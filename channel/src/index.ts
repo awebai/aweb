@@ -18,6 +18,15 @@ import { SenderTrustManager } from "./identity/trust.js";
 
 const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 const MAX_DISPATCHED_IDS = 2000;
+const MAIL_FETCH_LIMIT = 200;
+const CHAT_FETCH_LIMIT = 2000;
+
+interface SelfIdentity {
+  alias: string;
+  address: string;
+  did: string;
+  stableID: string;
+}
 
 async function loadPinStore(): Promise<PinStore> {
   try {
@@ -87,7 +96,19 @@ Control events (type="control") are operational signals. On "pause", stop curren
   process.on("SIGINT", () => abort.abort());
   process.on("SIGTERM", () => abort.abort());
 
-  await startEventLoop(mcp, client, pinStore, trust, config.alias, abort.signal);
+  await startEventLoop(
+    mcp,
+    client,
+    pinStore,
+    trust,
+    {
+      alias: config.alias,
+      address: config.address,
+      did: config.did,
+      stableID: config.stableID,
+    },
+    abort.signal,
+  );
 }
 
 function embeddedRegistryFallbackURL(baseURL: string): string | undefined {
@@ -101,14 +122,14 @@ async function startEventLoop(
   client: APIClient,
   pinStore: PinStore,
   trust: SenderTrustManager,
-  selfAlias: string,
+  self: SelfIdentity,
   signal: AbortSignal,
 ): Promise<void> {
   const dispatched = new Set<string>();
 
   for await (const event of streamAgentEvents(client, signal)) {
     try {
-      await dispatchEvent(mcp, client, pinStore, trust, selfAlias, dispatched, event);
+      await dispatchEvent(mcp, client, pinStore, trust, self, dispatched, event);
       pruneDispatched(dispatched);
     } catch (err) {
       console.error(`[aw-channel] dispatch error: ${err}`);
@@ -121,15 +142,16 @@ export async function dispatchEvent(
   client: APIClient,
   pinStore: PinStore,
   trust: SenderTrustManager,
-  selfAlias: string,
+  self: SelfIdentity,
   dispatched: Set<string>,
   event: AgentEvent,
 ): Promise<void> {
   switch (event.type) {
     case "mail_message": {
-      const messages = await fetchInbox(client, true, 10);
+      const messages = await fetchInbox(client, true, MAIL_FETCH_LIMIT, event.message_id);
       let pinsDirty = false;
       for (const msg of messages) {
+        if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, self)) continue;
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
@@ -173,11 +195,11 @@ export async function dispatchEvent(
 
     case "chat_message": {
       if (!event.session_id) break;
-      const messages = await fetchHistory(client, event.session_id, true, 10);
+      const messages = await fetchHistory(client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
       let pinsDirty = false;
       let lastMessageId: string | undefined;
       for (const msg of messages) {
-        if (msg.from_agent === selfAlias) continue;
+        if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, self)) continue;
         if (dispatched.has(msg.message_id)) continue;
         dispatched.add(msg.message_id);
 
@@ -302,6 +324,33 @@ function senderTrustAddress(alias: string | undefined, address: string | undefin
   const qualified = (address || "").trim();
   if (qualified) return qualified;
   return (alias || "").trim();
+}
+
+function isSelfSender(
+  alias: string | undefined,
+  address: string | undefined,
+  stableID: string | undefined,
+  did: string | undefined,
+  self: SelfIdentity,
+): boolean {
+  const msgAddress = (address || "").trim();
+  const msgStableID = (stableID || "").trim();
+  const msgDID = (did || "").trim();
+  const selfAddress = self.address.trim();
+  const selfStableID = self.stableID.trim();
+  const selfDID = self.did.trim();
+
+  if (selfAddress && msgAddress && selfAddress === msgAddress) return true;
+  if (selfStableID && (msgStableID === selfStableID || msgDID === selfStableID)) return true;
+  if (selfDID && (msgStableID === selfDID || msgDID === selfDID)) return true;
+
+  if ((selfAddress || selfStableID || selfDID) && (msgAddress || msgStableID || msgDID)) {
+    return false;
+  }
+
+  const selfAlias = self.alias.trim();
+  if (!selfAlias) return false;
+  return (alias || "").trim() === selfAlias;
 }
 
 export function isDirectExecution(moduleURL: string): boolean {

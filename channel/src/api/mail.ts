@@ -33,10 +33,12 @@ export async function fetchInbox(
   client: APIClient,
   unreadOnly: boolean = true,
   limit: number = 50,
+  messageID?: string,
 ): Promise<InboxMessage[]> {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
   if (limit > 0) params.set("limit", String(limit));
+  if ((messageID || "").trim()) params.set("message_id", messageID!.trim());
 
   const resp = await client.get<{ messages: InboxMessage[] }>(
     `/v1/messages/inbox?${params}`,

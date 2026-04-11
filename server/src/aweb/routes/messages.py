@@ -413,6 +413,7 @@ async def get_inbox(
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
     unread_only: bool = Query(default=False),
+    message_id: str | None = Query(default=None),
     identity: IdentityAuth = Depends(get_identity_auth),
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
@@ -423,7 +424,13 @@ async def get_inbox(
     where_clause = "WHERE m.to_did = ANY($1::text[])"
     params: list = [inbox_dids]
 
-    if unread_only:
+    if message_id is not None and message_id.strip():
+        try:
+            params.append(UUID(message_id.strip()))
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid message_id format")
+        where_clause += f" AND m.message_id = ${len(params)}"
+    elif unread_only:
         where_clause += " AND m.read_at IS NULL"
 
     rows = await aweb_db.fetch_all(
@@ -434,7 +441,7 @@ async def get_inbox(
         FROM {{{{tables.messages}}}} m
         {where_clause}
         ORDER BY m.created_at DESC
-        LIMIT $2
+        LIMIT ${len(params) + 1}
         """,
         *params,
         limit,
