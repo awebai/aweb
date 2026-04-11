@@ -88,6 +88,7 @@ def _validate_signed_chat_payload(
     from_did: str,
     message_id: str,
     timestamp: str,
+    wait_seconds: int | None = None,
     reply_to: str | None = None,
     sender_leaving: bool = False,
     hang_on: bool = False,
@@ -110,6 +111,8 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload message_id must match the chat message")
     if payload.get("timestamp") != timestamp:
         raise HTTPException(status_code=422, detail="signed_payload timestamp must match the chat message")
+    if payload.get("wait_seconds") != wait_seconds:
+        raise HTTPException(status_code=422, detail="signed_payload wait_seconds must match the chat message")
     if (payload.get("reply_to") or None) != ((reply_to or "").strip() or None):
         raise HTTPException(status_code=422, detail="signed_payload reply_to must match the chat message")
     if bool(payload.get("sender_leaving")) != sender_leaving:
@@ -428,6 +431,7 @@ async def create_or_send(
             from_did=from_did,
             message_id=payload.message_id,
             timestamp=payload.timestamp,
+            wait_seconds=payload.wait_seconds,
             reply_to=payload.reply_to,
             sender_leaving=payload.leaving,
         )

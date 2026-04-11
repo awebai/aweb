@@ -28,6 +28,7 @@ SIGNED_FIELDS = frozenset(
         "to_did",
         "to_stable_id",
         "type",
+        "wait_seconds",
     }
 )
 
