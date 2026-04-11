@@ -275,6 +275,46 @@ async def test_events_stream_matches_unread_mail_across_viewer_dids(aweb_cloud_d
 
 
 @pytest.mark.asyncio
+async def test_current_actionable_mail_includes_from_stable_id_for_current_sender_key(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (message_id, from_did, to_did, from_alias, subject, body, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, now())
+        """,
+        uuid4(),
+        "did:key:z6MkAliceCurrent",
+        "did:aw:bob",
+        "",
+        "hello",
+        "body",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice')
+        """,
+        uuid4(),
+    )
+
+    actionable = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob", "did:key:z6MkBobCurrent"],
+    )
+
+    assert len(actionable) == 1
+    assert actionable[0]["from_did"] == "did:key:z6MkAliceCurrent"
+    assert actionable[0]["from_stable_id"] == "did:aw:alice"
+    assert actionable[0]["from_address"] == "acme.com/alice"
+
+
+@pytest.mark.asyncio
 async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
@@ -452,6 +492,68 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
     assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
         "acme.com/alice"
     ]
+
+
+@pytest.mark.asyncio
+async def test_current_actionable_chat_includes_from_stable_id_for_current_sender_key(aweb_cloud_db, monkeypatch):
+    class _DbShim:
+        def __init__(self, aweb_db):
+            self._aweb_db = aweb_db
+
+        def get_manager(self, name="aweb"):
+            assert name == "aweb"
+            return self._aweb_db
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ('33333333-3333-4333-8333-333333333333', 'backend:acme.com', 'did:key:z6MkAliceCurrent')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ('33333333-3333-4333-8333-333333333333', 'did:aw:bob', 'bob'),
+            ('33333333-3333-4333-8333-333333333333', 'did:key:z6MkAliceCurrent', 'alice')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body)
+        VALUES ('33333333-3333-4333-8333-333333333333', 'did:key:z6MkAliceCurrent', '', 'hello from current key')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice')
+        """,
+        uuid4(),
+    )
+
+    async def _fake_get_waiting_agents(_redis, _session_id: str, participant_dids: list[str]):
+        return list(participant_dids)
+
+    monkeypatch.setattr(events_module, "get_waiting_agents", _fake_get_waiting_agents)
+
+    actionable = await events_module._current_actionable_chat(
+        _DbShim(aweb_cloud_db.aweb_db),
+        None,
+        participant_dids=["did:aw:bob", "did:key:z6MkBobCurrent"],
+        participant_agent_id=None,
+    )
+
+    assert len(actionable) == 1
+    assert actionable[0]["from_did"] == "did:key:z6MkAliceCurrent"
+    assert actionable[0]["from_stable_id"] == "did:aw:alice"
+    assert actionable[0]["from_address"] == "acme.com/alice"
 
 
 @pytest.mark.asyncio
