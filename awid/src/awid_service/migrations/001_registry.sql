@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS {{tables.public_addresses}} (
     name            TEXT NOT NULL,
     did_aw          TEXT NOT NULL,
     current_did_key TEXT NOT NULL,
-    reachability    TEXT NOT NULL DEFAULT 'private',
+    reachability    TEXT NOT NULL DEFAULT 'nobody',
+    visible_to_team_id TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
     CONSTRAINT chk_public_addresses_name_not_empty CHECK (name <> ''),
@@ -79,7 +80,12 @@ CREATE TABLE IF NOT EXISTS {{tables.public_addresses}} (
     CONSTRAINT chk_public_addresses_name_no_tilde CHECK (POSITION('~' IN name) = 0),
     CONSTRAINT chk_public_addresses_did_aw_prefix CHECK (did_aw LIKE 'did:aw:%'),
     CONSTRAINT chk_public_addresses_reachability
-        CHECK (reachability IN ('private', 'org_visible', 'contacts_only', 'public'))
+        CHECK (reachability IN ('nobody', 'org_only', 'team_members_only', 'public')),
+    CONSTRAINT chk_public_addresses_visible_to_team_id
+        CHECK (
+            (reachability = 'team_members_only' AND visible_to_team_id IS NOT NULL)
+            OR (reachability != 'team_members_only' AND visible_to_team_id IS NULL)
+        )
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_public_addresses_namespace_name_active

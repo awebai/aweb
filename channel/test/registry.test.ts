@@ -208,7 +208,7 @@ describe("registry resolver", () => {
           name: "alice",
           did_aw: identityLogVectors.mapping.did_aw,
           current_did_key: identityLogVectors.mapping.rotated_did_key,
-          reachability: "private",
+          reachability: "nobody",
           created_at: "2026-04-04T00:00:00Z",
         });
       }

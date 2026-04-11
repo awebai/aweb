@@ -403,6 +403,114 @@ async def list_tasks(
     ]
 
 
+async def list_tasks_paginated(
+    db,
+    *,
+    team_id: str,
+    status: str | None = None,
+    assignee_alias: str | None = None,
+    task_type: str | None = None,
+    priority: int | None = None,
+    labels: list[str] | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    created_before: datetime | None = None,
+    task_id_before: UUID | None = None,
+) -> list[dict[str, Any]]:
+    slug = _get_team_slug(team_id)
+    aweb_db = db.get_manager("aweb")
+
+    conditions = ["team_id = $1", "deleted_at IS NULL"]
+    params: list[Any] = [team_id]
+    idx = 2
+
+    if status is not None:
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            conditions.append(f"status = ${idx}")
+            params.append(statuses[0])
+        else:
+            conditions.append(f"status = ANY(${idx})")
+            params.append(statuses)
+        idx += 1
+    if assignee_alias is not None:
+        resolved_alias = await _resolve_assignee_alias(
+            db, team_id=team_id, assignee_ref=assignee_alias,
+        )
+        conditions.append(f"assignee_alias = ${idx}")
+        params.append(resolved_alias)
+        idx += 1
+    if task_type is not None:
+        conditions.append(f"task_type = ${idx}")
+        params.append(task_type)
+        idx += 1
+    if priority is not None:
+        conditions.append(f"priority = ${idx}")
+        params.append(priority)
+        idx += 1
+    if labels:
+        conditions.append(f"labels @> ${idx}")
+        params.append(labels)
+        idx += 1
+    if q is not None:
+        q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q_pattern = f"%{q_escaped}%"
+        conditions.append(
+            f"(title ILIKE ${idx} ESCAPE '\\' OR description ILIKE ${idx + 1} ESCAPE '\\')"
+        )
+        params.append(q_pattern)
+        params.append(q_pattern)
+        idx += 2
+    if created_before is not None and task_id_before is not None:
+        conditions.append(
+            f"(created_at < ${idx} OR (created_at = ${idx} AND task_id < ${idx + 1}))"
+        )
+        params.append(created_before)
+        params.append(task_id_before)
+        idx += 2
+
+    params.append(limit)
+    rows = await aweb_db.fetch_all(
+        f"""
+        SELECT t.task_id, t.task_number, t.task_ref_suffix, t.title, t.description, t.status,
+               t.priority, t.task_type, t.assignee_alias, t.created_by_alias, t.parent_task_id,
+               t.labels, t.created_at, t.updated_at,
+               (
+                   SELECT COUNT(*)
+                   FROM {{{{tables.task_dependencies}}}} d
+                   JOIN {{{{tables.tasks}}}} blocker ON blocker.task_id = d.depends_on_id
+                   WHERE d.task_id = t.task_id
+                     AND blocker.deleted_at IS NULL
+               ) AS blocker_count
+        FROM {{{{tables.tasks}}}} t
+        WHERE {' AND '.join(conditions)}
+        ORDER BY t.created_at DESC, t.task_id DESC
+        LIMIT ${idx}
+        """,
+        *params,
+    )
+    return [
+        {
+            "task_id": str(r["task_id"]),
+            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_number": r["task_number"],
+            "title": r["title"],
+            "description": r["description"],
+            "status": r["status"],
+            "priority": r["priority"],
+            "task_type": r["task_type"],
+            "assignee_alias": r["assignee_alias"],
+            "created_by_alias": r["created_by_alias"],
+            "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
+            "labels": list(r["labels"]) if r["labels"] else [],
+            "created_at": r["created_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            "blocker_count": r["blocker_count"],
+        }
+        for r in rows
+    ]
+
+
 async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")

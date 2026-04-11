@@ -69,6 +69,7 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
             "did_aw": did_aw,
             "current_did_key": did_key,
             "reachability": "public",
+            "visible_to_team_id": None,
             "created_at": now.isoformat(),
         }
     ]

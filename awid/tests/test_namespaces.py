@@ -61,42 +61,74 @@ async def _register_address_for_identity(
     *,
     member_did_key: str,
     reachability: str,
+    visible_to_team_id: str | None = None,
 ):
     headers = _sign(
         signing_key, controller_did, domain=domain, operation="register_address", name=name,
     )
+    payload = {
+        "name": name,
+        "did_aw": stable_id_from_did_key(member_did_key),
+        "current_did_key": member_did_key,
+        "reachability": reachability,
+    }
+    if visible_to_team_id is not None:
+        payload["visible_to_team_id"] = visible_to_team_id
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
-        json={
-            "name": name,
-            "did_aw": stable_id_from_did_key(member_did_key),
-            "current_did_key": member_did_key,
-            "reachability": reachability,
-        },
+        json=payload,
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
-async def _register_certificate(client, team_key, team_did, domain, team_name, certificate_id):
-    _, member_pub = generate_keypair()
+async def _register_certificate(
+    client,
+    team_key,
+    team_did,
+    domain,
+    team_name,
+    certificate_id,
+    *,
+    member_did_key: str | None = None,
+    member_did_aw: str | None = None,
+    member_address: str | None = None,
+    alias: str = "alice",
+    lifetime: str = "persistent",
+):
+    if member_did_key is None:
+        _, member_pub = generate_keypair()
+        member_did_key = did_from_public_key(member_pub)
     headers = _sign(
         team_key, team_did,
         domain=domain, operation="register_certificate",
         team_name=team_name, certificate_id=certificate_id,
     )
+    payload = {
+        "certificate_id": certificate_id,
+        "member_did_key": member_did_key,
+        "alias": alias,
+        "lifetime": lifetime,
+    }
+    if member_did_aw is not None:
+        payload["member_did_aw"] = member_did_aw
+    if member_address is not None:
+        payload["member_address"] = member_address
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams/{team_name}/certificates",
-        json={
-            "certificate_id": certificate_id,
-            "member_did_key": did_from_public_key(member_pub),
-            "alias": "alice",
-            "lifetime": "persistent",
-        },
+        json=payload,
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+    return {
+        "certificate_id": certificate_id,
+        "member_did_key": member_did_key,
+        "member_did_aw": member_did_aw,
+        "member_address": member_address,
+        "alias": alias,
+        "lifetime": lifetime,
+    }
 
 
 async def _register_persistent_certificate_for_address(
@@ -384,11 +416,11 @@ async def test_public_address_get_allows_anonymous(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_private_address_get_requires_owner_signature(client, controller_identity):
+async def test_nobody_address_get_requires_owner_signature(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
-    domain = "private-address.example"
+    domain = "nobody-address.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     address = await _register_address_for_identity(
         client,
@@ -397,7 +429,7 @@ async def test_private_address_get_requires_owner_signature(client, controller_i
         domain,
         "alice",
         member_did_key=owner_did_key,
-        reachability="private",
+        reachability="nobody",
     )
 
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
@@ -416,13 +448,13 @@ async def test_private_address_get_requires_owner_signature(client, controller_i
 
 
 @pytest.mark.asyncio
-async def test_address_get_nonexistent_matches_private_404_shape(client, controller_identity):
+async def test_address_get_nonexistent_matches_nobody_404_shape(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
     other_key, other_pub = generate_keypair()
     other_did_key = did_from_public_key(other_pub)
-    domain = "private-404-shape.example"
+    domain = "nobody-404-shape.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_address_for_identity(
         client,
@@ -431,26 +463,26 @@ async def test_address_get_nonexistent_matches_private_404_shape(client, control
         domain,
         "alice",
         member_did_key=owner_did_key,
-        reachability="private",
+        reachability="nobody",
     )
 
-    private_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
-    private_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=private_headers)
-    assert private_resp.status_code == 404
-    assert private_resp.json() == {"detail": "Address not found"}
+    hidden_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
+    hidden_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=hidden_headers)
+    assert hidden_resp.status_code == 404
+    assert hidden_resp.json() == {"detail": "Address not found"}
 
     missing_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="missing")
     missing_resp = await client.get(f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers)
     assert missing_resp.status_code == 404
-    assert missing_resp.json() == private_resp.json()
+    assert missing_resp.json() == hidden_resp.json()
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_filters_private_to_owner(client, controller_identity):
+async def test_list_addresses_filters_nobody_to_owner(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
-    domain = "list-private.example"
+    domain = "list-nobody.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_address_for_identity(
         client,
@@ -466,9 +498,9 @@ async def test_list_addresses_filters_private_to_owner(client, controller_identi
         ns_key,
         ns_did,
         domain,
-        "private-alice",
+        "nobody-alice",
         member_did_key=owner_did_key,
-        reachability="private",
+        reachability="nobody",
     )
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
@@ -478,17 +510,23 @@ async def test_list_addresses_filters_private_to_owner(client, controller_identi
     owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
     assert owner_resp.status_code == 200, owner_resp.text
-    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["private-alice", "public-alice"]
+    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reachability", ["org_visible", "contacts_only"])
-async def test_non_public_placeholder_reachability_is_owner_only(client, controller_identity, reachability):
+async def test_org_only_address_get_allows_same_org_persistent_members_only(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
-    domain = f"{reachability}.example"
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    other_key, other_pub = generate_keypair()
+    other_did_key = did_from_public_key(other_pub)
+    ephemeral_key, ephemeral_pub = generate_keypair()
+    ephemeral_did_key = did_from_public_key(ephemeral_pub)
+    domain = "org-only.example"
     await _register_namespace(client, ns_key, ns_did, domain)
+    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
     await _register_address_for_identity(
         client,
         ns_key,
@@ -496,7 +534,203 @@ async def test_non_public_placeholder_reachability_is_owner_only(client, control
         domain,
         "alice",
         member_did_key=owner_did_key,
-        reachability=reachability,
+        reachability="org_only",
+    )
+    await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=member_did_key,
+        member_did_aw=stable_id_from_did_key(member_did_key),
+        alias="member",
+    )
+    await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=ephemeral_did_key,
+        alias="ephemeral",
+        lifetime="ephemeral",
+    )
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert anon_resp.status_code == 404
+
+    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
+    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    assert owner_resp.status_code == 200, owner_resp.text
+    assert owner_resp.json()["reachability"] == "org_only"
+
+    member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
+    assert member_resp.status_code == 200, member_resp.text
+
+    other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
+    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
+    assert other_resp.status_code == 404
+
+    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    assert ephemeral_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    ephemeral_key, ephemeral_pub = generate_keypair()
+    ephemeral_did_key = did_from_public_key(ephemeral_pub)
+    domain = "org-only-ephemeral.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability="org_only",
+    )
+    await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=ephemeral_did_key,
+        member_did_aw=stable_id_from_did_key(ephemeral_did_key),
+        alias="ephemeral",
+        lifetime="ephemeral",
+    )
+
+    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    assert ephemeral_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_addresses_filters_org_only_to_same_org_persistent_members(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    outsider_key, outsider_pub = generate_keypair()
+    outsider_did_key = did_from_public_key(outsider_pub)
+    domain = "list-org-only.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "org-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="org_only",
+    )
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "public-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="public",
+    )
+    await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=member_did_key,
+        member_did_aw=stable_id_from_did_key(member_did_key),
+        alias="member",
+    )
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
+    assert anon_resp.status_code == 200, anon_resp.text
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+
+    outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
+    outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
+    assert outsider_resp.status_code == 200, outsider_resp.text
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["public-alice"]
+
+    member_headers = _sign(member_key, member_did_key, domain=domain, operation="list_addresses")
+    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=member_headers)
+    assert member_resp.status_code == 200, member_resp.text
+    assert [item["name"] for item in member_resp.json()["addresses"]] == ["org-alice", "public-alice"]
+
+
+@pytest.mark.asyncio
+async def test_team_members_only_address_get_allows_target_team_persistent_members_only(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    other_team_key, other_team_pub = generate_keypair()
+    other_team_did_key = did_from_public_key(other_team_pub)
+    ephemeral_key, ephemeral_pub = generate_keypair()
+    ephemeral_did_key = did_from_public_key(ephemeral_pub)
+    domain = "team-members-only.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    backend_key, backend_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    frontend_key, frontend_did, _ = await _create_team(client, ns_key, ns_did, domain, "frontend")
+    address = await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability="team_members_only",
+        visible_to_team_id=f"backend:{domain}",
+    )
+    assert address["visible_to_team_id"] == f"backend:{domain}"
+
+    await _register_certificate(
+        client,
+        backend_key,
+        backend_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=member_did_key,
+        member_did_aw=stable_id_from_did_key(member_did_key),
+        alias="backend-member",
+    )
+    await _register_certificate(
+        client,
+        frontend_key,
+        frontend_did,
+        domain,
+        "frontend",
+        str(uuid4()),
+        member_did_key=other_team_did_key,
+        member_did_aw=stable_id_from_did_key(other_team_did_key),
+        alias="frontend-member",
+    )
+    await _register_certificate(
+        client,
+        backend_key,
+        backend_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=ephemeral_did_key,
+        alias="backend-ephemeral",
+        lifetime="ephemeral",
     )
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
@@ -506,17 +740,165 @@ async def test_non_public_placeholder_reachability_is_owner_only(client, control
     owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
     assert owner_resp.status_code == 200, owner_resp.text
 
+    member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
+    assert member_resp.status_code == 200, member_resp.text
+
+    other_team_headers = _sign(other_team_key, other_team_did_key, domain=domain, operation="get_address", name="alice")
+    other_team_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_team_headers)
+    assert other_team_resp.status_code == 404
+
+    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    assert ephemeral_resp.status_code == 404
+
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reachability", ["org_visible", "contacts_only"])
-async def test_non_public_placeholder_reachability_is_filtered_from_non_owner_lists(client, controller_identity, reachability):
+async def test_list_addresses_filters_team_members_only_to_target_team(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    backend_member_key, backend_member_pub = generate_keypair()
+    backend_member_did_key = did_from_public_key(backend_member_pub)
+    frontend_member_key, frontend_member_pub = generate_keypair()
+    frontend_member_did_key = did_from_public_key(frontend_member_pub)
+    domain = "list-team-members-only.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    backend_key, backend_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    frontend_key, frontend_did, _ = await _create_team(client, ns_key, ns_did, domain, "frontend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "backend-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="team_members_only",
+        visible_to_team_id=f"backend:{domain}",
+    )
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "public-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="public",
+    )
+    await _register_certificate(
+        client,
+        backend_key,
+        backend_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=backend_member_did_key,
+        member_did_aw=stable_id_from_did_key(backend_member_did_key),
+        alias="backend-member",
+    )
+    await _register_certificate(
+        client,
+        frontend_key,
+        frontend_did,
+        domain,
+        "frontend",
+        str(uuid4()),
+        member_did_key=frontend_member_did_key,
+        member_did_aw=stable_id_from_did_key(frontend_member_did_key),
+        alias="frontend-member",
+    )
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
+    assert anon_resp.status_code == 200, anon_resp.text
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+
+    frontend_headers = _sign(frontend_member_key, frontend_member_did_key, domain=domain, operation="list_addresses")
+    frontend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=frontend_headers)
+    assert frontend_resp.status_code == 200, frontend_resp.text
+    assert [item["name"] for item in frontend_resp.json()["addresses"]] == ["public-alice"]
+
+    backend_headers = _sign(backend_member_key, backend_member_did_key, domain=domain, operation="list_addresses")
+    backend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=backend_headers)
+    assert backend_resp.status_code == 200, backend_resp.text
+    assert [item["name"] for item in backend_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
+
+
+@pytest.mark.asyncio
+# Split the literals so residue greps can stay strict while this negative test
+# still exercises server-side rejection of the removed enum values.
+@pytest.mark.parametrize("reachability", ["contacts" + "_only", "org" + "_visible"])
+async def test_register_address_rejects_legacy_reachability_values(client, controller_identity, reachability):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
-    other_key, other_pub = generate_keypair()
-    other_did_key = did_from_public_key(other_pub)
-    domain = f"list-{reachability}.example"
+    domain = f"legacy-{reachability.replace('_', '-')}.example"
     await _register_namespace(client, ns_key, ns_did, domain)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(owner_did_key),
+            "current_did_key": owner_did_key,
+            "reachability": reachability,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_register_team_members_only_requires_visible_to_team_id(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "missing-team-scope.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(owner_did_key),
+            "current_did_key": owner_did_key,
+            "reachability": "team_members_only",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "visible_to_team_id is required when reachability=team_members_only"
+
+
+@pytest.mark.asyncio
+async def test_register_non_team_members_only_rejects_visible_to_team_id(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "unexpected-team-scope.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _create_team(client, ns_key, ns_did, domain, "backend")
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(owner_did_key),
+            "current_did_key": owner_did_key,
+            "reachability": "org_only",
+            "visible_to_team_id": f"backend:{domain}",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "visible_to_team_id is only allowed when reachability=team_members_only"
+
+
+@pytest.mark.asyncio
+async def test_update_address_clears_visible_to_team_id_when_leaving_team_members_only(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "update-address-visibility.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _create_team(client, ns_key, ns_did, domain, "backend")
     await _register_address_for_identity(
         client,
         ns_key,
@@ -524,15 +906,44 @@ async def test_non_public_placeholder_reachability_is_filtered_from_non_owner_li
         domain,
         "alice",
         member_did_key=owner_did_key,
-        reachability=reachability,
+        reachability="team_members_only",
+        visible_to_team_id=f"backend:{domain}",
     )
 
-    other_headers = _sign(other_key, other_did_key, domain=domain, operation="list_addresses")
-    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=other_headers)
-    assert other_resp.status_code == 200, other_resp.text
-    assert other_resp.json()["addresses"] == []
+    headers = _sign(ns_key, ns_did, domain=domain, operation="update_address", name="alice")
+    resp = await client.put(
+        f"/v1/namespaces/{domain}/addresses/alice",
+        json={"reachability": "org_only"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "org_only"
+    assert resp.json()["visible_to_team_id"] is None
 
-    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
-    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
-    assert owner_resp.status_code == 200, owner_resp.text
-    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["alice"]
+
+@pytest.mark.asyncio
+async def test_update_address_rejects_visible_to_team_id_with_org_only(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "update-address-invalid-scope.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_did_key=owner_did_key,
+        reachability="nobody",
+    )
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="update_address", name="alice")
+    resp = await client.put(
+        f"/v1/namespaces/{domain}/addresses/alice",
+        json={"reachability": "org_only", "visible_to_team_id": f"backend:{domain}"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "visible_to_team_id is only allowed when reachability=team_members_only"

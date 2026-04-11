@@ -11,6 +11,7 @@ from uuid import UUID
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..db import DatabaseInfra, get_db_infra
+from ..claims import list_active_claims
 from awid.pagination import encode_cursor, validate_pagination_params
 
 router = APIRouter(prefix="/v1", tags=["claims"])
@@ -62,8 +63,6 @@ async def list_claims(
         Includes has_more and next_cursor for pagination.
     """
     team_id = identity.team_id
-    aweb_db = db_infra.get_manager("aweb")
-
     # Validate pagination params
     try:
         validated_limit, cursor_data = validate_pagination_params(limit, cursor)
@@ -78,43 +77,20 @@ async def list_claims(
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-    # Build query with cursor-based pagination
-    conditions: list[str] = []
-    params: list[object] = []
-    param_idx = 1
-
-    conditions.append(f"team_id = ${param_idx}")
-    params.append(team_id)
-    param_idx += 1
-
-    if validated_workspace_id:
-        conditions.append(f"workspace_id = ${param_idx}")
-        params.append(validated_workspace_id)
-        param_idx += 1
-
     # Apply cursor (claimed_at < cursor_timestamp for DESC order)
+    cursor_timestamp = None
     if cursor_data and "claimed_at" in cursor_data:
         try:
             cursor_timestamp = datetime.fromisoformat(cursor_data["claimed_at"])
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=f"Invalid cursor timestamp: {e}")
-        conditions.append(f"claimed_at < ${param_idx}")
-        params.append(cursor_timestamp)
-        param_idx += 1
-
-    # Fetch limit + 1 to detect has_more
-    params.append(validated_limit + 1)
-
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"""
-        SELECT task_ref, workspace_id, alias, human_name, claimed_at, team_id
-        FROM {{{{tables.task_claims}}}}
-        {where_clause}
-        ORDER BY claimed_at DESC
-        LIMIT ${param_idx}
-    """
-
-    rows = await aweb_db.fetch_all(query, *params)
+    rows = await list_active_claims(
+        db_infra,
+        team_id=team_id,
+        workspace_id=validated_workspace_id,
+        claimed_before=cursor_timestamp,
+        limit=validated_limit + 1,
+    )
 
     # Check if there are more results
     has_more = len(rows) > validated_limit

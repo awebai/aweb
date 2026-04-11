@@ -138,8 +138,8 @@ An **address** is the stable handle for a persistent identity:
 - Canonical external form is `namespace/name` (e.g., `acme.com/alice`)
 - Public trust semantics attach to the persistent address, not to ephemeral
   aliases
-- Address assignment is separate from reachability (`private` /
-  `org-visible` / `contacts-only` / `public`)
+- Address assignment is separate from reachability (`nobody` /
+  `org_only` / `team_members_only` / `public`)
 
 ### Lifecycle: Delete vs Archive vs Replace
 
@@ -712,7 +712,9 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 | `GET /v1/teams/{team_id}/agents` | List active agents in team |
 | `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
 | `GET /v1/teams/{team_id}/messages` | Message history |
-| `GET /v1/teams/{team_id}/tasks` | Task list |
+| `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
+| `GET /v1/teams/{team_id}/claims` | Active task claims |
+| `GET /v1/teams/{team_id}/events/stream` | Dashboard SSE stream. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream dashboard-shaped events `task.created`, `task.status_changed`, `task.claimed`, `task.unclaimed`, `message.sent`, `agent.online`, and `agent.offline`. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |
 | `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
 | `GET /v1/teams/{team_id}/instructions/active` | Active instructions |
 | `GET /v1/teams/{team_id}/status` | Team status (online agents, locks, claims) |

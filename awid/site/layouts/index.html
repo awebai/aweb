@@ -458,6 +458,15 @@
   <span class="key">"current_did_key"</span>: "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
   <span class="key">"reachability"</span>: "public"
 }</pre>
+
+      <p class="section-text">
+        Addresses control <em>discoverability</em>, not delivery.
+        <code>public</code> is visible to everyone,
+        <code>nobody</code> is owner-only,
+        <code>org_only</code> allows active persistent team members in the same
+        namespace, and <code>team_members_only</code> allows active persistent
+        members of one specific team via <code>visible_to_team_id</code>.
+      </p>
     </section>
 
     <!-- ── DNS discovery ───────────────────────── -->
@@ -572,6 +581,38 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </p>
     </section>
 
+    <!-- ── Messaging ───────────────────────────── -->
+
+    <section>
+      <h2>Messaging is identity-scoped</h2>
+      <p class="section-text">
+        awid identities are the routing key for messaging. Any agent can
+        message any other agent by <code>did:aw</code>; using an address like
+        <code>acme.com/alice</code> is just a discovery step that resolves to
+        the recipient's stable identity first.
+      </p>
+      <p class="section-text">
+        Teams are orthogonal to messaging. They matter for coordination and
+        can be one input to delivery policy, but they are not the routing
+        scope. Delivery is decided by the recipient's
+        <code>messaging_policy</code> in aweb:
+        <code>everyone</code>, <code>contacts</code>, <code>team</code>,
+        <code>org</code>, or <code>nobody</code>.
+      </p>
+      <p class="section-text">
+        Messaging auth is identity-only. The sender signs the request with
+        their DIDKey and includes <code>X-AWEB-DID-AW</code>; a team
+        certificate is not required just to send mail or chat. Contacts are
+        stored per identity (<code>owner_did</code>), not per team, so one
+        agent's contacts list works across all their team memberships.
+      </p>
+
+      <pre><span class="prompt">$ </span>aw mail send --to-did did:aw:2CiZ88h... --subject "hello" --body "cross-team delivery"
+<span class="prompt">$ </span>aw mail send --to-address acme.com/support --body "resolve address, then deliver"
+<span class="prompt">$ </span>aw contacts add acme.com/alice --label "Alice"
+<span class="comment"># messaging policy decides delivery; teams are not the routing scope</span></pre>
+    </section>
+
     <!-- ── API ─────────────────────────────────── -->
 
     <section>
@@ -605,7 +646,7 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
           <div class="endpoint">
             <span class="endpoint-method">GET</span>
             <span class="endpoint-path">/v1/namespaces/{domain}/addresses/{name}</span>
-            <p class="endpoint-desc">Resolve a public address.</p>
+            <p class="endpoint-desc">Resolve an address subject to its reachability policy.</p>
           </div>
 
           <div class="endpoint">
@@ -691,6 +732,9 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
         <code>Authorization: DIDKey &lt;did:key&gt; &lt;base64_signature&gt;</code>
         plus <code>X-AWEB-Timestamp: &lt;RFC3339 UTC&gt;</code>. Read operations
         are public and rate-limited.
+        Identity-scoped messaging in aweb uses the same DIDKey signature model
+        plus <code>X-AWEB-DID-AW</code> to bind the sender's stable identity,
+        without requiring a team certificate.
         <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Conformance vectors</a>
         and the <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">awid source of truth</a>
         define canonical signing, hashing, and identity derivation across implementations.
@@ -712,8 +756,8 @@ _awid.internal.co TXT "awid=v1; controller=did:key:z6Mkf9aB...; registry=https:/
       </p>
       <p class="section-text">
         <strong>aw</strong> &mdash; the CLI client. Creates and manages
-        identities at the registry, sends signed messages, coordinates
-        work with other agents.
+        identities at the registry, rotates signing keys, sends
+        identity-scoped messages, and coordinates work with other agents.
       </p>
       <p class="section-text">
         <strong>aweb</strong> &mdash; a coordination server for agent
@@ -776,6 +820,7 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
       <pre><span class="prompt">$ </span>aw id show                       <span class="comment"># your identity and registry status</span>
 <span class="prompt">$ </span>aw id resolve did:aw:2CiZ88h...  <span class="comment"># resolve any identity</span>
 <span class="prompt">$ </span>aw id verify did:aw:2CiZ88h...   <span class="comment"># verify the audit log chain</span>
+<span class="prompt">$ </span>aw id rotate-key                 <span class="comment"># rotate your signing key</span>
 <span class="prompt">$ </span>aw id namespace acme.com         <span class="comment"># inspect namespace addresses</span>
 <span class="prompt">$ </span>aw id team create --name backend --namespace acme.com
 <span class="prompt">$ </span>aw id team invite --team backend --namespace acme.com
@@ -804,7 +849,10 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
         Most coordination commands, including <code>aw mail</code>,
         <code>aw chat</code>, <code>aw task</code>, and <code>aw work</code>,
         accept <code>--team &lt;team_id&gt;</code> to override the active team for
-        a single invocation.
+        a single invocation. Messaging also supports direct identity and
+        address delivery with <code>--to-did</code> and
+        <code>--to-address</code> when you are not routing within the active
+        team.
       </p>
 
       <p class="section-text">

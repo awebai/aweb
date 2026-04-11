@@ -6,18 +6,34 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from datetime import datetime, timezone
+from uuid import UUID
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
-from awid.team_ids import parse_team_id, team_slug
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.team_ids import parse_team_id
+from aweb.claims import list_active_claims
+from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.config import get_settings
-from aweb.deps import get_db
+from aweb.deps import get_db, get_redis
+from aweb.events import team_events_channel_name
+from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
+from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
 router = APIRouter(tags=["dashboard"])
+logger = logging.getLogger(__name__)
+
+DASHBOARD_KEEPALIVE_SECONDS = 30.0
+DASHBOARD_PRESENCE_POLL_SECONDS = 5.0
+DASHBOARD_PUBSUB_POLL_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +106,9 @@ class AgentSummary(BaseModel):
     agent_id: str
     alias: str
     did_key: str
+    human_name: str
+    address: Optional[str]
+    agent_type: str
     role: str
     status: str
     lifetime: str
@@ -130,8 +149,19 @@ class TaskSummary(BaseModel):
     status: str
     priority: int
     task_type: str
+    parent_task_id: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    updated_at: Optional[str] = None
+    blocker_count: int = 0
+    created_by_alias: str = ""
     assignee_alias: Optional[str]
     created_at: str
+
+
+class TaskListResponse(BaseModel):
+    tasks: list[TaskSummary]
+    has_more: bool
+    next_cursor: Optional[str] = None
 
 
 class TeamStatus(BaseModel):
@@ -150,6 +180,134 @@ class UsageMetrics(BaseModel):
     until: Optional[str]
 
 
+class DashboardClaimSummary(BaseModel):
+    task_ref: str
+    workspace_id: str
+    alias: str
+    claimed_at: str
+
+
+class DashboardEventSnapshot(BaseModel):
+    team_id: str
+    online_aliases: list[str]
+    active_claims: list[DashboardClaimSummary]
+    timestamp: str
+
+
+# ---------------------------------------------------------------------------
+# Dashboard SSE helpers
+# ---------------------------------------------------------------------------
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _format_sse(event_name: str, payload: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _list_online_aliases(redis, *, team_id: str) -> list[str]:
+    workspace_ids = await get_workspace_ids_by_team_id(redis, team_id)
+    if not workspace_ids:
+        return []
+    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+    aliases = {
+        str(p.get("alias", "")).strip()
+        for p in presences
+        if str(p.get("alias", "")).strip() and str(p.get("team_id", "")).strip() == team_id
+    }
+    return sorted(aliases)
+
+
+async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any]:
+    online_aliases = await _list_online_aliases(redis, team_id=team_id)
+    claim_rows = await list_active_claims(db, team_id=team_id, limit=200)
+    snapshot = DashboardEventSnapshot(
+        team_id=team_id,
+        online_aliases=online_aliases,
+        active_claims=[
+            DashboardClaimSummary(
+                task_ref=row["task_ref"],
+                workspace_id=str(row["workspace_id"]),
+                alias=row["alias"],
+                claimed_at=row["claimed_at"].isoformat(),
+            )
+            for row in claim_rows
+        ],
+        timestamp=_utc_now_iso(),
+    )
+    return snapshot.model_dump()
+
+
+async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
+    channel = team_events_channel_name(team_id)
+    async with redis.pubsub() as pubsub:
+        await pubsub.subscribe(channel)
+
+        yield ": keepalive\n\n"
+        yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
+
+        snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
+        yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
+
+        previous_online_aliases = set(snapshot["online_aliases"])
+        loop = asyncio.get_running_loop()
+        last_keepalive = loop.time()
+        last_presence_poll = loop.time()
+
+        while True:
+            if await request.is_disconnected():
+                return
+
+            try:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
+                )
+            except Exception:
+                logger.warning("Dashboard team-events pubsub read failed", exc_info=True)
+                return
+
+            now = loop.time()
+
+            if message and message.get("type") == "message":
+                raw_payload = message.get("data")
+                if isinstance(raw_payload, bytes):
+                    raw_payload = raw_payload.decode("utf-8")
+                payload = json.loads(raw_payload)
+                yield _format_sse(str(payload.get("type", "message")), payload)
+
+            if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
+                current_online_aliases = set(await _list_online_aliases(redis, team_id=team_id))
+                for alias in sorted(current_online_aliases - previous_online_aliases):
+                    yield _format_sse(
+                        "agent.online",
+                        {
+                            "type": "agent.online",
+                            "team_id": team_id,
+                            "alias": alias,
+                            "timestamp": _utc_now_iso(),
+                        },
+                    )
+                for alias in sorted(previous_online_aliases - current_online_aliases):
+                    yield _format_sse(
+                        "agent.offline",
+                        {
+                            "type": "agent.offline",
+                            "team_id": team_id,
+                            "alias": alias,
+                            "timestamp": _utc_now_iso(),
+                        },
+                    )
+                previous_online_aliases = current_online_aliases
+                last_presence_poll = now
+
+            if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -164,7 +322,8 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.role, a.status, a.lifetime, a.created_at,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, a.address, a.agent_type,
+               a.role, a.status, a.lifetime, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
         LEFT JOIN LATERAL (
@@ -186,6 +345,9 @@ async def list_team_agents(
                 agent_id=str(r["agent_id"]),
                 alias=r["alias"],
                 did_key=r["did_key"],
+                human_name=r["human_name"],
+                address=r.get("address"),
+                agent_type=r["agent_type"],
                 role=r["role"],
                 status=r["status"],
                 lifetime=r["lifetime"],
@@ -194,6 +356,28 @@ async def list_team_agents(
                 created_at=r["created_at"].isoformat(),
             ).model_dump()
             for r in rows
+        ]
+    }
+
+
+@router.get("/v1/teams/{team_id:path}/claims")
+async def list_team_claims(
+    request: Request,
+    team_id: str,
+    limit: int = Query(default=200, ge=1, le=200),
+    db=Depends(get_db),
+) -> dict:
+    await _require_dashboard_auth(request, team_id)
+    rows = await list_active_claims(db, team_id=team_id, limit=limit)
+    return {
+        "claims": [
+            DashboardClaimSummary(
+                task_ref=row["task_ref"],
+                workspace_id=str(row["workspace_id"]),
+                alias=row["alias"],
+                claimed_at=row["claimed_at"].isoformat(),
+            ).model_dump()
+            for row in rows
         ]
     }
 
@@ -276,42 +460,108 @@ async def list_team_messages(
 async def list_team_tasks(
     request: Request,
     team_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
+    status: Optional[str] = Query(default=None),
+    assignee_alias: Optional[str] = Query(default=None),
+    task_type: Optional[str] = Query(default=None),
+    priority: Optional[str] = Query(default=None, pattern="^P[0-4]$"),
+    labels: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+    cursor: Optional[str] = Query(default=None),
     db=Depends(get_db),
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
-    aweb_db = db.get_manager("aweb")
+    try:
+        validated_limit, cursor_data = validate_pagination_params(limit, cursor)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid cursor")
+    label_list = [s.strip() for s in labels.split(",") if s.strip()] if labels else None
+    priority_value = None
+    if priority is not None:
+        priority_value = int(priority[1:])
 
-    slug = team_slug(team_id)
+    cursor_created_at = None
+    cursor_task_id = None
+    if cursor_data is not None:
+        try:
+            cursor_created_at_raw = cursor_data["created_at"]
+            cursor_task_id_raw = cursor_data["task_id"]
+            cursor_created_at = datetime.fromisoformat(cursor_created_at_raw)
+            cursor_task_id = UUID(cursor_task_id_raw)
+        except (KeyError, TypeError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=f"Invalid cursor: {e}")
 
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT task_id, task_ref_suffix, title, status, priority, task_type,
-               assignee_alias, created_at
-        FROM {{tables.tasks}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT $2
-        """,
-        team_id,
-        limit,
-    )
+    try:
+        rows = await list_tasks_paginated(
+            db,
+            team_id=team_id,
+            status=status,
+            assignee_alias=assignee_alias,
+            task_type=task_type,
+            priority=priority_value,
+            labels=label_list,
+            q=q,
+            limit=validated_limit + 1,
+            created_before=cursor_created_at,
+            task_id_before=cursor_task_id,
+        )
+    except ValidationError:
+        return TaskListResponse(tasks=[], has_more=False, next_cursor=None).model_dump()
 
-    return {
-        "tasks": [
+    has_more = len(rows) > validated_limit
+    rows = rows[:validated_limit]
+
+    next_cursor = None
+    if has_more and rows:
+        last_row = rows[-1]
+        next_cursor = encode_cursor(
+            {"created_at": last_row["created_at"], "task_id": last_row["task_id"]}
+        )
+
+    return TaskListResponse(
+        tasks=[
             TaskSummary(
-                task_id=str(r["task_id"]),
-                task_ref=f"{slug}-{r['task_ref_suffix']}",
+                task_id=r["task_id"],
+                task_ref=r["task_ref"],
                 title=r["title"],
                 status=r["status"],
                 priority=r["priority"],
                 task_type=r["task_type"],
+                parent_task_id=r.get("parent_task_id"),
+                labels=r.get("labels") or [],
+                updated_at=r.get("updated_at"),
+                blocker_count=r.get("blocker_count", 0),
+                created_by_alias=r.get("created_by_alias") or "",
                 assignee_alias=r.get("assignee_alias"),
-                created_at=r["created_at"].isoformat(),
-            ).model_dump()
+                created_at=r["created_at"],
+            )
             for r in rows
-        ]
-    }
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    ).model_dump()
+
+
+@router.get("/v1/teams/{team_id:path}/events/stream")
+async def stream_team_events(
+    request: Request,
+    team_id: str,
+    db=Depends(get_db),
+    redis=Depends(get_redis),
+):
+    await _require_dashboard_auth(request, team_id)
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    return StreamingResponse(
+        _sse_dashboard_events(request=request, db=db, redis=redis, team_id=team_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/v1/teams/{team_id:path}/roles/active")
@@ -396,15 +646,7 @@ async def get_team_status(
     )
     online_agents = [r["alias"] for r in online_rows]
 
-    claim_rows = await aweb_db.fetch_all(
-        """
-        SELECT task_ref, alias, claimed_at
-        FROM {{tables.task_claims}}
-        WHERE team_id = $1
-        ORDER BY claimed_at DESC
-        """,
-        team_id,
-    )
+    claim_rows = await list_active_claims(db, team_id=team_id)
 
     lock_rows = await aweb_db.fetch_all(
         """

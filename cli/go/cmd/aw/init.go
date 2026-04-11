@@ -63,7 +63,7 @@ func init() {
 	initCmd.Flags().StringVar(&initHostedUsername, "username", "", "Hosted username to create with --hosted")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
-	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (private|org-visible|contacts-only|public)")
+	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (nobody|org-only|team-members-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code channel MCP server for real-time coordination")
