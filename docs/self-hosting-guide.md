@@ -183,8 +183,8 @@ Important bootstrap rules:
 - `aw id create` and the guided BYOD path require a domain you control
 - `aw id team invite` requires an existing identity in the team
 - `aw id team accept-invite` requires the invite token; in interactive mode
-  it may prompt for alias, name, or role. In non-interactive mode supply
-  `--alias` and `--role` explicitly if the team has defined roles
+  it may prompt for alias. In non-interactive mode supply `--alias`
+  explicitly when you do not want the identity name default
 
 ## Health Checks and Smoke Tests
 
