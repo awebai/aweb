@@ -215,6 +215,13 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if displayFromAddress == "" {
 			displayFromAddress = strings.TrimSpace(evt.FromAddress)
 		}
+		displayFromDID := strings.TrimSpace(pending.LastFromDID)
+		if displayFromDID == "" {
+			displayFromDID = strings.TrimSpace(evt.FromStableID)
+		}
+		if displayFromDID == "" {
+			displayFromDID = strings.TrimSpace(evt.FromDID)
+		}
 		if pendingChatSenderFromSelf(pending, selfAlias, selfIdentityDIDs(client)...) {
 			return runWakeResolution{Skip: true}, nil
 		}
@@ -223,7 +230,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			ParticipantDIDs:      pending.ParticipantDIDs,
 			ParticipantAddresses: pending.ParticipantAddresses,
 			LastFrom:             alias,
-			LastFromDID:          pending.LastFromDID,
+			LastFromDID:          displayFromDID,
 			LastFromAddress:      displayFromAddress,
 		}, selfAlias, selfIdentityDIDs(client)...)
 		return runWakeResolution{
