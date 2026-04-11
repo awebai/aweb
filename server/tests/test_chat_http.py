@@ -503,6 +503,73 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(awe
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_group_chat(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _team_auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _team_auth_override
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id = "17111111-1111-4111-8111-111111111111"
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "signed hello",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob,carol",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "to_aliases": ["bob", "carol"],
+        "message": "signed hello",
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "signed_payload recipient must match the chat target"
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatch(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -877,6 +944,88 @@ async def test_chat_send_message_rejects_signed_payload_recipient_mismatch(aweb_
             "timestamp": timestamp,
             "to": "mallory",
             "to_did": "did:aw:mallory",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "body": "signed reply",
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "signed_payload recipient must match the chat target"
+
+
+@pytest.mark.asyncio
+async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_group_chat(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    session_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ('backend:acme.com', 'alice')
+        RETURNING session_id
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:aw:alice', 'alice'),
+            ($1, 'did:aw:bob', 'bob'),
+            ($1, 'did:aw:carol', 'carol')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+    registry = AsyncMock()
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _team_auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _team_auth_override
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id = "25222222-2222-4222-8222-222222222222"
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "signed reply",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "acme.com/bob,acme.com/carol",
+            "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
     )
