@@ -215,15 +215,17 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if displayFromAddress == "" {
 			displayFromAddress = strings.TrimSpace(evt.FromAddress)
 		}
-		displayFromDID := strings.TrimSpace(pending.LastFromDID)
-		if displayFromDID == "" {
-			displayFromDID = strings.TrimSpace(evt.FromStableID)
+		displayFromStableID := strings.TrimSpace(pending.LastFromStableID)
+		if displayFromStableID == "" {
+			displayFromStableID = strings.TrimSpace(evt.FromStableID)
 		}
+		displayFromDID := strings.TrimSpace(pending.LastFromDID)
 		if displayFromDID == "" {
 			displayFromDID = strings.TrimSpace(evt.FromDID)
 		}
 		derivedPending := pending
 		derivedPending.LastFrom = alias
+		derivedPending.LastFromStableID = displayFromStableID
 		derivedPending.LastFromDID = displayFromDID
 		derivedPending.LastFromAddress = displayFromAddress
 		if pendingChatSenderFromSelf(derivedPending, selfAlias, selfIdentityDIDs(client)...) {
@@ -234,6 +236,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 			ParticipantDIDs:      pending.ParticipantDIDs,
 			ParticipantAddresses: pending.ParticipantAddresses,
 			LastFrom:             alias,
+			LastFromStableID:     displayFromStableID,
 			LastFromDID:          displayFromDID,
 			LastFromAddress:      displayFromAddress,
 		}, selfAlias, selfIdentityDIDs(client)...)
@@ -273,6 +276,15 @@ func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...str
 }
 
 func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, selfDIDs ...string) bool {
+	lastFromStableID := strings.TrimSpace(pending.LastFromStableID)
+	if lastFromStableID != "" {
+		for _, selfDID := range selfDIDs {
+			if selfDID != "" && strings.EqualFold(lastFromStableID, selfDID) {
+				return true
+			}
+		}
+		return false
+	}
 	lastFromDID := strings.TrimSpace(pending.LastFromDID)
 	if lastFromDID != "" {
 		for _, selfDID := range selfDIDs {

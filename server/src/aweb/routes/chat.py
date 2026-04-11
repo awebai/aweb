@@ -147,7 +147,7 @@ def _group_participants_by_session(
     return grouped
 
 
-async def _lookup_addresses_by_did(db, dids: list[str]) -> dict[str, str]:
+async def _lookup_identity_metadata_by_did(db, dids: list[str]) -> dict[str, dict[str, str]]:
     if not dids:
         return {}
     aweb_db = db.get_manager("aweb")
@@ -161,15 +161,29 @@ async def _lookup_addresses_by_did(db, dids: list[str]) -> dict[str, str]:
         """,
         list(set(dids)),
     )
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     for row in rows:
+        stable_id = (row.get("did_aw") or "").strip()
+        current_did = (row.get("did_key") or "").strip()
         address = (row.get("address") or "").strip()
-        if not address:
-            continue
-        if row.get("did_aw"):
-            result[str(row["did_aw"]).strip()] = address
-        if row.get("did_key"):
-            result[str(row["did_key"]).strip()] = address
+        for did in (stable_id, current_did):
+            if not did:
+                continue
+            meta = result.setdefault(did, {})
+            if stable_id:
+                meta["stable_id"] = stable_id
+            if address:
+                meta["address"] = address
+    return result
+
+
+async def _lookup_addresses_by_did(db, dids: list[str]) -> dict[str, str]:
+    metadata = await _lookup_identity_metadata_by_did(db, dids)
+    result: dict[str, str] = {}
+    for did, meta in metadata.items():
+        address = (meta.get("address") or "").strip()
+        if address:
+            result[did] = address
     return result
 
 
@@ -554,7 +568,7 @@ async def pending(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
-    address_map = await _lookup_addresses_by_did(
+    identity_map = await _lookup_identity_metadata_by_did(
         db,
         [
             (row.get("did") or "").strip()
@@ -585,7 +599,7 @@ async def pending(
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
         participant_addresses = [
-            address_map.get((row.get("did") or "").strip(), row["alias"])
+            identity_map.get((row.get("did") or "").strip(), {}).get("address", row["alias"])
             for row in session_participants
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
@@ -613,9 +627,14 @@ async def pending(
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_from": item["last_from"],
+                "last_from_stable_id": identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": address_map.get(
-                    (item.get("last_from_did") or "").strip(),
+                "last_from_address": identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get(
+                    "address",
                     item["last_from"],
                 ),
                 "unread_count": item["unread_count"],

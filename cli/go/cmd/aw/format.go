@@ -370,11 +370,13 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 	lastFrom := preferredIdentityDisplayLabel(
 		strings.TrimSpace(p.LastFrom),
 		strings.TrimSpace(p.LastFromAddress),
-		"",
+		strings.TrimSpace(p.LastFromStableID),
 		strings.TrimSpace(p.LastFromDID),
 		"",
 	)
-	if strings.TrimSpace(p.LastFrom) != "" || strings.TrimSpace(p.LastFromAddress) != "" || strings.TrimSpace(p.LastFromDID) == "" {
+	if strings.TrimSpace(p.LastFrom) != "" ||
+		strings.TrimSpace(p.LastFromAddress) != "" ||
+		(strings.TrimSpace(p.LastFromStableID) == "" && strings.TrimSpace(p.LastFromDID) == "") {
 		return lastFrom
 	}
 
