@@ -114,6 +114,9 @@ def _parse_signed_timestamp(value: str) -> datetime:
 def _validate_signed_mail_payload(
     *,
     signed_payload: str | None,
+    recipient: dict | None,
+    to_agent_id: str | None,
+    to_alias: str | None,
     priority: MessagePriority,
     subject: str,
     body: str,
@@ -131,6 +134,34 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
     if payload.get("type") != "mail":
         raise HTTPException(status_code=422, detail="signed_payload type must be mail")
+    recipient_alias = (recipient or {}).get("alias") or ""
+    recipient_address = (recipient or {}).get("address") or ""
+    recipient_stable_id = (recipient or {}).get("did_aw") or ""
+    recipient_current_did = (recipient or {}).get("did_key") or ""
+    allowed_to_values = {
+        value
+        for value in (
+            str(to_agent_id or "").strip(),
+            str(to_alias or "").strip(),
+            str(recipient_alias).strip(),
+            str(recipient_address).strip(),
+            str(recipient_stable_id).strip(),
+            str(recipient_current_did).strip(),
+        )
+        if value
+    }
+    signed_to = str(payload.get("to") or "").strip()
+    if signed_to and signed_to not in allowed_to_values:
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
+    signed_to_did = str(payload.get("to_did") or "").strip()
+    if signed_to_did and signed_to_did not in {
+        str(recipient_stable_id).strip(),
+        str(recipient_current_did).strip(),
+    }:
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
+    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
+    if signed_to_stable_id and signed_to_stable_id != str(recipient_stable_id).strip():
+        raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
     if (payload.get("priority") or "normal") != priority:
         raise HTTPException(status_code=422, detail="signed_payload priority must match the mail message")
     if payload.get("subject", "") != subject:
@@ -300,6 +331,9 @@ async def send_message(
             )
         _validate_signed_mail_payload(
             signed_payload=payload.signed_payload,
+            recipient=recipient,
+            to_agent_id=to_agent_id,
+            to_alias=to_alias,
             priority=payload.priority,
             subject=payload.subject,
             body=payload.body,
