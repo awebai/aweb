@@ -793,6 +793,56 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud
 
 
 @pytest.mark.asyncio
+async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    _, _, carol_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone'),
+            ('ops:otherco.com', $2, 'did:aw:carol', 'otherco.com/carol', 'carol',
+             'persistent', 'developer', 'everyone')
+        """,
+        bob_did_key,
+        carol_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:otherco.com",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": "did:aw:bob",
+        "to_alias": "carol",
+        "subject": "mismatch",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 422
+    assert "to_alias" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_send_message_contacts_policy_accepts_equivalent_owner_did(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
