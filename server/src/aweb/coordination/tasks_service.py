@@ -309,7 +309,7 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         "created_by_alias": row["created_by_alias"],
         "closed_by_alias": row["closed_by_alias"],
         "created_at": row["created_at"].isoformat(),
-        "updated_at": row["updated_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
         "closed_at": row["closed_at"].isoformat() if row["closed_at"] else None,
         "blocked_by": [_dep_view(r) for r in blocked_by_rows],
         "blocks": [_dep_view(r) for r in blocks_rows],
@@ -629,7 +629,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
                 "parent_task_id": str(row["parent_task_id"]) if row["parent_task_id"] else None,
                 "labels": list(row["labels"]) if row["labels"] else [],
                 "created_at": row["created_at"].isoformat(),
-                "updated_at": row["updated_at"].isoformat(),
+                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
                 "workspace_id": owner_workspace_id,
                 "owner_alias": owner_alias,
                 "claimed_at": claimed_at,
@@ -688,7 +688,7 @@ async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list
             "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
-            "updated_at": r["updated_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
         }
         for r in rows
     ]
@@ -732,7 +732,7 @@ async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
             "parent_task_id": str(r["parent_task_id"]) if r["parent_task_id"] else None,
             "labels": list(r["labels"]) if r["labels"] else [],
             "created_at": r["created_at"].isoformat(),
-            "updated_at": r["updated_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
         }
         for r in rows
     ]
