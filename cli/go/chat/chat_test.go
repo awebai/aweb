@@ -1954,6 +1954,24 @@ func TestChatEventSenderLabelPrefersStableIDOverHandleAliasCollision(t *testing.
 	}
 }
 
+func TestChatEventSenderLabelPrefersStableIDOverAliasWhenAddressMissing(t *testing.T) {
+	t.Parallel()
+
+	label := chatEventSenderLabel(
+		Event{
+			FromAgent:    "monitor",
+			FromStableID: "did:aw:monitor",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "monitor", DID: "did:aw:monitor"},
+		},
+	)
+
+	if label != "did:aw:monitor" {
+		t.Fatalf("label=%q, want did:aw:monitor", label)
+	}
+}
+
 func TestChatEventTrustAddressPrefersStableIDOverHandleAliasCollision(t *testing.T) {
 	t.Parallel()
 
@@ -2012,6 +2030,26 @@ func TestNormalizedChatEventNamesDoesNotUnionAliasCollisionFromStableIDHandleMat
 	for _, name := range names {
 		if name == "otherco.com/monitor" || name == "did:aw:other-monitor" {
 			t.Fatalf("names=%v should not include alias-collision participant", names)
+		}
+	}
+}
+
+func TestNormalizedChatEventNamesDoesNotFallbackToAliasWhenStrongIdentityConflicts(t *testing.T) {
+	t.Parallel()
+
+	names := normalizedChatEventNames(
+		Event{
+			FromAgent:    "bob",
+			FromStableID: "did:aw:mallory",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "bob", Address: "otherco.com/bob", DID: "did:aw:bob"},
+		},
+	)
+
+	for _, name := range names {
+		if name == "bob" {
+			t.Fatalf("names=%v should not include alias fallback for conflicting strong identity", names)
 		}
 	}
 }
@@ -5037,6 +5075,66 @@ func TestSendDoesNotMarkStableDIDTargetDisconnectedWhenAliasConnected(t *testing
 	}
 	if result.TargetNotConnected {
 		t.Fatalf("target_not_connected=%v, want false", result.TargetNotConnected)
+	}
+}
+
+func TestSendDoesNotAcceptReplyWhenStrongEventIdentityConflictsWithTarget(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetStableID := "did:aw:bob"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:aw:alice", Address: "acme.com/alice"},
+					{Alias: "bob", DID: targetStableID, Address: "otherco.com/bob"},
+				},
+				TargetsConnected: []string{targetStableID},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type":           "message",
+				"message_id":     "msg-reply-1",
+				"from_agent":     "bob",
+				"from_stable_id": "did:aw:mallory",
+				"body":           "spoofed",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			<-time.After(10 * time.Second)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := Send(ctx, mustClient(t, server.URL), "alice", []string{targetStableID}, "hello", SendOptions{Wait: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "timeout" {
+		t.Fatalf("status=%s, want timeout", result.Status)
 	}
 }
 

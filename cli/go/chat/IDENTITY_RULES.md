@@ -35,7 +35,9 @@ Incoming chat events are matched to participants in this order:
 3. `from_did`
 4. `from_agent`
 
-For the first three fields, matching must stay on the same strong tier first. Only if no strong participant match exists may the code fall back to weak alias/handle matching.
+For the first three fields, matching must stay on the same strong tier first.
+If strong sender identity fields conflict with concrete participant context, matching must fail closed rather than falling back to weak alias/handle matching.
+Weak alias matching is only allowed when the event does not carry strong sender identity fields, or when no concrete participant context exists to contradict the alias.
 
 ## Display Labels
 

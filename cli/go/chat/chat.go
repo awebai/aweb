@@ -391,6 +391,27 @@ func (row chatParticipantRow) concreteIdentityKey() string {
 	return row.Address
 }
 
+func (row chatParticipantRow) label() string {
+	if row.Address != "" {
+		return row.Address
+	}
+	if row.StableID != "" {
+		return row.StableID
+	}
+	if row.DID != "" {
+		return row.DID
+	}
+	return row.Alias
+}
+
+func preferredChatIdentityLabel(alias string, address string, stableID string, did string) string {
+	row := newChatParticipantRow(alias, address, did)
+	if stableID = strings.TrimSpace(stableID); stableID != "" {
+		row.StableID = stableID
+	}
+	return row.label()
+}
+
 func chatIdentityMatchesTarget(candidate string, target string) bool {
 	candidate = strings.TrimSpace(candidate)
 	target = strings.TrimSpace(target)
@@ -1447,8 +1468,11 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		names = append(names, value)
 	}
 
+	hasStrongIdentity := strings.TrimSpace(ev.FromAddress) != "" ||
+		strings.TrimSpace(ev.FromStableID) != "" ||
+		strings.TrimSpace(ev.FromDID) != ""
+
 	for _, value := range []string{
-		ev.FromAgent,
 		ev.FromAddress,
 		ev.FromStableID,
 		ev.FromDID,
@@ -1457,10 +1481,14 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		appendUnique(value)
 	}
 
-	for _, match := range matchingChatParticipantsForEventIdentity(participants, ev) {
+	matchedParticipants := matchingChatParticipantsForEventIdentity(participants, ev)
+	for _, match := range matchedParticipants {
 		appendUnique(strings.TrimSpace(match.Alias))
 		appendUnique(strings.TrimSpace(match.Address))
 		appendUnique(strings.TrimSpace(match.DID))
+	}
+	if !hasStrongIdentity || len(participants) == 0 {
+		appendUnique(ev.FromAgent)
 	}
 
 	return names
@@ -1609,29 +1637,37 @@ func chatTargetNameListsOverlap(left []string, right []string) bool {
 
 func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string {
 	for _, participant := range matchingChatParticipantsForEventIdentity(participants, ev) {
-		if value := strings.TrimSpace(participant.Address); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(participant.Alias); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(ev.FromStableID); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(participant.DID); value != "" {
+		if value := preferredChatIdentityLabel(
+			strings.TrimSpace(participant.Alias),
+			strings.TrimSpace(participant.Address),
+			func() string {
+				row := chatParticipantRowFromParticipant(participant)
+				if row.StableID != "" {
+					return row.StableID
+				}
+				return strings.TrimSpace(ev.FromStableID)
+			}(),
+			func() string {
+				row := chatParticipantRowFromParticipant(participant)
+				if row.DID != "" {
+					return row.DID
+				}
+				return strings.TrimSpace(ev.FromDID)
+			}(),
+		); value != "" {
 			return value
 		}
 	}
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
 		return value
 	}
-	if value := strings.TrimSpace(ev.FromAgent); value != "" {
-		return value
-	}
 	if value := strings.TrimSpace(ev.FromStableID); value != "" {
 		return value
 	}
-	return strings.TrimSpace(ev.FromDID)
+	if value := strings.TrimSpace(ev.FromDID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(ev.FromAgent)
 }
 
 func chatEventTrustAddress(ev Event, participants []awid.ChatParticipant) string {
@@ -1706,34 +1742,30 @@ func chatParticipantMatchesSelf(participant awid.ChatParticipant, client *awid.C
 }
 
 func chatParticipantLabel(ctx context.Context, client *awid.Client, participant awid.ChatParticipant) string {
-	if value := strings.TrimSpace(participant.Address); value != "" {
-		return value
+	row := chatParticipantRowFromParticipant(participant)
+	if row.Address != "" {
+		return row.Address
 	}
-	if value := strings.TrimSpace(participant.Alias); value != "" {
-		return value
+	if row.StableID != "" {
+		return row.StableID
 	}
-	if client != nil {
-		for _, identifier := range []string{strings.TrimSpace(participant.DID)} {
-			if identifier == "" {
-				continue
+	if row.DID != "" && client != nil {
+		if identity, err := client.ResolveIdentity(ctx, row.DID); err == nil && identity != nil {
+			if value := strings.TrimSpace(identity.Address); value != "" {
+				return value
 			}
-			if identity, err := client.ResolveIdentity(ctx, identifier); err == nil && identity != nil {
-				if value := strings.TrimSpace(identity.Address); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.Handle); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.StableID); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.DID); value != "" {
-					return value
-				}
+			if value := strings.TrimSpace(identity.StableID); value != "" {
+				return value
+			}
+			if value := strings.TrimSpace(identity.DID); value != "" {
+				return value
 			}
 		}
 	}
-	return strings.TrimSpace(participant.DID)
+	if row.DID != "" {
+		return row.DID
+	}
+	return row.Alias
 }
 
 func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
@@ -1750,6 +1782,9 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 		strong bool
 		kind   string
 	}
+	hasStrongIdentity := strings.TrimSpace(ev.FromAddress) != "" ||
+		strings.TrimSpace(ev.FromStableID) != "" ||
+		strings.TrimSpace(ev.FromDID) != ""
 	matchParticipants := func(candidate candidateSpec) []awid.ChatParticipant {
 		candidate.value = strings.TrimSpace(candidate.value)
 		if candidate.value == "" {
@@ -1762,9 +1797,7 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 					matches = append(matches, participant)
 				}
 			}
-			if len(matches) > 0 {
-				return matches
-			}
+			return matches
 		}
 		for _, participant := range participants {
 			if chatParticipantMatchesTarget(participant, candidate.value) {
@@ -1774,12 +1807,15 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 		return matches
 	}
 
-	for _, candidate := range []candidateSpec{
+	candidates := []candidateSpec{
 		{value: ev.FromAddress, strong: true, kind: "address"},
 		{value: ev.FromStableID, strong: true, kind: "did"},
 		{value: ev.FromDID, strong: true, kind: "did"},
-		{value: ev.FromAgent},
-	} {
+	}
+	if !hasStrongIdentity {
+		candidates = append(candidates, candidateSpec{value: ev.FromAgent})
+	}
+	for _, candidate := range candidates {
 		if matches := matchParticipants(candidate); len(matches) > 0 {
 			return matches
 		}
