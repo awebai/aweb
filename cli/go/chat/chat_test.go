@@ -2182,6 +2182,103 @@ func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIden
 	}
 }
 
+func TestFindSessionAliasAllowsAddressAndStableDIDRowsForSameIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-rich",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"acme.com/monitor"},
+						ParticipantDIDs:      []string{"did:aw:monitor"},
+						CreatedAt:            "2025-01-01T00:00:01Z",
+					},
+					{
+						SessionID:       "s-did-only",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2025-01-01T00:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-rich" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
+func TestFindSessionStableDIDHandleOnlyAllowsAddressAndStableDIDRowsForSameIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-rich",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"acme.com/monitor"},
+						ParticipantDIDs:      []string{"did:aw:monitor"},
+						CreatedAt:            "2025-01-01T00:00:01Z",
+					},
+					{
+						SessionID:       "s-did-only",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2025-01-01T00:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != "did:aw:monitor" {
+				t.Fatalf("identifier=%q", identifier)
+			}
+			return &awid.ResolvedIdentity{
+				DID:         "did:key:z6MkMonitor",
+				StableID:    "did:aw:monitor",
+				Handle:      "monitor",
+				ResolvedVia: "registry",
+			}, nil
+		},
+	})
+
+	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-rich" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
 func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	t.Parallel()
 
