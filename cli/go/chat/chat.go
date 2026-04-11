@@ -567,7 +567,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 				continue
 			}
 			matchCount++
-			if requireUniqueConcreteAlias && trackConcreteIdentity {
+			if trackConcreteIdentity {
 				for _, key := range matchedParticipantIdentityKeys(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
 					appendIdentityKey(key)
 				}
@@ -594,7 +594,9 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if requireUnique && matchCount > 1 {
-			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			if !(trackConcreteIdentity && len(identityKeys) == 1) {
+				return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			}
 		}
 		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
 			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
@@ -647,7 +649,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 				continue
 			}
 			matchCount++
-			if requireUniqueConcreteAlias && trackConcreteIdentity {
+			if trackConcreteIdentity {
 				for _, key := range matchedParticipantIdentityKeys(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
 					appendIdentityKey(key)
 				}
@@ -668,7 +670,9 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if requireUnique && matchCount > 1 {
-			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			if !(trackConcreteIdentity && len(identityKeys) == 1) {
+				return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+			}
 		}
 		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
 			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
