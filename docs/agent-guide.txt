@@ -375,7 +375,7 @@ aw instructions show                                        # Show active instru
 aw instructions history                                     # List versions
 aw instructions set --body-file <path>                      # Create and activate new version
 aw instructions set --body "..."                            # Create from inline text
-aw instructions activate <project-instructions-id>          # Switch to a previous version
+aw instructions activate <team-instructions-id>             # Switch to a previous version
 aw instructions reset                                       # Reset to server defaults
 ```
 
