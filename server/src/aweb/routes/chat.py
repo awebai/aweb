@@ -85,6 +85,7 @@ def _validate_signed_chat_payload(
     *,
     signed_payload: str | None,
     recipient_rows: list[dict[str, Any]] | None = None,
+    from_stable_id: str | None = None,
     body: str,
     from_did: str,
     message_id: str,
@@ -144,6 +145,12 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload body must match the chat message")
     if payload.get("from_did") != from_did:
         raise HTTPException(status_code=422, detail="signed_payload from_did must match the authenticated sender")
+    signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
+    if signed_from_stable_id and signed_from_stable_id != str(from_stable_id or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="signed_payload from_stable_id must match the authenticated sender",
+        )
     if payload.get("message_id") != message_id:
         raise HTTPException(status_code=422, detail="signed_payload message_id must match the chat message")
     if payload.get("timestamp") != timestamp:
@@ -499,6 +506,7 @@ async def create_or_send(
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
             recipient_rows=target_rows,
+            from_stable_id=auth.did_aw,
             body=payload.message,
             from_did=from_did,
             message_id=payload.message_id,
@@ -1258,6 +1266,7 @@ async def send_message(
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,
+            from_stable_id=auth.did_aw,
             body=payload.body,
             from_did=from_did,
             message_id=payload.message_id,

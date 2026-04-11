@@ -1489,6 +1489,71 @@ async def test_send_message_rejects_signed_payload_recipient_mismatch(aweb_cloud
 
 
 @pytest.mark.asyncio
+async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    timestamp = "2026-04-10T00:00:00Z"
+    message_id = "15111111-1111-4111-8111-111111111111"
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "signed hi",
+            "from": "did:aw:alice",
+            "from_did": "did:aw:alice",
+            "from_stable_id": "did:aw:mallory",
+            "message_id": message_id,
+            "subject": "signed subject",
+            "timestamp": timestamp,
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "type": "mail",
+        }
+    )
+    payload = {
+        "to_did": "did:aw:bob",
+        "subject": "signed subject",
+        "body": "signed hi",
+        "from_did": "did:aw:alice",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+    }
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 422, resp.text
+    assert "signed_payload from_stable_id must match the authenticated sender" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

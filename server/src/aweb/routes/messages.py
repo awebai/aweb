@@ -117,6 +117,7 @@ def _validate_signed_mail_payload(
     recipient: dict | None,
     to_agent_id: str | None,
     to_alias: str | None,
+    from_stable_id: str | None,
     priority: MessagePriority,
     subject: str,
     body: str,
@@ -170,6 +171,12 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload body must match the mail body")
     if payload.get("from_did") != from_did:
         raise HTTPException(status_code=422, detail="signed_payload from_did must match the authenticated sender")
+    signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
+    if signed_from_stable_id and signed_from_stable_id != str(from_stable_id or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="signed_payload from_stable_id must match the authenticated sender",
+        )
     if payload.get("message_id") != message_id:
         raise HTTPException(status_code=422, detail="signed_payload message_id must match the mail message")
     if payload.get("timestamp") != timestamp:
@@ -334,6 +341,7 @@ async def send_message(
             recipient=recipient,
             to_agent_id=to_agent_id,
             to_alias=to_alias,
+            from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
             body=payload.body,
