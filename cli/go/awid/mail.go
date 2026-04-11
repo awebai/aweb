@@ -55,8 +55,12 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if to == "" {
 		to = payload.ToAgentID
 	}
-	if strings.TrimSpace(payload.ToDID) != "" {
-		to = strings.TrimSpace(payload.ToDID)
+	toStableID := strings.TrimSpace(payload.ToStableID)
+	toDID := strings.TrimSpace(payload.ToDID)
+	if toStableID != "" {
+		to = toStableID
+	} else if toDID != "" {
+		to = toDID
 	}
 	if strings.TrimSpace(payload.ToAddress) != "" {
 		to = strings.TrimSpace(payload.ToAddress)
@@ -72,23 +76,26 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		}
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:    from,
-		To:      to,
-		ToDID:   strings.TrimSpace(payload.ToDID),
-		Type:    "mail",
-		Subject: payload.Subject,
-		Body:    payload.Body,
+		From:       from,
+		To:         to,
+		ToDID:      toDID,
+		ToStableID: toStableID,
+		Type:       "mail",
+		Subject:    payload.Subject,
+		Body:       payload.Body,
 	})
 	if err != nil {
 		return nil, err
 	}
-	payload.FromDID = sf.FromDID
-	payload.ToDID = sf.ToDID
-	payload.ToStableID = sf.ToStableID
-	payload.Signature = sf.Signature
-	payload.MessageID = sf.MessageID
-	payload.Timestamp = sf.Timestamp
-	payload.SignedPayload = sf.SignedPayload
+	if c.signingKey != nil {
+		payload.FromDID = sf.FromDID
+		payload.ToDID = sf.ToDID
+		payload.ToStableID = sf.ToStableID
+		payload.Signature = sf.Signature
+		payload.MessageID = sf.MessageID
+		payload.Timestamp = sf.Timestamp
+		payload.SignedPayload = sf.SignedPayload
+	}
 
 	var out SendMessageResponse
 	if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
