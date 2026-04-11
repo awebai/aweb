@@ -778,6 +778,96 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_replay_includes_sender_stable_identity_for_current_key(aweb_cloud_db, monkeypatch):
+    session_id = uuid4()
+    message_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice')
+        """,
+        uuid4(),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, $2, 'did:key:z6MkAliceCurrent', 'alice', 'hello', $3)
+        """,
+        message_id,
+        session_id,
+        created_at + timedelta(seconds=30),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    class _FakePubSub:
+        async def subscribe(self, *_args, **_kwargs):
+            return None
+
+        async def get_message(self, *_args, **_kwargs):
+            return None
+
+        async def close(self):
+            return None
+
+    class _FakeRedis:
+        def pubsub(self):
+            return _FakePubSub()
+
+    app.state.redis = _FakeRedis()
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkBob",
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+    monkeypatch.setattr(chat_routes, "register_waiting", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_routes, "unregister_waiting", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_routes, "get_waiting_agents", AsyncMock(return_value=[]))
+
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    after = created_at.isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=5.0) as client:
+        resp = await client.get(
+            f"/v1/chat/sessions/{session_id}/stream",
+            params={"deadline": deadline, "after": after},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert '"from_did": "did:key:z6MkAliceCurrent"' in resp.text
+    assert '"from_stable_id": "did:aw:alice"' in resp.text
+    assert '"from_address": "acme.com/alice"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_cloud_db):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)

@@ -870,18 +870,20 @@ async def _sse_events(
                 after,
             )
             last_message_at = recent[-1]["created_at"] if recent else after
-            waiting = set(await get_waiting_agents(redis, session_id_str, list({str(r["from_did"]) for r in recent if r.get("from_did")})))
-            address_map = await _lookup_addresses_by_did(db, [str(r["from_did"]) for r in recent if r.get("from_did")])
+            sender_dids = [str(r["from_did"]) for r in recent if r.get("from_did")]
+            waiting = set(await get_waiting_agents(redis, session_id_str, list(set(sender_dids))))
+            identity_map = await _lookup_identity_metadata_by_did(db, sender_dids)
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
-                from_address = address_map.get(from_did, row["from_alias"])
+                from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
                     "message_id": str(row["message_id"]),
                     "from_agent": row["from_alias"],
                     "from_address": from_address,
+                    "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                     "body": row["body"],
                     "sender_leaving": bool(row["sender_leaving"]),
                     "sender_waiting": from_did in waiting,
@@ -959,18 +961,19 @@ async def _sse_events(
                 )
                 sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
                 sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
-                address_map = await _lookup_addresses_by_did(db, sender_dids)
+                identity_map = await _lookup_identity_metadata_by_did(db, sender_dids)
                 for row in new_msgs:
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
                     from_did = (row.get("from_did") or "").strip()
-                    from_address = address_map.get(from_did, row["from_alias"])
+                    from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
                         "message_id": str(row["message_id"]),
                         "from_agent": row["from_alias"],
                         "from_address": from_address,
+                        "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                         "body": row["body"],
                         "sender_leaving": bool(row["sender_leaving"]),
                         "sender_waiting": from_did in sender_waiting,
