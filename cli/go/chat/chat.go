@@ -505,16 +505,14 @@ func normalizeMatchedIdentityKeys(ctx context.Context, client *awid.Client, keys
 		if key == "" {
 			continue
 		}
-		if strings.HasPrefix(key, "did:") {
-			if identity, err := client.ResolveIdentity(ctx, key); err == nil && identity != nil {
-				if stableID := strings.TrimSpace(identity.StableID); stableID != "" {
-					appendUnique(stableID)
-					continue
-				}
-				if did := strings.TrimSpace(identity.DID); did != "" {
-					appendUnique(did)
-					continue
-				}
+		if identity, err := client.ResolveIdentity(ctx, key); err == nil && identity != nil {
+			if stableID := strings.TrimSpace(identity.StableID); stableID != "" {
+				appendUnique(stableID)
+				continue
+			}
+			if did := strings.TrimSpace(identity.DID); did != "" {
+				appendUnique(did)
+				continue
 			}
 		}
 		appendUnique(key)
