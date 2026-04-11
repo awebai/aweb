@@ -237,6 +237,72 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _team_auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _team_auth_override
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id = "11111111-1111-4111-8111-111111111111"
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "signed hello",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "to_aliases": ["bob"],
+        "message": "tampered hello",
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "signed_payload body must match the chat message"
+
+
+@pytest.mark.asyncio
 async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -288,6 +354,75 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aw
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["delivered"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    session_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ('backend:acme.com', 'alice')
+        RETURNING session_id
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:aw:alice', 'alice'),
+            ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    registry = AsyncMock()
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _team_auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _team_auth_override
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id = "22222222-2222-4222-8222-222222222222"
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "signed reply",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "body": "tampered reply",
+        "from_did": alice_did_key,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+        "message_id": message_id,
+        "timestamp": timestamp,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "signed_payload body must match the chat message"
 
 
 @pytest.mark.asyncio

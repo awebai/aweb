@@ -81,6 +81,34 @@ def _parse_signed_timestamp(value: str) -> datetime:
     return dt
 
 
+def _validate_signed_chat_payload(
+    *,
+    signed_payload: str | None,
+    body: str,
+    from_did: str,
+    message_id: str,
+    timestamp: str,
+) -> None:
+    if signed_payload is None:
+        return
+    try:
+        payload = json.loads(signed_payload)
+    except Exception:
+        raise HTTPException(status_code=422, detail="signed_payload must be valid JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
+    if payload.get("type") != "chat":
+        raise HTTPException(status_code=422, detail="signed_payload type must be chat")
+    if payload.get("body") != body:
+        raise HTTPException(status_code=422, detail="signed_payload body must match the chat message")
+    if payload.get("from_did") != from_did:
+        raise HTTPException(status_code=422, detail="signed_payload from_did must match the authenticated sender")
+    if payload.get("message_id") != message_id:
+        raise HTTPException(status_code=422, detail="signed_payload message_id must match the chat message")
+    if payload.get("timestamp") != timestamp:
+        raise HTTPException(status_code=422, detail="signed_payload timestamp must match the chat message")
+
+
 def _actor_did(auth: MessagingAuth) -> str:
     return (auth.did_aw or auth.did_key or "").strip()
 
@@ -377,13 +405,21 @@ async def create_or_send(
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
-        if payload.from_did.strip() not in set(_actor_dids(auth)):
+        from_did = payload.from_did.strip()
+        if from_did not in set(_actor_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
                 status_code=422,
                 detail="message_id and timestamp are required when signature is provided",
             )
+        _validate_signed_chat_payload(
+            signed_payload=payload.signed_payload,
+            body=payload.message,
+            from_did=from_did,
+            message_id=payload.message_id,
+            timestamp=payload.timestamp,
+        )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
@@ -1123,13 +1159,21 @@ async def send_message(
     if payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
-        if payload.from_did.strip() not in set(_actor_dids(auth)):
+        from_did = payload.from_did.strip()
+        if from_did not in set(_actor_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
                 status_code=422,
                 detail="message_id and timestamp are required when signature is provided",
             )
+        _validate_signed_chat_payload(
+            signed_payload=payload.signed_payload,
+            body=payload.body,
+            from_did=from_did,
+            message_id=payload.message_id,
+            timestamp=payload.timestamp,
+        )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
 
