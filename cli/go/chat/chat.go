@@ -368,6 +368,67 @@ func exactParticipantMatch(participants []string, participantDIDs []string, part
 	return false
 }
 
+func matchedParticipantIdentityKeys(participants []string, participantDIDs []string, participantAddresses []string, target string) []string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	keys := []string{}
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range keys {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		keys = append(keys, value)
+	}
+	maxLen := len(participants)
+	if len(participantDIDs) > maxLen {
+		maxLen = len(participantDIDs)
+	}
+	if len(participantAddresses) > maxLen {
+		maxLen = len(participantAddresses)
+	}
+	for i := 0; i < maxLen; i++ {
+		alias := ""
+		if i < len(participants) {
+			alias = strings.TrimSpace(participants[i])
+		}
+		address := ""
+		if i < len(participantAddresses) {
+			address = strings.TrimSpace(participantAddresses[i])
+		}
+		did := ""
+		if i < len(participantDIDs) {
+			did = strings.TrimSpace(participantDIDs[i])
+		}
+		matched := false
+		for _, candidate := range []string{alias, address, did} {
+			if chatSessionIdentityMatchesTarget(candidate, target) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if address != "" {
+			appendUnique(address)
+			continue
+		}
+		if did != "" {
+			appendUnique(did)
+			continue
+		}
+		appendUnique(alias)
+	}
+	return keys
+}
+
 func uniqueHandleParticipantMatch(participants []string, _ []string, _ []string, target string) bool {
 	handle := addressHandle(target)
 	if handle == "" {
@@ -420,22 +481,43 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		targetAlias != "" &&
 		targetAlias != rawTarget &&
 		!strings.Contains(targetAlias, "/")
+	requireUniqueConcreteAlias := rawTarget != "" &&
+		!strings.HasPrefix(rawTarget, "did:") &&
+		!strings.Contains(rawTarget, "/")
 	pendingResp, err := client.ChatPending(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
 
-	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool) (string, bool, error) {
+	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, bool, error) {
 		var bestPendingID string
 		var bestPendingWaiting bool
 		var bestPendingActivity string
 		bestPendingSize := 0
 		matchCount := 0
+		identityKeys := []string{}
+		appendIdentityKey := func(value string) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return
+			}
+			for _, existing := range identityKeys {
+				if strings.EqualFold(existing, value) {
+					return
+				}
+			}
+			identityKeys = append(identityKeys, value)
+		}
 		for _, p := range pendingResp.Pending {
 			if !match(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++
+			if requireUniqueConcreteAlias && trackConcreteIdentity {
+				for _, key := range matchedParticipantIdentityKeys(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
+					appendIdentityKey(key)
+				}
+			}
 			better := bestPendingSize == 0
 			if !better {
 				// Prefer sender_waiting over non-waiting.
@@ -459,19 +541,22 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		if requireUnique && matchCount > 1 {
 			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
 		}
+		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		}
 		if bestPendingID != "" {
 			return bestPendingID, bestPendingWaiting, nil
 		}
 		return "", false, nil
 	}
-	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, requireUniqueExact)
+	bestPendingID, bestPendingWaiting, err := selectPending(exactParticipantMatch, requireUniqueExact, true)
 	if err != nil {
 		return "", false, err
 	}
 	if bestPendingID != "" {
 		return bestPendingID, bestPendingWaiting, nil
 	}
-	bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true)
+	bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true, false)
 	if err != nil {
 		return "", false, err
 	}
@@ -484,16 +569,34 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 	if err != nil {
 		return "", false, fmt.Errorf("listing chat sessions: %w", err)
 	}
-	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool) (string, error) {
+	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, error) {
 		var bestSessionID string
 		var bestSessionCreated string
 		bestSessionSize := 0
 		matchCount := 0
+		identityKeys := []string{}
+		appendIdentityKey := func(value string) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return
+			}
+			for _, existing := range identityKeys {
+				if strings.EqualFold(existing, value) {
+					return
+				}
+			}
+			identityKeys = append(identityKeys, value)
+		}
 		for _, s := range sessionsResp.Sessions {
 			if !match(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
 				continue
 			}
 			matchCount++
+			if requireUniqueConcreteAlias && trackConcreteIdentity {
+				for _, key := range matchedParticipantIdentityKeys(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
+					appendIdentityKey(key)
+				}
+			}
 			better := bestSessionSize == 0
 			if !better {
 				if len(s.Participants) < bestSessionSize {
@@ -511,16 +614,19 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		if requireUnique && matchCount > 1 {
 			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
 		}
+		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		}
 		return bestSessionID, nil
 	}
-	bestSessionID, err := selectSession(exactParticipantMatch, requireUniqueExact)
+	bestSessionID, err := selectSession(exactParticipantMatch, requireUniqueExact, true)
 	if err != nil {
 		return "", false, err
 	}
 	if bestSessionID != "" {
 		return bestSessionID, false, nil
 	}
-	bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true)
+	bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true, false)
 	if err != nil {
 		return "", false, err
 	}
