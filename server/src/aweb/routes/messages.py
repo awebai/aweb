@@ -207,6 +207,9 @@ async def send_message(
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
+        if payload.to_agent_id is not None and payload.to_agent_id.strip():
+            if payload.to_agent_id.strip() != str(recipient["agent_id"]):
+                raise HTTPException(status_code=422, detail="to_agent_id must match the to_address recipient")
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias") or address
     elif to_agent_id is not None:
