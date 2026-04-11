@@ -2561,6 +2561,120 @@ func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.
 	}
 }
 
+func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := awid.ComputeDIDKey(senderPub)
+
+	receiverOldPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverOldDID := awid.ComputeDIDKey(receiverOldPub)
+	receiverStableID := awid.ComputeStableID(receiverOldPub)
+
+	receiverNewPub, receiverNewPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverNewDID := awid.ComputeDIDKey(receiverNewPub)
+
+	sentMsgID := "msg-sent-rotation"
+	replyMsgID := "msg-reply-rotation"
+	replyTimestamp := "2026-04-10T00:00:00Z"
+
+	replyEnv := &awid.MessageEnvelope{
+		From:       "myteam/architect",
+		FromDID:    senderDID,
+		To:         receiverStableID,
+		ToDID:      receiverOldDID,
+		ToStableID: receiverStableID,
+		Type:       "chat",
+		Body:       "hi after rotation!",
+		Timestamp:  replyTimestamp,
+		MessageID:  replyMsgID,
+	}
+	replySig, err := awid.SignMessage(senderPriv, replyEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replySignedPayload := awid.CanonicalJSON(replyEnv)
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			var req awid.ChatCreateSessionRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "implementer", DID: receiverStableID, Address: "myteam/implementer"},
+					{Alias: "architect", DID: "did:aw:architect", Address: "myteam/architect"},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "implementer", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			replyData, _ := json.Marshal(map[string]any{
+				"type":           "message",
+				"message_id":     replyMsgID,
+				"from_agent":     "architect",
+				"from_address":   "myteam/architect",
+				"body":           "hi after rotation!",
+				"from_did":       senderDID,
+				"signature":      replySig,
+				"signing_key_id": senderDID,
+				"signed_payload": replySignedPayload,
+				"timestamp":      replyTimestamp,
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", replyData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client, err := awid.NewWithIdentity(server.URL, receiverNewPriv, receiverNewDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetAddress("myteam/implementer")
+	client.SetStableID(receiverStableID)
+
+	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "replied" {
+		t.Fatalf("status=%s", result.Status)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d, want 1", len(result.Events))
+	}
+	if result.Events[0].VerificationStatus != awid.Verified {
+		t.Fatalf("verification_status=%s, want verified", result.Events[0].VerificationStatus)
+	}
+}
+
 func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 	t.Parallel()
 

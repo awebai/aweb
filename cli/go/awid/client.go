@@ -342,8 +342,8 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
 // signature verification and any sender-side trust normalization.
-func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID string) VerificationStatus {
-	return c.checkRecipientBinding(status, toDID)
+func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
+	return c.checkRecipientBinding(status, toDID, toStableID)
 }
 
 func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) VerificationStatus {
@@ -569,11 +569,20 @@ func (c *Client) savePinStore() {
 }
 
 // checkRecipientBinding downgrades a Verified status to IdentityMismatch
-// if the message's to_did doesn't match the client's own DID.
-// Returns the status unchanged if to_did is empty, the client has no DID,
-// or the DIDs match.
-func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string) VerificationStatus {
-	if status != Verified || toDID == "" || c.did == "" {
+// if the message's recipient binding doesn't match the client's identity.
+// A matching stable binding is sufficient across local key rotation; otherwise
+// we fall back to the current did:key binding.
+func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
+	if status != Verified {
+		return status
+	}
+	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {
+		if strings.EqualFold(strings.TrimSpace(toStableID), stableID) {
+			return status
+		}
+		return IdentityMismatch
+	}
+	if toDID == "" || c.did == "" {
 		return status
 	}
 	if toDID != c.did {

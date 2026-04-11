@@ -2948,6 +2948,80 @@ func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 	}
 }
 
+func TestInboxStableRecipientBindingSurvivesLocalKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderPub)
+
+	receiverOldPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverOldDID := ComputeDIDKey(receiverOldPub)
+	receiverStableID := ComputeStableID(receiverOldPub)
+
+	receiverNewPub, receiverNewPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverNewDID := ComputeDIDKey(receiverNewPub)
+
+	env := &MessageEnvelope{
+		From:         "otherco/alice",
+		FromDID:      senderDID,
+		To:           receiverStableID,
+		ToDID:        receiverOldDID,
+		ToStableID:   receiverStableID,
+		Type:         "mail",
+		Body:         "hello after your rotation",
+		Timestamp:    "2026-04-10T00:00:00Z",
+		MessageID:    "msg-rotation-mail",
+		SigningKeyID: senderDID,
+	}
+	sig, err := SignMessage(senderPriv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{{
+				"message_id":     "msg-rotation-mail",
+				"from_did":       senderDID,
+				"to_did":         receiverOldDID,
+				"to_stable_id":   receiverStableID,
+				"body":           "hello after your rotation",
+				"created_at":     "2026-04-10T00:00:00Z",
+				"signature":      sig,
+				"signing_key_id": senderDID,
+				"signed_payload": CanonicalJSON(env),
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, receiverNewPriv, receiverNewDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(receiverStableID)
+
+	resp, err := c.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("len=%d", len(resp.Messages))
+	}
+	if resp.Messages[0].VerificationStatus != Verified {
+		t.Fatalf("VerificationStatus=%q, want %q", resp.Messages[0].VerificationStatus, Verified)
+	}
+}
+
 func TestInboxTOFUPinFirstContact(t *testing.T) {
 	t.Parallel()
 
