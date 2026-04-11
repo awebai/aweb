@@ -135,6 +135,35 @@ func TestChatStreamUsesIdentityAuthHeadersWithoutTeamCert(t *testing.T) {
 	}
 }
 
+func TestChatStreamCapturesLatestClientVersionFromHeader(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Latest-Client-Version", "v0.99.0")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message\ndata: {\"ok\":true}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := c.LatestClientVersion(); v != "" {
+		t.Fatalf("before request: LatestClientVersion=%q, want empty", v)
+	}
+
+	stream, err := c.ChatStream(context.Background(), "sess", time.Now().Add(2*time.Second), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if v := c.LatestClientVersion(); v != "v0.99.0" {
+		t.Fatalf("after request: LatestClientVersion=%q, want v0.99.0", v)
+	}
+}
+
 func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	t.Parallel()
 
