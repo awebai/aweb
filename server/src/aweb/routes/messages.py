@@ -139,6 +139,9 @@ async def send_message(
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_did must match the to_stable_id recipient")
+        if payload.to_agent_id is not None and payload.to_agent_id.strip():
+            if payload.to_agent_id.strip() != str(recipient["agent_id"]):
+                raise HTTPException(status_code=422, detail="to_agent_id must match the to_stable_id recipient")
         if payload.to_address is not None and payload.to_address.strip():
             if registry_client is None:
                 raise HTTPException(status_code=503, detail="AWID registry unavailable")
