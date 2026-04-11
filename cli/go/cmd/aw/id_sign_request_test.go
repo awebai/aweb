@@ -196,10 +196,12 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	stableID := awid.ComputeStableID(pub)
 	var sawAuthorization bool
 	var sawTimestamp bool
+	var sawStableID string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuthorization = strings.TrimSpace(r.Header.Get("Authorization")) != ""
 		sawTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp")) != ""
+		sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("pong"))
 	}))
@@ -227,6 +229,9 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	}
 	if !sawAuthorization || !sawTimestamp {
 		t.Fatalf("raw request missing DIDKey auth headers: authorization=%v timestamp=%v", sawAuthorization, sawTimestamp)
+	}
+	if sawStableID != stableID {
+		t.Fatalf("raw request X-AWEB-DID-AW=%q want %q", sawStableID, stableID)
 	}
 }
 

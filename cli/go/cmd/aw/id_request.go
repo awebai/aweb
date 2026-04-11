@@ -32,6 +32,7 @@ type idRequestOutput struct {
 
 type localSigningIdentity struct {
 	DIDKey         string
+	StableID       string
 	SigningKey     ed25519.PrivateKey
 	SigningKeyPath string
 	Custody        string
@@ -137,6 +138,9 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	}
 	headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 	headers.Set("X-AWEB-Timestamp", timestamp)
+	if strings.TrimSpace(identity.StableID) != "" {
+		headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
+	}
 	if len(bodyBytes) > 0 && strings.TrimSpace(headers.Get("Content-Type")) == "" {
 		headers.Set("Content-Type", "application/json")
 	}
@@ -209,6 +213,7 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 	}
 	return &localSigningIdentity{
 		DIDKey:         didKey,
+		StableID:       strings.TrimSpace(sel.StableID),
 		SigningKey:     signingKey,
 		SigningKeyPath: strings.TrimSpace(sel.SigningKey),
 		Custody:        strings.TrimSpace(sel.Custody),
