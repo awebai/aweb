@@ -21,6 +21,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/identityutil"
 	"github.com/joho/godotenv"
 )
 
@@ -809,17 +810,7 @@ func selectionAddress(sel *awconfig.Selection) string {
 }
 
 func handleFromAddress(address string) string {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return ""
-	}
-	if idx := strings.LastIndexByte(address, '/'); idx >= 0 && idx+1 < len(address) {
-		return strings.TrimSpace(address[idx+1:])
-	}
-	if idx := strings.LastIndexByte(address, '~'); idx >= 0 && idx+1 < len(address) {
-		return strings.TrimSpace(address[idx+1:])
-	}
-	return address
+	return identityutil.HandleFromAddress(address)
 }
 
 func ensureWorktreeContextAt(workingDir string) error {

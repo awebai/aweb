@@ -285,29 +285,19 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 	if lastFromStableID == "" {
 		lastFromStableID = mappedStableID
 	}
-	if lastFromStableID != "" {
-		for _, selfDID := range selfDIDs {
-			if selfDID != "" && strings.EqualFold(lastFromStableID, selfDID) {
-				return true
-			}
-		}
-		return false
-	}
 	lastFromDID := strings.TrimSpace(pending.LastFromDID)
-	if lastFromDID == "" {
+	if lastFromDID == "" && lastFromStableID == "" {
 		lastFromDID = mappedDID
-	}
-	if lastFromDID != "" {
-		for _, selfDID := range selfDIDs {
-			if selfDID != "" && strings.EqualFold(lastFromDID, selfDID) {
-				return true
-			}
-		}
-		return false
 	}
 	lastFromAddress := strings.TrimSpace(pending.LastFromAddress)
 	if lastFromAddress == "" {
 		lastFromAddress = mappedAddress
+	}
+	if lastFromStableID != "" {
+		return identityValueMatchesSelf(lastFromStableID, "", selfDIDs...)
+	}
+	if lastFromDID != "" {
+		return identityValueMatchesSelf(lastFromDID, "", selfDIDs...)
 	}
 	if lastFromAddress != "" {
 		selfAddress = strings.TrimSpace(selfAddress)
@@ -316,7 +306,7 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 		}
 		selfAlias = strings.TrimSpace(selfAlias)
 		if selfAlias != "" && len(selfDIDs) == 0 {
-			return strings.EqualFold(handleFromAddress(lastFromAddress), selfAlias)
+			return identityValueMatchesSelf(lastFromAddress, selfAlias)
 		}
 		return false
 	}
