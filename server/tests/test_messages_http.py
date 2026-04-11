@@ -246,6 +246,71 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
 
 
 @pytest.mark.asyncio
+async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    captured: dict[str, dict] = {}
+
+    async def _capture(event_type: str, context: dict) -> None:
+        captured["event_type"] = event_type
+        captured["context"] = dict(context)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.on_mutation = _capture
+
+    payload = {"to_did": "did:aw:bob", "subject": "hello", "body": "hi"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", headers=headers, content=body)
+
+    assert resp.status_code == 200, resp.text
+    assert captured["event_type"] == "message.sent"
+    assert captured["context"]["from_did_aw"] == "did:aw:alice"
+
+
+@pytest.mark.asyncio
 async def test_messages_inbox_rejects_invalid_identity_signature(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     other_sk, _, _ = _make_keypair()
