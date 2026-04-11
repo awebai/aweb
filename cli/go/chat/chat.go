@@ -1181,6 +1181,22 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		if p.SessionID != sessionID {
 			continue
 		}
+		fromAddress := strings.TrimSpace(p.LastFromAddress)
+		if fromAddress == "" {
+			candidate := ""
+			for _, participantAddress := range p.ParticipantAddresses {
+				participantAddress = strings.TrimSpace(participantAddress)
+				if participantAddress == "" {
+					continue
+				}
+				if candidate != "" && !strings.EqualFold(candidate, participantAddress) {
+					candidate = ""
+					break
+				}
+				candidate = participantAddress
+			}
+			fromAddress = candidate
+		}
 		fromStableID := ""
 		fromDID := ""
 		if value := strings.TrimSpace(p.LastFromStableID); value != "" {
@@ -1219,7 +1235,7 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 				{
 					Type:         "message",
 					FromAgent:    p.LastFrom,
-					FromAddress:  p.LastFromAddress,
+					FromAddress:  fromAddress,
 					FromStableID: fromStableID,
 					FromDID:      fromDID,
 					Body:         p.LastMessage,
