@@ -2078,6 +2078,54 @@ func TestChatCreateSessionSignedPayloadIncludesReplyAndLeaving(t *testing.T) {
 	}
 }
 
+func TestChatCreateSessionSignedPayloadIncludesWaitSeconds(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess-1",
+			"message_id": "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	wait := 120
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAliases:   []string{"bob"},
+		Message:     "hey",
+		WaitSeconds: &wait,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	if env["wait_seconds"] != float64(wait) {
+		t.Fatalf("signed payload wait_seconds=%v, want %d", env["wait_seconds"], wait)
+	}
+}
+
 func TestChatCreateSessionSupportsIdentityTargets(t *testing.T) {
 	t.Parallel()
 

@@ -195,6 +195,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		To:            to,
 		Type:          "chat",
 		Body:          payload.Message,
+		WaitSeconds:   payload.WaitSeconds,
 		ReplyTo:       payload.ReplyTo,
 		SenderLeaving: payload.Leaving,
 	}

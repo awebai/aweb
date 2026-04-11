@@ -70,6 +70,7 @@ type MessageEnvelope struct {
 	ToDID         string `json:"to_did"`
 	Type          string `json:"type"`
 	Priority      string `json:"priority,omitempty"`
+	WaitSeconds   *int   `json:"wait_seconds,omitempty"`
 	Subject       string `json:"subject"`
 	Body          string `json:"body"`
 	Timestamp     string `json:"timestamp"`
@@ -312,6 +313,9 @@ func CanonicalJSON(env *MessageEnvelope) string {
 	}
 	if env.ToStableID != "" {
 		fields = append(fields, field{"to_stable_id", jsonStringValue(env.ToStableID)})
+	}
+	if env.WaitSeconds != nil {
+		fields = append(fields, field{"wait_seconds", strconv.Itoa(*env.WaitSeconds)})
 	}
 
 	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
