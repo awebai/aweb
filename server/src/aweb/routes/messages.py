@@ -224,6 +224,12 @@ async def send_message(
         ) if auth.team_id else await get_agent_by_id(db, agent_id=to_agent_id)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
+        if payload.to_alias is not None and payload.to_alias.strip():
+            if auth.team_id is None:
+                raise HTTPException(status_code=422, detail="to_alias requires team context")
+            bound_recipient = await get_agent_by_alias(db, team_id=auth.team_id, alias=payload.to_alias.strip())
+            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+                raise HTTPException(status_code=422, detail="to_alias must match the to_agent_id recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         to_alias = recipient.get("alias")
     elif payload.to_alias is not None:
