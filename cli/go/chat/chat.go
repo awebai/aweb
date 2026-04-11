@@ -368,6 +368,17 @@ func exactParticipantMatch(participants []string, participantDIDs []string, part
 	return false
 }
 
+func participantIdentityCount(participants []string, participantDIDs []string, participantAddresses []string) int {
+	count := len(participants)
+	if len(participantDIDs) > count {
+		count = len(participantDIDs)
+	}
+	if len(participantAddresses) > count {
+		count = len(participantAddresses)
+	}
+	return count
+}
+
 func matchedParticipantIdentityKeys(participants []string, participantDIDs []string, participantAddresses []string, target string) []string {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -491,7 +502,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 		var bestPendingID string
 		var bestPendingWaiting bool
 		var bestPendingActivity string
-		bestPendingSize := 0
+		bestPendingSize := -1
 		matchCount := 0
 		identityKeys := []string{}
 		appendIdentityKey := func(value string) {
@@ -516,23 +527,24 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 					appendIdentityKey(key)
 				}
 			}
-			better := bestPendingSize == 0
+			size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
+			better := bestPendingSize < 0
 			if !better {
 				// Prefer sender_waiting over non-waiting.
 				if p.SenderWaiting && !bestPendingWaiting {
 					better = true
 				} else if !p.SenderWaiting && bestPendingWaiting {
 					better = false
-				} else if len(p.Participants) < bestPendingSize {
+				} else if size < bestPendingSize {
 					better = true
-				} else if len(p.Participants) == bestPendingSize && p.LastActivity > bestPendingActivity {
+				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
 					better = true
 				}
 			}
 			if better {
 				bestPendingID = p.SessionID
 				bestPendingWaiting = p.SenderWaiting
-				bestPendingSize = len(p.Participants)
+				bestPendingSize = size
 				bestPendingActivity = p.LastActivity
 			}
 		}
@@ -570,7 +582,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, error) {
 		var bestSessionID string
 		var bestSessionCreated string
-		bestSessionSize := 0
+		bestSessionSize := -1
 		matchCount := 0
 		identityKeys := []string{}
 		appendIdentityKey := func(value string) {
@@ -595,17 +607,18 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 					appendIdentityKey(key)
 				}
 			}
-			better := bestSessionSize == 0
+			size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
+			better := bestSessionSize < 0
 			if !better {
-				if len(s.Participants) < bestSessionSize {
+				if size < bestSessionSize {
 					better = true
-				} else if len(s.Participants) == bestSessionSize && s.CreatedAt > bestSessionCreated {
+				} else if size == bestSessionSize && s.CreatedAt > bestSessionCreated {
 					better = true
 				}
 			}
 			if better {
 				bestSessionID = s.SessionID
-				bestSessionSize = len(s.Participants)
+				bestSessionSize = size
 				bestSessionCreated = s.CreatedAt
 			}
 		}
