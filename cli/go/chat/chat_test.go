@@ -2376,6 +2376,136 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressAndCurrentDIDRowsForSameIden
 	}
 }
 
+func TestFindSessionStableDIDHandleOnlyAllowsStableAndCurrentDIDRowsForSameIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:       "s-stable",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2025-01-01T00:00:01Z",
+					},
+					{
+						SessionID:       "s-current",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:key:z6MkMonitor"},
+						CreatedAt:       "2025-01-01T00:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case "did:aw:monitor":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkMonitor",
+					StableID:    "did:aw:monitor",
+					Handle:      "monitor",
+					ResolvedVia: "registry",
+				}, nil
+			case "did:key:z6MkMonitor":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkMonitor",
+					StableID:    "did:aw:monitor",
+					Handle:      "monitor",
+					ResolvedVia: "registry",
+				}, nil
+			default:
+				t.Fatalf("identifier=%q", identifier)
+				return nil, nil
+			}
+		},
+	})
+
+	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-stable" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
+func TestFindSessionAliasAllowsStableAndCurrentDIDRowsForSameIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:       "s-stable",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2025-01-01T00:00:01Z",
+					},
+					{
+						SessionID:       "s-current",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:key:z6MkMonitor"},
+						CreatedAt:       "2025-01-01T00:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case "did:aw:monitor":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkMonitor",
+					StableID:    "did:aw:monitor",
+					Handle:      "monitor",
+					ResolvedVia: "registry",
+				}, nil
+			case "did:key:z6MkMonitor":
+				return &awid.ResolvedIdentity{
+					DID:         "did:key:z6MkMonitor",
+					StableID:    "did:aw:monitor",
+					Handle:      "monitor",
+					ResolvedVia: "registry",
+				}, nil
+			default:
+				t.Fatalf("identifier=%q", identifier)
+				return nil, nil
+			}
+		},
+	})
+
+	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-stable" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
 func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	t.Parallel()
 

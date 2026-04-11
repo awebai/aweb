@@ -483,6 +483,45 @@ func matchedParticipantIdentityKeys(participants []string, participantDIDs []str
 	return keys
 }
 
+func normalizeMatchedIdentityKeys(ctx context.Context, client *awid.Client, keys []string) []string {
+	if len(keys) == 0 || client == nil {
+		return keys
+	}
+	normalized := []string{}
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range normalized {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		normalized = append(normalized, value)
+	}
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if strings.HasPrefix(key, "did:") {
+			if identity, err := client.ResolveIdentity(ctx, key); err == nil && identity != nil {
+				if stableID := strings.TrimSpace(identity.StableID); stableID != "" {
+					appendUnique(stableID)
+					continue
+				}
+				if did := strings.TrimSpace(identity.DID); did != "" {
+					appendUnique(did)
+					continue
+				}
+			}
+		}
+		appendUnique(key)
+	}
+	return normalized
+}
+
 func uniqueHandleParticipantMatch(participants []string, _ []string, _ []string, target string) bool {
 	handle := addressHandle(target)
 	if handle == "" {
@@ -594,9 +633,15 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if requireUnique && matchCount > 1 {
+			if trackConcreteIdentity && len(identityKeys) > 1 {
+				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
+			}
 			if !(trackConcreteIdentity && len(identityKeys) == 1) {
 				return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
 			}
+		}
+		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
 		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
 			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
@@ -670,9 +715,15 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 		}
 		if requireUnique && matchCount > 1 {
+			if trackConcreteIdentity && len(identityKeys) > 1 {
+				identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
+			}
 			if !(trackConcreteIdentity && len(identityKeys) == 1) {
 				return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
 			}
+		}
+		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
+			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
 		}
 		if requireUniqueConcreteAlias && trackConcreteIdentity && len(identityKeys) > 1 {
 			return "", fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
