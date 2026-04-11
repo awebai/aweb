@@ -1706,6 +1706,31 @@ func TestSendReadReceiptFallsBackToStableTargetLabelWhenReaderAliasMissing(t *te
 	}
 }
 
+func TestInferReadReceiptLabelDoesNotTreatDifferentAddressHandleAsSelf(t *testing.T) {
+	t.Parallel()
+
+	client, err := awid.New("http://example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetAddress("acme.com/rose")
+
+	label := inferReadReceiptLabel(
+		context.Background(),
+		client,
+		"rose",
+		"",
+		[]awid.ChatParticipant{
+			{Alias: "rose", Address: "acme.com/rose", DID: "did:aw:self-rose"},
+			{Alias: "rose", Address: "otherco/rose", DID: "did:aw:other-rose"},
+		},
+	)
+
+	if label != "otherco/rose" {
+		t.Fatalf("label=%q, want otherco/rose", label)
+	}
+}
+
 func TestDefaultWaitIs120(t *testing.T) {
 	t.Parallel()
 

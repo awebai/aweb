@@ -1334,22 +1334,8 @@ func inferReadReceiptLabel(ctx context.Context, client *awid.Client, selfAlias s
 		}
 		candidates = append(candidates, value)
 	}
-	selfIdentifiers := []string{
-		strings.TrimSpace(selfAlias),
-		strings.TrimSpace(client.Address()),
-		addressHandle(client.Address()),
-		strings.TrimSpace(client.StableID()),
-		strings.TrimSpace(client.DID()),
-	}
 	for _, participant := range participants {
-		isSelf := false
-		for _, identifier := range selfIdentifiers {
-			if identifier != "" && chatParticipantMatchesTarget(participant, identifier) {
-				isSelf = true
-				break
-			}
-		}
-		if isSelf {
+		if chatParticipantMatchesSelf(participant, client, selfAlias) {
 			continue
 		}
 		appendUnique(chatParticipantLabel(ctx, client, participant))
@@ -1358,6 +1344,32 @@ func inferReadReceiptLabel(ctx context.Context, client *awid.Client, selfAlias s
 		return candidates[0]
 	}
 	return ""
+}
+
+func chatParticipantMatchesSelf(participant awid.ChatParticipant, client *awid.Client, selfAlias string) bool {
+	selfAlias = strings.TrimSpace(selfAlias)
+	selfAddress := ""
+	selfStableID := ""
+	selfDID := ""
+	if client != nil {
+		selfAddress = strings.TrimSpace(client.Address())
+		selfStableID = strings.TrimSpace(client.StableID())
+		selfDID = strings.TrimSpace(client.DID())
+	}
+	if selfAddress != "" && strings.EqualFold(strings.TrimSpace(participant.Address), selfAddress) {
+		return true
+	}
+	if selfStableID != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), selfStableID) {
+		return true
+	}
+	if selfDID != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), selfDID) {
+		return true
+	}
+	participantHasStrongIdentity := strings.TrimSpace(participant.Address) != "" || strings.TrimSpace(participant.DID) != ""
+	if participantHasStrongIdentity && (selfAddress != "" || selfStableID != "" || selfDID != "") {
+		return false
+	}
+	return selfAlias != "" && chatIdentityMatchesTarget(strings.TrimSpace(participant.Alias), selfAlias)
 }
 
 func chatParticipantLabel(ctx context.Context, client *awid.Client, participant awid.ChatParticipant) string {
