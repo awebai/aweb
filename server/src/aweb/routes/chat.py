@@ -85,6 +85,8 @@ def _validate_signed_chat_payload(
     *,
     signed_payload: str | None,
     recipient_rows: list[dict[str, Any]] | None = None,
+    from_alias: str | None = None,
+    from_address: str | None = None,
     from_stable_id: str | None = None,
     body: str,
     from_did: str,
@@ -105,6 +107,19 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
     if payload.get("type") != "chat":
         raise HTTPException(status_code=422, detail="signed_payload type must be chat")
+    allowed_from_values = {
+        value
+        for value in (
+            str(from_alias or "").strip(),
+            str(from_address or "").strip(),
+            str(from_did or "").strip(),
+            str(from_stable_id or "").strip(),
+        )
+        if value
+    }
+    signed_from = str(payload.get("from") or "").strip()
+    if signed_from and signed_from not in allowed_from_values:
+        raise HTTPException(status_code=422, detail="signed_payload from must match the authenticated sender")
     recipient_rows = recipient_rows or []
     allowed_to_values: set[str] = set()
     if recipient_rows:
@@ -506,6 +521,8 @@ async def create_or_send(
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
             recipient_rows=target_rows,
+            from_alias=auth.alias,
+            from_address=auth.address,
             from_stable_id=auth.did_aw,
             body=payload.message,
             from_did=from_did,
@@ -1266,6 +1283,8 @@ async def send_message(
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,
+            from_alias=auth.alias,
+            from_address=auth.address,
             from_stable_id=auth.did_aw,
             body=payload.body,
             from_did=from_did,
