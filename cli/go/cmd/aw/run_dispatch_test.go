@@ -1013,6 +1013,132 @@ func TestResolveChatWakeForAliasSkipsPendingFallbackForSelfStableIDWhenHistoryUn
 	}
 }
 
+func TestResolveChatWakeForAliasSkipsPendingFallbackForSelfParticipantAddressWhenHistoryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"rose", "bob"},
+						ParticipantAddresses: []string{"example.com/rose", "otherco/bob"},
+						LastMessage:          "note to self",
+						LastFrom:             "rose",
+						LastFromAddress:      "",
+						SenderWaiting:        true,
+						UnreadCount:          1,
+					},
+				},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "rose",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored pending participant-address fallback to skip, got %+v", result)
+	}
+}
+
+func TestResolveChatWakeForAliasSkipsPendingFallbackForSelfParticipantStableIDWhenHistoryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"rose", "bob"},
+						ParticipantDIDs: []string{"did:aw:self-rose", "did:aw:bob"},
+						LastMessage:     "note to self",
+						LastFrom:        "rose",
+						LastFromDID:     "",
+						SenderWaiting:   true,
+						UnreadCount:     1,
+					},
+				},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "rose",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored pending participant-stable-id fallback to skip, got %+v", result)
+	}
+}
+
+func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentAddressHandleWhenHistoryUnavailable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"rose", "bob"},
+						ParticipantAddresses: []string{"otherco/rose", "acme.com/bob"},
+						LastMessage:          "hello from another rose",
+						LastFrom:             "rose",
+						LastFromAddress:      "",
+						SenderWaiting:        true,
+						UnreadCount:          1,
+					},
+				},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/s1/messages"):
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:      awid.AgentEventActionableChat,
+		SessionID: "s1",
+		FromAlias: "rose",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skip {
+		t.Fatalf("expected different-address same-handle pending fallback to wake, got %+v", result)
+	}
+}
+
 func TestResolveChatWakeRetriesMarkReadAndCachesDeliveredIDs(t *testing.T) {
 	tmp := deliveredIDsTestPath(t)
 

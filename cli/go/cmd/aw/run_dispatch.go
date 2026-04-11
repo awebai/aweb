@@ -228,7 +228,7 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		derivedPending.LastFromStableID = displayFromStableID
 		derivedPending.LastFromDID = displayFromDID
 		derivedPending.LastFromAddress = displayFromAddress
-		if pendingChatSenderFromSelf(derivedPending, selfAlias, selfIdentityDIDs(client)...) {
+		if pendingChatSenderFromSelf(derivedPending, selfAlias, client.Address(), selfIdentityDIDs(client)...) {
 			return runWakeResolution{Skip: true}, nil
 		}
 		displayFrom := preferredPendingSenderLabel(chat.PendingConversation{
@@ -264,6 +264,65 @@ func selfIdentityDIDs(client *aweb.Client) []string {
 	return dids
 }
 
+func pendingIdentityCount(pending awid.ChatPendingItem) int {
+	count := len(pending.Participants)
+	if len(pending.ParticipantAddresses) > count {
+		count = len(pending.ParticipantAddresses)
+	}
+	if len(pending.ParticipantDIDs) > count {
+		count = len(pending.ParticipantDIDs)
+	}
+	return count
+}
+
+func pendingStableAlias(value string) string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "did:aw:") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(value, "did:aw:"))
+}
+
+func pendingIdentityByAlias(pending awid.ChatPendingItem, alias string) (address, stableID, did string) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return "", "", ""
+	}
+	matches := 0
+	for idx := 0; idx < pendingIdentityCount(pending); idx++ {
+		participantAlias := ""
+		if idx < len(pending.Participants) {
+			participantAlias = strings.TrimSpace(pending.Participants[idx])
+		}
+		participantAddress := ""
+		if idx < len(pending.ParticipantAddresses) {
+			participantAddress = strings.TrimSpace(pending.ParticipantAddresses[idx])
+		}
+		participantDID := ""
+		if idx < len(pending.ParticipantDIDs) {
+			participantDID = strings.TrimSpace(pending.ParticipantDIDs[idx])
+		}
+		if !strings.EqualFold(participantAlias, alias) &&
+			!strings.EqualFold(handleFromAddress(participantAddress), alias) &&
+			!strings.EqualFold(pendingStableAlias(participantDID), alias) {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return "", "", ""
+		}
+		address = participantAddress
+		if strings.HasPrefix(participantDID, "did:aw:") {
+			stableID = participantDID
+			did = ""
+		} else {
+			stableID = ""
+			did = participantDID
+		}
+	}
+	return address, stableID, did
+}
+
 func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...string) bool {
 	return identityMatchesSelf(
 		strings.TrimSpace(msg.FromAgent),
@@ -275,8 +334,12 @@ func chatMessageFromSelf(msg awid.ChatMessage, selfAlias string, selfDIDs ...str
 	)
 }
 
-func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, selfDIDs ...string) bool {
+func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, selfAddress string, selfDIDs ...string) bool {
+	mappedAddress, mappedStableID, mappedDID := pendingIdentityByAlias(pending, pending.LastFrom)
 	lastFromStableID := strings.TrimSpace(pending.LastFromStableID)
+	if lastFromStableID == "" {
+		lastFromStableID = mappedStableID
+	}
 	if lastFromStableID != "" {
 		for _, selfDID := range selfDIDs {
 			if selfDID != "" && strings.EqualFold(lastFromStableID, selfDID) {
@@ -286,6 +349,9 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 		return false
 	}
 	lastFromDID := strings.TrimSpace(pending.LastFromDID)
+	if lastFromDID == "" {
+		lastFromDID = mappedDID
+	}
 	if lastFromDID != "" {
 		for _, selfDID := range selfDIDs {
 			if selfDID != "" && strings.EqualFold(lastFromDID, selfDID) {
@@ -295,9 +361,19 @@ func pendingChatSenderFromSelf(pending awid.ChatPendingItem, selfAlias string, s
 		return false
 	}
 	lastFromAddress := strings.TrimSpace(pending.LastFromAddress)
+	if lastFromAddress == "" {
+		lastFromAddress = mappedAddress
+	}
 	if lastFromAddress != "" {
+		selfAddress = strings.TrimSpace(selfAddress)
+		if selfAddress != "" {
+			return strings.EqualFold(lastFromAddress, selfAddress)
+		}
 		selfAlias = strings.TrimSpace(selfAlias)
-		return selfAlias != "" && strings.EqualFold(handleFromAddress(lastFromAddress), selfAlias)
+		if selfAlias != "" && len(selfDIDs) == 0 {
+			return strings.EqualFold(handleFromAddress(lastFromAddress), selfAlias)
+		}
+		return false
 	}
 	if len(selfDIDs) > 0 {
 		return false
