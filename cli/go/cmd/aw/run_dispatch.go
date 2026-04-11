@@ -222,7 +222,11 @@ func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if displayFromDID == "" {
 			displayFromDID = strings.TrimSpace(evt.FromDID)
 		}
-		if pendingChatSenderFromSelf(pending, selfAlias, selfIdentityDIDs(client)...) {
+		derivedPending := pending
+		derivedPending.LastFrom = alias
+		derivedPending.LastFromDID = displayFromDID
+		derivedPending.LastFromAddress = displayFromAddress
+		if pendingChatSenderFromSelf(derivedPending, selfAlias, selfIdentityDIDs(client)...) {
 			return runWakeResolution{Skip: true}, nil
 		}
 		displayFrom := preferredPendingSenderLabel(chat.PendingConversation{
