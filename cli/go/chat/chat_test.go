@@ -704,6 +704,74 @@ func TestShowPendingDerivesFromAddressFromParticipantAddress(t *testing.T) {
 	}
 }
 
+func TestShowPendingMapsLastFromAliasToParticipantAddress(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "monitor"},
+						ParticipantAddresses: []string{"acme/alice", "otherco/monitor"},
+						LastMessage:          "help!",
+						LastFrom:             "monitor",
+						LastFromAddress:      "",
+						SenderWaiting:        true,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d", len(result.Events))
+	}
+	if result.Events[0].FromAddress != "otherco/monitor" {
+		t.Fatalf("from_address=%q", result.Events[0].FromAddress)
+	}
+}
+
+func TestShowPendingMapsLastFromAliasToParticipantStableID(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"alice", "monitor"},
+						ParticipantDIDs: []string{"did:aw:alice", "did:aw:monitor"},
+						LastMessage:     "help!",
+						LastFrom:        "monitor",
+						LastFromDID:     "",
+						SenderWaiting:   true,
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := ShowPending(context.Background(), mustClient(t, server.URL), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events=%d", len(result.Events))
+	}
+	if result.Events[0].FromStableID != "did:aw:monitor" {
+		t.Fatalf("from_stable_id=%q", result.Events[0].FromStableID)
+	}
+}
+
 func TestShowPendingCarriesLastFromStableID(t *testing.T) {
 	t.Parallel()
 
