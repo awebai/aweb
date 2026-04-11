@@ -298,6 +298,120 @@ func stableAlias(value string) string {
 	return strings.TrimSpace(strings.TrimPrefix(value, "did:aw:"))
 }
 
+type chatParticipantRow struct {
+	Alias    string
+	Address  string
+	DID      string
+	StableID string
+}
+
+func newChatParticipantRow(alias string, address string, did string) chatParticipantRow {
+	row := chatParticipantRow{
+		Alias:   strings.TrimSpace(alias),
+		Address: strings.TrimSpace(address),
+		DID:     strings.TrimSpace(did),
+	}
+	if strings.HasPrefix(row.DID, "did:aw:") {
+		row.StableID = row.DID
+	}
+	return row
+}
+
+func chatParticipantRows(participants []string, participantDIDs []string, participantAddresses []string) []chatParticipantRow {
+	maxLen := len(participants)
+	if len(participantDIDs) > maxLen {
+		maxLen = len(participantDIDs)
+	}
+	if len(participantAddresses) > maxLen {
+		maxLen = len(participantAddresses)
+	}
+	rows := make([]chatParticipantRow, 0, maxLen)
+	for i := 0; i < maxLen; i++ {
+		alias := ""
+		if i < len(participants) {
+			alias = participants[i]
+		}
+		address := ""
+		if i < len(participantAddresses) {
+			address = participantAddresses[i]
+		}
+		did := ""
+		if i < len(participantDIDs) {
+			did = participantDIDs[i]
+		}
+		rows = append(rows, newChatParticipantRow(alias, address, did))
+	}
+	return rows
+}
+
+func chatParticipantRowFromParticipant(participant awid.ChatParticipant) chatParticipantRow {
+	return newChatParticipantRow(participant.Alias, participant.Address, participant.DID)
+}
+
+func (row chatParticipantRow) identityValues() []string {
+	return []string{row.Alias, row.Address, row.DID}
+}
+
+func (row chatParticipantRow) matchesTarget(target string) bool {
+	for _, candidate := range row.identityValues() {
+		if chatIdentityMatchesTarget(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (row chatParticipantRow) matchesSessionTarget(target string) bool {
+	for _, candidate := range row.identityValues() {
+		if chatSessionIdentityMatchesTarget(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (row chatParticipantRow) matchesStrongIdentity(kind string, target string) bool {
+	switch kind {
+	case "address":
+		return chatIdentityMatchesTarget(row.Address, target)
+	case "did":
+		return chatIdentityMatchesTarget(row.DID, target)
+	default:
+		return false
+	}
+}
+
+func (row chatParticipantRow) concreteIdentityKey() string {
+	if row.StableID != "" {
+		return row.StableID
+	}
+	if row.DID != "" {
+		return row.DID
+	}
+	return row.Address
+}
+
+func (row chatParticipantRow) label() string {
+	if row.Address != "" {
+		return row.Address
+	}
+	if row.StableID != "" {
+		return row.StableID
+	}
+	if row.DID != "" {
+		return row.DID
+	}
+	return row.Alias
+}
+
+func preferredChatIdentityLabel(alias string, address string, stableID string, did string) string {
+	row := newChatParticipantRow(alias, address, did)
+	if stableID = strings.TrimSpace(stableID); stableID != "" {
+		row.StableID = stableID
+	}
+	return row.label()
+}
+
 func chatIdentityMatchesTarget(candidate string, target string) bool {
 	candidate = strings.TrimSpace(candidate)
 	target = strings.TrimSpace(target)
@@ -350,18 +464,8 @@ func exactParticipantMatch(participants []string, participantDIDs []string, part
 	if target == "" {
 		return false
 	}
-	for _, participant := range participants {
-		if chatSessionIdentityMatchesTarget(participant, target) {
-			return true
-		}
-	}
-	for _, participant := range participantAddresses {
-		if chatSessionIdentityMatchesTarget(participant, target) {
-			return true
-		}
-	}
-	for _, participant := range participantDIDs {
-		if chatSessionIdentityMatchesTarget(participant, target) {
+	for _, row := range chatParticipantRows(participants, participantDIDs, participantAddresses) {
+		if row.matchesSessionTarget(target) {
 			return true
 		}
 	}
@@ -369,27 +473,16 @@ func exactParticipantMatch(participants []string, participantDIDs []string, part
 }
 
 func participantIdentityCount(participants []string, participantDIDs []string, participantAddresses []string) int {
-	count := len(participants)
-	if len(participantDIDs) > count {
-		count = len(participantDIDs)
-	}
-	if len(participantAddresses) > count {
-		count = len(participantAddresses)
-	}
-	return count
+	return len(chatParticipantRows(participants, participantDIDs, participantAddresses))
 }
 
 func pendingParticipantIdentityAt(participants []string, participantDIDs []string, participantAddresses []string, idx int) (alias, address, did string) {
-	if idx < len(participants) {
-		alias = strings.TrimSpace(participants[idx])
+	rows := chatParticipantRows(participants, participantDIDs, participantAddresses)
+	if idx >= 0 && idx < len(rows) {
+		row := rows[idx]
+		return row.Alias, row.Address, row.DID
 	}
-	if idx < len(participantAddresses) {
-		address = strings.TrimSpace(participantAddresses[idx])
-	}
-	if idx < len(participantDIDs) {
-		did = strings.TrimSpace(participantDIDs[idx])
-	}
-	return alias, address, did
+	return "", "", ""
 }
 
 func pendingParticipantIdentityByLastFrom(participants []string, participantDIDs []string, participantAddresses []string, lastFrom string) (address, stableID, did string) {
@@ -401,24 +494,21 @@ func pendingParticipantIdentityByLastFrom(participants []string, participantDIDs
 	matchStableID := ""
 	matchDID := ""
 	matches := 0
-	for idx := 0; idx < participantIdentityCount(participants, participantDIDs, participantAddresses); idx++ {
-		alias, participantAddress, participantDID := pendingParticipantIdentityAt(participants, participantDIDs, participantAddresses, idx)
-		if !chatSessionIdentityMatchesTarget(alias, lastFrom) &&
-			!chatSessionIdentityMatchesTarget(participantAddress, lastFrom) &&
-			!chatSessionIdentityMatchesTarget(participantDID, lastFrom) {
+	for _, row := range chatParticipantRows(participants, participantDIDs, participantAddresses) {
+		if !row.matchesSessionTarget(lastFrom) {
 			continue
 		}
 		matches++
 		if matches > 1 {
 			return "", "", ""
 		}
-		matchAddress = participantAddress
-		if strings.HasPrefix(participantDID, "did:aw:") {
-			matchStableID = participantDID
+		matchAddress = row.Address
+		if row.StableID != "" {
+			matchStableID = row.StableID
 			matchDID = ""
 		} else {
 			matchStableID = ""
-			matchDID = participantDID
+			matchDID = row.DID
 		}
 	}
 	return matchAddress, matchStableID, matchDID
@@ -442,42 +532,12 @@ func matchedParticipantIdentityKeys(participants []string, participantDIDs []str
 		}
 		keys = append(keys, value)
 	}
-	maxLen := len(participants)
-	if len(participantDIDs) > maxLen {
-		maxLen = len(participantDIDs)
-	}
-	if len(participantAddresses) > maxLen {
-		maxLen = len(participantAddresses)
-	}
-	for i := 0; i < maxLen; i++ {
-		alias := ""
-		if i < len(participants) {
-			alias = strings.TrimSpace(participants[i])
-		}
-		address := ""
-		if i < len(participantAddresses) {
-			address = strings.TrimSpace(participantAddresses[i])
-		}
-		did := ""
-		if i < len(participantDIDs) {
-			did = strings.TrimSpace(participantDIDs[i])
-		}
-		matched := false
-		for _, candidate := range []string{alias, address, did} {
-			if chatSessionIdentityMatchesTarget(candidate, target) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+	for _, row := range chatParticipantRows(participants, participantDIDs, participantAddresses) {
+		if !row.matchesSessionTarget(target) {
 			continue
 		}
-		if did != "" {
-			appendUnique(did)
-			continue
-		}
-		if address != "" {
-			appendUnique(address)
+		if key := row.concreteIdentityKey(); key != "" {
+			appendUnique(key)
 		}
 	}
 	return keys
@@ -1408,8 +1468,11 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		names = append(names, value)
 	}
 
+	hasStrongIdentity := strings.TrimSpace(ev.FromAddress) != "" ||
+		strings.TrimSpace(ev.FromStableID) != "" ||
+		strings.TrimSpace(ev.FromDID) != ""
+
 	for _, value := range []string{
-		ev.FromAgent,
 		ev.FromAddress,
 		ev.FromStableID,
 		ev.FromDID,
@@ -1418,10 +1481,14 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		appendUnique(value)
 	}
 
-	for _, match := range matchingChatParticipantsForEventIdentity(participants, ev) {
+	matchedParticipants := matchingChatParticipantsForEventIdentity(participants, ev)
+	for _, match := range matchedParticipants {
 		appendUnique(strings.TrimSpace(match.Alias))
 		appendUnique(strings.TrimSpace(match.Address))
 		appendUnique(strings.TrimSpace(match.DID))
+	}
+	if !hasStrongIdentity || len(participants) == 0 {
+		appendUnique(ev.FromAgent)
 	}
 
 	return names
@@ -1570,29 +1637,37 @@ func chatTargetNameListsOverlap(left []string, right []string) bool {
 
 func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string {
 	for _, participant := range matchingChatParticipantsForEventIdentity(participants, ev) {
-		if value := strings.TrimSpace(participant.Address); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(participant.Alias); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(ev.FromStableID); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(participant.DID); value != "" {
+		if value := preferredChatIdentityLabel(
+			strings.TrimSpace(participant.Alias),
+			strings.TrimSpace(participant.Address),
+			func() string {
+				row := chatParticipantRowFromParticipant(participant)
+				if row.StableID != "" {
+					return row.StableID
+				}
+				return strings.TrimSpace(ev.FromStableID)
+			}(),
+			func() string {
+				row := chatParticipantRowFromParticipant(participant)
+				if row.DID != "" {
+					return row.DID
+				}
+				return strings.TrimSpace(ev.FromDID)
+			}(),
+		); value != "" {
 			return value
 		}
 	}
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
 		return value
 	}
-	if value := strings.TrimSpace(ev.FromAgent); value != "" {
-		return value
-	}
 	if value := strings.TrimSpace(ev.FromStableID); value != "" {
 		return value
 	}
-	return strings.TrimSpace(ev.FromDID)
+	if value := strings.TrimSpace(ev.FromDID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(ev.FromAgent)
 }
 
 func chatEventTrustAddress(ev Event, participants []awid.ChatParticipant) string {
@@ -1667,68 +1742,38 @@ func chatParticipantMatchesSelf(participant awid.ChatParticipant, client *awid.C
 }
 
 func chatParticipantLabel(ctx context.Context, client *awid.Client, participant awid.ChatParticipant) string {
-	if value := strings.TrimSpace(participant.Address); value != "" {
-		return value
+	row := chatParticipantRowFromParticipant(participant)
+	if row.Address != "" {
+		return row.Address
 	}
-	if value := strings.TrimSpace(participant.Alias); value != "" {
-		return value
+	if row.StableID != "" {
+		return row.StableID
 	}
-	if client != nil {
-		for _, identifier := range []string{strings.TrimSpace(participant.DID)} {
-			if identifier == "" {
-				continue
+	if row.DID != "" && client != nil {
+		if identity, err := client.ResolveIdentity(ctx, row.DID); err == nil && identity != nil {
+			if value := strings.TrimSpace(identity.Address); value != "" {
+				return value
 			}
-			if identity, err := client.ResolveIdentity(ctx, identifier); err == nil && identity != nil {
-				if value := strings.TrimSpace(identity.Address); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.Handle); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.StableID); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(identity.DID); value != "" {
-					return value
-				}
+			if value := strings.TrimSpace(identity.StableID); value != "" {
+				return value
+			}
+			if value := strings.TrimSpace(identity.DID); value != "" {
+				return value
 			}
 		}
 	}
-	return strings.TrimSpace(participant.DID)
+	if row.DID != "" {
+		return row.DID
+	}
+	return row.Alias
 }
 
 func chatParticipantMatchesTarget(participant awid.ChatParticipant, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, candidate := range []string{
-		strings.TrimSpace(participant.Alias),
-		strings.TrimSpace(participant.Address),
-		strings.TrimSpace(participant.DID),
-	} {
-		if chatIdentityMatchesTarget(candidate, target) {
-			return true
-		}
-	}
-	return false
+	return chatParticipantRowFromParticipant(participant).matchesTarget(target)
 }
 
 func chatParticipantMatchesSessionTarget(participant awid.ChatParticipant, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, candidate := range []string{
-		strings.TrimSpace(participant.Alias),
-		strings.TrimSpace(participant.Address),
-		strings.TrimSpace(participant.DID),
-	} {
-		if chatSessionIdentityMatchesTarget(candidate, target) {
-			return true
-		}
-	}
-	return false
+	return chatParticipantRowFromParticipant(participant).matchesSessionTarget(target)
 }
 
 func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipant, ev Event) []awid.ChatParticipant {
@@ -1737,6 +1782,9 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 		strong bool
 		kind   string
 	}
+	hasStrongIdentity := strings.TrimSpace(ev.FromAddress) != "" ||
+		strings.TrimSpace(ev.FromStableID) != "" ||
+		strings.TrimSpace(ev.FromDID) != ""
 	matchParticipants := func(candidate candidateSpec) []awid.ChatParticipant {
 		candidate.value = strings.TrimSpace(candidate.value)
 		if candidate.value == "" {
@@ -1745,20 +1793,11 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 		matches := []awid.ChatParticipant{}
 		if candidate.strong {
 			for _, participant := range participants {
-				switch candidate.kind {
-				case "address":
-					if chatIdentityMatchesTarget(strings.TrimSpace(participant.Address), candidate.value) {
-						matches = append(matches, participant)
-					}
-				case "did":
-					if chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), candidate.value) {
-						matches = append(matches, participant)
-					}
+				if chatParticipantRowFromParticipant(participant).matchesStrongIdentity(candidate.kind, candidate.value) {
+					matches = append(matches, participant)
 				}
 			}
-			if len(matches) > 0 {
-				return matches
-			}
+			return matches
 		}
 		for _, participant := range participants {
 			if chatParticipantMatchesTarget(participant, candidate.value) {
@@ -1768,12 +1807,15 @@ func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipan
 		return matches
 	}
 
-	for _, candidate := range []candidateSpec{
+	candidates := []candidateSpec{
 		{value: ev.FromAddress, strong: true, kind: "address"},
 		{value: ev.FromStableID, strong: true, kind: "did"},
 		{value: ev.FromDID, strong: true, kind: "did"},
-		{value: ev.FromAgent},
-	} {
+	}
+	if !hasStrongIdentity {
+		candidates = append(candidates, candidateSpec{value: ev.FromAgent})
+	}
+	for _, candidate := range candidates {
 		if matches := matchParticipants(candidate); len(matches) > 0 {
 			return matches
 		}

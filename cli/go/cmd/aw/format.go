@@ -55,9 +55,9 @@ func formatChatEventLine(m chat.Event) string {
 }
 
 func preferredIdentityDisplayLabel(alias string, address string, stableID string, did string, fallback string) string {
-	label := preferredIdentityLabel(alias, address, "")
-	if label != "" {
-		return label
+	address = strings.TrimSpace(address)
+	if address != "" {
+		return address
 	}
 	stableID = strings.TrimSpace(stableID)
 	if stableID != "" {
@@ -66,6 +66,10 @@ func preferredIdentityDisplayLabel(alias string, address string, stableID string
 	did = strings.TrimSpace(did)
 	if did != "" {
 		return did
+	}
+	alias = strings.TrimSpace(alias)
+	if alias != "" {
+		return alias
 	}
 	return strings.TrimSpace(fallback)
 }
@@ -351,96 +355,35 @@ func chatEventMatchesDisplayTarget(ev *chat.Event, target string) bool {
 }
 
 func pendingParticipantLabel(p chat.PendingConversation, idx int) string {
-	alias, address, did := pendingParticipantIdentityAt(p, idx)
-	stableID := ""
-	currentDID := did
-	if strings.HasPrefix(did, "did:aw:") {
-		stableID = did
-		currentDID = ""
+	rows := pendingIdentityRows(p.Participants, p.ParticipantAddresses, p.ParticipantDIDs)
+	if idx >= 0 && idx < len(rows) {
+		return rows[idx].label()
 	}
-	if address != "" {
-		return address
-	}
-	if stableID != "" {
-		return stableID
-	}
-	if currentDID != "" {
-		return currentDID
-	}
-	return alias
+	return ""
 }
 
 func pendingParticipantIdentityAt(p chat.PendingConversation, idx int) (alias, address, did string) {
-	if idx < len(p.Participants) {
-		alias = strings.TrimSpace(p.Participants[idx])
+	rows := pendingIdentityRows(p.Participants, p.ParticipantAddresses, p.ParticipantDIDs)
+	if idx >= 0 && idx < len(rows) {
+		row := rows[idx]
+		return row.Alias, row.Address, row.DID
 	}
-	if idx < len(p.ParticipantAddresses) {
-		address = strings.TrimSpace(p.ParticipantAddresses[idx])
-	}
-	if idx < len(p.ParticipantDIDs) {
-		did = strings.TrimSpace(p.ParticipantDIDs[idx])
-	}
-	return alias, address, did
+	return "", "", ""
 }
 
 func pendingParticipantCount(p chat.PendingConversation) int {
-	count := len(p.Participants)
-	if len(p.ParticipantAddresses) > count {
-		count = len(p.ParticipantAddresses)
-	}
-	if len(p.ParticipantDIDs) > count {
-		count = len(p.ParticipantDIDs)
-	}
-	return count
+	return len(pendingIdentityRows(p.Participants, p.ParticipantAddresses, p.ParticipantDIDs))
 }
 
 func pendingIdentityStrength(address string, stableID string, did string, alias string) int {
-	if strings.TrimSpace(address) != "" {
-		return 4
-	}
-	if strings.TrimSpace(stableID) != "" {
-		return 3
-	}
-	did = strings.TrimSpace(did)
-	if did != "" {
-		if strings.HasPrefix(did, "did:aw:") {
-			return 3
-		}
-		return 2
-	}
-	if strings.TrimSpace(alias) != "" {
-		return 1
-	}
-	return 0
+	return newPendingIdentityRow(alias, address, did).strength()
 }
 
 func pendingParticipantIdentityByLastFrom(p chat.PendingConversation) (label string, strength int) {
-	lastFrom := strings.TrimSpace(p.LastFrom)
-	if lastFrom == "" {
-		return "", 0
+	if row, ok := pendingIdentityByAliasSlices(p.Participants, p.ParticipantAddresses, p.ParticipantDIDs, p.LastFrom); ok {
+		return row.label(), row.strength()
 	}
-	matches := 0
-	for idx := 0; idx < pendingParticipantCount(p); idx++ {
-		alias, address, did := pendingParticipantIdentityAt(p, idx)
-		if !strings.EqualFold(alias, lastFrom) &&
-			!strings.EqualFold(handleFromAddress(address), lastFrom) &&
-			!strings.EqualFold(pendingStableAlias(did), lastFrom) {
-			continue
-		}
-		matches++
-		if matches > 1 {
-			return "", 0
-		}
-		stableID := ""
-		currentDID := did
-		if strings.HasPrefix(did, "did:aw:") {
-			stableID = did
-			currentDID = ""
-		}
-		label = pendingParticipantLabel(p, idx)
-		strength = pendingIdentityStrength(address, stableID, currentDID, alias)
-	}
-	return label, strength
+	return "", 0
 }
 
 func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, selfDIDs ...string) string {
@@ -484,19 +427,7 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 }
 
 func pendingOpenTarget(p chat.PendingConversation) string {
-	if pendingParticipantCount(p) != 1 {
-		return ""
-	}
-	if len(p.ParticipantAddresses) == 1 && strings.TrimSpace(p.ParticipantAddresses[0]) != "" {
-		return strings.TrimSpace(p.ParticipantAddresses[0])
-	}
-	if len(p.ParticipantDIDs) == 1 && strings.TrimSpace(p.ParticipantDIDs[0]) != "" {
-		return strings.TrimSpace(p.ParticipantDIDs[0])
-	}
-	if len(p.Participants) == 1 {
-		return strings.TrimSpace(p.Participants[0])
-	}
-	return ""
+	return pendingDirectOpenTargetSlices(p.Participants, p.ParticipantAddresses, p.ParticipantDIDs)
 }
 
 func formatChatPending(v any) string {

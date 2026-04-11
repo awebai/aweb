@@ -113,7 +113,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 		from := preferredPendingSenderLabel(pending, selfAlias, selfDIDs...)
 		if from == "" {
 			for idx, participant := range pending.Participants {
-				participant = preferredIdentityLabel(
+				participant = preferredIdentityDisplayLabel(
 					strings.TrimSpace(participant),
 					func() string {
 						if idx < len(pending.ParticipantAddresses) {
@@ -123,10 +123,20 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 					}(),
 					func() string {
 						if idx < len(pending.ParticipantDIDs) {
+							did := strings.TrimSpace(pending.ParticipantDIDs[idx])
+							if strings.HasPrefix(did, "did:aw:") {
+								return did
+							}
+						}
+						return ""
+					}(),
+					func() string {
+						if idx < len(pending.ParticipantDIDs) {
 							return strings.TrimSpace(pending.ParticipantDIDs[idx])
 						}
 						return ""
 					}(),
+					"",
 				)
 				if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias, selfDIDs...) {
 					continue
@@ -171,27 +181,7 @@ func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs .
 }
 
 func notifyIdentityMatchesSelf(value string, selfAlias string, selfDIDs ...string) bool {
-	value = strings.TrimSpace(value)
-	selfAlias = strings.TrimSpace(selfAlias)
-	if value == "" {
-		return false
-	}
-	for _, selfDID := range selfDIDs {
-		selfDID = strings.TrimSpace(selfDID)
-		if selfDID != "" && strings.EqualFold(value, selfDID) {
-			return true
-		}
-	}
-	if selfAlias == "" {
-		return false
-	}
-	if strings.EqualFold(value, selfAlias) {
-		return true
-	}
-	if strings.EqualFold(value, "did:aw:"+selfAlias) {
-		return true
-	}
-	return strings.EqualFold(handleFromAddress(value), selfAlias)
+	return identityValueMatchesSelf(value, selfAlias, selfDIDs...)
 }
 
 func padNotifyLine(line string) string {

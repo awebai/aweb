@@ -21,7 +21,7 @@ var mailCmd = &cobra.Command{
 
 var (
 	mailSendTo        string
-	mailSendToDID    string
+	mailSendToDID     string
 	mailSendToAddress string
 	mailSendSubject   string
 	mailSendBody      string
@@ -180,22 +180,20 @@ var mailInboxCmd = &cobra.Command{
 			if msg.ReadAt != nil {
 				continue
 			}
-			from := preferredIdentityLabel(
+			from := preferredIdentityDisplayLabel(
 				msg.FromAlias,
 				msg.FromAddress,
-				preferredIdentityLabel("", "", strings.TrimSpace(msg.FromStableID)),
+				msg.FromStableID,
+				msg.FromDID,
+				"",
 			)
-			if from == "" {
-				from = strings.TrimSpace(msg.FromDID)
-			}
-			to := preferredIdentityLabel(
+			to := preferredIdentityDisplayLabel(
 				msg.ToAlias,
 				msg.ToAddress,
-				preferredIdentityLabel("", "", strings.TrimSpace(msg.ToStableID)),
+				msg.ToStableID,
+				msg.ToDID,
+				"",
 			)
-			if to == "" {
-				to = strings.TrimSpace(msg.ToDID)
-			}
 			appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 				Timestamp:    msg.CreatedAt,
 				Dir:          "recv",

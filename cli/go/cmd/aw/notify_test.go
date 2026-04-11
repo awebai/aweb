@@ -168,6 +168,34 @@ func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputFallbackParticipantPrefersStableIDOverAlias(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"wendy", "rose"},
+				ParticipantDIDs:      []string{"did:aw:wendy", "did:aw:rose"},
+				ParticipantAddresses: []string{"", ""},
+				LastFrom:             "",
+				LastFromDID:          "",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if !strings.Contains(out, "Unread message from did:aw:rose") {
+		t.Fatalf("notify output should prefer participant stable id over alias fallback:\n%s", out)
+	}
+	if strings.Contains(out, "Unread message from rose") {
+		t.Fatalf("notify output should not collapse to alias fallback when stable id is present:\n%s", out)
+	}
+}
+
 func TestFormatNotifyOutputPrefersParticipantAddressWhenLastFromIsAliasOnly(t *testing.T) {
 	t.Parallel()
 
