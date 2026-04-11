@@ -1251,16 +1251,16 @@ func chatTargetNameListsOverlap(left []string, right []string) bool {
 }
 
 func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string {
-	for _, participant := range participants {
-		for _, candidate := range []string{
-			strings.TrimSpace(ev.FromAddress),
-			strings.TrimSpace(ev.FromAgent),
-			strings.TrimSpace(ev.FromStableID),
-			strings.TrimSpace(ev.FromDID),
-		} {
-			if candidate == "" {
-				continue
-			}
+	for _, candidate := range []string{
+		strings.TrimSpace(ev.FromAddress),
+		strings.TrimSpace(ev.FromStableID),
+		strings.TrimSpace(ev.FromDID),
+		strings.TrimSpace(ev.FromAgent),
+	} {
+		if candidate == "" {
+			continue
+		}
+		for _, participant := range participants {
 			if chatParticipantMatchesTarget(participant, candidate) {
 				if value := strings.TrimSpace(participant.Address); value != "" {
 					return value

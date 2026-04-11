@@ -1751,6 +1751,26 @@ func TestChatEventTrustAddressPrefersStableIdentityOverAliasCollision(t *testing
 	}
 }
 
+func TestChatEventSenderLabelPrefersStableIdentityOverAliasCollision(t *testing.T) {
+	t.Parallel()
+
+	label := chatEventSenderLabel(
+		Event{
+			FromAgent:    "rose",
+			FromDID:      "did:aw:other-rose",
+			FromStableID: "did:aw:other-rose",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "rose", Address: "acme.com/rose", DID: "did:aw:self-rose"},
+			{Alias: "rose", Address: "otherco/rose", DID: "did:aw:other-rose"},
+		},
+	)
+
+	if label != "otherco/rose" {
+		t.Fatalf("label=%q, want otherco/rose", label)
+	}
+}
+
 func TestDefaultWaitIs120(t *testing.T) {
 	t.Parallel()
 
