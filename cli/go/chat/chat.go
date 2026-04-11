@@ -473,17 +473,11 @@ func matchedParticipantIdentityKeys(participants []string, participantDIDs []str
 			continue
 		}
 		if did != "" {
-			if strings.HasPrefix(did, "did:aw:") {
-				appendUnique(did)
-				continue
-			}
+			appendUnique(did)
+			continue
 		}
 		if address != "" {
 			appendUnique(address)
-			continue
-		}
-		if did != "" {
-			appendUnique(did)
 		}
 	}
 	return keys
