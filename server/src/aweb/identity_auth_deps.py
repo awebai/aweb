@@ -35,6 +35,14 @@ class MessagingAuth:
     certificate_id: str | None = None
 
 
+def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
+    dids: list[str] = []
+    for value in ((getattr(identity, "did_aw", None) or "").strip(), (getattr(identity, "did_key", None) or "").strip()):
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
 def _get_body_sha256(request: Request) -> str:
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is not None:
