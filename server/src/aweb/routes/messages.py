@@ -29,6 +29,7 @@ class SendMessageRequest(BaseModel):
     to_agent_id: Optional[str] = Field(default=None, min_length=1)
     to_alias: Optional[str] = Field(default=None, min_length=1, max_length=64)
     to_did: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
     subject: str = ""
     body: str
@@ -124,7 +125,14 @@ async def send_message(
     to_agent_id: str | None = payload.to_agent_id
     to_alias: str | None = None
 
-    if payload.to_did is not None:
+    if payload.to_stable_id is not None:
+        recipient_did = payload.to_stable_id.strip()
+        recipient = await resolve_agent_by_did(db, recipient_did)
+        if recipient is None:
+            raise HTTPException(status_code=404, detail="Recipient agent not found")
+        to_agent_id = str(recipient["agent_id"])
+        to_alias = recipient.get("alias")
+    elif payload.to_did is not None:
         recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:

@@ -19,6 +19,7 @@ type SendMessageRequest struct {
 	ToAgentID     string          `json:"to_agent_id,omitempty"`
 	ToAlias       string          `json:"to_alias,omitempty"`
 	ToDID         string          `json:"to_did,omitempty"`
+	ToStableID    string          `json:"to_stable_id,omitempty"`
 	ToAddress     string          `json:"to_address,omitempty"`
 	Subject       string          `json:"subject,omitempty"`
 	Body          string          `json:"body"`
@@ -82,9 +83,8 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return nil, err
 	}
 	payload.FromDID = sf.FromDID
-	if strings.TrimSpace(payload.ToDID) == "" {
-		payload.ToDID = sf.ToDID
-	}
+	payload.ToDID = sf.ToDID
+	payload.ToStableID = sf.ToStableID
 	payload.Signature = sf.Signature
 	payload.MessageID = sf.MessageID
 	payload.Timestamp = sf.Timestamp

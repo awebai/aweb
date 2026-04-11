@@ -1492,8 +1492,11 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if gotBody["to_did"] != recipientDID {
-		t.Fatalf("to_did=%v", gotBody["to_did"])
+	if gotBody["to_did"] != nil {
+		t.Fatalf("to_did=%v, want absent without current recipient binding", gotBody["to_did"])
+	}
+	if gotBody["to_stable_id"] != recipientDID {
+		t.Fatalf("to_stable_id=%v, want %q", gotBody["to_stable_id"], recipientDID)
 	}
 	if gotBody["to_address"] != nil {
 		t.Fatalf("to_address should be absent, got %v", gotBody["to_address"])
@@ -1509,6 +1512,16 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
+	}
+	var env MessageEnvelope
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed payload: %v", err)
+	}
+	if env.ToDID != "" {
+		t.Fatalf("signed payload to_did=%q, want empty without current recipient binding", env.ToDID)
+	}
+	if env.ToStableID != recipientDID {
+		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientDID)
 	}
 }
 
@@ -1561,8 +1574,11 @@ func TestSendMessageByIdentityStableTargetSignsResolvedRecipientBinding(t *testi
 		t.Fatal(err)
 	}
 
-	if gotBody["to_did"] != recipientStableID {
-		t.Fatalf("wire to_did=%v, want stable target %q", gotBody["to_did"], recipientStableID)
+	if gotBody["to_did"] != recipientCurrentDID {
+		t.Fatalf("wire to_did=%v, want resolved current did %q", gotBody["to_did"], recipientCurrentDID)
+	}
+	if gotBody["to_stable_id"] != recipientStableID {
+		t.Fatalf("wire to_stable_id=%v, want stable target %q", gotBody["to_stable_id"], recipientStableID)
 	}
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
@@ -1627,6 +1643,12 @@ func TestSendMessageByIdentityStableTargetWithoutResolverOmitsCurrentRecipientBi
 	}
 	if env.ToDID != "" {
 		t.Fatalf("signed payload to_did=%q, want empty without resolver", env.ToDID)
+	}
+	if gotBody["to_did"] != nil {
+		t.Fatalf("wire to_did=%v, want absent without resolver", gotBody["to_did"])
+	}
+	if gotBody["to_stable_id"] != recipientStableID {
+		t.Fatalf("wire to_stable_id=%v, want stable target %q", gotBody["to_stable_id"], recipientStableID)
 	}
 	if env.ToStableID != recipientStableID {
 		t.Fatalf("signed payload to_stable_id=%q, want %q", env.ToStableID, recipientStableID)

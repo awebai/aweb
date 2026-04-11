@@ -24,6 +24,7 @@ import (
 type signedFields struct {
 	FromDID       string
 	ToDID         string
+	ToStableID    string
 	FromStableID  string
 	Signature     string
 	SigningKeyID  string
@@ -85,6 +86,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	return signedFields{
 		FromDID:       c.did,
 		ToDID:         env.ToDID,
+		ToStableID:    env.ToStableID,
 		FromStableID:  c.stableID,
 		Signature:     sig,
 		SigningKeyID:  c.did,
