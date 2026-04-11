@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from aweb.deps import get_db
-from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
 
@@ -25,14 +25,6 @@ class ConversationItem(BaseModel):
 class ConversationsResponse(BaseModel):
     conversations: list[ConversationItem]
     next_cursor: str | None
-
-
-def _actor_dids(auth: MessagingAuth) -> list[str]:
-    dids: list[str] = []
-    for value in ((auth.did_aw or "").strip(), (auth.did_key or "").strip()):
-        if value and value not in dids:
-            dids.append(value)
-    return dids
 
 
 def _conversation_label(alias: str | None, did: str | None) -> str:
@@ -61,7 +53,7 @@ async def list_conversations(
 ) -> ConversationsResponse:
     del request
     aweb_db = db.get_manager("aweb")
-    actor_dids = _actor_dids(auth)
+    actor_dids = auth_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -73,7 +65,7 @@ async def list_conversations(
             raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     # --- Mail conversations ---
-    # Each message is a standalone conversation.
+    # Mail is one conversation per stored message. message_id is unique per row.
     mail_rows = await aweb_db.fetch_all(
         """
         SELECT

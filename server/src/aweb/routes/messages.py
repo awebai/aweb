@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
-from aweb.identity_auth_deps import IdentityAuth, MessagingAuth, get_identity_auth, get_messaging_auth
+from aweb.identity_auth_deps import IdentityAuth, MessagingAuth, auth_dids, get_identity_auth, get_messaging_auth
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -198,14 +198,6 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload timestamp must match the mail message")
 
 
-def _identity_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
-    dids: list[str] = []
-    for value in ((getattr(identity, "did_aw", None) or "").strip(), (getattr(identity, "did_key", None) or "").strip()):
-        if value and value not in dids:
-            dids.append(value)
-    return dids
-
-
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -344,7 +336,7 @@ async def send_message(
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
         from_did = payload.from_did.strip()
-        if from_did not in set(_identity_dids(auth)):
+        if from_did not in set(auth_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
@@ -422,7 +414,7 @@ async def get_inbox(
     identity: IdentityAuth = Depends(get_identity_auth),
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
-    inbox_dids = _identity_dids(identity)
+    inbox_dids = auth_dids(identity)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -496,7 +488,7 @@ async def ack_message(
 
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-    inbox_dids = _identity_dids(identity)
+    inbox_dids = auth_dids(identity)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 

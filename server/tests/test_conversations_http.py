@@ -139,6 +139,145 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
 
 
 @pytest.mark.asyncio
+async def test_conversations_lists_each_mail_message_as_its_own_conversation(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES
+            (
+                '11111111-1111-1111-1111-111111111111',
+                'did:aw:alice',
+                $1,
+                'alice',
+                'bob',
+                'first',
+                'one',
+                'normal',
+                NOW() - INTERVAL '1 minute'
+            ),
+            (
+                '44444444-4444-4444-4444-444444444444',
+                'did:aw:alice',
+                $1,
+                'alice',
+                'bob',
+                'second',
+                'two',
+                'normal',
+                NOW()
+            )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="bob",
+                did_aw="did:aw:bob",
+                current_did_key=bob_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/conversations", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    conversations = resp.json()["conversations"]
+    assert [item["conversation_id"] for item in conversations] == [
+        "44444444-4444-4444-4444-444444444444",
+        "11111111-1111-1111-1111-111111111111",
+    ]
+    assert [item["subject"] for item in conversations] == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_conversations_mail_isolation_excludes_other_identities(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+    carol_sk, _, carol_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES (
+            '11111111-1111-1111-1111-111111111111',
+            'did:aw:alice',
+            $1,
+            'alice',
+            'bob',
+            'hello',
+            'hi',
+            'normal',
+            NOW()
+        )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+
+    async def resolve_key(did_aw: str):
+        if did_aw == "did:aw:bob":
+            return KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+        if did_aw == "did:aw:carol":
+            return KeyResolution(did_aw="did:aw:carol", current_did_key=carol_did_key)
+        raise AssertionError(f"unexpected did_aw {did_aw}")
+
+    async def list_did_addresses(did_aw: str):
+        if did_aw == "did:aw:bob":
+            return [
+                Address(
+                    address_id="addr-1",
+                    domain="acme.com",
+                    name="bob",
+                    did_aw="did:aw:bob",
+                    current_did_key=bob_did_key,
+                    reachability="public",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            ]
+        if did_aw == "did:aw:carol":
+            return [
+                Address(
+                    address_id="addr-2",
+                    domain="acme.com",
+                    name="carol",
+                    did_aw="did:aw:carol",
+                    current_did_key=carol_did_key,
+                    reachability="public",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            ]
+        raise AssertionError(f"unexpected did_aw {did_aw}")
+
+    registry.resolve_key = AsyncMock(side_effect=resolve_key)
+    registry.list_did_addresses = AsyncMock(side_effect=list_did_addresses)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    headers = _signed_identity_headers(carol_sk, carol_did_key, "did:aw:carol")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/conversations", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversations"] == []
+
+
+@pytest.mark.asyncio
 async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
 
