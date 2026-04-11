@@ -14,7 +14,13 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER
+from aweb.identity_auth_deps import (
+    IDENTITY_DID_AW_HEADER,
+    IdentityAuth,
+    MessagingAuth,
+    get_identity_auth,
+    get_messaging_auth,
+)
 from aweb.routes.messages import router as messages_router
 
 
@@ -395,6 +401,74 @@ async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_cur
     )
     assert row["from_did"] == "did:aw:alice"
     assert row["to_did"] == "did:aw:bob"
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_current_did_remains_visible_after_recipient_rotation(aweb_cloud_db):
+    _, _, bob_old_did_key = _make_keypair()
+    _, _, bob_new_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        bob_old_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {"to_did": bob_old_did_key, "subject": "hello current did", "body": "hi"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        send_resp = await client.post("/v1/messages", json=payload)
+    assert send_resp.status_code == 200, send_resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT to_did FROM {{tables.messages}} WHERE subject = 'hello current did'"
+    )
+    assert row["to_did"] == "did:aw:bob"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET did_key = $1
+        WHERE did_aw = 'did:aw:bob'
+        """,
+        bob_new_did_key,
+    )
+
+    async def _inbox_auth_override():
+        return IdentityAuth(
+            did_key=bob_new_did_key,
+            did_aw="did:aw:bob",
+            address="otherco.com/bob",
+        )
+
+    app.dependency_overrides[get_identity_auth] = _inbox_auth_override
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        inbox_resp = await client.get("/v1/messages/inbox")
+
+    assert inbox_resp.status_code == 200, inbox_resp.text
+    body = inbox_resp.json()
+    assert [item["subject"] for item in body["messages"]] == ["hello current did"]
 
 
 @pytest.mark.asyncio

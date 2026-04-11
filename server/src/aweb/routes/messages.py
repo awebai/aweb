@@ -138,10 +138,11 @@ async def send_message(
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
     elif payload.to_did is not None:
-        recipient_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(db, recipient_did)
+        requested_recipient_did = payload.to_did.strip()
+        recipient = await resolve_agent_by_did(db, requested_recipient_did)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
+        recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
     elif payload.to_address is not None:
