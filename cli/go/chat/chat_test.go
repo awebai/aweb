@@ -5040,6 +5040,84 @@ func TestSendDoesNotMarkStableDIDTargetDisconnectedWhenAliasConnected(t *testing
 	}
 }
 
+func TestSendMarksStableDIDTargetDisconnectedWhenOnlyResolverHandleCollisionParticipantIsConnected(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+	targetStableID := "did:aw:monitor"
+	targetCurrentDID := "did:key:z6MkMonitor"
+	otherStableID := "did:aw:other-monitor"
+	otherCurrentDID := "did:key:z6MkOtherMonitor"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:key:z6MkAliceCurrent", Address: "acme.com/alice"},
+					{Alias: "monitor", DID: targetCurrentDID, Address: "acme.com/monitor"},
+					{Alias: "monitor", DID: otherCurrentDID, Address: "otherco.com/monitor"},
+				},
+				TargetsConnected: []string{"otherco.com/monitor"},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			<-time.After(10 * time.Second)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := mustClient(t, server.URL)
+	client.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			switch identifier {
+			case targetStableID, targetCurrentDID, "acme.com/monitor":
+				return &awid.ResolvedIdentity{
+					DID:         targetCurrentDID,
+					StableID:    targetStableID,
+					Handle:      "monitor",
+					Address:     "acme.com/monitor",
+					ResolvedVia: "registry",
+				}, nil
+			case otherStableID, otherCurrentDID, "otherco.com/monitor":
+				return &awid.ResolvedIdentity{
+					DID:         otherCurrentDID,
+					StableID:    otherStableID,
+					Handle:      "monitor",
+					Address:     "otherco.com/monitor",
+					ResolvedVia: "registry",
+				}, nil
+			default:
+				return nil, errors.New("unexpected identifier")
+			}
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := Send(ctx, client, "alice", []string{targetStableID}, "hello", SendOptions{Wait: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.TargetNotConnected {
+		t.Fatalf("target_not_connected=%v, want true", result.TargetNotConnected)
+	}
+}
+
 func TestParseSSEEventIdentityFields(t *testing.T) {
 	t.Parallel()
 
