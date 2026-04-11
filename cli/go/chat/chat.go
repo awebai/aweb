@@ -1304,6 +1304,19 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 		}
 		names = append(names, value)
 	}
+	removeValue := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		filtered := names[:0]
+		for _, existing := range names {
+			if !strings.EqualFold(existing, value) {
+				filtered = append(filtered, existing)
+			}
+		}
+		names = filtered
+	}
 	appendResolved := func(identifier string) {
 		identifier = strings.TrimSpace(identifier)
 		if identifier == "" || client == nil {
@@ -1358,6 +1371,13 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 	}
 	if len(matchedParticipants) == 1 {
 		appendParticipant(matchedParticipants[0])
+	} else if len(matchedParticipants) > 1 {
+		if !strings.HasPrefix(strings.TrimSpace(target), "did:") && !strings.Contains(strings.TrimSpace(target), "/") {
+			removeValue(target)
+		}
+		if normalized != target && !strings.HasPrefix(strings.TrimSpace(normalized), "did:") && !strings.Contains(strings.TrimSpace(normalized), "/") {
+			removeValue(normalized)
+		}
 	} else if len(matchedParticipants) == 0 {
 		handleMatches := []awid.ChatParticipant{}
 		for _, candidate := range []string{addressHandle(target), addressHandle(normalized)} {
