@@ -2453,6 +2453,54 @@ func TestChatSendMessageSignedPayloadIncludesReplyAndHangOn(t *testing.T) {
 	}
 }
 
+func TestSendMessageSignedPayloadIncludesPriority(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message_id": "msg-1",
+			"status":     "delivered",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToAlias:  "otherco/monitor",
+		Subject:  "hello",
+		Body:     "world",
+		Priority: PriorityUrgent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	if env["priority"] != string(PriorityUrgent) {
+		t.Fatalf("signed payload priority=%v, want %q", env["priority"], PriorityUrgent)
+	}
+}
+
 func TestInboxVerifiesSignedMessages(t *testing.T) {
 	t.Parallel()
 

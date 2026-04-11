@@ -69,6 +69,7 @@ type MessageEnvelope struct {
 	To            string `json:"to"`
 	ToDID         string `json:"to_did"`
 	Type          string `json:"type"`
+	Priority      string `json:"priority,omitempty"`
 	Subject       string `json:"subject"`
 	Body          string `json:"body"`
 	Timestamp     string `json:"timestamp"`
@@ -299,6 +300,9 @@ func CanonicalJSON(env *MessageEnvelope) string {
 	}
 	if env.MessageID != "" {
 		fields = append(fields, field{"message_id", jsonStringValue(env.MessageID)})
+	}
+	if env.Priority != "" {
+		fields = append(fields, field{"priority", jsonStringValue(env.Priority)})
 	}
 	if env.ReplyTo != "" {
 		fields = append(fields, field{"reply_to", jsonStringValue(env.ReplyTo)})

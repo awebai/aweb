@@ -114,6 +114,7 @@ def _parse_signed_timestamp(value: str) -> datetime:
 def _validate_signed_mail_payload(
     *,
     signed_payload: str | None,
+    priority: MessagePriority,
     subject: str,
     body: str,
     from_did: str,
@@ -130,6 +131,8 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
     if payload.get("type") != "mail":
         raise HTTPException(status_code=422, detail="signed_payload type must be mail")
+    if (payload.get("priority") or "normal") != priority:
+        raise HTTPException(status_code=422, detail="signed_payload priority must match the mail message")
     if payload.get("subject", "") != subject:
         raise HTTPException(status_code=422, detail="signed_payload subject must match the mail subject")
     if payload.get("body") != body:
@@ -297,6 +300,7 @@ async def send_message(
             )
         _validate_signed_mail_payload(
             signed_payload=payload.signed_payload,
+            priority=payload.priority,
             subject=payload.subject,
             body=payload.body,
             from_did=from_did,
