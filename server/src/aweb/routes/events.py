@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from aweb.deps import get_db, get_redis
+from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
@@ -42,39 +43,6 @@ def _mail_wake_mode(priority: str | None) -> str:
 
 def _chat_wake_mode(*, sender_waiting: bool) -> str:
     return "interrupt" if sender_waiting else "prompt"
-
-
-async def _lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dict[str, dict[str, str]]:
-    unique_dids = sorted({(did or "").strip() for did in dids if (did or "").strip()})
-    if not unique_dids:
-        return {}
-    aweb_db = (
-        db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
-    )
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT did_aw, did_key, address
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND address IS NOT NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
-        """,
-        unique_dids,
-    )
-    result: dict[str, dict[str, str]] = {}
-    for row in rows:
-        stable_id = (row.get("did_aw") or "").strip()
-        current_did = (row.get("did_key") or "").strip()
-        address = (row.get("address") or "").strip()
-        for did in (stable_id, current_did):
-            if not did:
-                continue
-            meta = result.setdefault(did, {})
-            if stable_id:
-                meta["stable_id"] = stable_id
-            if address:
-                meta["address"] = address
-    return result
 
 
 async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
@@ -106,7 +74,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         """,
         inbox_dids,
     )
-    sender_map = await _lookup_identity_metadata_by_did(
+    sender_map = await lookup_identity_metadata_by_did(
         aweb_db,
         [str(row["from_did"]).strip() for row in rows if row.get("from_did")],
     )
@@ -163,7 +131,7 @@ async def _current_actionable_chat(
         for item in pending:
             pending_by_session.setdefault(item["session_id"], item)
     actionable: list[dict[str, Any]] = []
-    participant_identity_map = await _lookup_identity_metadata_by_did(
+    participant_identity_map = await lookup_identity_metadata_by_did(
         db,
         [
             did

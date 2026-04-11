@@ -177,6 +177,69 @@ async def test_messages_inbox_accepts_identity_auth(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+    _, _, alice_current_did = _make_keypair()
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        alice_current_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            from_did, to_did, from_alias, to_alias, subject, body, priority
+        )
+        VALUES ($1, 'did:aw:bob', 'alice', 'bob', 'stable sender', 'hello', 'normal')
+        """,
+        alice_current_did,
+    )
+
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/messages/inbox", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["messages"][0]["from_did"] == alice_current_did
+    assert body["messages"][0]["from_stable_id"] == "did:aw:alice"
+    assert body["messages"][0]["from_address"] == "acme.com/alice"
+    assert body["messages"][0]["to_did"] == "did:aw:bob"
+    assert body["messages"][0]["to_stable_id"] == "did:aw:bob"
+    assert body["messages"][0]["to_address"] == "acme.com/bob"
+
+
+@pytest.mark.asyncio
 async def test_messages_inbox_rejects_invalid_identity_signature(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     other_sk, _, _ = _make_keypair()

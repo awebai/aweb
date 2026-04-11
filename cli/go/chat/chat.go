@@ -1012,6 +1012,7 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 			ParticipantAddresses: p.ParticipantAddresses,
 			LastMessage:          p.LastMessage,
 			LastFrom:             p.LastFrom,
+			LastFromStableID:     p.LastFromStableID,
 			LastFromDID:          p.LastFromDID,
 			LastFromAddress:      p.LastFromAddress,
 			UnreadCount:          p.UnreadCount,
@@ -1065,11 +1066,16 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		}
 		fromStableID := ""
 		fromDID := ""
-		if value := strings.TrimSpace(p.LastFromDID); value != "" {
-			if strings.HasPrefix(value, "did:aw:") {
-				fromStableID = value
-			} else {
-				fromDID = value
+		if value := strings.TrimSpace(p.LastFromStableID); value != "" {
+			fromStableID = value
+		}
+		if fromStableID == "" {
+			if value := strings.TrimSpace(p.LastFromDID); value != "" {
+				if strings.HasPrefix(value, "did:aw:") {
+					fromStableID = value
+				} else {
+					fromDID = value
+				}
 			}
 		}
 		if fromStableID == "" {

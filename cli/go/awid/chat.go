@@ -228,6 +228,7 @@ type ChatPendingItem struct {
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	LastMessage          string   `json:"last_message"`
 	LastFrom             string   `json:"last_from"`
+	LastFromStableID     string   `json:"last_from_stable_id,omitempty"`
 	LastFromDID          string   `json:"last_from_did,omitempty"`
 	LastFromAddress      string   `json:"last_from_address,omitempty"`
 	UnreadCount          int      `json:"unread_count"`

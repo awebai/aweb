@@ -21,6 +21,7 @@ from redis.exceptions import RedisError
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
+from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
@@ -148,28 +149,12 @@ def _group_participants_by_session(
 
 
 async def _lookup_addresses_by_did(db, dids: list[str]) -> dict[str, str]:
-    if not dids:
-        return {}
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT did_aw, did_key, address
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND address IS NOT NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
-        """,
-        list(set(dids)),
-    )
+    metadata = await lookup_identity_metadata_by_did(db, dids)
     result: dict[str, str] = {}
-    for row in rows:
-        address = (row.get("address") or "").strip()
-        if not address:
-            continue
-        if row.get("did_aw"):
-            result[str(row["did_aw"]).strip()] = address
-        if row.get("did_key"):
-            result[str(row["did_key"]).strip()] = address
+    for did, meta in metadata.items():
+        address = (meta.get("address") or "").strip()
+        if address:
+            result[did] = address
     return result
 
 
@@ -554,7 +539,7 @@ async def pending(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
-    address_map = await _lookup_addresses_by_did(
+    identity_map = await lookup_identity_metadata_by_did(
         db,
         [
             (row.get("did") or "").strip()
@@ -585,7 +570,7 @@ async def pending(
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
         participant_addresses = [
-            address_map.get((row.get("did") or "").strip(), row["alias"])
+            identity_map.get((row.get("did") or "").strip(), {}).get("address", row["alias"])
             for row in session_participants
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
@@ -613,9 +598,14 @@ async def pending(
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_from": item["last_from"],
+                "last_from_stable_id": identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": address_map.get(
-                    (item.get("last_from_did") or "").strip(),
+                "last_from_address": identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ).get(
+                    "address",
                     item["last_from"],
                 ),
                 "unread_count": item["unread_count"],
@@ -679,14 +669,15 @@ async def history(
         limit=limit,
     )
     contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
-    address_map = await _lookup_addresses_by_did(
+    identity_map = await lookup_identity_metadata_by_did(
         db,
         [m["from_did"] for m in messages if m.get("from_did")],
     )
 
     history_items: list[dict[str, Any]] = []
     for msg in messages:
-        from_address = address_map.get(msg.get("from_did") or "", msg["from_alias"])
+        from_did = (msg.get("from_did") or "").strip()
+        from_address = identity_map.get(from_did, {}).get("address") or msg["from_alias"]
         history_items.append(
             {
                 "message_id": msg["message_id"],
@@ -696,8 +687,9 @@ async def history(
                 "timestamp": _utc_iso(msg["created_at"]),
                 "sender_leaving": msg["sender_leaving"],
                 "reply_to": msg.get("reply_to"),
-                "to_address": _chat_to_address(participant_rows, from_did=msg.get("from_did") or ""),
-                "from_did": msg.get("from_did"),
+                "to_address": _chat_to_address(participant_rows, from_did=from_did),
+                "from_did": from_did or None,
+                "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -850,18 +842,20 @@ async def _sse_events(
                 after,
             )
             last_message_at = recent[-1]["created_at"] if recent else after
-            waiting = set(await get_waiting_agents(redis, session_id_str, list({str(r["from_did"]) for r in recent if r.get("from_did")})))
-            address_map = await _lookup_addresses_by_did(db, [str(r["from_did"]) for r in recent if r.get("from_did")])
+            sender_dids = [str(r["from_did"]) for r in recent if r.get("from_did")]
+            waiting = set(await get_waiting_agents(redis, session_id_str, list(set(sender_dids))))
+            identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
-                from_address = address_map.get(from_did, row["from_alias"])
+                from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
                     "message_id": str(row["message_id"]),
                     "from_agent": row["from_alias"],
                     "from_address": from_address,
+                    "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                     "body": row["body"],
                     "sender_leaving": bool(row["sender_leaving"]),
                     "sender_waiting": from_did in waiting,
@@ -939,18 +933,19 @@ async def _sse_events(
                 )
                 sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
                 sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
-                address_map = await _lookup_addresses_by_did(db, sender_dids)
+                identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
                 for row in new_msgs:
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
                     from_did = (row.get("from_did") or "").strip()
-                    from_address = address_map.get(from_did, row["from_alias"])
+                    from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
                         "message_id": str(row["message_id"]),
                         "from_agent": row["from_alias"],
                         "from_address": from_address,
+                        "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                         "body": row["body"],
                         "sender_leaving": bool(row["sender_leaving"]),
                         "sender_waiting": from_did in sender_waiting,

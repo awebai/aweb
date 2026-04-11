@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
+from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import IdentityAuth, MessagingAuth, get_identity_auth, get_messaging_auth
 from aweb.messaging.messages import (
     MessagePriority,
@@ -79,6 +80,10 @@ class InboxMessage(BaseModel):
     created_at: str
     from_did: Optional[str] = None
     to_did: Optional[str] = None
+    from_stable_id: Optional[str] = None
+    to_stable_id: Optional[str] = None
+    from_address: Optional[str] = None
+    to_address: Optional[str] = None
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
 
@@ -273,8 +278,20 @@ async def get_inbox(
         limit,
     )
 
+    identity_map = await lookup_identity_metadata_by_did(
+        db,
+        [
+            str(value).strip()
+            for row in rows
+            for value in (row.get("from_did"), row.get("to_did"))
+            if value
+        ],
+    )
+
     messages = []
     for r in rows:
+        from_did = (r.get("from_did") or "").strip()
+        to_did = (r.get("to_did") or "").strip()
         messages.append(InboxMessage(
             message_id=str(r["message_id"]),
             from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
@@ -285,8 +302,12 @@ async def get_inbox(
             priority=r["priority"],
             read_at=r["read_at"].isoformat() if r.get("read_at") else None,
             created_at=r["created_at"].isoformat(),
-            from_did=r.get("from_did"),
-            to_did=r.get("to_did"),
+            from_did=from_did or None,
+            to_did=to_did or None,
+            from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
+            to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
+            from_address=(identity_map.get(from_did, {}).get("address") or None),
+            to_address=(identity_map.get(to_did, {}).get("address") or None),
             signature=r.get("signature"),
             signed_payload=r.get("signed_payload"),
         ))
