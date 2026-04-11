@@ -1221,13 +1221,63 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 	appendUnique(normalized)
 	appendResolved(target)
 	appendResolved(normalized)
-	appendUnique(addressHandle(target))
-	appendUnique(addressHandle(normalized))
+	participantAliasIsUnique := func(alias string) bool {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			return false
+		}
+		matches := 0
+		for _, participant := range participants {
+			if strings.EqualFold(strings.TrimSpace(participant.Alias), alias) {
+				matches++
+				if matches > 1 {
+					return false
+				}
+			}
+		}
+		return matches == 1
+	}
+	appendParticipant := func(participant awid.ChatParticipant) {
+		if alias := strings.TrimSpace(participant.Alias); participantAliasIsUnique(alias) {
+			appendUnique(alias)
+		}
+		appendUnique(strings.TrimSpace(participant.Address))
+		appendUnique(strings.TrimSpace(participant.DID))
+	}
+	matchedParticipant := false
 	for _, participant := range participants {
-		if chatParticipantMatchesTarget(participant, target) || chatParticipantMatchesTarget(participant, normalized) {
-			appendUnique(strings.TrimSpace(participant.Alias))
-			appendUnique(strings.TrimSpace(participant.Address))
-			appendUnique(strings.TrimSpace(participant.DID))
+		if chatParticipantMatchesSessionTarget(participant, target) || chatParticipantMatchesSessionTarget(participant, normalized) {
+			appendParticipant(participant)
+			matchedParticipant = true
+		}
+	}
+	if !matchedParticipant {
+		handleMatches := []awid.ChatParticipant{}
+		for _, candidate := range []string{addressHandle(target), addressHandle(normalized)} {
+			if candidate == "" {
+				continue
+			}
+			handleMatches = handleMatches[:0]
+			for _, participant := range participants {
+				for _, identity := range []string{
+					strings.TrimSpace(participant.Alias),
+					addressHandle(strings.TrimSpace(participant.Address)),
+					stableAlias(strings.TrimSpace(participant.DID)),
+				} {
+					if identity != "" && strings.EqualFold(identity, candidate) {
+						handleMatches = append(handleMatches, participant)
+						break
+					}
+				}
+			}
+			if len(handleMatches) == 1 {
+				appendParticipant(handleMatches[0])
+				break
+			}
+		}
+		if len(participants) == 0 {
+			appendUnique(addressHandle(target))
+			appendUnique(addressHandle(normalized))
 		}
 	}
 	return names
@@ -1419,6 +1469,23 @@ func chatParticipantMatchesTarget(participant awid.ChatParticipant, target strin
 		strings.TrimSpace(participant.DID),
 	} {
 		if chatIdentityMatchesTarget(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatParticipantMatchesSessionTarget(participant awid.ChatParticipant, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		strings.TrimSpace(participant.Alias),
+		strings.TrimSpace(participant.Address),
+		strings.TrimSpace(participant.DID),
+	} {
+		if chatSessionIdentityMatchesTarget(candidate, target) {
 			return true
 		}
 	}

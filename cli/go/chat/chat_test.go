@@ -3608,6 +3608,54 @@ func TestSendDoesNotMarkAddressTargetDisconnectedWhenAliasConnected(t *testing.T
 	}
 }
 
+func TestSendMarksAddressTargetDisconnectedWhenOnlyAliasCollisionParticipantIsConnected(t *testing.T) {
+	t.Parallel()
+
+	sentMsgID := "msg-sent-1"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{
+				SessionID: "s1",
+				MessageID: sentMsgID,
+				SSEURL:    "/v1/chat/sessions/s1/stream",
+				Participants: []awid.ChatParticipant{
+					{Alias: "alice", DID: "did:aw:alice", Address: "acme.com/alice"},
+					{Alias: "rose", DID: "did:aw:acme-rose", Address: "acme.com/rose"},
+					{Alias: "rose", DID: "did:aw:otherco-rose", Address: "otherco.com/rose"},
+				},
+				TargetsConnected: []string{"acme.com/rose"},
+			})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			<-time.After(10 * time.Second)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := Send(ctx, mustClient(t, server.URL), "alice", []string{"otherco.com/rose"}, "hello", SendOptions{Wait: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.TargetNotConnected {
+		t.Fatalf("target_not_connected=%v, want true", result.TargetNotConnected)
+	}
+}
+
 func TestSendAcceptsAddressTargetReplyByStableDID(t *testing.T) {
 	t.Parallel()
 
