@@ -624,15 +624,15 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 
 	env := &MessageEnvelope{
-		From:      "rose",
-		FromDID:   did,
-		To:        "did:aw:monitor",
-		ToStableID:"did:aw:monitor",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:       "rose",
+		FromDID:    did,
+		To:         "did:aw:monitor",
+		ToStableID: "did:aw:monitor",
+		Type:       "chat",
+		Body:       "ping",
+		Timestamp:  gotSend.Timestamp,
+		MessageID:  gotSend.MessageID,
+		Signature:  gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -2027,6 +2027,57 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 	}
 }
 
+func TestChatCreateSessionSignedPayloadIncludesReplyAndLeaving(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess-1",
+			"message_id": "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAliases: []string{"bob"},
+		Message:   "hey",
+		Leaving:   true,
+		ReplyTo:   "11111111-1111-4111-8111-111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	if env["reply_to"] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("signed payload reply_to=%v, want reply target", env["reply_to"])
+	}
+	if env["sender_leaving"] != true {
+		t.Fatalf("signed payload sender_leaving=%v, want true", env["sender_leaving"])
+	}
+}
+
 func TestChatCreateSessionSupportsIdentityTargets(t *testing.T) {
 	t.Parallel()
 
@@ -2350,6 +2401,55 @@ func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 	if gotBody["signature"] == nil || gotBody["signature"] == "" {
 		t.Fatal("signature missing")
+	}
+}
+
+func TestChatSendMessageSignedPayloadIncludesReplyAndHangOn(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message_id": "msg-1",
+			"delivered":  true,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{
+		Body:       "message in chat",
+		ExtendWait: true,
+		ReplyTo:    "22222222-2222-4222-8222-222222222222",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sp, ok := gotBody["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	if env["reply_to"] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("signed payload reply_to=%v, want reply target", env["reply_to"])
+	}
+	if env["hang_on"] != true {
+		t.Fatalf("signed payload hang_on=%v, want true", env["hang_on"])
 	}
 }
 
