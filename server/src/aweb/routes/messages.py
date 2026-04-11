@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
+from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import IdentityAuth, MessagingAuth, get_identity_auth, get_messaging_auth
 from aweb.messaging.messages import (
     MessagePriority,
@@ -115,44 +116,6 @@ def _identity_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
         if value and value not in dids:
             dids.append(value)
     return dids
-
-
-async def _lookup_identity_metadata_by_did(db, dids: list[str]) -> dict[str, dict[str, str]]:
-    cleaned = []
-    for did in dids:
-        did = (did or "").strip()
-        if did and did not in cleaned:
-            cleaned.append(did)
-    if not cleaned:
-        return {}
-
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT did_aw, did_key, address
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
-        """,
-        cleaned,
-    )
-    result: dict[str, dict[str, str]] = {}
-    for did in cleaned:
-        if did.startswith("did:aw:"):
-            result.setdefault(did, {})["stable_id"] = did
-    for row in rows:
-        stable_id = (row.get("did_aw") or "").strip()
-        current_did = (row.get("did_key") or "").strip()
-        address = (row.get("address") or "").strip()
-        for did in (stable_id, current_did):
-            if not did:
-                continue
-            meta = result.setdefault(did, {})
-            if stable_id:
-                meta["stable_id"] = stable_id
-            if address:
-                meta["address"] = address
-    return result
 
 
 @router.post("", response_model=SendMessageResponse)
@@ -312,7 +275,7 @@ async def get_inbox(
         limit,
     )
 
-    identity_map = await _lookup_identity_metadata_by_did(
+    identity_map = await lookup_identity_metadata_by_did(
         db,
         [
             str(value).strip()

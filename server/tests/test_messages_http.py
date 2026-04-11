@@ -205,6 +205,18 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
     )
     await aweb_cloud_db.aweb_db.execute(
         """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
         INSERT INTO {{tables.messages}} (
             from_did, to_did, from_alias, to_alias, subject, body, priority
         )
@@ -222,6 +234,9 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
     assert body["messages"][0]["from_did"] == alice_current_did
     assert body["messages"][0]["from_stable_id"] == "did:aw:alice"
     assert body["messages"][0]["from_address"] == "acme.com/alice"
+    assert body["messages"][0]["to_did"] == "did:aw:bob"
+    assert body["messages"][0]["to_stable_id"] == "did:aw:bob"
+    assert body["messages"][0]["to_address"] == "acme.com/bob"
 
 
 @pytest.mark.asyncio

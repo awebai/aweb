@@ -1071,12 +1071,12 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		}
 		if fromStableID == "" {
 			if value := strings.TrimSpace(p.LastFromDID); value != "" {
-			if strings.HasPrefix(value, "did:aw:") {
-				fromStableID = value
-			} else {
-				fromDID = value
+				if strings.HasPrefix(value, "did:aw:") {
+					fromStableID = value
+				} else {
+					fromDID = value
+				}
 			}
-		}
 		}
 		if fromStableID == "" {
 			candidate := ""
