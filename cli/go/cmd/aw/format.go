@@ -366,6 +366,26 @@ func pendingParticipantLabel(p chat.PendingConversation, idx int) string {
 	return preferredIdentityDisplayLabel(alias, address, "", did, "")
 }
 
+func pendingIdentityStrength(address string, stableID string, did string, alias string) int {
+	if strings.TrimSpace(address) != "" {
+		return 4
+	}
+	if strings.TrimSpace(stableID) != "" {
+		return 3
+	}
+	did = strings.TrimSpace(did)
+	if did != "" {
+		if strings.HasPrefix(did, "did:aw:") {
+			return 3
+		}
+		return 2
+	}
+	if strings.TrimSpace(alias) != "" {
+		return 1
+	}
+	return 0
+}
+
 func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, selfDIDs ...string) string {
 	lastFrom := preferredIdentityDisplayLabel(
 		strings.TrimSpace(p.LastFrom),
@@ -374,11 +394,12 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 		strings.TrimSpace(p.LastFromDID),
 		"",
 	)
-	if strings.TrimSpace(p.LastFrom) != "" ||
-		strings.TrimSpace(p.LastFromAddress) != "" ||
-		(strings.TrimSpace(p.LastFromStableID) == "" && strings.TrimSpace(p.LastFromDID) == "") {
-		return lastFrom
-	}
+	lastFromStrength := pendingIdentityStrength(
+		p.LastFromAddress,
+		p.LastFromStableID,
+		p.LastFromDID,
+		p.LastFrom,
+	)
 
 	count := len(p.Participants)
 	if len(p.ParticipantAddresses) > count {
@@ -389,7 +410,20 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 	}
 
 	candidate := ""
+	candidateStrength := 0
 	for idx := 0; idx < count; idx++ {
+		alias := ""
+		if idx < len(p.Participants) {
+			alias = strings.TrimSpace(p.Participants[idx])
+		}
+		address := ""
+		if idx < len(p.ParticipantAddresses) {
+			address = strings.TrimSpace(p.ParticipantAddresses[idx])
+		}
+		did := ""
+		if idx < len(p.ParticipantDIDs) {
+			did = strings.TrimSpace(p.ParticipantDIDs[idx])
+		}
 		participant := pendingParticipantLabel(p, idx)
 		if participant == "" || notifyIdentityMatchesSelf(participant, selfAlias, selfDIDs...) {
 			continue
@@ -398,8 +432,9 @@ func preferredPendingSenderLabel(p chat.PendingConversation, selfAlias string, s
 			return lastFrom
 		}
 		candidate = participant
+		candidateStrength = pendingIdentityStrength(address, "", did, alias)
 	}
-	if candidate != "" {
+	if candidate != "" && candidateStrength > lastFromStrength {
 		return candidate
 	}
 	return lastFrom

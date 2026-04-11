@@ -142,6 +142,29 @@ func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
 	}
 }
 
+func TestFormatChatPendingPrefersParticipantAddressWhenLastFromIsAliasOnly(t *testing.T) {
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				Participants:         []string{"carol"},
+				ParticipantAddresses: []string{"otherco/carol"},
+				LastFrom:             "carol",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        true,
+			},
+		},
+	}
+
+	out := formatChatPending(result)
+	if !strings.Contains(out, "CHAT WAITING: otherco/carol") {
+		t.Fatalf("pending output should prefer participant address over alias-only last_from:\n%s", out)
+	}
+	if strings.Contains(out, "CHAT WAITING: carol") {
+		t.Fatalf("pending output should not collapse to alias-only sender label:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingFallsBackToStableID(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{

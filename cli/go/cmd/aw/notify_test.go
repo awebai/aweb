@@ -168,6 +168,32 @@ func TestFormatNotifyOutputFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestFormatNotifyOutputPrefersParticipantAddressWhenLastFromIsAliasOnly(t *testing.T) {
+	t.Parallel()
+
+	result := &chat.PendingResult{
+		Pending: []chat.PendingConversation{
+			{
+				SessionID:            "s1",
+				Participants:         []string{"wendy", "rose"},
+				ParticipantAddresses: []string{"acme.com/wendy", "otherco/rose"},
+				LastFrom:             "rose",
+				LastFromAddress:      "",
+				UnreadCount:          1,
+				SenderWaiting:        false,
+			},
+		},
+	}
+
+	out := formatNotifyOutput(result, "wendy")
+	if !strings.Contains(out, "Unread message from otherco/rose") {
+		t.Fatalf("notify output should prefer participant address over alias-only last_from:\n%s", out)
+	}
+	if strings.Contains(out, "Unread message from rose") {
+		t.Fatalf("notify output should not collapse to alias-only sender label:\n%s", out)
+	}
+}
+
 func TestFormatNotifyOutputSkipsSelfStableIDParticipant(t *testing.T) {
 	t.Parallel()
 
