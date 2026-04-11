@@ -90,6 +90,51 @@ func TestChatStreamRequestsEventStream(t *testing.T) {
 	}
 }
 
+func TestChatStreamUsesIdentityAuthHeadersWithoutTeamCert(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:test-alice"
+
+	var gotAuth string
+	var gotTimestamp string
+	var gotStableID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		gotStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message\ndata: {\"ok\":true}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(stableID)
+
+	stream, err := c.ChatStream(context.Background(), "sess", time.Now().Add(2*time.Second), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if gotAuth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	if gotTimestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp header")
+	}
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
+	}
+}
+
 func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	t.Parallel()
 

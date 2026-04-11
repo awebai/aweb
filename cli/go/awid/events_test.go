@@ -2,6 +2,7 @@ package awid
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"io"
 	"net/http"
@@ -235,6 +236,52 @@ func TestEventStreamRequestsEventStream(t *testing.T) {
 	}
 	if ev.AgentID != "a1" || ev.TeamID != "backend:acme.com" {
 		t.Fatalf("unexpected event payload: %#v", ev)
+	}
+}
+
+func TestEventStreamUsesIdentityAuthHeadersWithoutTeamCert(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := "did:aw:test-alice"
+
+	var gotAuth string
+	var gotTimestamp string
+	var gotStableID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		gotStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: connected\n")
+		_, _ = io.WriteString(w, "data: {\"agent_id\":\"a1\",\"team_id\":\"backend:acme.com\"}\n\n")
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStableID(stableID)
+
+	stream, err := c.EventStream(context.Background(), time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if gotAuth == "" {
+		t.Fatal("missing Authorization header")
+	}
+	if gotTimestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp header")
+	}
+	if gotStableID != stableID {
+		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
 	}
 }
 
