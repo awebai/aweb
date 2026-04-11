@@ -413,6 +413,9 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	if err != nil {
 		return nil, err
 	}
+	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
+		c.latestClientVersion.Store(v)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		_ = resp.Body.Close()
