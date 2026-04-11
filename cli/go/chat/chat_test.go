@@ -1948,6 +1948,45 @@ func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	}
 }
 
+func TestFindSessionAliasAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-rich",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"acme.com/monitor"},
+						CreatedAt:            "2025-01-01T00:00:01Z",
+					},
+					{
+						SessionID:    "s-sparse",
+						Participants: []string{"monitor"},
+						CreatedAt:    "2025-01-01T00:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-rich" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
 func TestFindSessionNotFound(t *testing.T) {
 	t.Parallel()
 
