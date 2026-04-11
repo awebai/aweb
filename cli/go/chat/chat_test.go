@@ -1987,6 +1987,83 @@ func TestFindSessionAliasAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
 	}
 }
 
+func TestFindSessionPendingDoesNotPreferSparseGroupOverDirect(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:            "s-direct",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"otherco/monitor"},
+						LastActivity:         "2026-04-11T10:00:00Z",
+					},
+					{
+						SessionID:            "s-group-sparse",
+						Participants:         nil,
+						ParticipantAddresses: []string{"otherco/monitor", "acme/alice"},
+						LastActivity:         "2026-04-11T09:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-direct" {
+		t.Fatalf("session_id=%q, want s-direct", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true, want false")
+	}
+}
+
+func TestFindSessionFallbackDoesNotPreferSparseGroupOverDirect(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-direct",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"otherco/monitor"},
+						CreatedAt:            "2026-04-11T10:00:00Z",
+					},
+					{
+						SessionID:            "s-group-sparse",
+						Participants:         nil,
+						ParticipantAddresses: []string{"otherco/monitor", "acme/alice"},
+						CreatedAt:            "2026-04-11T09:00:00Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-direct" {
+		t.Fatalf("session_id=%q, want s-direct", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true, want false")
+	}
+}
+
 func TestFindSessionNotFound(t *testing.T) {
 	t.Parallel()
 
