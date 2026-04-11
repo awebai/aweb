@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from aweb.deps import get_db
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
 
@@ -28,17 +27,43 @@ class ConversationsResponse(BaseModel):
     next_cursor: str | None
 
 
+def _actor_dids(auth: MessagingAuth) -> list[str]:
+    dids: list[str] = []
+    for value in ((auth.did_aw or "").strip(), (auth.did_key or "").strip()):
+        if value and value not in dids:
+            dids.append(value)
+    return dids
+
+
+def _conversation_label(alias: str | None, did: str | None) -> str:
+    alias_value = (alias or "").strip()
+    if alias_value:
+        return alias_value
+    return (did or "").strip()
+
+
+def _dedupe_labels(values: list[str]) -> list[str]:
+    labels: list[str] = []
+    for value in values:
+        value = (value or "").strip()
+        if value and value not in labels:
+            labels.append(value)
+    return labels
+
+
 @router.get("", response_model=ConversationsResponse)
 async def list_conversations(
     request: Request,
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> ConversationsResponse:
+    del request
     aweb_db = db.get_manager("aweb")
-
-    actor_uuid = UUID(identity.agent_id)
+    actor_dids = _actor_dids(auth)
+    if not actor_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     cursor_dt: datetime | None = None
     if cursor:
@@ -53,112 +78,111 @@ async def list_conversations(
         """
         SELECT
             m.message_id::text AS conversation_id,
-            MAX(m.created_at) AS last_message_at,
-            (array_agg(m.body ORDER BY m.created_at DESC))[1] AS last_body,
-            (array_agg(m.from_alias ORDER BY m.created_at DESC))[1] AS last_from,
-            (array_agg(m.subject ORDER BY m.created_at DESC))[1] AS subject,
-            COUNT(*) FILTER (WHERE m.to_agent_id = $2 AND m.read_at IS NULL)::int AS unread_count
+            m.created_at AS last_message_at,
+            m.body AS last_body,
+            m.from_alias AS last_from,
+            m.from_did AS last_from_did,
+            m.subject AS subject,
+            m.to_alias AS to_alias,
+            m.to_did AS to_did,
+            CASE
+                WHEN m.to_did = ANY($1::text[]) AND m.read_at IS NULL THEN 1
+                ELSE 0
+            END::int AS unread_count
         FROM {{tables.messages}} m
-        WHERE m.team_id = $1
-          AND (m.from_agent_id = $2 OR m.to_agent_id = $2)
-        GROUP BY m.message_id
-        ORDER BY MAX(m.created_at) DESC
+        WHERE m.from_did = ANY($1::text[])
+           OR m.to_did = ANY($1::text[])
+        ORDER BY m.created_at DESC
         """,
-        identity.team_id,
-        actor_uuid,
+        actor_dids,
     )
-
-    # Batch-resolve participants for all mail conversations in one query.
-    conv_ids = [row["conversation_id"] for row in mail_rows]
-    participants_map: dict[str, list[str]] = {cid: [] for cid in conv_ids}
-    if conv_ids:
-        part_rows = await aweb_db.fetch_all(
-            """
-            SELECT m.message_id::text AS conv_id, a.alias
-            FROM {{tables.messages}} m
-            JOIN {{tables.agents}} a ON a.agent_id IN (m.from_agent_id, m.to_agent_id)
-            WHERE m.team_id = $1
-              AND m.message_id::text = ANY($2)
-            GROUP BY m.message_id, a.alias
-            ORDER BY a.alias
-            """,
-            identity.team_id,
-            conv_ids,
-        )
-        for r in part_rows:
-            participants_map[r["conv_id"]].append(r["alias"])
 
     mail_items: list[dict] = []
     for row in mail_rows:
-        conv_id = row["conversation_id"]
         preview = (row["last_body"] or "")[:100]
-
         mail_items.append(
             {
                 "conversation_type": "mail",
-                "conversation_id": conv_id,
-                "participants": participants_map.get(conv_id, []),
+                "conversation_id": row["conversation_id"],
+                "participants": _dedupe_labels(
+                    [
+                        _conversation_label(row["last_from"], row["last_from_did"]),
+                        _conversation_label(row["to_alias"], row["to_did"]),
+                    ]
+                ),
                 "subject": row["subject"] or "",
                 "last_message_at": row["last_message_at"],
-                "last_message_from": row["last_from"] or "",
+                "last_message_from": _conversation_label(row["last_from"], row["last_from_did"]),
                 "last_message_preview": preview,
                 "unread_count": row["unread_count"],
             }
         )
 
     # --- Chat conversations ---
-    chat_rows = await aweb_db.fetch_all(
-        """
-        SELECT
-            s.session_id::text AS conversation_id,
-            array_agg(DISTINCT p2.alias ORDER BY p2.alias) AS participants,
-            lm.body AS last_body,
-            lm.from_alias AS last_from,
-            lm.created_at AS last_message_at,
-            COALESCE(unread.cnt, 0)::int AS unread_count
-        FROM {{tables.chat_sessions}} s
-        JOIN {{tables.chat_participants}} p
-          ON p.session_id = s.session_id AND p.agent_id = $2
-        JOIN {{tables.chat_participants}} p2
-          ON p2.session_id = s.session_id
-        LEFT JOIN LATERAL (
-            SELECT body, from_alias, created_at
-            FROM {{tables.chat_messages}}
-            WHERE session_id = s.session_id
-            ORDER BY created_at DESC
-            LIMIT 1
-        ) lm ON TRUE
-        LEFT JOIN {{tables.chat_read_receipts}} rr
-          ON rr.session_id = s.session_id AND rr.agent_id = $2
-        LEFT JOIN {{tables.chat_messages}} last_read_msg
-          ON last_read_msg.message_id = rr.last_read_message_id
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*)::int AS cnt
-            FROM {{tables.chat_messages}} cm
-            WHERE cm.session_id = s.session_id
-              AND cm.from_agent_id <> $2
-              AND cm.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
-        ) unread ON TRUE
-        WHERE s.team_id = $1
-          AND lm.created_at IS NOT NULL
-        GROUP BY s.session_id, lm.body, lm.from_alias, lm.created_at, unread.cnt
-        ORDER BY lm.created_at DESC
-        """,
-        identity.team_id,
-        actor_uuid,
-    )
+    rows_by_session: dict[str, dict] = {}
+    for actor_did in actor_dids:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT
+                s.session_id::text AS conversation_id,
+                array_agg(p2.alias ORDER BY p2.alias) AS participants,
+                array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
+                lm.body AS last_body,
+                lm.from_alias AS last_from,
+                lm.from_did AS last_from_did,
+                lm.created_at AS last_message_at,
+                COALESCE(unread.cnt, 0)::int AS unread_count
+            FROM {{tables.chat_sessions}} s
+            JOIN {{tables.chat_participants}} p
+              ON p.session_id = s.session_id AND p.did = $1
+            JOIN {{tables.chat_participants}} p2
+              ON p2.session_id = s.session_id
+            LEFT JOIN LATERAL (
+                SELECT body, from_alias, from_did, created_at
+                FROM {{tables.chat_messages}}
+                WHERE session_id = s.session_id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) lm ON TRUE
+            LEFT JOIN {{tables.chat_read_receipts}} rr
+              ON rr.session_id = s.session_id AND rr.did = $1
+            LEFT JOIN {{tables.chat_messages}} last_read_msg
+              ON last_read_msg.message_id = rr.last_read_message_id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS cnt
+                FROM {{tables.chat_messages}} cm
+                WHERE cm.session_id = s.session_id
+                  AND cm.from_did <> $1
+                  AND cm.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
+            ) unread ON TRUE
+            WHERE lm.created_at IS NOT NULL
+            GROUP BY s.session_id, lm.body, lm.from_alias, lm.from_did, lm.created_at, unread.cnt
+            ORDER BY lm.created_at DESC
+            """,
+            actor_did,
+        )
+        for row in rows:
+            rows_by_session.setdefault(row["conversation_id"], dict(row))
+    chat_rows = list(rows_by_session.values())
+    chat_rows.sort(key=lambda row: row["last_message_at"], reverse=True)
 
     chat_items: list[dict] = []
     for row in chat_rows:
         preview = (row["last_body"] or "")[:100]
+        participants = _dedupe_labels(
+            [
+                _conversation_label(alias, did)
+                for alias, did in zip(list(row["participants"] or []), list(row["participant_dids"] or []))
+            ]
+        )
         chat_items.append(
             {
                 "conversation_type": "chat",
                 "conversation_id": row["conversation_id"],
-                "participants": list(row["participants"] or []),
+                "participants": participants,
                 "subject": "",
                 "last_message_at": row["last_message_at"],
-                "last_message_from": row["last_from"] or "",
+                "last_message_from": _conversation_label(row["last_from"], row["last_from_did"]),
                 "last_message_preview": preview,
                 "unread_count": row["unread_count"],
             }
