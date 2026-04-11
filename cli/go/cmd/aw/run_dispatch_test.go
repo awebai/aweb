@@ -777,6 +777,52 @@ func TestResolveChatWakeForAliasPendingFallsBackToEventStableIDWhenPendingIsAmbi
 	}
 }
 
+func TestResolveChatWakeForAliasSkipsSelfWhenOnlyEventStableIDIdentifiesSender(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/chat/pending":
+			json.NewEncoder(w).Encode(awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{
+						SessionID:       "s1",
+						Participants:    []string{"", ""},
+						ParticipantDIDs: []string{"did:aw:self-rose", "did:aw:carol"},
+						LastMessage:     "self echo",
+						LastFrom:        "",
+						LastFromDID:     "",
+						UnreadCount:     1,
+						SenderWaiting:   true,
+					},
+				},
+				MessagesWaiting: 1,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := mustIdentityWebClient(t, server.URL, "rose")
+
+	result, err := resolveChatWakeForAlias(context.Background(), client, "rose", awid.AgentEvent{
+		Type:         awid.AgentEventActionableChat,
+		SessionID:    "s1",
+		MessageID:    "chat-msg-self",
+		FromAlias:    "",
+		FromAddress:  "",
+		FromStableID: "did:aw:self-rose",
+		FromDID:      "did:key:z6MkSelfRoseCurrent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skip {
+		t.Fatalf("expected self-authored sparse pending wake to skip, got %+v", result)
+	}
+}
+
 func TestResolveChatWakeForAliasSkipsSelfAuthoredAddressMessage(t *testing.T) {
 	t.Parallel()
 
