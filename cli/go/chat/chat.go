@@ -1167,6 +1167,22 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 		MessagesWaiting: resp.MessagesWaiting,
 	}
 	for _, p := range resp.Pending {
+		mappedAddress, mappedStableID, mappedDID := pendingParticipantIdentityByLastFrom(
+			p.Participants,
+			p.ParticipantDIDs,
+			p.ParticipantAddresses,
+			p.LastFrom,
+		)
+		lastFromAddress := strings.TrimSpace(p.LastFromAddress)
+		if lastFromAddress == "" {
+			lastFromAddress = mappedAddress
+		}
+		lastFromStableID := strings.TrimSpace(p.LastFromStableID)
+		lastFromDID := strings.TrimSpace(p.LastFromDID)
+		if lastFromStableID == "" && lastFromDID == "" {
+			lastFromStableID = mappedStableID
+			lastFromDID = mappedDID
+		}
 		result.Pending = append(result.Pending, PendingConversation{
 			SessionID:            p.SessionID,
 			Participants:         p.Participants,
@@ -1174,9 +1190,9 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 			ParticipantAddresses: p.ParticipantAddresses,
 			LastMessage:          p.LastMessage,
 			LastFrom:             p.LastFrom,
-			LastFromStableID:     p.LastFromStableID,
-			LastFromDID:          p.LastFromDID,
-			LastFromAddress:      p.LastFromAddress,
+			LastFromStableID:     lastFromStableID,
+			LastFromDID:          lastFromDID,
+			LastFromAddress:      lastFromAddress,
 			UnreadCount:          p.UnreadCount,
 			LastActivity:         p.LastActivity,
 			SenderWaiting:        p.SenderWaiting,
