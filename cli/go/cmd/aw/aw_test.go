@@ -1154,7 +1154,7 @@ func TestAwMailSendRejectsMultipleRecipientFlags(t *testing.T) {
 	}
 }
 
-func TestAwMailInboxLogsAliasWhenAddressMissing(t *testing.T) {
+func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -1224,12 +1224,12 @@ func TestAwMailInboxLogsAliasWhenAddressMissing(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("entries=%d, want 1", len(entries))
 	}
-	if got := entries[0].From; got != "monitor" {
-		t.Fatalf("interaction from=%q want monitor", got)
+	if got := entries[0].From; got != "did:aw:monitor" {
+		t.Fatalf("interaction from=%q want did:aw:monitor", got)
 	}
 
 	recap := formatInteractionRecap(entries, 10)
-	if !strings.Contains(recap, "from monitor (mail)") {
+	if !strings.Contains(recap, "from did:aw:monitor (mail)") {
 		t.Fatalf("interaction recap lost sender identity:\n%s", recap)
 	}
 }
