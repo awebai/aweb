@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,17 +64,20 @@ type ReplacementAnnouncement struct {
 // Transport-only fields (Signature, SigningKeyID) are not part of the
 // signed payload but are carried here for convenience.
 type MessageEnvelope struct {
-	From         string `json:"from"`
-	FromDID      string `json:"from_did"`
-	To           string `json:"to"`
-	ToDID        string `json:"to_did"`
-	Type         string `json:"type"`
-	Subject      string `json:"subject"`
-	Body         string `json:"body"`
-	Timestamp    string `json:"timestamp"`
-	FromStableID string `json:"from_stable_id,omitempty"`
-	ToStableID   string `json:"to_stable_id,omitempty"`
-	MessageID    string `json:"message_id,omitempty"`
+	From          string `json:"from"`
+	FromDID       string `json:"from_did"`
+	To            string `json:"to"`
+	ToDID         string `json:"to_did"`
+	Type          string `json:"type"`
+	Subject       string `json:"subject"`
+	Body          string `json:"body"`
+	Timestamp     string `json:"timestamp"`
+	FromStableID  string `json:"from_stable_id,omitempty"`
+	ToStableID    string `json:"to_stable_id,omitempty"`
+	MessageID     string `json:"message_id,omitempty"`
+	ReplyTo       string `json:"reply_to,omitempty"`
+	SenderLeaving bool   `json:"sender_leaving,omitempty"`
+	HangOn        bool   `json:"hang_on,omitempty"`
 
 	Signature    string `json:"signature,omitempty"`
 	SigningKeyID string `json:"signing_key_id,omitempty"`
@@ -270,31 +274,40 @@ func VerifyReplacementSignature(controllerPub ed25519.PublicKey, address, contro
 // See also LogEntry.CanonicalJSON which always includes all fields with null for absent values.
 func CanonicalJSON(env *MessageEnvelope) string {
 	type field struct {
-		key   string
-		value string
+		key string
+		raw string
 	}
 
 	// Always-present signed fields.
 	fields := []field{
-		{"body", env.Body},
-		{"from", env.From},
-		{"from_did", env.FromDID},
-		{"subject", env.Subject},
-		{"timestamp", env.Timestamp},
-		{"to", env.To},
-		{"to_did", env.ToDID},
-		{"type", env.Type},
+		{"body", jsonStringValue(env.Body)},
+		{"from", jsonStringValue(env.From)},
+		{"from_did", jsonStringValue(env.FromDID)},
+		{"subject", jsonStringValue(env.Subject)},
+		{"timestamp", jsonStringValue(env.Timestamp)},
+		{"to", jsonStringValue(env.To)},
+		{"to_did", jsonStringValue(env.ToDID)},
+		{"type", jsonStringValue(env.Type)},
 	}
 
 	// Optional fields included when present.
 	if env.FromStableID != "" {
-		fields = append(fields, field{"from_stable_id", env.FromStableID})
+		fields = append(fields, field{"from_stable_id", jsonStringValue(env.FromStableID)})
+	}
+	if env.HangOn {
+		fields = append(fields, field{"hang_on", strconv.FormatBool(env.HangOn)})
 	}
 	if env.MessageID != "" {
-		fields = append(fields, field{"message_id", env.MessageID})
+		fields = append(fields, field{"message_id", jsonStringValue(env.MessageID)})
+	}
+	if env.ReplyTo != "" {
+		fields = append(fields, field{"reply_to", jsonStringValue(env.ReplyTo)})
+	}
+	if env.SenderLeaving {
+		fields = append(fields, field{"sender_leaving", strconv.FormatBool(env.SenderLeaving)})
 	}
 	if env.ToStableID != "" {
-		fields = append(fields, field{"to_stable_id", env.ToStableID})
+		fields = append(fields, field{"to_stable_id", jsonStringValue(env.ToStableID)})
 	}
 
 	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
@@ -307,11 +320,18 @@ func CanonicalJSON(env *MessageEnvelope) string {
 		}
 		b.WriteByte('"')
 		b.WriteString(f.key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, f.value)
-		b.WriteByte('"')
+		b.WriteString(`":`)
+		b.WriteString(f.raw)
 	}
 	b.WriteByte('}')
+	return b.String()
+}
+
+func jsonStringValue(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	writeEscapedString(&b, s)
+	b.WriteByte('"')
 	return b.String()
 }
 
