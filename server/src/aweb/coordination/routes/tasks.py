@@ -286,7 +286,7 @@ async def add_dependency_route(
     await fire_mutation_hook(
         request,
         "task.dependency_added",
-        {"task_id": result["task_id"], "depends_on_task_id": result["depends_on_task_id"]},
+        {"task_id": result["task_id"], "depends_on_task_id": result["depends_on_id"]},
     )
     return result
 
@@ -305,7 +305,7 @@ async def remove_dependency_route(
         "task.dependency_removed",
         {
             "task_id": result["task_id"],
-            "removed_depends_on_task_id": result["removed_depends_on_task_id"],
+            "removed_depends_on_task_id": result["removed_depends_on_id"],
         },
     )
     return result
