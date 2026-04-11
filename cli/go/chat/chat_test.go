@@ -1935,6 +1935,44 @@ func TestChatEventSenderLabelPrefersStableIdentityOverAliasCollision(t *testing.
 	}
 }
 
+func TestChatEventSenderLabelPrefersStableIDOverHandleAliasCollision(t *testing.T) {
+	t.Parallel()
+
+	label := chatEventSenderLabel(
+		Event{
+			FromAgent:    "monitor",
+			FromStableID: "did:aw:monitor",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "monitor", Address: "otherco.com/monitor", DID: "did:aw:other-monitor"},
+			{Alias: "monitor", Address: "acme.com/monitor", DID: "did:aw:monitor"},
+		},
+	)
+
+	if label != "acme.com/monitor" {
+		t.Fatalf("label=%q, want acme.com/monitor", label)
+	}
+}
+
+func TestChatEventTrustAddressPrefersStableIDOverHandleAliasCollision(t *testing.T) {
+	t.Parallel()
+
+	trust := chatEventTrustAddress(
+		Event{
+			FromAgent:    "monitor",
+			FromStableID: "did:aw:monitor",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "monitor", Address: "otherco.com/monitor", DID: "did:aw:other-monitor"},
+			{Alias: "monitor", Address: "acme.com/monitor", DID: "did:aw:monitor"},
+		},
+	)
+
+	if trust != "acme.com/monitor" {
+		t.Fatalf("trust=%q, want acme.com/monitor", trust)
+	}
+}
+
 func TestNormalizedChatEventNamesDoesNotUnionAliasCollisionParticipants(t *testing.T) {
 	t.Parallel()
 
@@ -1952,6 +1990,27 @@ func TestNormalizedChatEventNamesDoesNotUnionAliasCollisionParticipants(t *testi
 
 	for _, name := range names {
 		if name == "otherco/rose" || name == "did:aw:other-rose" {
+			t.Fatalf("names=%v should not include alias-collision participant", names)
+		}
+	}
+}
+
+func TestNormalizedChatEventNamesDoesNotUnionAliasCollisionFromStableIDHandleMatch(t *testing.T) {
+	t.Parallel()
+
+	names := normalizedChatEventNames(
+		Event{
+			FromAgent:    "monitor",
+			FromStableID: "did:aw:monitor",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "monitor", Address: "acme.com/monitor", DID: "did:aw:monitor"},
+			{Alias: "monitor", Address: "otherco.com/monitor", DID: "did:aw:other-monitor"},
+		},
+	)
+
+	for _, name := range names {
+		if name == "otherco.com/monitor" || name == "did:aw:other-monitor" {
 			t.Fatalf("names=%v should not include alias-collision participant", names)
 		}
 	}
@@ -2613,6 +2672,47 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressOnlyAndStableDIDRowsForSameI
 	})
 
 	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-address" {
+		t.Fatalf("session_id=%s", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true (expected false from fallback)")
+	}
+}
+
+func TestFindSessionAddressTargetPrefersAddressBackedRowOverDIDOnlyDuplicate(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s-address",
+						Participants:         []string{"monitor"},
+						ParticipantAddresses: []string{"acme.com/monitor"},
+						ParticipantDIDs:      []string{"did:aw:monitor"},
+						CreatedAt:            "2025-01-01T00:00:00Z",
+					},
+					{
+						SessionID:       "s-did-only",
+						Participants:    []string{"monitor"},
+						ParticipantDIDs: []string{"did:aw:monitor"},
+						CreatedAt:       "2025-01-01T00:00:01Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "acme.com/monitor")
 	if err != nil {
 		t.Fatal(err)
 	}

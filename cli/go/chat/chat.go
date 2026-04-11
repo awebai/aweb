@@ -1418,27 +1418,10 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		appendUnique(value)
 	}
 
-	for _, candidate := range []string{
-		strings.TrimSpace(ev.FromAddress),
-		strings.TrimSpace(ev.FromStableID),
-		strings.TrimSpace(ev.FromDID),
-		strings.TrimSpace(ev.FromAgent),
-	} {
-		if candidate == "" {
-			continue
-		}
-		matched := false
-		for _, participant := range participants {
-			if chatParticipantMatchesTarget(participant, candidate) {
-				appendUnique(strings.TrimSpace(participant.Alias))
-				appendUnique(strings.TrimSpace(participant.Address))
-				appendUnique(strings.TrimSpace(participant.DID))
-				matched = true
-			}
-		}
-		if matched {
-			break
-		}
+	for _, match := range matchingChatParticipantsForEventIdentity(participants, ev) {
+		appendUnique(strings.TrimSpace(match.Alias))
+		appendUnique(strings.TrimSpace(match.Address))
+		appendUnique(strings.TrimSpace(match.DID))
 	}
 
 	return names
@@ -1587,30 +1570,18 @@ func chatTargetNameListsOverlap(left []string, right []string) bool {
 }
 
 func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string {
-	for _, candidate := range []string{
-		strings.TrimSpace(ev.FromAddress),
-		strings.TrimSpace(ev.FromStableID),
-		strings.TrimSpace(ev.FromDID),
-		strings.TrimSpace(ev.FromAgent),
-	} {
-		if candidate == "" {
-			continue
+	for _, participant := range matchingChatParticipantsForEventIdentity(participants, ev) {
+		if value := strings.TrimSpace(participant.Address); value != "" {
+			return value
 		}
-		for _, participant := range participants {
-			if chatParticipantMatchesTarget(participant, candidate) {
-				if value := strings.TrimSpace(participant.Address); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(participant.Alias); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(ev.FromStableID); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(participant.DID); value != "" {
-					return value
-				}
-			}
+		if value := strings.TrimSpace(participant.Alias); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(ev.FromStableID); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(participant.DID); value != "" {
+			return value
 		}
 	}
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
@@ -1626,24 +1597,12 @@ func chatEventSenderLabel(ev Event, participants []awid.ChatParticipant) string 
 }
 
 func chatEventTrustAddress(ev Event, participants []awid.ChatParticipant) string {
-	for _, candidate := range []string{
-		strings.TrimSpace(ev.FromAddress),
-		strings.TrimSpace(ev.FromStableID),
-		strings.TrimSpace(ev.FromDID),
-		strings.TrimSpace(ev.FromAgent),
-	} {
-		if candidate == "" {
-			continue
+	for _, participant := range matchingChatParticipantsForEventIdentity(participants, ev) {
+		if value := strings.TrimSpace(participant.Address); value != "" {
+			return value
 		}
-		for _, participant := range participants {
-			if chatParticipantMatchesTarget(participant, candidate) {
-				if value := strings.TrimSpace(participant.Address); value != "" {
-					return value
-				}
-				if value := strings.TrimSpace(participant.Alias); value != "" {
-					return value
-				}
-			}
+		if value := strings.TrimSpace(participant.Alias); value != "" {
+			return value
 		}
 	}
 	if value := strings.TrimSpace(ev.FromAddress); value != "" {
@@ -1771,4 +1730,54 @@ func chatParticipantMatchesSessionTarget(participant awid.ChatParticipant, targe
 		}
 	}
 	return false
+}
+
+func matchingChatParticipantsForEventIdentity(participants []awid.ChatParticipant, ev Event) []awid.ChatParticipant {
+	type candidateSpec struct {
+		value  string
+		strong bool
+		kind   string
+	}
+	matchParticipants := func(candidate candidateSpec) []awid.ChatParticipant {
+		candidate.value = strings.TrimSpace(candidate.value)
+		if candidate.value == "" {
+			return nil
+		}
+		matches := []awid.ChatParticipant{}
+		if candidate.strong {
+			for _, participant := range participants {
+				switch candidate.kind {
+				case "address":
+					if chatIdentityMatchesTarget(strings.TrimSpace(participant.Address), candidate.value) {
+						matches = append(matches, participant)
+					}
+				case "did":
+					if chatIdentityMatchesTarget(strings.TrimSpace(participant.DID), candidate.value) {
+						matches = append(matches, participant)
+					}
+				}
+			}
+			if len(matches) > 0 {
+				return matches
+			}
+		}
+		for _, participant := range participants {
+			if chatParticipantMatchesTarget(participant, candidate.value) {
+				matches = append(matches, participant)
+			}
+		}
+		return matches
+	}
+
+	for _, candidate := range []candidateSpec{
+		{value: ev.FromAddress, strong: true, kind: "address"},
+		{value: ev.FromStableID, strong: true, kind: "did"},
+		{value: ev.FromDID, strong: true, kind: "did"},
+		{value: ev.FromAgent},
+	} {
+		if matches := matchParticipants(candidate); len(matches) > 0 {
+			return matches
+		}
+	}
+	return nil
 }
