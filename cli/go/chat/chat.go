@@ -379,6 +379,51 @@ func participantIdentityCount(participants []string, participantDIDs []string, p
 	return count
 }
 
+func pendingParticipantIdentityAt(participants []string, participantDIDs []string, participantAddresses []string, idx int) (alias, address, did string) {
+	if idx < len(participants) {
+		alias = strings.TrimSpace(participants[idx])
+	}
+	if idx < len(participantAddresses) {
+		address = strings.TrimSpace(participantAddresses[idx])
+	}
+	if idx < len(participantDIDs) {
+		did = strings.TrimSpace(participantDIDs[idx])
+	}
+	return alias, address, did
+}
+
+func pendingParticipantIdentityByLastFrom(participants []string, participantDIDs []string, participantAddresses []string, lastFrom string) (address, stableID, did string) {
+	lastFrom = strings.TrimSpace(lastFrom)
+	if lastFrom == "" {
+		return "", "", ""
+	}
+	matchAddress := ""
+	matchStableID := ""
+	matchDID := ""
+	matches := 0
+	for idx := 0; idx < participantIdentityCount(participants, participantDIDs, participantAddresses); idx++ {
+		alias, participantAddress, participantDID := pendingParticipantIdentityAt(participants, participantDIDs, participantAddresses, idx)
+		if !chatSessionIdentityMatchesTarget(alias, lastFrom) &&
+			!chatSessionIdentityMatchesTarget(participantAddress, lastFrom) &&
+			!chatSessionIdentityMatchesTarget(participantDID, lastFrom) {
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return "", "", ""
+		}
+		matchAddress = participantAddress
+		if strings.HasPrefix(participantDID, "did:aw:") {
+			matchStableID = participantDID
+			matchDID = ""
+		} else {
+			matchStableID = ""
+			matchDID = participantDID
+		}
+	}
+	return matchAddress, matchStableID, matchDID
+}
+
 func matchedParticipantIdentityKeys(participants []string, participantDIDs []string, participantAddresses []string, target string) []string {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -1181,7 +1226,16 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		if p.SessionID != sessionID {
 			continue
 		}
+		mappedAddress, mappedStableID, mappedDID := pendingParticipantIdentityByLastFrom(
+			p.Participants,
+			p.ParticipantDIDs,
+			p.ParticipantAddresses,
+			p.LastFrom,
+		)
 		fromAddress := strings.TrimSpace(p.LastFromAddress)
+		if fromAddress == "" {
+			fromAddress = mappedAddress
+		}
 		if fromAddress == "" {
 			candidate := ""
 			for _, participantAddress := range p.ParticipantAddresses {
@@ -1201,6 +1255,10 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 		fromDID := ""
 		if value := strings.TrimSpace(p.LastFromStableID); value != "" {
 			fromStableID = value
+		}
+		if fromStableID == "" && fromDID == "" {
+			fromStableID = mappedStableID
+			fromDID = mappedDID
 		}
 		if fromStableID == "" {
 			if value := strings.TrimSpace(p.LastFromDID); value != "" {
