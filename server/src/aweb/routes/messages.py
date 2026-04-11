@@ -117,6 +117,8 @@ def _validate_signed_mail_payload(
     recipient: dict | None,
     to_agent_id: str | None,
     to_alias: str | None,
+    from_alias: str | None,
+    from_address: str | None,
     from_stable_id: str | None,
     priority: MessagePriority,
     subject: str,
@@ -135,6 +137,19 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
     if payload.get("type") != "mail":
         raise HTTPException(status_code=422, detail="signed_payload type must be mail")
+    allowed_from_values = {
+        value
+        for value in (
+            str(from_alias or "").strip(),
+            str(from_address or "").strip(),
+            str(from_did or "").strip(),
+            str(from_stable_id or "").strip(),
+        )
+        if value
+    }
+    signed_from = str(payload.get("from") or "").strip()
+    if signed_from and signed_from not in allowed_from_values:
+        raise HTTPException(status_code=422, detail="signed_payload from must match the authenticated sender")
     recipient_alias = (recipient or {}).get("alias") or ""
     recipient_address = (recipient or {}).get("address") or ""
     recipient_stable_id = (recipient or {}).get("did_aw") or ""
@@ -341,6 +356,8 @@ async def send_message(
             recipient=recipient,
             to_agent_id=to_agent_id,
             to_alias=to_alias,
+            from_alias=auth.alias,
+            from_address=auth.address,
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
