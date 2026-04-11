@@ -422,9 +422,7 @@ func matchedParticipantIdentityKeys(participants []string, participantDIDs []str
 		}
 		if did != "" {
 			appendUnique(did)
-			continue
 		}
-		appendUnique(alias)
 	}
 	return keys
 }
