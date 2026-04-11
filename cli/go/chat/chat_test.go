@@ -1771,6 +1771,28 @@ func TestChatEventSenderLabelPrefersStableIdentityOverAliasCollision(t *testing.
 	}
 }
 
+func TestNormalizedChatEventNamesDoesNotUnionAliasCollisionParticipants(t *testing.T) {
+	t.Parallel()
+
+	names := normalizedChatEventNames(
+		Event{
+			FromAgent:    "rose",
+			FromDID:      "did:aw:self-rose",
+			FromStableID: "did:aw:self-rose",
+		},
+		[]awid.ChatParticipant{
+			{Alias: "rose", Address: "acme.com/rose", DID: "did:aw:self-rose"},
+			{Alias: "rose", Address: "otherco/rose", DID: "did:aw:other-rose"},
+		},
+	)
+
+	for _, name := range names {
+		if name == "otherco/rose" || name == "did:aw:other-rose" {
+			t.Fatalf("names=%v should not include alias-collision participant", names)
+		}
+	}
+}
+
 func TestDefaultWaitIs120(t *testing.T) {
 	t.Parallel()
 

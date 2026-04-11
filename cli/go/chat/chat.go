@@ -1158,21 +1158,26 @@ func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []s
 		appendUnique(value)
 	}
 
-	for _, participant := range participants {
-		for _, candidate := range []string{
-			strings.TrimSpace(ev.FromAgent),
-			strings.TrimSpace(ev.FromAddress),
-			strings.TrimSpace(ev.FromStableID),
-			strings.TrimSpace(ev.FromDID),
-		} {
-			if candidate == "" {
-				continue
-			}
+	for _, candidate := range []string{
+		strings.TrimSpace(ev.FromAddress),
+		strings.TrimSpace(ev.FromStableID),
+		strings.TrimSpace(ev.FromDID),
+		strings.TrimSpace(ev.FromAgent),
+	} {
+		if candidate == "" {
+			continue
+		}
+		matched := false
+		for _, participant := range participants {
 			if chatParticipantMatchesTarget(participant, candidate) {
 				appendUnique(strings.TrimSpace(participant.Alias))
 				appendUnique(strings.TrimSpace(participant.Address))
 				appendUnique(strings.TrimSpace(participant.DID))
+				matched = true
 			}
+		}
+		if matched {
+			break
 		}
 	}
 
