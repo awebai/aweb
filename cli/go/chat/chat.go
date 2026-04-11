@@ -1467,7 +1467,6 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 			return
 		}
 		appendUnique(strings.TrimSpace(identity.Address))
-		appendUnique(strings.TrimSpace(identity.Handle))
 		appendUnique(strings.TrimSpace(identity.StableID))
 		appendUnique(strings.TrimSpace(identity.DID))
 	}
