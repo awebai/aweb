@@ -203,11 +203,13 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	if err != nil {
 		return nil, err
 	}
-	payload.FromDID = sf.FromDID
-	payload.Signature = sf.Signature
-	payload.Timestamp = sf.Timestamp
-	payload.MessageID = sf.MessageID
-	payload.SignedPayload = sf.SignedPayload
+	if c.signingKey != nil {
+		payload.FromDID = sf.FromDID
+		payload.Signature = sf.Signature
+		payload.Timestamp = sf.Timestamp
+		payload.MessageID = sf.MessageID
+		payload.SignedPayload = sf.SignedPayload
+	}
 
 	var out ChatCreateSessionResponse
 	if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
@@ -453,11 +455,13 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	if err != nil {
 		return nil, err
 	}
-	payload.FromDID = sf.FromDID
-	payload.Signature = sf.Signature
-	payload.Timestamp = sf.Timestamp
-	payload.MessageID = sf.MessageID
-	payload.SignedPayload = sf.SignedPayload
+	if c.signingKey != nil {
+		payload.FromDID = sf.FromDID
+		payload.Signature = sf.Signature
+		payload.Timestamp = sf.Timestamp
+		payload.MessageID = sf.MessageID
+		payload.SignedPayload = sf.SignedPayload
+	}
 
 	var out ChatSendMessageResponse
 	if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
