@@ -19,6 +19,7 @@ SIGNED_FIELDS = frozenset(
         "from_stable_id",
         "hang_on",
         "message_id",
+        "priority",
         "reply_to",
         "sender_leaving",
         "subject",
@@ -100,4 +101,3 @@ def verify_did_key_signature(*, did_key: str, payload: bytes, signature_b64: str
     result = verify_signature(did_key, payload, signature_b64)
     if result != VerifyResult.VERIFIED:
         raise ValueError("invalid signature")
-

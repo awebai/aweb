@@ -81,6 +81,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		ToDID:      toDID,
 		ToStableID: toStableID,
 		Type:       "mail",
+		Priority:   signedMailPriority(payload.Priority),
 		Subject:    payload.Subject,
 		Body:       payload.Body,
 	})
@@ -193,6 +194,7 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 				To:           to,
 				ToDID:        m.ToDID,
 				Type:         "mail",
+				Priority:     signedMailPriority(m.Priority),
 				Subject:      m.Subject,
 				Body:         m.Body,
 				Timestamp:    m.CreatedAt,
@@ -208,6 +210,15 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return &out, nil
+}
+
+func signedMailPriority(priority MessagePriority) string {
+	switch priority {
+	case "", PriorityNormal:
+		return ""
+	default:
+		return string(priority)
+	}
 }
 
 type AckResponse struct {
