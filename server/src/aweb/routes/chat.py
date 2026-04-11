@@ -612,7 +612,9 @@ async def create_or_send(
         {
             "session_id": str(session_id),
             "message_id": str(msg_row["message_id"]),
+            "from_agent_id": actor_agent_id,
             "from_did": actor_did,
+            "from_did_aw": (auth.did_aw or "").strip() or None,
         },
     )
 
@@ -1323,7 +1325,9 @@ async def send_message(
         {
             "session_id": str(session_uuid),
             "message_id": str(msg_row["message_id"]),
+            "from_agent_id": actor_agent_id,
             "from_did": actor_did,
+            "from_did_aw": (auth.did_aw or "").strip() or None,
         },
     )
 

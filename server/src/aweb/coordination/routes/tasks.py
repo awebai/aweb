@@ -122,7 +122,9 @@ async def create_task_route(
             "title": result["title"],
             "parent_task_id": result["parent_task_id"],
             "assignee_alias": result["assignee_alias"],
+            "actor_agent_id": identity.agent_id,
             "actor_alias": identity.alias,
+            "actor_did_aw": identity.did_aw,
         },
     )
     return result
@@ -245,7 +247,9 @@ async def update_task_route(
                 "new_status": result["status"],
                 "assignee_alias": result["assignee_alias"],
                 "parent_task_id": result["parent_task_id"],
+                "actor_agent_id": identity.agent_id,
                 "actor_alias": identity.alias,
+                "actor_did_aw": identity.did_aw,
                 "claim_preacquired": result.pop("claim_preacquired", False),
             },
         )
@@ -253,7 +257,12 @@ async def update_task_route(
         await fire_mutation_hook(
             request,
             "task.updated",
-            {"task_id": result["task_id"], "task_ref": result["task_ref"]},
+            {
+                "task_id": result["task_id"],
+                "task_ref": result["task_ref"],
+                "actor_agent_id": identity.agent_id,
+                "actor_did_aw": identity.did_aw,
+            },
         )
     return result
 
@@ -267,7 +276,12 @@ async def delete_task_route(
     await fire_mutation_hook(
         request,
         "task.deleted",
-        {"task_id": result["task_id"], "task_ref": result["task_ref"]},
+        {
+            "task_id": result["task_id"],
+            "task_ref": result["task_ref"],
+            "actor_agent_id": identity.agent_id,
+            "actor_did_aw": identity.did_aw,
+        },
     )
     return result
 
@@ -286,7 +300,12 @@ async def add_dependency_route(
     await fire_mutation_hook(
         request,
         "task.dependency_added",
-        {"task_id": result["task_id"], "depends_on_task_id": result["depends_on_id"]},
+        {
+            "task_id": result["task_id"],
+            "depends_on_task_id": result["depends_on_id"],
+            "actor_agent_id": identity.agent_id,
+            "actor_did_aw": identity.did_aw,
+        },
     )
     return result
 
@@ -306,6 +325,8 @@ async def remove_dependency_route(
         {
             "task_id": result["task_id"],
             "removed_depends_on_task_id": result["removed_depends_on_id"],
+            "actor_agent_id": identity.agent_id,
+            "actor_did_aw": identity.did_aw,
         },
     )
     return result
@@ -324,7 +345,12 @@ async def add_comment_route(
     await fire_mutation_hook(
         request,
         "task.comment_added",
-        {"task_id": result["task_id"], "comment_id": result["comment_id"]},
+        {
+            "task_id": result["task_id"],
+            "comment_id": result["comment_id"],
+            "actor_agent_id": identity.agent_id,
+            "actor_did_aw": identity.did_aw,
+        },
     )
     return result
 

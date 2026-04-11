@@ -34,12 +34,50 @@ from .events import (
     publish_event,
     publish_team_event,
 )
+from .identity_metadata import lookup_identity_metadata_by_agent_id, lookup_identity_metadata_by_did
 from .presence import clear_workspace_presence, get_agent_presence
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
 
 logger = logging.getLogger(__name__)
+
+
+async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> dict:
+    ctx = dict(context)
+    identity_fields = (
+        ("actor_agent_id", "actor_did", "actor_did_aw"),
+        ("from_agent_id", "from_did", "from_did_aw"),
+        ("holder_agent_id", "holder_did", "holder_did_aw"),
+    )
+
+    agent_ids = [
+        str(ctx.get(agent_key, "")).strip()
+        for agent_key, _, stable_key in identity_fields
+        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+    ]
+    dids = [
+        str(ctx.get(did_key, "")).strip()
+        for _, did_key, stable_key in identity_fields
+        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(did_key, "")).strip()
+    ]
+
+    agent_meta = await lookup_identity_metadata_by_agent_id(db_infra, agent_ids)
+    did_meta = await lookup_identity_metadata_by_did(db_infra, dids)
+
+    for agent_key, did_key, stable_key in identity_fields:
+        if str(ctx.get(stable_key, "")).strip():
+            continue
+        stable_id = ""
+        agent_id = str(ctx.get(agent_key, "")).strip()
+        did = str(ctx.get(did_key, "")).strip()
+        if agent_id:
+            stable_id = (agent_meta.get(agent_id, {}).get("stable_id") or "").strip()
+        if not stable_id and did:
+            stable_id = (did_meta.get(did, {}).get("stable_id") or "").strip()
+        if stable_id:
+            ctx[stable_key] = stable_id
+    return ctx
 
 
 def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
@@ -50,6 +88,8 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
     """
 
     async def on_mutation(event_type: str, context: dict) -> None:
+        context = await _enrich_identity_context(db_infra, context)
+
         # Side-effect hooks (cascades that modify state).
         # These run before SSE translation and do NOT prevent SSE publication.
         if event_type == "agent.deleted":

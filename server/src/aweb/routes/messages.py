@@ -389,6 +389,8 @@ async def send_message(
         {
             "team_id": auth.team_id,
             "from_agent_id": auth.agent_id,
+            "from_did": sender_did,
+            "from_did_aw": (auth.did_aw or "").strip() or None,
             "to_agent_id": to_agent_id,
             "from_alias": auth.alias or sender_did,
             "message_id": str(message_id),

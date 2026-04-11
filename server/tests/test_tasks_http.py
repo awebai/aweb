@@ -178,6 +178,30 @@ async def test_remove_dependency_route_uses_service_result_keys(aweb_cloud_db, m
 
 
 @pytest.mark.asyncio
+async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db, monkeypatch):
+    captured: dict[str, dict] = {}
+
+    async def _capture(event_type: str, context: dict) -> None:
+        captured["event_type"] = event_type
+        captured["context"] = dict(context)
+
+    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
+    app = _build_tasks_app(aweb_cloud_db.aweb_db)
+    app.state.on_mutation = _capture
+    await _seed_team(aweb_cloud_db.aweb_db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/tasks",
+            json={"title": "Emit did:aw in mutation context"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["event_type"] == "task.created"
+    assert captured["context"]["actor_did_aw"] == "did:aw:alice"
+
+
+@pytest.mark.asyncio
 async def test_get_task_allows_null_updated_at(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
