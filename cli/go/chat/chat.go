@@ -1244,14 +1244,15 @@ func normalizedChatTargetNames(ctx context.Context, client *awid.Client, target 
 		appendUnique(strings.TrimSpace(participant.Address))
 		appendUnique(strings.TrimSpace(participant.DID))
 	}
-	matchedParticipant := false
+	matchedParticipants := []awid.ChatParticipant{}
 	for _, participant := range participants {
 		if chatParticipantMatchesSessionTarget(participant, target) || chatParticipantMatchesSessionTarget(participant, normalized) {
-			appendParticipant(participant)
-			matchedParticipant = true
+			matchedParticipants = append(matchedParticipants, participant)
 		}
 	}
-	if !matchedParticipant {
+	if len(matchedParticipants) == 1 {
+		appendParticipant(matchedParticipants[0])
+	} else if len(matchedParticipants) == 0 {
 		handleMatches := []awid.ChatParticipant{}
 		for _, candidate := range []string{addressHandle(target), addressHandle(normalized)} {
 			if candidate == "" {
