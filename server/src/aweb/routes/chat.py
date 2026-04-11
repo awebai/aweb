@@ -148,13 +148,13 @@ def _validate_signed_chat_payload(
         if value
     }
     signed_to_did = str(payload.get("to_did") or "").strip()
-    if signed_to_did and signed_to_did not in allowed_to_dids:
+    if signed_to_did and (len(recipient_rows) != 1 or signed_to_did not in allowed_to_dids):
         raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
     allowed_to_stable_ids = {
         value for row in recipient_rows for value in (str(row.get("did_aw") or "").strip(),) if value
     }
     signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
-    if signed_to_stable_id and signed_to_stable_id not in allowed_to_stable_ids:
+    if signed_to_stable_id and (len(recipient_rows) != 1 or signed_to_stable_id not in allowed_to_stable_ids):
         raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
     if payload.get("body") != body:
         raise HTTPException(status_code=422, detail="signed_payload body must match the chat message")
