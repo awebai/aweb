@@ -119,6 +119,28 @@ func TestFormatMailInboxFallsBackToStableID(t *testing.T) {
 	}
 }
 
+func TestFormatMailInboxPrefersStableIDOverAliasWhenAddressMissing(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{
+				FromAlias:    "carol",
+				FromAddress:  "",
+				FromStableID: "did:aw:carol",
+				Subject:      "hello",
+				Body:         "world",
+			},
+		},
+	}
+
+	out := formatMailInbox(resp)
+	if !strings.Contains(out, "- did:aw:carol") {
+		t.Fatalf("mail inbox should prefer stable identity over alias-only label:\n%s", out)
+	}
+	if strings.Contains(out, "- carol") {
+		t.Fatalf("mail inbox should not collapse to alias when stable identity is present:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{

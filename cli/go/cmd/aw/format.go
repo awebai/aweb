@@ -55,9 +55,9 @@ func formatChatEventLine(m chat.Event) string {
 }
 
 func preferredIdentityDisplayLabel(alias string, address string, stableID string, did string, fallback string) string {
-	label := preferredIdentityLabel(alias, address, "")
-	if label != "" {
-		return label
+	address = strings.TrimSpace(address)
+	if address != "" {
+		return address
 	}
 	stableID = strings.TrimSpace(stableID)
 	if stableID != "" {
@@ -66,6 +66,10 @@ func preferredIdentityDisplayLabel(alias string, address string, stableID string
 	did = strings.TrimSpace(did)
 	if did != "" {
 		return did
+	}
+	alias = strings.TrimSpace(alias)
+	if alias != "" {
+		return alias
 	}
 	return strings.TrimSpace(fallback)
 }
