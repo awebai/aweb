@@ -79,6 +79,10 @@ class InboxMessage(BaseModel):
     created_at: str
     from_did: Optional[str] = None
     to_did: Optional[str] = None
+    from_stable_id: Optional[str] = None
+    to_stable_id: Optional[str] = None
+    from_address: Optional[str] = None
+    to_address: Optional[str] = None
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
 
@@ -111,6 +115,44 @@ def _identity_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
         if value and value not in dids:
             dids.append(value)
     return dids
+
+
+async def _lookup_identity_metadata_by_did(db, dids: list[str]) -> dict[str, dict[str, str]]:
+    cleaned = []
+    for did in dids:
+        did = (did or "").strip()
+        if did and did not in cleaned:
+            cleaned.append(did)
+    if not cleaned:
+        return {}
+
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT did_aw, did_key, address
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+        """,
+        cleaned,
+    )
+    result: dict[str, dict[str, str]] = {}
+    for did in cleaned:
+        if did.startswith("did:aw:"):
+            result.setdefault(did, {})["stable_id"] = did
+    for row in rows:
+        stable_id = (row.get("did_aw") or "").strip()
+        current_did = (row.get("did_key") or "").strip()
+        address = (row.get("address") or "").strip()
+        for did in (stable_id, current_did):
+            if not did:
+                continue
+            meta = result.setdefault(did, {})
+            if stable_id:
+                meta["stable_id"] = stable_id
+            if address:
+                meta["address"] = address
+    return result
 
 
 @router.post("", response_model=SendMessageResponse)
@@ -270,8 +312,20 @@ async def get_inbox(
         limit,
     )
 
+    identity_map = await _lookup_identity_metadata_by_did(
+        db,
+        [
+            str(value).strip()
+            for row in rows
+            for value in (row.get("from_did"), row.get("to_did"))
+            if value
+        ],
+    )
+
     messages = []
     for r in rows:
+        from_did = (r.get("from_did") or "").strip()
+        to_did = (r.get("to_did") or "").strip()
         messages.append(InboxMessage(
             message_id=str(r["message_id"]),
             from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
@@ -282,8 +336,12 @@ async def get_inbox(
             priority=r["priority"],
             read_at=r["read_at"].isoformat() if r.get("read_at") else None,
             created_at=r["created_at"].isoformat(),
-            from_did=r.get("from_did"),
-            to_did=r.get("to_did"),
+            from_did=from_did or None,
+            to_did=to_did or None,
+            from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
+            to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
+            from_address=(identity_map.get(from_did, {}).get("address") or None),
+            to_address=(identity_map.get(to_did, {}).get("address") or None),
             signature=r.get("signature"),
             signed_payload=r.get("signed_payload"),
         ))
