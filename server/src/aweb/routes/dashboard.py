@@ -23,7 +23,12 @@ from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
-from aweb.events import team_events_channel_name
+from aweb.events import (
+    TeamAgentOfflineEvent,
+    TeamAgentOnlineEvent,
+    publish_team_event,
+    team_events_channel_name,
+)
 from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
@@ -281,24 +286,20 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
                 current_online_aliases = set(await _list_online_aliases(redis, team_id=team_id))
                 for alias in sorted(current_online_aliases - previous_online_aliases):
-                    yield _format_sse(
-                        "agent.online",
-                        {
-                            "type": "agent.online",
-                            "team_id": team_id,
-                            "alias": alias,
-                            "timestamp": _utc_now_iso(),
-                        },
+                    await publish_team_event(
+                        redis,
+                        TeamAgentOnlineEvent(
+                            team_id=team_id,
+                            alias=alias,
+                        ),
                     )
                 for alias in sorted(previous_online_aliases - current_online_aliases):
-                    yield _format_sse(
-                        "agent.offline",
-                        {
-                            "type": "agent.offline",
-                            "team_id": team_id,
-                            "alias": alias,
-                            "timestamp": _utc_now_iso(),
-                        },
+                    await publish_team_event(
+                        redis,
+                        TeamAgentOfflineEvent(
+                            team_id=team_id,
+                            alias=alias,
+                        ),
                     )
                 previous_online_aliases = current_online_aliases
                 last_presence_poll = now

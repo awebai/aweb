@@ -215,6 +215,18 @@ class TeamMessageSentEvent(TeamEvent):
     priority: str = "normal"
 
 
+@dataclass
+class TeamAgentOnlineEvent(TeamEvent):
+    type: str = field(default="agent.online", init=False)
+    alias: str = ""
+
+
+@dataclass
+class TeamAgentOfflineEvent(TeamEvent):
+    type: str = field(default="agent.offline", init=False)
+    alias: str = ""
+
+
 def _channel_name(workspace_id: str) -> str:
     """Generate Redis channel name for a workspace."""
     return f"events:{workspace_id}"

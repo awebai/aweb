@@ -14,7 +14,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
-from aweb.events import TeamTaskCreatedEvent, publish_team_event
+from aweb.events import TeamAgentOfflineEvent, TeamAgentOnlineEvent, TeamTaskCreatedEvent, publish_team_event
 from aweb.presence import update_agent_presence
 from aweb.routes import dashboard as dashboard_routes
 from aweb.routes.dashboard import router as dashboard_router
@@ -824,13 +824,64 @@ async def test_events_stream_emits_presence_diffs(aweb_cloud_db, monkeypatch):
 
     event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
     assert event_name == "agent.online"
-    assert payload["alias"] == "bob"
+    assert payload == {
+        "type": "agent.online",
+        "team_id": "backend:acme.com",
+        "alias": "bob",
+        "timestamp": payload["timestamp"],
+    }
 
     await redis.delete(f"presence:{workspace_id}")
 
     event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
     assert event_name == "agent.offline"
-    assert payload["alias"] == "bob"
+    assert payload == {
+        "type": "agent.offline",
+        "team_id": "backend:acme.com",
+        "alias": "bob",
+        "timestamp": payload["timestamp"],
+    }
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_team_presence_events_publish_to_shared_channel(aweb_cloud_db):
+    redis = _FakeRedis()
+    stream = dashboard_routes._sse_dashboard_events(
+        request=_FakeStreamRequest(),
+        db=_build_app(aweb_cloud_db.aweb_db, redis=redis).state.db,
+        redis=redis,
+        team_id="backend:acme.com",
+    )
+    assert await anext(stream) == ": keepalive\n\n"
+    await anext(stream)
+    await anext(stream)
+
+    await publish_team_event(
+        redis,
+        TeamAgentOnlineEvent(team_id="backend:acme.com", alias="alice"),
+    )
+    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    assert event_name == "agent.online"
+    assert payload == {
+        "type": "agent.online",
+        "team_id": "backend:acme.com",
+        "alias": "alice",
+        "timestamp": payload["timestamp"],
+    }
+
+    await publish_team_event(
+        redis,
+        TeamAgentOfflineEvent(team_id="backend:acme.com", alias="alice"),
+    )
+    event_name, payload = _parse_sse_chunk(await asyncio.wait_for(anext(stream), timeout=1))
+    assert event_name == "agent.offline"
+    assert payload == {
+        "type": "agent.offline",
+        "team_id": "backend:acme.com",
+        "alias": "alice",
+        "timestamp": payload["timestamp"],
+    }
     await stream.aclose()
 
 

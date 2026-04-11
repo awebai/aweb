@@ -181,6 +181,12 @@ JSON of `{team_id, timestamp, body_sha256}` where `body_sha256`
 is the SHA256 hex digest of the request body (or of empty string for
 GET requests with no body).
 
+Messaging endpoints also accept identity-only auth without a team
+certificate. In that mode the signed canonical JSON is
+`{did_aw, timestamp, body_sha256}` instead of `{team_id, timestamp,
+body_sha256}`. See the Messaging section for the exact endpoint scope
+and routing semantics.
+
 The `X-AWEB-Timestamp` header carries the signed request timestamp in
 RFC 3339 UTC format. Servers reject requests outside the allowed clock-skew
 window of +/-300 seconds against the server wall clock.

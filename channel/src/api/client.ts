@@ -4,6 +4,10 @@ import { sha512 } from "@noble/hashes/sha2.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
+function canonicalTimestamp(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 export interface APIClientAuth {
   did: string;
   stableID: string;
@@ -88,7 +92,7 @@ export class APIClient {
   }
 
   private identityAuthHeaders(bodyText: string): Record<string, string> {
-    const timestamp = new Date().toISOString();
+    const timestamp = canonicalTimestamp();
     const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
     const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"did_aw":${JSON.stringify(this.auth.stableID)},"timestamp":${JSON.stringify(timestamp)}}`;
     const signature = Buffer.from(
@@ -105,7 +109,7 @@ export class APIClient {
   }
 
   private teamAuthHeaders(bodyText: string): Record<string, string> {
-    const timestamp = new Date().toISOString();
+    const timestamp = canonicalTimestamp();
     const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
     const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp)}}`;
     const signature = Buffer.from(

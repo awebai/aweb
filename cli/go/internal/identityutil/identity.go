@@ -1,22 +1,13 @@
 package identityutil
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/awebai/aw/awid"
+)
 
 func HandleFromAddress(address string) string {
-	address = strings.TrimSpace(address)
-	if address == "" || strings.HasPrefix(address, "did:") {
-		return ""
-	}
-	lastSlash := strings.LastIndexByte(address, '/')
-	lastTilde := strings.LastIndexByte(address, '~')
-	idx := lastSlash
-	if lastTilde > idx {
-		idx = lastTilde
-	}
-	if idx >= 0 && idx+1 < len(address) {
-		return strings.TrimSpace(address[idx+1:])
-	}
-	return address
+	return awid.HandleFromAddress(address)
 }
 
 func ValueMatchesSelf(value string, selfAlias string, selfDIDs ...string) bool {
