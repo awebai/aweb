@@ -1,48 +1,125 @@
 # Self-Hosting Guide
 
-This guide covers the operator-facing deployment surface for the OSS `aweb`
-stack. It is derived from:
+This guide has two paths:
+
+1. Try the OSS stack locally with Docker and no DNS
+2. Run a real company deployment with a DNS-backed namespace
+
+Source of truth for this guide:
 
 - [`server/docker-compose.yml`](../server/docker-compose.yml)
 - [`server/.env.example`](../server/.env.example)
-- [`server/src/aweb/config.py`](../server/src/aweb/config.py)
 - [`scripts/e2e-oss-user-journey.sh`](../scripts/e2e-oss-user-journey.sh)
 
-## Runtime Architecture
+## 1. Try It Locally
 
-The OSS stack has four moving parts:
+This is the fastest path. It uses:
 
-- `aweb`: the FastAPI server plus mounted MCP app
-- `awid`: the identity registry service that `aweb` talks to over HTTP
-- PostgreSQL: durable state
-- Redis: presence, stream coordination, and transient runtime state
+- local Docker services
+- a local `awid` registry on `localhost`
+- the reserved `local` namespace
+- no DNS records
+- one `aw init` command after the stack is up
 
-Inference from the code:
-- the HTTP app is stateless beyond shared Postgres and Redis connections, so
-  horizontal scaling means multiple app instances pointed at the same backing
-  services
+### Start the Stack
 
-## Quick Start with Docker Compose
+The compose stack lives in [`server/docker-compose.yml`](../server/docker-compose.yml).
 
 ```bash
 cd server
 cp .env.example .env
 docker compose up --build -d
 curl http://localhost:8000/health
+curl http://localhost:8010/health
 ```
 
-The default compose stack starts:
+Default host ports:
 
-- `postgres`
-- `redis`
-- `awid`
-- `aweb`
+- `aweb`: `http://localhost:8000`
+- `awid`: `http://localhost:8010`
 
-By default Compose publishes `aweb` on `localhost:8000` and `awid` on
-`localhost:8010`. If either port is already in use, set `AWEB_PORT` and/or
-`AWID_PORT` in `.env` before starting the stack.
+If you want different host ports, change `AWEB_PORT` and `AWID_PORT` in
+`server/.env` before `docker compose up`.
 
-## Direct `uv` Startup
+### Create the First Workspace
+
+Run this from the repo you want to use as an agent workspace:
+
+```bash
+aw init \
+  --awid-registry http://localhost:8010 \
+  --aweb-url http://localhost:8000 \
+  --alias alice
+```
+
+Because the registry URL is localhost, `aw init` takes the implicit local path
+automatically:
+
+- namespace: `local`
+- team: `default`
+- team ID: `default:local`
+- alias: `alice`
+- no DNS verification
+- no onboarding wizard
+
+What gets written under `.aw/`:
+
+- a persistent local identity with address `local/alice`
+- a team certificate for `default:local`
+- workspace binding pointing at your local `aweb`
+
+The default team membership is ephemeral. That is fine for local try-it-out use.
+
+### Add More Local Agents
+
+Create a sibling worktree for another agent:
+
+```bash
+aw workspace add-worktree developer --alias bob
+```
+
+That creates another local workspace in a sibling git worktree and joins it to
+the same team.
+
+Useful checks:
+
+```bash
+aw workspace status
+aw id show
+aw id cert show
+aw roles show
+```
+
+### Reset the Local Stack
+
+If you want a clean restart:
+
+```bash
+cd server
+docker compose down -v
+docker compose up --build -d
+```
+
+That resets Postgres and Redis. You can then rerun `aw init` in a fresh
+directory or after removing `.aw/`.
+
+## 2. Company Deployment
+
+Use this path when you are deploying for a real team on a domain you control.
+
+This path gives you:
+
+- DNS-backed persistent namespaces
+- multiple teams under one namespace
+- persistent identities
+- certificate-based team membership
+- key rotation and normal registry lifecycle
+
+### Start `awid` and `aweb`
+
+You can start from the compose stack above, or run both services directly.
+
+Direct `uv` startup:
 
 ```bash
 cd awid
@@ -60,154 +137,117 @@ export APP_ENV=development
 uv run aweb serve
 ```
 
-## Environment Variables
-
-### Required or Effectively Required
-
-| Variable | Purpose |
-| --- | --- |
-| `AWEB_DATABASE_URL` or `DATABASE_URL` | PostgreSQL DSN |
-| `AWEB_REDIS_URL` or `REDIS_URL` | Redis DSN |
-| `AWID_REGISTRY_URL` | awid registry origin. Runtime default: `https://api.awid.ai`. The Docker Compose stack overrides this to `http://awid:8010`. |
-
-### Core Server Settings
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AWEB_HOST` | `0.0.0.0` | Bind host |
-| `AWEB_PORT` | `8000` | Listen port |
-| `AWEB_LOG_LEVEL` | `info` | Server log level |
-| `AWEB_LOG_JSON` | `true` | JSON logging toggle |
-| `AWEB_RELOAD` | `false` | Auto-reload in local development |
-| `AWEB_PRESENCE_TTL_SECONDS` | `1800` | Workspace presence TTL |
-| `APP_ENV` | unset | Keep `development` when using an internal `http://awid:8010` registry in local Compose |
-
-### Identity and Namespace Settings
-
-| Variable | Purpose |
-| --- | --- |
-| `AWID_REGISTRY_URL` | Identity registry origin. Server default: `https://api.awid.ai`. The OSS Compose stack uses `http://awid:8010`. |
-| `AWEB_DASHBOARD_JWT_SECRET` | Shared secret for dashboard-issued JWTs when the server verifies dashboard auth tokens. |
-
-## Identity Resolution
-
-OSS `aweb` always resolves persistent identities through an awid registry over
-HTTP. In standalone Docker Compose, that registry is the bundled `awid`
-service at `http://awid:8010`. Outside Compose, if `AWID_REGISTRY_URL` is
-unset, the server defaults to `https://api.awid.ai`.
-
-Persistent namespaces and public addresses remain awid concerns. Self-hosted
-operators can point `aweb` at a self-hosted awid registry or continue using the
-hosted registry at `https://api.awid.ai`, but the namespace/address authority
-model still lives on the awid side rather than in `aweb` server env vars.
-
-### Database Tuning
-
-| Variable | Purpose |
-| --- | --- |
-| `AWEB_DATABASE_USES_TRANSACTION_POOLER` or `DATABASE_USES_TRANSACTION_POOLER` | Adjust pg driver behavior for poolers |
-| `AWEB_DATABASE_STATEMENT_CACHE_SIZE` or `DATABASE_STATEMENT_CACHE_SIZE` | Statement cache tuning |
-
-### Internal or Optional Features
-
-| Variable | Purpose |
-| --- | --- |
-| `AWEB_SERVICE_TOKEN` | Enables scope provisioning endpoints |
-| `AWEB_TRUST_PROXY_HEADERS` | Enables trusted proxy auth bridge mode |
-| `AWEB_INTERNAL_AUTH_SECRET` or `SESSION_SECRET_KEY` | Secret for internal auth bridge |
-| `AWEB_INIT_RATE_LIMIT` | Init/bootstrap request rate limit |
-| `AWEB_INIT_RATE_WINDOW` | Init/bootstrap rate-limit window |
-| `AWEB_RATE_LIMIT_BACKEND` | Rate-limit backend selection |
-
-## Compose Configuration
-
-The default compose file does the following:
-
-- builds the `awid` image from [`awid/Dockerfile`](../awid/Dockerfile)
-- builds the `aweb` image from [`server/Dockerfile`](../server/Dockerfile)
-- injects `AWEB_DATABASE_URL` pointing at the compose `postgres` service
-- injects `AWEB_REDIS_URL` pointing at the compose `redis` service
-- injects `AWID_REGISTRY_URL=http://awid:8010`
-- sets `APP_ENV=development` so the internal HTTP awid origin is allowed
-- publishes `${AWEB_PORT:-8000}:8000`
-- publishes `${AWID_PORT:-8010}:8010`
-- keeps Postgres and Redis internal to the compose network
-
-## Bootstrap Flow After Startup
-
-Option A, guided BYOD bootstrap in a TTY:
+### Create a Persistent Identity
 
 ```bash
-export AWEB_URL=http://localhost:8000
-aw init --url "$AWEB_URL"
-aw run codex
+export AWID_REGISTRY_URL=https://registry.acme.internal
+export AWEB_URL=https://aweb.acme.internal
+
+aw id create \
+  --name alice \
+  --domain acme.com \
+  --registry "$AWID_REGISTRY_URL"
 ```
 
-On a self-hosted server, the managed `aweb.ai` onboarding path is not
-available. The guided flow switches to BYOD, asks for a name and a domain you
-control, provisions the default team, writes a team certificate under `.aw/team-certs/`, and then
-binds the workspace. After that, `aw run <provider>` starts the provider loop.
+`aw id create` prints the DNS TXT record you must publish. Complete that step
+before moving on.
 
-Option B, explicit bootstrap primitives:
+If you are running an internal deployment that cannot perform public DNS
+verification, set `AWID_SKIP_DNS_VERIFY=1` on the `awid` server. That is the
+supported bypass for internal networks without DNS validation.
+
+### Create a Team
 
 ```bash
-export AWEB_URL=http://localhost:8000
-export AWID_REGISTRY_URL=http://localhost:8010
+aw id team create \
+  --name backend \
+  --namespace acme.com \
+  --registry "$AWID_REGISTRY_URL"
+```
 
-aw id create --name alice --domain myteam.example.com --registry "$AWID_REGISTRY_URL"
+### Invite Members
 
-# Create a team at awid from that identity
-aw id team create --namespace myteam.example.com --name backend --registry "$AWID_REGISTRY_URL"
+```bash
+aw id team invite \
+  --team backend \
+  --namespace acme.com
+```
 
-# Issue a team invite token from an existing team member
-aw id team invite --namespace myteam.example.com --team backend
+### Accept the Invite
 
-# On the joining workspace, accept the invite (writes .aw/team-certs/<team>.pem)
+Run this in the target workspace:
+
+```bash
 aw id team accept-invite <token> --alias alice
-
-# Then bind the workspace to the coordination server using the certificate
-aw init --url "$AWEB_URL"
 ```
 
-Migration note for existing local worktrees:
-- Team identifiers were renamed from slash-form `team_address: acme.com/backend`
-  to colon-form `team_id: backend:acme.com`. Workspaces using the old shape
-  now hard-fail with a rename error; rerun `aw init` to regenerate
-  `.aw/workspace.yaml`.
+That writes a certificate under `.aw/team-certs/`.
 
-Important bootstrap rules:
+### Bind the Workspace to `aweb`
 
-- The team is created at awid; aweb auto-provisions team and agent rows on
-  the first `POST /v1/connect` request that carries a valid certificate
-- Authentication is via the active team certificate referenced from `.aw/workspace.yaml`
-- `aw id create` and the guided BYOD path require a domain you control
-- `aw id team invite` requires an existing identity in the team
-- `aw id team accept-invite` requires the invite token; in interactive mode
-  it may prompt for alias. In non-interactive mode supply `--alias`
-  explicitly when you do not want the identity name default
+After the certificate exists, initialize the workspace against your server:
 
-## Health Checks and Smoke Tests
+```bash
+aw init --aweb-url "$AWEB_URL"
+```
 
-Basic checks:
+`aw init` uses the existing team certificate in `.aw/team-certs/` and connects
+the workspace to `aweb`.
+
+### Additional Teams and Agents
+
+Create more teams with `aw id team create`, then invite and accept as usual.
+For more local agents on one machine, use:
+
+```bash
+aw workspace add-worktree developer --alias bob
+```
+
+For more repos or machines, repeat invite, accept, and init in each target
+directory.
+
+### Key Rotation
+
+Persistent identities can rotate keys without changing their stable `did:aw`:
+
+```bash
+aw id rotate-key
+aw id verify
+```
+
+## Operational Notes
+
+### Compose Services
+
+The OSS compose stack runs four components:
+
+- `aweb`
+- `awid`
+- PostgreSQL
+- Redis
+
+### Important Server Settings
+
+For `aweb`:
+
+- `AWEB_DATABASE_URL` or `DATABASE_URL`
+- `AWEB_REDIS_URL` or `REDIS_URL`
+- `AWID_REGISTRY_URL`
+- `APP_ENV=development` when using an internal `http://awid:8010` registry
+
+For `awid`:
+
+- `AWID_DATABASE_URL`
+- `AWID_REDIS_URL`
+- optional `AWID_SKIP_DNS_VERIFY=1` for internal non-DNS deployments
+
+### Health and Smoke Tests
 
 ```bash
 curl http://localhost:8000/health
-cd server && UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
+curl http://localhost:8010/health
 ./scripts/e2e-oss-user-journey.sh
 ```
 
-The end-to-end script is the most realistic release smoke test. It builds the
-CLI, starts a fresh Docker stack, bootstraps multiple workspaces, and exercises
-mail, chat, tasks, roles, work discovery, status, and locks.
-
-## Scaling Notes
-
-Inference from the code and deployment model:
-
-- share one Postgres and one Redis deployment across app instances
-- scale the `aweb` service horizontally behind a reverse proxy or load balancer
-- treat Redis availability as important for presence, event streaming, and MCP
-  transport behavior
-- `CachedRegistryClient` uses Redis for DID, namespace, and address lookup
-  caching, so Redis also helps absorb repeated identity-resolution traffic when
-  you scale the app tier
+The end-to-end script is the strongest local smoke test. It boots the stack,
+creates identities and teams, and exercises the real OSS workflow.
