@@ -41,10 +41,11 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 
 	prepared, err := prepareIDCreatePlan(req.WorkingDir, idCreateOptions{
-		Name:        alias,
-		Domain:      implicitLocalDomain,
-		RegistryURL: req.RegistryURL,
-		Now:         time.Now,
+		Name:                     alias,
+		Domain:                   implicitLocalDomain,
+		RegistryURL:              req.RegistryURL,
+		AllowReservedLocalDomain: true,
+		Now:                      time.Now,
 	})
 	if err != nil {
 		return connectOutput{}, err

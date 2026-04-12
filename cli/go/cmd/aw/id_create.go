@@ -53,14 +53,15 @@ func init() {
 }
 
 type idCreateOptions struct {
-	Name          string
-	Domain        string
-	RegistryURL   string
-	SkipDNSVerify bool
-	PromptIn      io.Reader
-	PromptOut     io.Writer
-	TXTResolver   awid.TXTResolver
-	Now           func() time.Time
+	Name                     string
+	Domain                   string
+	RegistryURL              string
+	AllowReservedLocalDomain bool
+	SkipDNSVerify            bool
+	PromptIn                 io.Reader
+	PromptOut                io.Writer
+	TXTResolver              awid.TXTResolver
+	Now                      func() time.Time
 }
 
 type idCreatePlan struct {
@@ -190,7 +191,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 	if err != nil {
 		return nil, err
 	}
-	domain, err := normalizeIDCreateDomain(opts.Domain)
+	domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -543,17 +544,17 @@ func normalizeIDCreateName(value string) (string, error) {
 	return value, nil
 }
 
-func normalizeIDCreateDomain(value string) (string, error) {
+func normalizeIDCreateDomain(value string, allowReservedLocal bool) (string, error) {
 	value = awconfig.NormalizeDomain(value)
 	switch {
 	case value == "":
 		return "", usageError("--domain is required")
 	case strings.Contains(value, "/"):
 		return "", usageError("--domain must not contain '/'")
-	case value == implicitLocalDomain:
+	case value == implicitLocalDomain && allowReservedLocal:
 		return value, nil
 	case !strings.Contains(value, "."):
-		return "", usageError("--domain must be a fully qualified domain name or the reserved local namespace")
+		return "", usageError("--domain must be a fully qualified domain name")
 	}
 	return value, nil
 }

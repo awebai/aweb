@@ -157,6 +157,26 @@ func TestResolveInitURLPrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveExplicitInitAwebURLRequiresOverride(t *testing.T) {
+	oldAwebURL := initAwebURL
+	oldCompatURL := initURL
+	t.Cleanup(func() {
+		initAwebURL = oldAwebURL
+		initURL = oldCompatURL
+	})
+	t.Setenv("AWEB_URL", "")
+	initAwebURL = ""
+	initURL = ""
+
+	_, err := resolveExplicitInitAwebURL()
+	if err == nil {
+		t.Fatal("expected explicit aweb URL requirement error")
+	}
+	if !strings.Contains(err.Error(), "--aweb-url, --url, or AWEB_URL is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestInitRegistryIsLocalhost(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +191,27 @@ func TestInitRegistryIsLocalhost(t *testing.T) {
 		if got := initRegistryIsLocalhost(raw); got != want {
 			t.Fatalf("initRegistryIsLocalhost(%q)=%v want %v", raw, got, want)
 		}
+	}
+}
+
+func TestNormalizeIDCreateDomainRejectsLocalByDefault(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeIDCreateDomain("local", false)
+	if err == nil {
+		t.Fatal("expected local to be rejected outside the implicit local flow")
+	}
+}
+
+func TestNormalizeIDCreateDomainAllowsLocalWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	domain, err := normalizeIDCreateDomain("local", true)
+	if err != nil {
+		t.Fatalf("normalizeIDCreateDomain: %v", err)
+	}
+	if domain != "local" {
+		t.Fatalf("domain=%q", domain)
 	}
 }
 
@@ -255,6 +296,53 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	}
 	if got.AgentType != "codex" {
 		t.Fatalf("agent_type=%q", got.AgentType)
+	}
+}
+
+func TestInitUsesResolvedAliasForImplicitLocalFlow(t *testing.T) {
+	oldLocalFlow := initRunImplicitLocalFlow
+	oldIsTTY := initIsTTY
+	oldAwebURL := initAwebURL
+	oldRegistry := initAWIDRegistry
+	oldAlias := initAlias
+	t.Cleanup(func() {
+		initRunImplicitLocalFlow = oldLocalFlow
+		initIsTTY = oldIsTTY
+		initAwebURL = oldAwebURL
+		initAWIDRegistry = oldRegistry
+		initAlias = oldAlias
+	})
+
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	t.Setenv("AWEB_ALIAS", "env-alice")
+	initIsTTY = func() bool { return false }
+	initAwebURL = "http://localhost:8100"
+	initAWIDRegistry = "http://127.0.0.1:8010"
+	initAlias = ""
+
+	var got implicitLocalInitRequest
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		got = req
+		return connectOutput{Status: "connected", TeamID: "default:local", Alias: req.Alias}, nil
+	}
+
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+
+	if err := runInit(&cmd.Command, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	if got.Alias != "env-alice" {
+		t.Fatalf("alias=%q", got.Alias)
 	}
 }
 
@@ -489,5 +577,20 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	}
 	if cert.Lifetime != awid.LifetimeEphemeral {
 		t.Fatalf("loaded cert lifetime=%q", cert.Lifetime)
+	}
+}
+
+func TestRunImplicitLocalInitRequiresAlias(t *testing.T) {
+	tmp := t.TempDir()
+	_, err := runImplicitLocalInit(implicitLocalInitRequest{
+		WorkingDir:  tmp,
+		AwebURL:     "http://localhost:8100",
+		RegistryURL: "http://localhost:8010",
+	})
+	if err == nil {
+		t.Fatal("expected alias requirement error")
+	}
+	if !strings.Contains(err.Error(), "--alias is required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

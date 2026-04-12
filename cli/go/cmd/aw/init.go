@@ -117,7 +117,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	{
 		wd, _ := os.Getwd()
 		if hasCertificateForInit(wd) {
-			awebURL, err := resolveInitAwebURL()
+			awebURL, err := resolveExplicitInitAwebURL()
 			if err != nil {
 				return err
 			}
@@ -166,7 +166,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				WorkingDir:  wd,
 				AwebURL:     awebURL,
 				RegistryURL: registryURL,
-				Alias:       strings.TrimSpace(initAlias),
+				Alias:       resolveAliasValue(strings.TrimSpace(initAlias)),
 				Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
 				HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 				AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
@@ -222,6 +222,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func resolveInitAwebURL() (string, error) {
+	value := resolveInitAwebURLOverride()
+	if value == "" {
+		value = DefaultAwebURL
+	}
+	return normalizeAwebBaseURL(value)
+}
+
+func resolveExplicitInitAwebURL() (string, error) {
+	value := resolveInitAwebURLOverride()
+	if value == "" {
+		return "", usageError("--aweb-url, --url, or AWEB_URL is required when using certificate auth (team certificate found under .aw/team-certs/)")
+	}
+	return normalizeAwebBaseURL(value)
+}
+
+func resolveInitAwebURLOverride() string {
 	value := strings.TrimSpace(initAwebURL)
 	if value == "" {
 		value = strings.TrimSpace(initURL)
@@ -229,10 +245,7 @@ func resolveInitAwebURL() (string, error) {
 	if value == "" {
 		value = strings.TrimSpace(os.Getenv("AWEB_URL"))
 	}
-	if value == "" {
-		value = DefaultAwebURL
-	}
-	return normalizeAwebBaseURL(value)
+	return value
 }
 
 func resolveInitAWIDRegistryURL() (string, error) {
