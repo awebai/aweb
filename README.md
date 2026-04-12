@@ -53,7 +53,7 @@ Or build from source:
 
 ```bash
 cd cli/go
-go build -o aw ./cmd/aw
+make build
 sudo mv aw /usr/local/bin/
 ```
 
