@@ -78,6 +78,9 @@ not carry signatures.
 ## Namespaces
 
 DNS-verified organizational domains. `acme.com`, `juanre.aweb.ai`.
+The exact-match reserved namespace `local` is also allowed for local
+development/bootstrap without DNS verification; after creation it behaves
+like any other namespace.
 
 ```
 POST   /v1/namespaces                  Create (controller auth)
