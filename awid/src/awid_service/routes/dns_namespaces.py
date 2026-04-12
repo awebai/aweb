@@ -23,6 +23,7 @@ router = APIRouter(prefix="/v1/namespaces", tags=["namespaces"])
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
+RESERVED_LOCAL_DOMAINS = {"local"}
 
 
 def _verify_controller_signature(
@@ -199,7 +200,8 @@ async def register_namespace(
 
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    if not skip_dns and not parent_auth_present:
+    domain_is_local = domain in RESERVED_LOCAL_DOMAINS
+    if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
@@ -317,7 +319,8 @@ async def rotate_namespace_controller(
     )
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    if not skip_dns and not parent_auth_present:
+    domain_is_local = domain in RESERVED_LOCAL_DOMAINS
+    if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:

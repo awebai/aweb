@@ -184,6 +184,91 @@ def _bad_signature_headers(signing_key, header_did, *, domain, operation, **extr
 
 
 @pytest.mark.asyncio
+async def test_register_namespace_local_skips_dns_verification(client):
+    signing_key, public_key = generate_keypair()
+    controller_did = did_from_public_key(public_key)
+
+    headers = _sign(signing_key, controller_did, domain="local", operation="register")
+    resp = await client.post("/v1/namespaces", json={"domain": "local"}, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["domain"] == "local"
+    assert body["controller_did"] == controller_did
+
+
+@pytest.mark.asyncio
+async def test_register_namespace_notlocal_still_requires_dns_verification(client):
+    signing_key, public_key = generate_keypair()
+    controller_did = did_from_public_key(public_key)
+
+    headers = _sign(signing_key, controller_did, domain="notlocal", operation="register")
+    resp = await client.post("/v1/namespaces", json={"domain": "notlocal"}, headers=headers)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Signing key does not match DNS controller"
+
+
+@pytest.mark.asyncio
+async def test_rotate_local_namespace_controller_skips_dns_verification(client):
+    signing_key, public_key = generate_keypair()
+    controller_did = did_from_public_key(public_key)
+    await _register_namespace(client, signing_key, controller_did, "local")
+
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+    headers = _sign(
+        new_signing_key,
+        new_controller_did,
+        domain="local",
+        operation="rotate_controller",
+        new_controller_did=new_controller_did,
+    )
+    resp = await client.put(
+        "/v1/namespaces/local",
+        json={"new_controller_did": new_controller_did},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["controller_did"] == new_controller_did
+
+
+@pytest.mark.asyncio
+async def test_local_namespace_behaves_like_normal_namespace(client):
+    ns_key, ns_pub = generate_keypair()
+    ns_did = did_from_public_key(ns_pub)
+    await _register_namespace(client, ns_key, ns_did, "local")
+
+    team_key, team_did, team = await _create_team(client, ns_key, ns_did, "local", "default")
+    address = await _register_address(client, ns_key, ns_did, "local", "alice")
+    cert = await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        "local",
+        "default",
+        str(uuid4()),
+        member_did_key=address["current_did_key"],
+        member_did_aw=address["did_aw"],
+        member_address="local/alice",
+        alias="alice",
+    )
+
+    team_resp = await client.get("/v1/namespaces/local/teams/default")
+    assert team_resp.status_code == 200, team_resp.text
+    assert team_resp.json()["team_id"] == team["team_id"]
+
+    address_resp = await client.get("/v1/namespaces/local/addresses/alice")
+    assert address_resp.status_code == 200, address_resp.text
+    assert address_resp.json()["did_aw"] == address["did_aw"]
+
+    member_resp = await client.get("/v1/namespaces/local/teams/default/members/alice")
+    assert member_resp.status_code == 200, member_resp.text
+    assert member_resp.json()["certificate_id"] == cert["certificate_id"]
+
+
+@pytest.mark.asyncio
 async def test_delete_namespace_happy_path_cascades(client, controller_identity, awid_db_infra):
     ns_key, ns_did = controller_identity
     domain = "delete-ns.example"
