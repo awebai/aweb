@@ -39,6 +39,7 @@ type guidedOnboardingRequest struct {
 	PromptIn           io.Reader
 	PromptOut          io.Writer
 	BaseURL            string
+	RegistryURL        string
 	ServerName         string
 	Alias              string
 	Name               string
@@ -326,6 +327,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	opts := idCreateOptions{
 		Name:          name,
 		Domain:        domain,
+		RegistryURL:   strings.TrimSpace(req.RegistryURL),
 		PromptIn:      req.PromptIn,
 		PromptOut:     req.PromptOut,
 		SkipDNSVerify: guidedOnboardingSkipDNSVerify(),

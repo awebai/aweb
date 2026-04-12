@@ -550,8 +550,10 @@ func normalizeIDCreateDomain(value string) (string, error) {
 		return "", usageError("--domain is required")
 	case strings.Contains(value, "/"):
 		return "", usageError("--domain must not contain '/'")
+	case value == implicitLocalDomain:
+		return value, nil
 	case !strings.Contains(value, "."):
-		return "", usageError("--domain must be a fully qualified domain name")
+		return "", usageError("--domain must be a fully qualified domain name or the reserved local namespace")
 	}
 	return value, nil
 }

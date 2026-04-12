@@ -1051,12 +1051,39 @@ func bootstrapFirstLocalTeamMember(
 	controllerKey, memberKey ed25519.PrivateKey,
 	memberDIDAW, memberAddress, alias string,
 ) (*localTeamBootstrapResult, error) {
+	return bootstrapLocalTeamMemberWithLifetime(
+		ctx,
+		registry,
+		registryURL,
+		domain,
+		teamName,
+		displayName,
+		controllerKey,
+		memberKey,
+		memberDIDAW,
+		memberAddress,
+		alias,
+		awid.LifetimePersistent,
+	)
+}
+
+func bootstrapLocalTeamMemberWithLifetime(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, teamName, displayName string,
+	controllerKey, memberKey ed25519.PrivateKey,
+	memberDIDAW, memberAddress, alias, lifetime string,
+) (*localTeamBootstrapResult, error) {
 	if memberKey == nil {
 		return nil, fmt.Errorf("member signing key is required")
 	}
 	resolvedRegistryURL := strings.TrimSpace(registryURL)
 	if resolvedRegistryURL == "" && registry != nil {
 		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	lifetime = strings.TrimSpace(lifetime)
+	if lifetime == "" {
+		lifetime = awid.LifetimePersistent
 	}
 	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
 	if err != nil {
@@ -1069,7 +1096,7 @@ func bootstrapFirstLocalTeamMember(
 		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
 		MemberAddress: strings.TrimSpace(memberAddress),
 		Alias:         strings.TrimSpace(alias),
-		Lifetime:      awid.LifetimePersistent,
+		Lifetime:      strings.TrimSpace(lifetime),
 	})
 	if err != nil {
 		return nil, err

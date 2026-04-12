@@ -46,7 +46,11 @@ func runHostedInit(cmd *cobra.Command) error {
 		return err
 	}
 
-	serviceURLs, err := resolveOnboardingServiceURLs(initURL)
+	awebURL, err := resolveInitAwebURL()
+	if err != nil {
+		return err
+	}
+	serviceURLs, err := resolveOnboardingServiceURLs(awebURL)
 	if err != nil {
 		return err
 	}

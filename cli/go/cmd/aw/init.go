@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +32,8 @@ team-architecture flows:
 
 var (
 	initURL            string
+	initAwebURL        string
+	initAWIDRegistry   string
 	initHosted         bool
 	initHostedUsername string
 	initAlias          string
@@ -49,6 +53,7 @@ var (
 var (
 	initIsTTY                      = isTTY
 	initPrintGuidedOnboardingReady = printGuidedOnboardingReadyMessage
+	initRunImplicitLocalFlow       = runImplicitLocalInit
 )
 
 type initResult struct {
@@ -59,6 +64,8 @@ type initResult struct {
 
 func init() {
 	initCmd.Flags().StringVar(&initURL, "url", "", "Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows")
+	initCmd.Flags().StringVar(&initAwebURL, "aweb-url", "", "Base URL for the aweb server used by aw init (overrides AWEB_URL)")
+	initCmd.Flags().StringVar(&initAWIDRegistry, "awid-registry", "", "Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)")
 	initCmd.Flags().BoolVar(&initHosted, "hosted", false, "Create a hosted aweb.ai identity in this directory")
 	initCmd.Flags().StringVar(&initHostedUsername, "username", "", "Hosted username to create with --hosted")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
@@ -110,14 +117,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	{
 		wd, _ := os.Getwd()
 		if hasCertificateForInit(wd) {
-			baseURL := strings.TrimSpace(initURL)
-			if baseURL == "" {
-				baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
+			awebURL, err := resolveInitAwebURL()
+			if err != nil {
+				return err
 			}
-			if baseURL == "" {
-				return usageError("--url or AWEB_URL is required when using certificate auth (team certificate found under .aw/team-certs/)")
-			}
-			serviceURLs, err := resolveOnboardingServiceURLs(baseURL)
+			serviceURLs, err := resolveOnboardingServiceURLs(awebURL)
 			if err != nil {
 				return err
 			}
@@ -149,15 +153,50 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if workspaceMissing {
+		awebURL, err := resolveInitAwebURL()
+		if err != nil {
+			return err
+		}
+		registryURL, err := resolveInitAWIDRegistryURL()
+		if err != nil {
+			return err
+		}
+		if initRegistryIsLocalhost(registryURL) {
+			result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
+				WorkingDir:  wd,
+				AwebURL:     awebURL,
+				RegistryURL: registryURL,
+				Alias:       strings.TrimSpace(initAlias),
+				Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
+				HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+				AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			})
+			if err != nil {
+				if isRegistryUnavailableError(err) {
+					return fmt.Errorf("local awid registry %s is not reachable; start the local stack (for example docker compose up) and retry: %w", registryURL, err)
+				}
+				return err
+			}
+			printOutput(result, formatConnect)
+			if !jsonFlag {
+				printPostInitActions(&initResult{
+					ServerName:    hostFromBaseURL(awebURL),
+					ExportBaseURL: awebURL,
+					Alias:         strings.TrimSpace(result.Alias),
+				}, wd)
+			}
+			return nil
+		}
 		if !initIsTTY() {
 			return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or get a team certificate first with `aw id team accept-invite`")
 		}
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
-			WorkingDir: wd,
-			PromptIn:   os.Stdin,
-			PromptOut:  os.Stderr,
-			BaseURL:    initURL,
-			ServerName: serverFlag,
+			WorkingDir:  wd,
+			PromptIn:    os.Stdin,
+			PromptOut:   os.Stderr,
+			BaseURL:     awebURL,
+			RegistryURL: registryURL,
+			ServerName:  serverFlag,
 			Alias: func() string {
 				if initPersistent {
 					return strings.TrimSpace(initAlias)
@@ -182,6 +221,47 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return usageError("this directory already has a workspace; use a fresh directory")
 }
 
+func resolveInitAwebURL() (string, error) {
+	value := strings.TrimSpace(initAwebURL)
+	if value == "" {
+		value = strings.TrimSpace(initURL)
+	}
+	if value == "" {
+		value = strings.TrimSpace(os.Getenv("AWEB_URL"))
+	}
+	if value == "" {
+		value = DefaultAwebURL
+	}
+	return normalizeAwebBaseURL(value)
+}
+
+func resolveInitAWIDRegistryURL() (string, error) {
+	value := strings.TrimSpace(initAWIDRegistry)
+	if value == "" {
+		value = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	}
+	if value == "" {
+		value = awid.DefaultAWIDRegistryURL
+	}
+	if strings.EqualFold(value, "local") {
+		return "", usageError("AWID_REGISTRY_URL=local is not supported by `aw init`; use an explicit localhost URL such as http://localhost:8010")
+	}
+	return cleanBaseURL(value)
+}
+
+func initRegistryIsLocalhost(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func hostedInitRequested() bool {
 	return initHosted || strings.TrimSpace(initHostedUsername) != ""
 }
@@ -189,7 +269,7 @@ func hostedInitRequested() bool {
 // initNeedsFullInit returns true if the user passed flags that require the
 // full init flow, or if no local workspace binding exists yet (first-time init).
 func initNeedsFullInit() bool {
-	if initURL != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
+	if initURL != "" || initAwebURL != "" || initAWIDRegistry != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
 		return true
 	}
 	wd, _ := os.Getwd()
