@@ -413,7 +413,6 @@ CREATE TABLE dns_namespaces (
     namespace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT UNIQUE NOT NULL,
     controller_did  TEXT,
-    namespace_type  TEXT NOT NULL DEFAULT 'verified',
     scope_id        UUID,
     verification_status TEXT NOT NULL DEFAULT 'pending',
     last_verified_at TIMESTAMPTZ,

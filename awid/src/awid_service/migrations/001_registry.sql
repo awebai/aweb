@@ -45,13 +45,9 @@ CREATE TABLE IF NOT EXISTS {{tables.dns_namespaces}} (
     last_verified_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
-    namespace_type  TEXT NOT NULL DEFAULT 'dns_verified',
     scope_id        UUID,
     CONSTRAINT chk_dns_namespaces_status CHECK (
         verification_status IN ('verified', 'unverified', 'revoked')
-    ),
-    CONSTRAINT chk_dns_namespaces_type CHECK (
-        namespace_type IN ('dns_verified', 'managed')
     )
 );
 

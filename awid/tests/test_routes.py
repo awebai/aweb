@@ -36,8 +36,8 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
     await db.execute(
         """
         INSERT INTO {{tables.dns_namespaces}}
-            (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at, namespace_type)
-        VALUES ($1, $2, $3, 'verified', $4, $4, 'dns_verified')
+            (namespace_id, domain, controller_did, verification_status, last_verified_at, created_at)
+        VALUES ($1, $2, $3, 'verified', $4, $4)
         """,
         namespace_id,
         "registry.example",
