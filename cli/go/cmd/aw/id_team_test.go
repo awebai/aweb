@@ -974,19 +974,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-			if err != nil {
-				t.Fatalf("decode cert header: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      cert.Team,
-				"alias":        cert.Alias,
-				"agent_id":     "agent-ops",
-				"workspace_id": "ws-ops",
-				"repo_id":      "repo-1",
-				"team_did_key": cert.TeamDIDKey,
-			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1029,17 +1016,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:    server.URL,
-		ActiveTeam: "backend:acme.com",
-		Memberships: []awconfig.WorktreeMembership{{
-			TeamID:      "backend:acme.com",
-			Alias:       "alice",
-			WorkspaceID: "ws-backend",
-			CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
-			JoinedAt:    "2026-04-09T00:00:00Z",
-		}},
-	})
 	writeTeamStateForTest(t, tmp, awconfig.TeamState{
 		ActiveTeam: "backend:acme.com",
 		Memberships: []awconfig.TeamMembership{{
@@ -1093,19 +1069,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal("identity.yaml changed during aw id team add")
 	}
 
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workspace.ActiveTeam != "backend:acme.com" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
-	}
-	if workspace.Membership("ops:acme.com") == nil {
-		t.Fatal("expected ops team membership")
-	}
-	if workspace.Membership("ops:acme.com").WorkspaceID != "ws-ops" {
-		t.Fatalf("workspace_id=%q", workspace.Membership("ops:acme.com").WorkspaceID)
-	}
 	teamState, err := awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatal(err)
@@ -1115,6 +1078,9 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
 	}
 
 	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
@@ -1171,13 +1137,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if leaveGot["active_team"] != "backend:acme.com" {
 		t.Fatalf("active_team=%v", leaveGot["active_team"])
 	}
-	workspace, err = awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workspace.Membership("ops:acme.com") != nil {
-		t.Fatal("expected ops membership removed")
-	}
 	teamState, err = awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatal(err)
@@ -1199,7 +1158,6 @@ func TestTeamLeaveRejectsOnlyMembership(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
 	writeDefaultTeamStateForTest(t, tmp)
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "leave", "backend:demo")
@@ -1223,13 +1181,8 @@ func TestTeamSwitchAlreadyActiveIsNoOp(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
 	writeDefaultTeamStateForTest(t, tmp)
 
-	before, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	teamStateBefore, err := os.ReadFile(awconfig.TeamStatePath(tmp))
 	if err != nil {
 		t.Fatal(err)
@@ -1246,13 +1199,6 @@ func TestTeamSwitchAlreadyActiveIsNoOp(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 
-	after, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) {
-		t.Fatal("workspace.yaml changed for already-active switch")
-	}
 	teamStateAfter, err := os.ReadFile(awconfig.TeamStatePath(tmp))
 	if err != nil {
 		t.Fatal(err)
@@ -1271,26 +1217,6 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: "backend:acme.com",
-		Memberships: []awconfig.WorktreeMembership{
-			{
-				TeamID:      "backend:acme.com",
-				Alias:       "alice",
-				WorkspaceID: "ws-backend",
-				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
-				JoinedAt:    "2026-04-09T00:00:00Z",
-			},
-			{
-				TeamID:      "ops:acme.com",
-				Alias:       "alice-ops",
-				WorkspaceID: "ws-ops",
-				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
-				JoinedAt:    "2026-04-09T00:00:00Z",
-			},
-		},
-	})
 	writeTeamStateForTest(t, tmp, awconfig.TeamState{
 		ActiveTeam: "backend:acme.com",
 		Memberships: []awconfig.TeamMembership{

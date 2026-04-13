@@ -64,9 +64,6 @@ func formatTeamAdd(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
-	if strings.TrimSpace(out.WorkspaceID) != "" {
-		sb.WriteString(fmt.Sprintf("Workspace:   %s\n", out.WorkspaceID))
-	}
 	return sb.String()
 }
 
@@ -85,17 +82,16 @@ func formatTeamList(v any) string {
 	}
 	var sb strings.Builder
 	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ACTIVE\tTEAM\tALIAS\tROLE\tLIFETIME\tISSUED")
+	_, _ = fmt.Fprintln(tw, "ACTIVE\tTEAM\tALIAS\tLIFETIME\tISSUED")
 	for _, item := range out.Memberships {
 		active := ""
 		if item.Active {
 			active = "*"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			active,
 			item.TeamID,
 			item.Alias,
-			firstNonEmpty(item.RoleName, "-"),
 			firstNonEmpty(item.Lifetime, "-"),
 			firstNonEmpty(item.IssuedAt, "-"),
 		)

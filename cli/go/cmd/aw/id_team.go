@@ -53,11 +53,10 @@ type teamRemoveMemberOutput struct {
 }
 
 type teamAddOutput struct {
-	Status      string `json:"status"`
-	TeamID      string `json:"team_id"`
-	Alias       string `json:"alias"`
-	CertPath    string `json:"cert_path"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
+	Status   string `json:"status"`
+	TeamID   string `json:"team_id"`
+	Alias    string `json:"alias"`
+	CertPath string `json:"cert_path"`
 }
 
 type teamSwitchOutput struct {
@@ -66,13 +65,11 @@ type teamSwitchOutput struct {
 }
 
 type teamListItem struct {
-	TeamID      string `json:"team_id"`
-	Alias       string `json:"alias"`
-	RoleName    string `json:"role_name,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	Lifetime    string `json:"lifetime,omitempty"`
-	IssuedAt    string `json:"issued_at,omitempty"`
-	Active      bool   `json:"active"`
+	TeamID   string `json:"team_id"`
+	Alias    string `json:"alias"`
+	Lifetime string `json:"lifetime,omitempty"`
+	IssuedAt string `json:"issued_at,omitempty"`
+	Active   bool   `json:"active"`
 }
 
 type teamListOutput struct {
@@ -368,9 +365,6 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, true); err != nil {
 		return err
 	}
-	if err := syncWorkspaceTeamStateCache(workingDir); err != nil {
-		return err
-	}
 	printOutput(*accepted.Output, formatTeamAcceptInvite)
 	return nil
 }
@@ -382,20 +376,10 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	}
 	teamState, err := requireTeamStateForMembership(workingDir)
 	if err != nil {
-		return err
-	}
-	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return usageError("current worktree is missing .aw/workspace.yaml; run `aw init` first")
+		if !os.IsNotExist(err) {
+			return err
 		}
-		return err
-	}
-	if _, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err != nil {
-		if os.IsNotExist(err) {
-			return usageError("current worktree is missing .aw/identity.yaml; run `aw id create` first")
-		}
-		return err
+		teamState = &awconfig.TeamState{}
 	}
 
 	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAddAlias)
@@ -405,12 +389,15 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	if teamState.Membership(accepted.Output.TeamID) != nil {
 		return rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
 	}
-
-	output, err := connectAcceptedTeamMembership(workingDir, workspace, teamState, accepted)
-	if err != nil {
+	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, false); err != nil {
 		return rollbackAddedTeamCertificate(workingDir, accepted, err)
 	}
-	printOutput(*output, formatTeamAdd)
+	printOutput(teamAddOutput{
+		Status:   "added",
+		TeamID:   accepted.Output.TeamID,
+		Alias:    accepted.Output.Alias,
+		CertPath: accepted.Output.CertPath,
+	}, formatTeamAdd)
 	return nil
 }
 
@@ -438,9 +425,6 @@ func runTeamSwitch(cmd *cobra.Command, args []string) error {
 	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
 		return err
 	}
-	if err := syncWorkspaceTeamStateCache(workingDir); err != nil {
-		return err
-	}
 	printOutput(teamSwitchOutput{
 		Status:     "switched",
 		ActiveTeam: teamState.ActiveTeam,
@@ -459,18 +443,11 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 	}
 
 	items := make([]teamListItem, 0, len(teamState.Memberships))
-	workspace, _, _ := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
 	for _, membership := range teamState.Memberships {
 		item := teamListItem{
 			TeamID: strings.TrimSpace(membership.TeamID),
 			Alias:  strings.TrimSpace(membership.Alias),
 			Active: strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
-		}
-		if workspace != nil {
-			if cached := workspace.Membership(membership.TeamID); cached != nil {
-				item.RoleName = strings.TrimSpace(cached.RoleName)
-				item.WorkspaceID = strings.TrimSpace(cached.WorkspaceID)
-			}
 		}
 		if cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, membership.TeamID); err == nil && cert != nil {
 			item.Lifetime = strings.TrimSpace(cert.Lifetime)
@@ -504,9 +481,6 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 
 	teamState.RemoveMembership(teamID)
 	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
-		return err
-	}
-	if err := syncWorkspaceTeamStateCache(workingDir); err != nil {
 		return err
 	}
 	certPath := awconfig.TeamCertificatePath(workingDir, teamID)
@@ -936,91 +910,6 @@ func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, erro
 	return teamState, nil
 }
 
-func connectAcceptedTeamMembership(
-	workingDir string,
-	workspace *awconfig.WorktreeWorkspace,
-	teamState *awconfig.TeamState,
-	accepted *acceptedTeamInvite,
-) (*teamAddOutput, error) {
-	if workspace == nil {
-		return nil, fmt.Errorf("workspace is required")
-	}
-	if accepted == nil || accepted.Certificate == nil || accepted.Output == nil {
-		return nil, fmt.Errorf("accepted team invite is required")
-	}
-	if teamState == nil {
-		return nil, fmt.Errorf("teams state is required")
-	}
-	awebURL := strings.TrimSpace(workspace.AwebURL)
-	if awebURL == "" {
-		return nil, fmt.Errorf("workspace is missing aweb_url")
-	}
-	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
-	if err != nil {
-		return nil, fmt.Errorf("load signing key: %w", err)
-	}
-	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	if didKey != accepted.Certificate.MemberDIDKey {
-		return nil, fmt.Errorf("signing key did:key %s does not match certificate member_did_key %s", didKey, accepted.Certificate.MemberDIDKey)
-	}
-
-	hostname, _ := os.Hostname()
-	repoOrigin := discoverRepoOrigin(workingDir)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	resp, err := postConnect(ctx, awebURL, signingKey, accepted.Certificate, connectRequest{
-		Hostname:      hostname,
-		WorkspacePath: workingDir,
-		RepoOrigin:    repoOrigin,
-		HumanName:     resolveHumanNameValue(strings.TrimSpace(workspace.HumanName)),
-		AgentType:     resolveAgentTypeValue(strings.TrimSpace(workspace.AgentType)),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	membership := awconfig.TeamMembership{
-		TeamID:   resp.TeamID,
-		Alias:    resp.Alias,
-		CertPath: filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
-		JoinedAt: strings.TrimSpace(accepted.Certificate.IssuedAt),
-	}
-	if existing := teamState.Membership(resp.TeamID); existing != nil {
-		if strings.TrimSpace(existing.JoinedAt) != "" {
-			membership.JoinedAt = existing.JoinedAt
-		}
-		*existing = membership
-	} else {
-		teamState.AddMembership(membership)
-	}
-	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
-		return nil, err
-	}
-	upsertWorkspaceMembershipCache(workspace, awconfig.WorktreeMembership{
-		TeamID:      resp.TeamID,
-		Alias:       resp.Alias,
-		WorkspaceID: resp.WorkspaceID,
-		CertPath:    filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
-		JoinedAt:    strings.TrimSpace(accepted.Certificate.IssuedAt),
-	})
-	applyTeamStateToWorkspaceCache(workspace, teamState)
-	workspace.RepoID = resp.RepoID
-	workspace.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
-	workspace.Hostname = hostname
-	workspace.WorkspacePath = workingDir
-	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()), workspace); err != nil {
-		return nil, err
-	}
-	return &teamAddOutput{
-		Status:      "added",
-		TeamID:      resp.TeamID,
-		Alias:       resp.Alias,
-		CertPath:    filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
-		WorkspaceID: resp.WorkspaceID,
-	}, nil
-}
-
 func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvite, cause error) error {
 	revokeErr := revokeAcceptedTeamCertificate(accepted)
 	if accepted != nil && accepted.Output != nil && strings.TrimSpace(accepted.Output.CertPath) != "" {
@@ -1064,23 +953,6 @@ func loadOptionalTeamState(workingDir string) (*awconfig.TeamState, error) {
 		return nil, nil
 	}
 	return nil, err
-}
-
-func syncWorkspaceTeamStateCache(workingDir string) error {
-	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	teamState, err := awconfig.LoadTeamState(workingDir)
-	if err != nil {
-		return err
-	}
-	applyTeamStateToWorkspaceCache(workspace, teamState)
-	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
 func applyTeamStateToWorkspaceCache(workspace *awconfig.WorktreeWorkspace, teamState *awconfig.TeamState) {
