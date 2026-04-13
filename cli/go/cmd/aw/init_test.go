@@ -407,8 +407,6 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	var gotNamespacePayload map[string]any
-	var gotAddressPayload map[string]any
-	var gotDIDPayload map[string]any
 	var gotTeamPayload map[string]any
 	var gotCertPayload map[string]any
 
@@ -428,38 +426,12 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 				"last_verified_at":    "2026-04-12T00:00:00Z",
 				"created_at":          "2026-04-12T00:00:00Z",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/addresses/alice":
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/addresses":
-			if err := json.NewDecoder(r.Body).Decode(&gotAddressPayload); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"address_id":      "addr-1",
-				"domain":          "local",
-				"name":            "alice",
-				"did_aw":          gotAddressPayload["did_aw"],
-				"current_did_key": gotAddressPayload["current_did_key"],
-				"reachability":    gotAddressPayload["reachability"],
-				"created_at":      "2026-04-12T00:00:00Z",
-			})
+		case strings.HasPrefix(r.URL.Path, "/v1/namespaces/local/addresses"):
+			t.Fatalf("local implicit init should not register addresses: %s %s", r.Method, r.URL.Path)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
-				t.Fatal(err)
-			}
-			w.WriteHeader(http.StatusCreated)
+			t.Fatalf("local implicit init should not register dids: %s %s", r.Method, r.URL.Path)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
-			handle := "alice"
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          stableID,
-				"current_did_key": gotDIDPayload["did_key"],
-				"server":          "",
-				"address":         "local/alice",
-				"handle":          &handle,
-				"created_at":      "2026-04-12T00:00:00Z",
-				"updated_at":      "2026-04-12T00:00:00Z",
-			})
+			t.Fatalf("local implicit init should not resolve did registrations: %s %s", r.Method, r.URL.Path)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams":
 			if err := json.NewDecoder(r.Body).Decode(&gotTeamPayload); err != nil {
 				t.Fatal(err)
@@ -520,20 +492,17 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if gotNamespacePayload["domain"] != "local" {
 		t.Fatalf("namespace domain=%v", gotNamespacePayload["domain"])
 	}
-	if gotAddressPayload["name"] != "alice" {
-		t.Fatalf("address name=%v", gotAddressPayload["name"])
-	}
-	if gotDIDPayload["address"] != "local/alice" {
-		t.Fatalf("did address=%v", gotDIDPayload["address"])
-	}
 	if gotTeamPayload["name"] != "default" {
 		t.Fatalf("team name=%v", gotTeamPayload["name"])
 	}
 	if gotCertPayload["lifetime"] != awid.LifetimeEphemeral {
 		t.Fatalf("cert lifetime=%v", gotCertPayload["lifetime"])
 	}
-	if gotCertPayload["member_address"] != "local/alice" {
-		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])
+	if _, ok := gotCertPayload["member_did_aw"]; ok {
+		t.Fatalf("ephemeral local cert should not include member_did_aw: %v", gotCertPayload["member_did_aw"])
+	}
+	if _, ok := gotCertPayload["member_address"]; ok {
+		t.Fatalf("ephemeral local cert should not include member_address: %v", gotCertPayload["member_address"])
 	}
 	if gotConnectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", gotConnectBody["role"])
@@ -570,6 +539,12 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	}
 	if cert.Lifetime != awid.LifetimeEphemeral {
 		t.Fatalf("loaded cert lifetime=%q", cert.Lifetime)
+	}
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("loaded cert member_did_aw=%q", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("loaded cert member_address=%q", cert.MemberAddress)
 	}
 }
 

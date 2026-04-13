@@ -253,6 +253,70 @@ async def test_connect_http_idempotent(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_connect_http_ephemeral_agents_store_no_stable_identity(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    alice_cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        alice_did_key,
+        team_id="default:local",
+        alias="alice",
+        lifetime="ephemeral",
+    )
+    bob_cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        bob_did_key,
+        team_id="default:local",
+        alias="bob",
+        lifetime="ephemeral",
+    )
+    body = {"hostname": "Mac.local", "workspace_path": "/tmp/repo"}
+    body_bytes = json.dumps(body).encode()
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        alice_headers = _signed_request(alice_sk, alice_did_key, "default:local", body_bytes)
+        alice_headers["X-AWID-Team-Certificate"] = _encode_certificate(alice_cert)
+        alice_resp = await client.post(
+            "/v1/connect",
+            content=body_bytes,
+            headers={**alice_headers, "Content-Type": "application/json"},
+        )
+
+        bob_headers = _signed_request(bob_sk, bob_did_key, "default:local", body_bytes)
+        bob_headers["X-AWID-Team-Certificate"] = _encode_certificate(bob_cert)
+        bob_resp = await client.post(
+            "/v1/connect",
+            content=body_bytes,
+            headers={**bob_headers, "Content-Type": "application/json"},
+        )
+
+    assert alice_resp.status_code == 200, alice_resp.text
+    assert bob_resp.status_code == 200, bob_resp.text
+
+    rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT alias, did_key, did_aw, address, lifetime
+        FROM {{tables.agents}}
+        WHERE team_id = 'default:local'
+        ORDER BY alias
+        """
+    )
+    assert [row["alias"] for row in rows] == ["alice", "bob"]
+    assert rows[0]["did_key"] == alice_did_key
+    assert rows[1]["did_key"] == bob_did_key
+    assert all(row["did_aw"] is None for row in rows)
+    assert all(row["address"] is None for row in rows)
+    assert all(row["lifetime"] == "ephemeral" for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_connect_http_reuses_existing_agent_for_same_alias(aweb_cloud_db):
     """An existing active agent may reconnect with the same alias and update mutable fields."""
     team_sk, _, team_did_key = _make_keypair()

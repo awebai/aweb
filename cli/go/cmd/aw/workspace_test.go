@@ -967,6 +967,12 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
 		t.Fatalf("registered lifetime=%v", registeredCert["lifetime"])
 	}
+	if _, ok := registeredCert["member_did_aw"]; ok {
+		t.Fatalf("ephemeral add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
+	}
+	if _, ok := registeredCert["member_address"]; ok {
+		t.Fatalf("ephemeral add-worktree cert should not include member_address: %v", registeredCert["member_address"])
+	}
 
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(child); err != nil {
@@ -1004,6 +1010,12 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	}
 	if cert.Lifetime != awid.LifetimeEphemeral {
 		t.Fatalf("cert lifetime=%q", cert.Lifetime)
+	}
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("cert member_address=%q", cert.MemberAddress)
 	}
 
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {

@@ -62,7 +62,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := ensureStandaloneRegistryRegistration(ctx, registry, prepared.Plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
+	if err := ensureStandaloneNamespace(ctx, registry, prepared.Plan, prepared.ControllerKey); err != nil {
 		return connectOutput{}, err
 	}
 
@@ -75,8 +75,8 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		"",
 		prepared.ControllerKey,
 		prepared.IdentityKey,
-		prepared.Plan.DIDAW,
-		prepared.Plan.Address,
+		"",
+		"",
 		alias,
 		awid.LifetimeEphemeral,
 	)

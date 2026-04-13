@@ -1242,6 +1242,122 @@ async def test_send_message_accepts_team_auth(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identity_did_key(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('default:local', 'local', 'default', $1)
+        """,
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('default:local', $1, NULL, NULL, 'alice', 'ephemeral', 'developer', 'everyone'),
+            ('default:local', $2, NULL, NULL, 'bob', 'ephemeral', 'developer', 'everyone')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+
+    alice_cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        alice_did_key,
+        team_id="default:local",
+        alias="alice",
+        lifetime="ephemeral",
+    )
+    bob_cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        bob_did_key,
+        team_id="default:local",
+        alias="bob",
+        lifetime="ephemeral",
+    )
+    registry = AsyncMock()
+    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    alice_payload = {"to_alias": "bob", "subject": "local to bob", "body": "hello bob"}
+    alice_body = json.dumps(alice_payload).encode()
+    alice_headers = {
+        **_signed_team_headers(
+            alice_sk,
+            alice_did_key,
+            "default:local",
+            _encode_certificate(alice_cert),
+            alice_body,
+        ),
+        "Content-Type": "application/json",
+    }
+
+    bob_payload = {"to_alias": "alice", "subject": "local to alice", "body": "hello alice"}
+    bob_body = json.dumps(bob_payload).encode()
+    bob_headers = {
+        **_signed_team_headers(
+            bob_sk,
+            bob_did_key,
+            "default:local",
+            _encode_certificate(bob_cert),
+            bob_body,
+        ),
+        "Content-Type": "application/json",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        alice_send = await client.post("/v1/messages", content=alice_body, headers=alice_headers)
+        bob_send = await client.post("/v1/messages", content=bob_body, headers=bob_headers)
+
+        alice_inbox = await client.get(
+            "/v1/messages/inbox",
+            headers=_signed_identity_headers(alice_sk, alice_did_key, ""),
+        )
+        bob_inbox = await client.get(
+            "/v1/messages/inbox",
+            headers=_signed_identity_headers(bob_sk, bob_did_key, ""),
+        )
+
+    assert alice_send.status_code == 200, alice_send.text
+    assert bob_send.status_code == 200, bob_send.text
+    assert alice_inbox.status_code == 200, alice_inbox.text
+    assert bob_inbox.status_code == 200, bob_inbox.text
+
+    messages = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT from_did, to_did, subject
+        FROM {{tables.messages}}
+        WHERE subject IN ('local to bob', 'local to alice')
+        ORDER BY subject
+        """
+    )
+    assert [row["subject"] for row in messages] == ["local to alice", "local to bob"]
+    assert messages[0]["from_did"] == bob_did_key
+    assert messages[0]["to_did"] == alice_did_key
+    assert messages[1]["from_did"] == alice_did_key
+    assert messages[1]["to_did"] == bob_did_key
+
+    alice_body_json = alice_inbox.json()
+    bob_body_json = bob_inbox.json()
+    assert [item["subject"] for item in alice_body_json["messages"]] == ["local to alice"]
+    assert [item["subject"] for item in bob_body_json["messages"]] == ["local to bob"]
+    assert alice_body_json["messages"][0]["to_did"] == alice_did_key
+    assert alice_body_json["messages"][0]["to_stable_id"] is None
+    assert bob_body_json["messages"][0]["to_did"] == bob_did_key
+    assert bob_body_json["messages"][0]["to_stable_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_partial(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
