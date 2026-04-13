@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
@@ -717,6 +718,222 @@ func TestCertShow(t *testing.T) {
 	}
 	if got["certificate_id"] != cert.CertificateID {
 		t.Fatalf("certificate_id=%v want %v", got["certificate_id"], cert.CertificateID)
+	}
+}
+
+func TestCertIssueEmitsSignedEphemeralCertificateWithoutEmptyOptionalFields(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeControllerKeyForTest(t, tmp, "acme.com", controllerKey)
+
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+
+	run := exec.CommandContext(ctx, bin, "id", "cert", "issue",
+		"--did", memberDID,
+		"--team", "backend:acme.com",
+		"--alias", "alice")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cert issue failed: %v\n%s", err, string(out))
+	}
+
+	encoded := strings.TrimSpace(string(out))
+	cert, err := awid.DecodeTeamCertificateHeader(encoded)
+	if err != nil {
+		t.Fatalf("decode certificate: %v", err)
+	}
+	if cert.Team != "backend:acme.com" {
+		t.Fatalf("team=%q", cert.Team)
+	}
+	if cert.MemberDIDKey != memberDID {
+		t.Fatalf("member_did_key=%q", cert.MemberDIDKey)
+	}
+	if cert.Alias != "alice" {
+		t.Fatalf("alias=%q", cert.Alias)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("lifetime=%q", cert.Lifetime)
+	}
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("member_did_aw=%q", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("member_address=%q", cert.MemberAddress)
+	}
+	if err := awid.VerifyTeamCertificate(cert, controllerKey.Public().(ed25519.PublicKey)); err != nil {
+		t.Fatalf("verify certificate: %v", err)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode raw certificate json: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal raw certificate json: %v", err)
+	}
+	if _, ok := payload["member_did_aw"]; ok {
+		t.Fatalf("raw certificate unexpectedly included member_did_aw: %s", string(raw))
+	}
+	if _, ok := payload["member_address"]; ok {
+		t.Fatalf("raw certificate unexpectedly included member_address: %s", string(raw))
+	}
+}
+
+func TestCertIssuePersistentCertificateWritesOutputFile(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeControllerKeyForTest(t, tmp, "partner.com", controllerKey)
+
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	outputPath := filepath.Join(tmp, "out", "team-cert.txt")
+
+	run := exec.CommandContext(ctx, bin, "id", "cert", "issue",
+		"--did", memberDID,
+		"--team", "ops:partner.com",
+		"--alias", "bob",
+		"--lifetime", awid.LifetimePersistent,
+		"--did-aw", "did:aw:zpartnerbob",
+		"--address", "partner.com/bob",
+		"--output", outputPath)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cert issue failed: %v\n%s", err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected no stdout when --output is set, got:\n%s", string(out))
+	}
+
+	encodedBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(string(encodedBytes)))
+	if err != nil {
+		t.Fatalf("decode certificate: %v", err)
+	}
+	if cert.Team != "ops:partner.com" {
+		t.Fatalf("team=%q", cert.Team)
+	}
+	if cert.MemberDIDAW != "did:aw:zpartnerbob" {
+		t.Fatalf("member_did_aw=%q", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "partner.com/bob" {
+		t.Fatalf("member_address=%q", cert.MemberAddress)
+	}
+	if cert.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("lifetime=%q", cert.Lifetime)
+	}
+	if err := awid.VerifyTeamCertificate(cert, controllerKey.Public().(ed25519.PublicKey)); err != nil {
+		t.Fatalf("verify certificate: %v", err)
+	}
+}
+
+func TestCertIssueRejectsMissingRequiredFlags(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeControllerKeyForTest(t, tmp, "acme.com", controllerKey)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing did",
+			args: []string{"id", "cert", "issue", "--team", "backend:acme.com", "--alias", "alice"},
+			want: "--did is required",
+		},
+		{
+			name: "missing team",
+			args: []string{"id", "cert", "issue", "--did", "did:key:z6Mkexample", "--alias", "alice"},
+			want: "--team is required",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			run := exec.CommandContext(ctx, bin, tc.args...)
+			run.Env = testCommandEnv(tmp)
+			run.Dir = tmp
+			out, err := run.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected cert issue to fail:\n%s", string(out))
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Fatalf("unexpected output:\n%s", string(out))
+			}
+		})
+	}
+}
+
+func TestCertIssueFailsWhenControllerKeyMissing(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "id", "cert", "issue",
+		"--did", "did:key:z6Mkexample",
+		"--team", "backend:acme.com",
+		"--alias", "alice")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected cert issue to fail:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "load controller key for acme.com") {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
 

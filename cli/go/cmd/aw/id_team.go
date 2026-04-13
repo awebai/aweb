@@ -142,6 +142,14 @@ var (
 	teamRemoveNamespace   string
 	teamRemoveMember      string
 	teamRemoveRegistryURL string
+
+	certIssueDID      string
+	certIssueTeam     string
+	certIssueAlias    string
+	certIssueLifetime string
+	certIssueDIDAW    string
+	certIssueAddress  string
+	certIssueOutput   string
 )
 
 // --- commands ---
@@ -215,6 +223,12 @@ var certShowCmd = &cobra.Command{
 	RunE:  runCertShow,
 }
 
+var certIssueCmd = &cobra.Command{
+	Use:   "issue",
+	Short: "Issue a team certificate signed by the team controller key",
+	RunE:  runCertIssue,
+}
+
 var certCmd = &cobra.Command{
 	Use:   "cert",
 	Short: "Team certificate operations",
@@ -254,7 +268,15 @@ func init() {
 
 	identityCmd.AddCommand(teamCmd)
 
+	certIssueCmd.Flags().StringVar(&certIssueDID, "did", "", "Member did:key")
+	certIssueCmd.Flags().StringVar(&certIssueTeam, "team", "", "Canonical team ID (<name>:<domain>)")
+	certIssueCmd.Flags().StringVar(&certIssueAlias, "alias", "", "Member alias")
+	certIssueCmd.Flags().StringVar(&certIssueLifetime, "lifetime", awid.LifetimeEphemeral, "Certificate lifetime (ephemeral or persistent)")
+	certIssueCmd.Flags().StringVar(&certIssueDIDAW, "did-aw", "", "Optional stable did:aw for persistent members")
+	certIssueCmd.Flags().StringVar(&certIssueAddress, "address", "", "Optional member address for persistent members")
+	certIssueCmd.Flags().StringVar(&certIssueOutput, "output", "", "Write the base64 certificate to a file instead of stdout")
 	certCmd.AddCommand(certShowCmd)
+	certCmd.AddCommand(certIssueCmd)
 	identityCmd.AddCommand(certCmd)
 }
 
@@ -851,6 +873,65 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		IssuedAt:      cert.IssuedAt,
 		CertificateID: cert.CertificateID,
 	}, formatCertShow)
+	return nil
+}
+
+func runCertIssue(cmd *cobra.Command, args []string) error {
+	didKey := strings.TrimSpace(certIssueDID)
+	teamID := strings.TrimSpace(certIssueTeam)
+	alias := strings.TrimSpace(certIssueAlias)
+	lifetime := strings.TrimSpace(certIssueLifetime)
+	memberDIDAW := strings.TrimSpace(certIssueDIDAW)
+	memberAddress := strings.TrimSpace(certIssueAddress)
+	outputPath := strings.TrimSpace(certIssueOutput)
+
+	if didKey == "" {
+		return usageError("--did is required")
+	}
+	if teamID == "" {
+		return usageError("--team is required")
+	}
+	if alias == "" {
+		return usageError("--alias is required")
+	}
+	if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
+		return usageError("invalid --lifetime %q (use %q or %q)", lifetime, awid.LifetimeEphemeral, awid.LifetimePersistent)
+	}
+
+	domain, _, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return usageError("invalid --team %q: %v", teamID, err)
+	}
+	controllerKey, err := awconfig.LoadControllerKey(domain)
+	if err != nil {
+		return fmt.Errorf("load controller key for %s: %w", domain, err)
+	}
+
+	cert, err := awid.SignTeamCertificate(controllerKey, awid.TeamCertificateFields{
+		Team:          teamID,
+		MemberDIDKey:  didKey,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
+		Alias:         alias,
+		Lifetime:      lifetime,
+	})
+	if err != nil {
+		return fmt.Errorf("issue certificate: %w", err)
+	}
+	encoded, err := awid.EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		return fmt.Errorf("encode certificate: %w", err)
+	}
+	if outputPath != "" {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+		if err := os.WriteFile(outputPath, append([]byte(encoded), '\n'), 0o600); err != nil {
+			return fmt.Errorf("write certificate output: %w", err)
+		}
+		return nil
+	}
+	cmd.Println(encoded)
 	return nil
 }
 
