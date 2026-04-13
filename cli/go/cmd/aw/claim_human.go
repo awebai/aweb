@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	claimHumanEmail   string
-	claimHumanMockURL string
+	claimHumanEmail    string
+	claimHumanMockURL  string
+	claimHumanUsername string
 )
 
 var claimHumanCmd = &cobra.Command{
@@ -30,6 +31,7 @@ var claimHumanCmd = &cobra.Command{
 func init() {
 	claimHumanCmd.GroupID = groupIdentity
 	claimHumanCmd.Flags().StringVar(&claimHumanEmail, "email", "", "Email address to attach to the current CLI-created account")
+	claimHumanCmd.Flags().StringVar(&claimHumanUsername, "username", "", "Override the default dashboard username derived from the registered domain")
 	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the bootstrap base URL for local development")
 	rootCmd.AddCommand(claimHumanCmd)
 }
@@ -54,6 +56,7 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		WorkingDir: workingDir,
 		BaseURL:    baseURL,
 		Email:      email,
+		Username:   strings.TrimSpace(claimHumanUsername),
 	})
 	if err != nil {
 		return err
@@ -74,6 +77,7 @@ type claimHumanOptions struct {
 	WorkingDir string
 	BaseURL    string
 	Email      string
+	Username   string
 }
 
 func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, string, error) {
@@ -86,7 +90,7 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	if err != nil {
 		return nil, "", err
 	}
-	username, err := resolveClaimHumanUsername(opts.WorkingDir, identityAddress)
+	username, err := resolveClaimHumanUsername(opts.WorkingDir, identityAddress, opts.Username)
 	if err != nil {
 		return nil, "", err
 	}
@@ -147,7 +151,10 @@ func resolveClaimHumanIdentity(workingDir string) (string, ed25519.PrivateKey, s
 	return didKey, signingKey, address, nil
 }
 
-func resolveClaimHumanUsername(workingDir, address string) (string, error) {
+func resolveClaimHumanUsername(workingDir, address, override string) (string, error) {
+	if username := strings.TrimSpace(override); username != "" {
+		return username, nil
+	}
 	if strings.TrimSpace(address) != "" {
 		return usernameFromMemberAddress(address)
 	}
@@ -197,9 +204,12 @@ func usernameFromMemberAddress(address string) (string, error) {
 
 func usernameFromManagedDomain(domain string) (string, error) {
 	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return "", fmt.Errorf("current identity domain is empty")
+	}
 	const managedSuffix = ".aweb.ai"
 	if !strings.HasSuffix(domain, managedSuffix) {
-		return "", errors.New("claim-human is only for managed aweb.ai accounts; BYOD identities are not supported by this command")
+		return domain, nil
 	}
 	username := strings.TrimSuffix(domain, managedSuffix)
 	if strings.TrimSpace(username) == "" {
