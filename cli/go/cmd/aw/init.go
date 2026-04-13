@@ -273,9 +273,43 @@ func resolveInitAwebURL() (string, error) {
 func resolveExplicitInitAwebURL() (string, error) {
 	value := resolveInitAwebURLOverride()
 	if value == "" {
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		discovered, ok, err := resolveDefaultCertificateInitAwebURL(workingDir)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return discovered, nil
+		}
 		return "", usageError("--aweb-url, --url, or AWEB_URL is required when using certificate auth (team certificate found under .aw/team-certs/)")
 	}
 	return normalizeAwebBaseURL(value)
+}
+
+func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, error) {
+	cert, _, err := loadCertificateForConnect(workingDir)
+	if err != nil {
+		return "", false, nil
+	}
+	teamDomain, _, err := awid.ParseTeamID(strings.TrimSpace(cert.Team))
+	if err != nil {
+		return "", false, fmt.Errorf("current team certificate has invalid team_id %q: %w", cert.Team, err)
+	}
+	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "", teamDomain)
+	if err != nil {
+		return "", false, nil
+	}
+	if strings.TrimSpace(registryURL) != awid.DefaultAWIDRegistryURL {
+		return "", false, nil
+	}
+	awebURL, err := cleanBaseURL(DefaultAwebURL + "/api")
+	if err != nil {
+		return "", false, err
+	}
+	return awebURL, true, nil
 }
 
 func resolveInitAwebURLOverride() string {
