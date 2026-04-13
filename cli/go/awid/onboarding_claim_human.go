@@ -13,16 +13,16 @@ import (
 	"time"
 )
 
-const onboardingClaimHumanPath = "/api/v1/onboarding/claim-human"
+const onboardingClaimHumanPath = "/api/v1/claim-human"
 
-// ClaimHumanRequest is sent to POST /api/v1/onboarding/claim-human.
+// ClaimHumanRequest is sent to POST /api/v1/claim-human.
 type ClaimHumanRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	DIDKey   string `json:"did_key"`
 }
 
-// ClaimHumanResponse is returned by POST /api/v1/onboarding/claim-human.
+// ClaimHumanResponse is returned by POST /api/v1/claim-human.
 type ClaimHumanResponse struct {
 	Status string `json:"status"`
 	Email  string `json:"email,omitempty"`
