@@ -974,6 +974,137 @@ func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 	}
 }
 
+func TestAwIDShowWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := writeEphemeralIdentityWorkspaceForIDTest(t, tmp, "https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id show failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["did_key"] != didKey {
+		t.Fatalf("did_key=%v want %v", got["did_key"], didKey)
+	}
+	if got["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("lifetime=%v", got["lifetime"])
+	}
+	if got["custody"] != awid.CustodySelf {
+		t.Fatalf("custody=%v", got["custody"])
+	}
+	if got["registry_status"] != "not_applicable" {
+		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+	if _, ok := got["did_aw"]; ok {
+		t.Fatalf("did_aw should be absent for ephemeral identity, got %v", got["did_aw"])
+	}
+	if _, ok := got["address"]; ok {
+		t.Fatalf("address should be absent for ephemeral identity, got %v", got["address"])
+	}
+}
+
+func TestAwIDVerifyWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
+
+	var serverURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/log":
+			_ = json.NewEncoder(w).Encode([]map[string]any{didLogJSON(logEntry)})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	serverURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, ephemeralKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, serverURL, "default:alice.aweb.ai", "alice-laptop", ephemeralKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id verify failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "OK" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["current_did_key"] != did {
+		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	}
+}
+
+func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, "https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected rotate-key to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "this command requires a persistent identity") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+}
+
 func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -1378,6 +1509,24 @@ func cloneStringMap(src map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func writeEphemeralIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverURL, teamID, alias string, signingKey ed25519.PrivateKey) string {
+	t.Helper()
+	workspace := workspaceBinding(serverURL, teamID, alias, "workspace-1")
+	if err := awid.SaveSigningKey(filepath.Join(workingDir, ".aw", "signing.key"), signingKey); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	writeTeamCertificateWorkspaceForTest(t, workingDir, workspace, &testSelectionFixture{
+		SigningKey: signingKey,
+		Lifetime:   awid.LifetimeEphemeral,
+		CreatedAt:  "2026-04-13T00:00:00Z",
+	})
+	writeWorkspaceBindingForTest(t, workingDir, workspace)
+	if _, err := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should be absent for ephemeral workspace, err=%v", err)
+	}
+	return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 }
 
 type staticTXTResolver map[string][]string

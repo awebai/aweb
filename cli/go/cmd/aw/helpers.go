@@ -84,7 +84,64 @@ func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
 	wd, _ := os.Getwd()
-	return awconfig.ResolveIdentity(wd)
+	identity, err := awconfig.ResolveIdentity(wd)
+	if err == nil {
+		return identity, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return resolveEphemeralIdentityWithoutState(wd)
+}
+
+func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("invalid worktree workspace: %w", err)
+	}
+	activeMembership := workspace.ActiveMembership()
+	if activeMembership == nil {
+		return nil, usageError("current worktree is missing active_team membership; run `aw init` first")
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, activeMembership.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("load active team certificate for %s: %w", activeMembership.TeamID, err)
+	}
+	if strings.TrimSpace(cert.Lifetime) != awid.LifetimeEphemeral {
+		return nil, usageError("current persistent identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+	}
+
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, usageError("current identity has no local signing key")
+		}
+		return nil, fmt.Errorf("failed to load signing key: %w", err)
+	}
+	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if certDID := strings.TrimSpace(cert.MemberDIDKey); certDID != "" && certDID != didKey {
+		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
+	}
+
+	return &awconfig.ResolvedIdentity{
+		WorkingDir:     strings.TrimSpace(workingDir),
+		IdentityPath:   "",
+		SigningKeyPath: signingKeyPath,
+		DID:            didKey,
+		StableID:       "",
+		Address:        "",
+		Handle:         "",
+		Domain:         "",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimeEphemeral,
+		RegistryURL:    "",
+		RegistryStatus: "",
+		CreatedAt:      "",
+	}, nil
 }
 
 func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
