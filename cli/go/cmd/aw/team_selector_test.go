@@ -215,6 +215,66 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	}
 }
 
+func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
+	var sawStableID string
+	var sawCertHeader string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
+			sawCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	t.Setenv("HOME", tmp)
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1")
+	writeTeamCertificateWorkspaceForTest(t, tmp, workspace, &testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "backend:demo",
+		Alias:       "alice",
+		WorkspaceID: "workspace-1",
+		DID:         awid.ComputeDIDKey(memberPub),
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  memberKey,
+		CreatedAt:   "2026-04-09T00:00:00Z",
+	})
+	writeWorkspaceBindingForTest(t, tmp, workspace)
+
+	run := exec.CommandContext(ctx, bin, "mail", "inbox", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
+	}
+	if sawStableID != "" {
+		t.Fatalf("unexpected stable id header: %q", sawStableID)
+	}
+	if sawCertHeader != "" {
+		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
+	}
+}
+
 func containsAll(text string, needles ...string) bool {
 	for _, needle := range needles {
 		if needle != "" && !strings.Contains(text, needle) {

@@ -140,26 +140,46 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	sel.BaseURL = baseURL
 
 	identity, err := awconfig.ResolveIdentity(workingDir)
-	if err != nil {
-		return nil, nil, errors.New("current workspace has no local identity; run `aw init` here first")
+	identityMissing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !identityMissing {
+		return nil, nil, err
 	}
-	signingKey, err := awid.LoadSigningKey(identity.SigningKeyPath)
+
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	didKey := ""
+	if !identityMissing {
+		signingKeyPath = identity.SigningKeyPath
+		didKey = strings.TrimSpace(identity.DID)
+	}
+
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, errors.New("current workspace has no local signing key; run `aw init` here first")
+		}
 		return nil, nil, fmt.Errorf("load signing key: %w", err)
 	}
-	rawClient, err := awid.NewWithIdentity(baseURL, signingKey, identity.DID)
+	if didKey == "" {
+		didKey = awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	}
+
+	rawClient, err := awid.NewWithIdentity(baseURL, signingKey, didKey)
 	if err != nil {
 		return nil, nil, err
 	}
 	c := &aweb.Client{Client: rawClient}
-	if strings.TrimSpace(sel.StableID) == "" {
+	if !identityMissing && strings.TrimSpace(sel.StableID) == "" {
 		sel.StableID = strings.TrimSpace(identity.StableID)
 	}
-	if strings.TrimSpace(sel.Address) == "" {
+	if !identityMissing && strings.TrimSpace(sel.Address) == "" {
 		sel.Address = strings.TrimSpace(identity.Address)
 	}
 	if err := configureResolvedClient(c, sel, baseURL); err != nil {
 		return nil, nil, err
+	}
+	if identityMissing {
+		c.SetAddress("")
+		c.SetStableID("")
 	}
 
 	lastClient = c
