@@ -19,6 +19,7 @@ import (
 )
 
 const initAPIKeyEnvVar = "AWEB_API_KEY"
+const maxWorkspaceAPIKeyLength = 4096
 
 type apiKeyInitRequest struct {
 	WorkingDir  string
@@ -96,7 +97,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(resp.TeamCert))
+	encodedCert := strings.TrimSpace(resp.TeamCert)
+	if encodedCert == "" {
+		return connectOutput{}, fmt.Errorf("workspace init response is missing team_cert")
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(encodedCert)
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("decode workspace init team cert: %w", err)
 	}
@@ -136,11 +141,11 @@ func validateAPIKeyBootstrapResponse(
 	if err != nil {
 		return false, "", "", fmt.Errorf("invalid server_url in workspace init response: %w", err)
 	}
-	if strings.TrimSpace(resp.TeamCert) == "" {
-		return false, "", "", fmt.Errorf("workspace init response is missing team_cert")
-	}
 	if cert == nil {
 		return false, "", "", fmt.Errorf("workspace init response is missing a team cert")
+	}
+	if err := verifyAPIKeyBootstrapCertificate(cert); err != nil {
+		return false, "", "", err
 	}
 	responseDID := strings.TrimSpace(resp.DID)
 	if responseDID == "" {
@@ -161,6 +166,9 @@ func validateAPIKeyBootstrapResponse(
 		return false, "", "", fmt.Errorf("workspace init response is missing custody")
 	} else if custody != awid.CustodySelf {
 		return false, "", "", fmt.Errorf("workspace init response custody %q is not self-custodial", custody)
+	}
+	if len(strings.TrimSpace(resp.APIKey)) > maxWorkspaceAPIKeyLength {
+		return false, "", "", fmt.Errorf("workspace init response api_key exceeds %d bytes", maxWorkspaceAPIKeyLength)
 	}
 	lifetime := strings.TrimSpace(resp.Lifetime)
 	switch lifetime {
@@ -207,6 +215,21 @@ func validateAPIKeyBootstrapResponse(
 	return persistent, serverURL, "", nil
 }
 
+func verifyAPIKeyBootstrapCertificate(cert *awid.TeamCertificate) error {
+	teamDIDKey := strings.TrimSpace(cert.TeamDIDKey)
+	if teamDIDKey == "" {
+		return fmt.Errorf("workspace init team cert is missing team_did_key")
+	}
+	teamPub, err := awid.ExtractPublicKey(teamDIDKey)
+	if err != nil {
+		return fmt.Errorf("workspace init team cert has invalid team_did_key %q: %w", teamDIDKey, err)
+	}
+	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+		return fmt.Errorf("workspace init team cert signature verification failed: %w", err)
+	}
+	return nil
+}
+
 func persistAPIKeyBootstrapState(
 	workingDir, registryURL string,
 	signingKey ed25519.PrivateKey,
@@ -235,15 +258,9 @@ func persistAPIKeyBootstrapState(
 }
 
 func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest) (*apiKeyBootstrapResponse, error) {
-	if ctx == nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-	} else {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-	}
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -256,7 +273,7 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return nil, err
 	}
