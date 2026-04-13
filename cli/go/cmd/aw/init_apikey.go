@@ -112,6 +112,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		Role:      strings.TrimSpace(req.Role),
 		HumanName: strings.TrimSpace(req.HumanName),
 		AgentType: strings.TrimSpace(req.AgentType),
+		APIKey:    strings.TrimSpace(resp.APIKey),
 	})
 }
 

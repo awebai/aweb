@@ -22,6 +22,7 @@ type WorktreeMembership struct {
 
 type WorktreeWorkspace struct {
 	AwebURL         string               `yaml:"aweb_url,omitempty"`
+	APIKey          string               `yaml:"api_key,omitempty"`
 	ActiveTeam      string               `yaml:"active_team,omitempty"`
 	Memberships     []WorktreeMembership `yaml:"memberships,omitempty"`
 	HumanName       string               `yaml:"human_name,omitempty"`
@@ -44,6 +45,7 @@ type worktreeMembershipYAML struct {
 
 type worktreeWorkspaceYAML struct {
 	AwebURL         string                   `yaml:"aweb_url,omitempty"`
+	APIKey          string                   `yaml:"api_key,omitempty"`
 	ActiveTeam      string                   `yaml:"active_team,omitempty"`
 	Memberships     []worktreeMembershipYAML `yaml:"memberships,omitempty"`
 	HumanName       string                   `yaml:"human_name,omitempty"`
@@ -71,7 +73,6 @@ type LegacySingleTeamWorkspace struct {
 }
 
 const legacyWorkspaceFormatError = "workspace.yaml uses removed server_url. Run `aw init` to reinitialize this worktree."
-const legacyWorkspaceAPIKeyError = "workspace.yaml uses removed api_key auth. Run `aw init` to reinitialize this worktree with team certificate auth."
 const legacyWorkspaceTeamAddressError = "workspace.yaml uses removed team_address. team_address was renamed to team_id with colon-form value; run `aw init` to regenerate this worktree."
 const legacyWorkspaceSingleTeamError = "workspace.yaml uses single-team shape. Run `aw workspace migrate-multi-team`."
 const legacyWorkspaceRemovedFieldsErrorPrefix = "workspace.yaml uses removed fields"
@@ -79,6 +80,7 @@ const workspaceUnsupportedFieldsErrorPrefix = "workspace.yaml contains unsupport
 
 var canonicalWorkspaceYAMLKeys = map[string]struct{}{
 	"aweb_url":         {},
+	"api_key":          {},
 	"active_team":      {},
 	"memberships":      {},
 	"human_name":       {},
@@ -132,6 +134,7 @@ func (w *WorktreeWorkspace) syncURLFields() {
 		return
 	}
 	w.AwebURL = strings.TrimSpace(w.AwebURL)
+	w.APIKey = strings.TrimSpace(w.APIKey)
 }
 
 func (w *WorktreeWorkspace) normalize() {
@@ -269,14 +272,13 @@ func inspectMembershipYAMLKeys(prefix string, value *yaml.Node) (removed []strin
 	return removed, unsupported
 }
 
-func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, bool, []string, []string) {
+func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, []string, []string) {
 	if value == nil || value.Kind != yaml.MappingNode {
-		return false, false, false, false, nil, nil
+		return false, false, false, nil, nil
 	}
 	removed := make([]string, 0, 8)
 	unsupported := make([]string, 0, 4)
 	hasServerURL := false
-	hasAPIKey := false
 	hasLegacyTeamAddress := false
 	hasLegacySingleTeam := false
 	for i := 0; i+1 < len(value.Content); i += 2 {
@@ -303,8 +305,6 @@ func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, bool, []strin
 		switch key {
 		case "server_url":
 			hasServerURL = true
-		case "api_key":
-			hasAPIKey = true
 		case "team_address":
 			hasLegacyTeamAddress = true
 		case "team_id":
@@ -319,7 +319,7 @@ func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, bool, []strin
 	}
 	sort.Strings(removed)
 	sort.Strings(unsupported)
-	return hasServerURL, hasAPIKey, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported
+	return hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported
 }
 
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
@@ -327,12 +327,9 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	hasServerURL, hasAPIKey, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value)
+	hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value)
 	if hasServerURL {
 		return errors.New(legacyWorkspaceFormatError)
-	}
-	if hasAPIKey {
-		return errors.New(legacyWorkspaceAPIKeyError)
 	}
 	if hasLegacyTeamAddress {
 		return errors.New(legacyWorkspaceTeamAddressError)
@@ -361,6 +358,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 
 	*w = WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
+		APIKey:          raw.APIKey,
 		ActiveTeam:      raw.ActiveTeam,
 		Memberships:     memberships,
 		HumanName:       raw.HumanName,
@@ -393,6 +391,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	}
 	return worktreeWorkspaceYAML{
 		AwebURL:         w.AwebURL,
+		APIKey:          w.APIKey,
 		ActiveTeam:      w.ActiveTeam,
 		Memberships:     memberships,
 		HumanName:       w.HumanName,

@@ -54,6 +54,7 @@ type certificateConnectOptions struct {
 	Role      string
 	HumanName string
 	AgentType string
+	APIKey    string
 }
 
 // initCertificateConnect implements the certificate-based init flow.
@@ -125,6 +126,9 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		workspaceState.Memberships = append(workspaceState.Memberships, membership)
 	}
 	workspaceState.AwebURL = awebURL
+	if strings.TrimSpace(opts.APIKey) != "" {
+		workspaceState.APIKey = strings.TrimSpace(opts.APIKey)
+	}
 	workspaceState.ActiveTeam = resp.TeamID
 	workspaceState.RepoID = resp.RepoID
 	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)

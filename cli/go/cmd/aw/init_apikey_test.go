@@ -74,6 +74,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 				"stable_id":    "",
 				"lifetime":     awid.LifetimeEphemeral,
 				"custody":      awid.CustodySelf,
+				"api_key":      "workspace-sk-ephemeral",
 			})
 		case "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -143,6 +144,13 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not exist for ephemeral API-key init: %v", err)
 	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace.yaml: %v", err)
+	}
+	if workspace.APIKey != "workspace-sk-ephemeral" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
+	}
 	if containsStringUnderTree(t, filepath.Join(tmp, ".aw"), apiKey) {
 		t.Fatal("AWEB_API_KEY was written to disk")
 	}
@@ -193,6 +201,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"stable_id":    "did:aw:alice",
 				"lifetime":     awid.LifetimePersistent,
 				"custody":      awid.CustodySelf,
+				"api_key":      "workspace-sk-persistent",
 			})
 		case "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -246,6 +255,13 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	}
 	if identity.Address != "alice.aweb.ai/alice" {
 		t.Fatalf("address=%q", identity.Address)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace.yaml: %v", err)
+	}
+	if workspace.APIKey != "workspace-sk-persistent" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
 }
 

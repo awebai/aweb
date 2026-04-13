@@ -10,6 +10,7 @@ import (
 func canonicalWorkspaceState() *WorktreeWorkspace {
 	return &WorktreeWorkspace{
 		AwebURL:    "https://app.aweb.ai",
+		APIKey:     "aw_sk_workspace",
 		ActiveTeam: "backend:acme.com",
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:acme.com",
@@ -195,7 +196,7 @@ memberships:
 	}
 }
 
-func TestLoadWorktreeWorkspaceFromRejectsLegacyAPIKeyAuth(t *testing.T) {
+func TestLoadWorktreeWorkspaceFromAcceptsWorkspaceAPIKey(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -213,12 +214,12 @@ memberships:
 		t.Fatalf("write workspace: %v", err)
 	}
 
-	_, err := LoadWorktreeWorkspaceFrom(path)
-	if err == nil {
-		t.Fatal("expected api_key workspace load to fail")
+	workspace, err := LoadWorktreeWorkspaceFrom(path)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
 	}
-	if !strings.Contains(err.Error(), legacyWorkspaceAPIKeyError) {
-		t.Fatalf("unexpected error: %v", err)
+	if workspace.APIKey != "removed-token" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
 }
 
