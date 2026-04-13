@@ -43,7 +43,7 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 				"registry_url":   "https://api.awid.ai",
 				"version":        "1.7.0",
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
 			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
 			var err error
@@ -98,7 +98,7 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 		t.Fatalf("auth did=%q want %q", parts[1], didKey)
 	}
 
-	if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/onboarding/claim-human", gotTimestamp, gotBodyBytes, parts[2]) {
+	if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/claim-human", gotTimestamp, gotBodyBytes, parts[2]) {
 		t.Fatal("signed claim-human payload did not verify")
 	}
 
@@ -131,7 +131,7 @@ func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
 				"registry_url":   "https://api.awid.ai",
 				"version":        "1.7.0",
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
 			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
 			var err error
@@ -192,7 +192,7 @@ func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
 		t.Fatalf("auth did=%q want %q", parts[1], didKey)
 	}
 
-	if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/onboarding/claim-human", gotTimestamp, gotBodyBytes, parts[2]) {
+	if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/claim-human", gotTimestamp, gotBodyBytes, parts[2]) {
 		t.Fatal("signed claim-human payload did not verify")
 	}
 
@@ -223,7 +223,7 @@ func TestClaimHumanCommandUsesFullDomainForBYODIdentity(t *testing.T) {
 				"registry_url":   "https://api.awid.ai",
 				"version":        "1.7.0",
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
@@ -279,7 +279,7 @@ func TestClaimHumanCommandAllowsUsernameOverride(t *testing.T) {
 				"registry_url":   "https://api.awid.ai",
 				"version":        "1.7.0",
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}

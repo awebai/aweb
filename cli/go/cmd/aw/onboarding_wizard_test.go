@@ -529,7 +529,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"member_address":   memberAddress,
 				"alias":            alias,
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
 			if err := json.NewDecoder(r.Body).Decode(&claimBody); err != nil {
 				t.Fatal(err)
 			}
