@@ -74,9 +74,6 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if strings.TrimSpace(req.AwebURL) == "" {
 		return connectOutput{}, usageError("--aweb-url, --url, or AWEB_URL is required when AWEB_API_KEY is set")
 	}
-	if initBaseURLIsLocalhost(req.AwebURL) {
-		return connectOutput{}, usageError("AWEB_API_KEY bootstrap is only supported against non-localhost AWEB_URL values")
-	}
 	if err := ensureConnectTargetClean(req.WorkingDir); err != nil {
 		return connectOutput{}, err
 	}

@@ -308,48 +308,6 @@ func TestInitAPIKeyRequiresExplicitAwebURL(t *testing.T) {
 	}
 }
 
-func TestInitAPIKeyRejectsLocalhostAwebURL(t *testing.T) {
-	// Cannot use t.Parallel() — uses cwd and globals.
-
-	oldIsTTY := initIsTTY
-	oldAwebURL := initAwebURL
-	oldCompatURL := initURL
-	oldInjectDocs := initInjectDocs
-	oldSetupHooks := initSetupHooks
-	oldSetupChannel := initSetupChannel
-	t.Cleanup(func() {
-		initIsTTY = oldIsTTY
-		initAwebURL = oldAwebURL
-		initURL = oldCompatURL
-		initInjectDocs = oldInjectDocs
-		initSetupHooks = oldSetupHooks
-		initSetupChannel = oldSetupChannel
-	})
-	initIsTTY = func() bool { return false }
-
-	tmp := t.TempDir()
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
-
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_localhost")
-	t.Setenv("AWEB_URL", "http://localhost:8000")
-	initAwebURL = ""
-	initURL = ""
-	initInjectDocs = false
-	initSetupHooks = false
-	initSetupChannel = false
-
-	cmd := &cobraCommandClone{Command: *initCmd}
-	cmd.ResetFlagsForTest()
-	cmd.Command.SetContext(context.Background())
-	if err := runInit(&cmd.Command, nil); err == nil || !strings.Contains(err.Error(), "not supported with localhost AWEB_URL") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 	t.Parallel()
 

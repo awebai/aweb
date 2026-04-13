@@ -119,9 +119,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if initBaseURLIsLocalhost(awebURL) {
-			return usageError("AWEB_API_KEY bootstrap is not supported with localhost AWEB_URL; use the local awid flow instead")
-		}
 		registryURL, err := resolveInitAWIDRegistryURL()
 		if err != nil {
 			return err
