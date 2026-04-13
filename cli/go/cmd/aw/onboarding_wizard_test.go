@@ -635,10 +635,19 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if cert.MemberAddress != "jack.aweb.ai/laptop" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
 	}
+	if claimBody["username"] != "jack" {
+		t.Fatalf("claim username=%v", claimBody["username"])
+	}
+	if claimBody["email"] != "jack@example.com" {
+		t.Fatalf("claim email=%v", claimBody["email"])
+	}
+	if claimBody["did_key"] != strings.TrimSpace(signupBody["did_key"].(string)) {
+		t.Fatalf("claim did_key=%v want %v", claimBody["did_key"], signupBody["did_key"])
+	}
 
 	output := out.String()
-	if strings.Contains(output, "Run aw claim-human now?") {
-		t.Fatalf("unexpected persistent claim-human prompt in ephemeral hosted output: %q", output)
+	if !strings.Contains(output, "Run aw claim-human now?") {
+		t.Fatalf("expected claim-human prompt in hosted output: %q", output)
 	}
 }
 
@@ -800,8 +809,8 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not exist for ephemeral hosted onboarding retry: %v", err)
 	}
-	if strings.Contains(out.String(), "Run aw claim-human now?") {
-		t.Fatalf("unexpected persistent claim-human prompt in ephemeral hosted retry output: %q", out.String())
+	if !strings.Contains(out.String(), "Run aw claim-human now?") {
+		t.Fatalf("expected claim-human prompt in hosted retry output: %q", out.String())
 	}
 	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
 		t.Fatalf("expected retry message, got %q", out.String())

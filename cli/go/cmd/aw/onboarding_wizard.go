@@ -166,10 +166,8 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	}
 	printOutput(result, formatConnect)
 
-	if req.Persistent {
-		if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
-			return nil, err
-		}
+	if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
+		return nil, err
 	}
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
