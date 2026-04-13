@@ -123,6 +123,7 @@ type Client struct {
 	did                 string             // empty for legacy/custodial
 	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	teamID              string             // team identifier from certificate, used in auth signature
+	certAlias           string             // certificate alias, used for signed payloads in cert-auth mode
 	address             string             // namespace/alias, used in signed envelopes
 	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
 	resolver            IdentityResolver   // optional; resolves recipient DID for to_did binding
@@ -192,6 +193,7 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	c.did = did
 	c.teamCertHeader = certHeader
 	c.teamID = cert.Team
+	c.certAlias = strings.TrimSpace(cert.Alias)
 	return c, nil
 }
 
@@ -228,6 +230,41 @@ func (c *Client) Address() string { return c.address }
 // SetAddress sets the client's agent address (namespace/alias) for use in
 // signed message envelopes.
 func (c *Client) SetAddress(address string) { c.address = address }
+
+func (c *Client) addressAlias() string {
+	parts := strings.SplitN(c.address, "/", 2)
+	if len(parts) == 2 && parts[1] != "" {
+		return parts[1]
+	}
+	return ""
+}
+
+func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
+	from := strings.TrimSpace(c.address)
+	if c.signingKey == nil {
+		return from
+	}
+	if c.teamCertHeader != "" {
+		if alias := strings.TrimSpace(c.certAlias); alias != "" {
+			return alias
+		}
+	}
+	if identityTarget {
+		if from == "" {
+			return strings.TrimSpace(c.did)
+		}
+		return from
+	}
+	if preferAlias {
+		if alias := c.addressAlias(); alias != "" {
+			return alias
+		}
+	}
+	if from == "" {
+		return strings.TrimSpace(c.did)
+	}
+	return from
+}
 
 // SetStableID sets the client's stable identifier (did:aw:...) for use
 // as from_stable_id in outgoing signed envelopes.

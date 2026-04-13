@@ -22,11 +22,7 @@ func (c *Client) namespaceSlug() string {
 }
 
 func (c *Client) alias() string {
-	parts := strings.SplitN(c.address, "/", 2)
-	if len(parts) == 2 && parts[1] != "" {
-		return parts[1]
-	}
-	return ""
+	return c.addressAlias()
 }
 
 func (c *Client) toAddressForAliases(aliases []string) string {
@@ -184,11 +180,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		} else if toAddr := c.toAddressForAliases(payload.ToAliases); toAddr != "" {
 			to = toAddr
 		}
-		if strings.TrimSpace(from) == "" {
-			from = c.did
-		} else if !directIdentityTargets {
-			from = c.alias()
-		}
+		from = c.signedPayloadFrom(false, !directIdentityTargets)
 	}
 	env := &MessageEnvelope{
 		From:          from,
@@ -459,7 +451,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		if toAddr, err := c.toAddressForSession(ctx, sessionID); err == nil {
 			to = toAddr
 		}
-		from = c.alias()
+		from = c.signedPayloadFrom(false, true)
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:    from,

@@ -67,13 +67,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	}
 	from := c.address
 	if c.signingKey != nil {
-		if identityTarget {
-			if strings.TrimSpace(from) == "" {
-				from = c.did
-			}
-		} else if payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/") {
-			from = c.alias()
-		}
+		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:       from,

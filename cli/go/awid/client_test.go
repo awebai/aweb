@@ -34,6 +34,37 @@ func (r stubIdentityResolver) VerifyStableIdentity(ctx context.Context, address,
 	return r.verify(ctx, address, stableID)
 }
 
+func testTeamCertificate(t *testing.T, memberKey ed25519.PrivateKey, alias string) *TeamCertificate {
+	t.Helper()
+	_, teamKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: ComputeDIDKey(memberKey.Public().(ed25519.PublicKey)),
+		Alias:        alias,
+		Lifetime:     LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func signedPayloadMap(t *testing.T, body map[string]any) map[string]any {
+	t.Helper()
+	sp, ok := body["signed_payload"].(string)
+	if !ok || sp == "" {
+		t.Fatal("signed_payload missing")
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(sp), &env); err != nil {
+		t.Fatalf("unmarshal signed_payload: %v", err)
+	}
+	return env
+}
+
 func TestCertAuthSignPayloadDoesNotHTMLEscapeAndPreservesUnicode(t *testing.T) {
 	t.Parallel()
 
@@ -1390,6 +1421,90 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 }
 
+func TestSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message_id":   "msg-1",
+			"status":       "delivered",
+			"delivered_at": "2026-04-13T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	cert := testTeamCertificate(t, priv, "alice")
+	c, err := NewWithCertificate(server.URL, priv, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("acme.com/owner")
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToAlias: "bob",
+		Body:    "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := signedPayloadMap(t, gotBody)
+	if env["from"] != "alice" {
+		t.Fatalf("signed payload from=%v, want cert alias alice", env["from"])
+	}
+	if gotBody["from_did"] != did {
+		t.Fatalf("from_did=%v", gotBody["from_did"])
+	}
+}
+
+func TestSendMessageIdentityAuthStillUsesAddressDerivedAlias(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message_id":   "msg-1",
+			"status":       "delivered",
+			"delivered_at": "2026-04-13T00:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("acme.com/owner")
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToAlias: "bob",
+		Body:    "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := signedPayloadMap(t, gotBody)
+	if env["from"] != "owner" {
+		t.Fatalf("signed payload from=%v, want address-derived alias owner", env["from"])
+	}
+}
+
 // TestSendMessageIncludesSignedPayload verifies that self-custodial messages
 // include the signed_payload field, and that verification succeeds using it
 // even when from_address differs from the signed from.
@@ -2027,6 +2142,45 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 	}
 }
 
+func TestChatCreateSessionUsesCertAliasForSignedPayloadFrom(t *testing.T) {
+	t.Parallel()
+
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(ChatCreateSessionResponse{
+			SessionID: "sess-1",
+			MessageID: "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	cert := testTeamCertificate(t, priv, "alice")
+	c, err := NewWithCertificate(server.URL, priv, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("acme.com/owner")
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAliases: []string{"bob"},
+		Message:   "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := signedPayloadMap(t, gotBody)
+	if env["from"] != "alice" {
+		t.Fatalf("signed payload from=%v, want cert alias alice", env["from"])
+	}
+}
+
 func TestChatCreateSessionSignedPayloadIncludesReplyAndLeaving(t *testing.T) {
 	t.Parallel()
 
@@ -2449,6 +2603,56 @@ func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 	if gotBody["signature"] == nil || gotBody["signature"] == "" {
 		t.Fatal("signature missing")
+	}
+}
+
+func TestChatSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
+	t.Parallel()
+
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{{
+					SessionID:    "sess-1",
+					Participants: []string{"alice", "bob"},
+				}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/sess-1/messages":
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID: "msg-2",
+				Delivered: true,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cert := testTeamCertificate(t, priv, "alice")
+	c, err := NewWithCertificate(server.URL, priv, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("acme.com/owner")
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{
+		Body: "message in chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := signedPayloadMap(t, gotBody)
+	if env["from"] != "alice" {
+		t.Fatalf("signed payload from=%v, want cert alias alice", env["from"])
 	}
 }
 
