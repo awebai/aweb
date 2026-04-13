@@ -272,6 +272,27 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveAPIKeyInitAwebURLStripsAPISuffix(t *testing.T) {
+	oldAwebURL := initAwebURL
+	oldCompatURL := initURL
+	t.Cleanup(func() {
+		initAwebURL = oldAwebURL
+		initURL = oldCompatURL
+	})
+
+	t.Setenv("AWEB_URL", "")
+	initAwebURL = "https://app.aweb.ai/api"
+	initURL = ""
+
+	awebURL, err := resolveAPIKeyInitAwebURL()
+	if err != nil {
+		t.Fatalf("resolveAPIKeyInitAwebURL: %v", err)
+	}
+	if awebURL != "https://app.aweb.ai" {
+		t.Fatalf("awebURL=%q", awebURL)
+	}
+}
+
 func TestInitAPIKeyRequiresExplicitAwebURL(t *testing.T) {
 	// Cannot use t.Parallel() — uses cwd and globals.
 

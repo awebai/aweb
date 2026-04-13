@@ -287,6 +287,27 @@ func TestResolveExplicitInitAwebURLOverrideWinsOverDiscoveryFallback(t *testing.
 	}
 }
 
+func TestResolveExplicitInitAwebURLPreservesAPISuffix(t *testing.T) {
+	oldAwebURL := initAwebURL
+	oldCompatURL := initURL
+	t.Cleanup(func() {
+		initAwebURL = oldAwebURL
+		initURL = oldCompatURL
+	})
+
+	t.Setenv("AWEB_URL", "")
+	initAwebURL = "https://app.aweb.ai/api"
+	initURL = ""
+
+	awebURL, err := resolveExplicitInitAwebURL()
+	if err != nil {
+		t.Fatalf("resolveExplicitInitAwebURL: %v", err)
+	}
+	if awebURL != "https://app.aweb.ai/api" {
+		t.Fatalf("awebURL=%q", awebURL)
+	}
+}
+
 func TestInitRegistryIsLocalhost(t *testing.T) {
 	t.Parallel()
 

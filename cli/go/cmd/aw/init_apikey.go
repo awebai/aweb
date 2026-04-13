@@ -62,7 +62,7 @@ func resolveAPIKeyInitAwebURL() (string, error) {
 	if value == "" {
 		return "", usageError("--aweb-url, --url, or AWEB_URL is required when AWEB_API_KEY is set")
 	}
-	return normalizeAwebBaseURL(value)
+	return normalizeAPIKeyBootstrapBaseURL(value)
 }
 
 func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
@@ -222,6 +222,23 @@ func normalizeBootstrapServerURL(raw string) (string, error) {
 		return "", fmt.Errorf("server_url must include scheme and host")
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+
+func normalizeAPIKeyBootstrapBaseURL(raw string) (string, error) {
+	baseURL, err := normalizeAwebBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	u.Path = strings.TrimSuffix(u.Path, "/api")
 	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""

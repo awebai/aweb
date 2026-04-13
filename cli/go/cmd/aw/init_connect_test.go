@@ -175,6 +175,92 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	}
 }
 
+func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberPub)
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: memberDIDKey,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotConnectPath string
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL + "/api",
+				"aweb_url":       server.URL + "/api",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
+			gotConnectPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "backend:acme.com",
+				"alias":        "alice",
+				"agent_id":     "agent-uuid-1",
+				"workspace_id": "ws-uuid-1",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       memberDIDKey,
+		StableID:  awid.ComputeStableID(memberPub),
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, cert.Team, cert); err != nil {
+		t.Fatal(err)
+	}
+
+	initGitRepoWithOrigin(t, tmp, "https://github.com/acme/backend.git")
+
+	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL+"/api", "--role", "developer", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, string(out))
+	}
+	if gotConnectPath != "/api/v1/connect" {
+		t.Fatalf("connect path=%q", gotConnectPath)
+	}
+}
+
 func TestInitWithCertificateNotTriggeredWithoutCert(t *testing.T) {
 	t.Parallel()
 

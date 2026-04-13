@@ -554,7 +554,6 @@ func normalizeAwebBaseURL(baseURL string) (string, error) {
 		return "", err
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.Path = strings.TrimSuffix(u.Path, "/api")
 	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""
