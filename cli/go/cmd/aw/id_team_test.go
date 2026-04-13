@@ -356,6 +356,110 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	}
 }
 
+func TestEphemeralAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
+	t.Parallel()
+
+	var registeredCert map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "local", "default", teamKey)
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       memberDIDKey,
+		StableID:  awid.ComputeStableID(memberPub),
+		Address:   "local/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-13T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID:    inviteID,
+		Domain:      "local",
+		TeamName:    "default",
+		Ephemeral:   true,
+		Secret:      secret,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-04-13T00:00:00Z",
+	}
+	writeTeamInviteForTest(t, tmp, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--json")
+	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	runAccept.Dir = tmp
+	acceptOut, err := runAccept.CombinedOutput()
+	if err != nil {
+		t.Fatalf("accept-invite failed: %v\n%s", err, string(acceptOut))
+	}
+
+	certPath := awconfig.TeamCertificatePath(tmp, "default:local")
+	cert, err := awid.LoadTeamCertificate(certPath)
+	if err != nil {
+		t.Fatalf("load certificate: %v", err)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("cert lifetime=%q", cert.Lifetime)
+	}
+	if cert.MemberDIDKey != memberDIDKey {
+		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, memberDIDKey)
+	}
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+	if _, ok := registeredCert["member_did_aw"]; ok {
+		t.Fatalf("registered cert member_did_aw=%v", registeredCert["member_did_aw"])
+	}
+	if _, ok := registeredCert["member_address"]; ok {
+		t.Fatalf("registered cert member_address=%v", registeredCert["member_address"])
+	}
+}
+
 func TestTeamAddMemberFlow(t *testing.T) {
 	t.Parallel()
 

@@ -591,8 +591,10 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 		lifetime = awid.LifetimeEphemeral
 	}
 
-	// Resolve identity fields for the certificate
-	memberDIDAW, memberAddress := resolveIdentityFieldsForCert(workingDir)
+	var memberDIDAW, memberAddress string
+	if !invite.Ephemeral {
+		memberDIDAW, memberAddress = resolveIdentityFieldsForCert(workingDir)
+	}
 
 	// Sign certificate
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
