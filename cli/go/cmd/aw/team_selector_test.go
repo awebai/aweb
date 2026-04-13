@@ -216,11 +216,13 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 }
 
 func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
+	var sawAuth string
 	var sawStableID string
 	var sawCertHeader string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
+			sawAuth = strings.TrimSpace(r.Header.Get("Authorization"))
 			sawStableID = strings.TrimSpace(r.Header.Get("X-AWEB-DID-AW"))
 			sawCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
@@ -243,6 +245,7 @@ func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	expectedDID := awid.ComputeDIDKey(memberPub)
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +269,9 @@ func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
+	}
+	if !strings.HasPrefix(sawAuth, "DIDKey "+expectedDID+" ") {
+		t.Fatalf("authorization=%q want DIDKey %s <sig>", sawAuth, expectedDID)
 	}
 	if sawStableID != "" {
 		t.Fatalf("unexpected stable id header: %q", sawStableID)

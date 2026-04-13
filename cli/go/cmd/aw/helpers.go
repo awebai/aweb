@@ -174,12 +174,18 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	if !identityMissing && strings.TrimSpace(sel.Address) == "" {
 		sel.Address = strings.TrimSpace(identity.Address)
 	}
-	if err := configureResolvedClient(c, sel, baseURL); err != nil {
-		return nil, nil, err
-	}
+	configuredSel := *sel
 	if identityMissing {
-		c.SetAddress("")
-		c.SetStableID("")
+		// Ephemeral identity-auth requests must not synthesize a public address
+		// from team membership metadata. Without identity.yaml, only the local
+		// signing key is authoritative for messaging auth.
+		configuredSel.Address = ""
+		configuredSel.StableID = ""
+		configuredSel.Domain = ""
+		configuredSel.Alias = ""
+	}
+	if err := configureResolvedClient(c, &configuredSel, baseURL); err != nil {
+		return nil, nil, err
 	}
 
 	lastClient = c
