@@ -238,7 +238,10 @@ func TeamStatePath(root string) string {
 func LoadTeamState(workingDir string) (*TeamState, error) {
 	data, err := os.ReadFile(TeamStatePath(workingDir))
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		return migrateTeamStateFromWorkspace(workingDir)
 	}
 	var state TeamState
 	if err := yaml.Unmarshal(data, &state); err != nil {
@@ -256,4 +259,36 @@ func SaveTeamState(workingDir string, state *TeamState) error {
 		return err
 	}
 	return atomicWriteFile(TeamStatePath(workingDir), append(bytesTrimRightNewlines(data), '\n'))
+}
+
+func migrateTeamStateFromWorkspace(workingDir string) (*TeamState, error) {
+	workspacePath := filepath.Join(filepath.Clean(workingDir), DefaultWorktreeWorkspaceRelativePath())
+	workspace, err := LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	state := teamStateFromWorkspace(workspace)
+	if err := SaveTeamState(workingDir, state); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+func teamStateFromWorkspace(workspace *WorktreeWorkspace) *TeamState {
+	if workspace == nil {
+		return nil
+	}
+	state := &TeamState{
+		ActiveTeam: strings.TrimSpace(workspace.ActiveTeam),
+	}
+	for _, membership := range workspace.Memberships {
+		state.Memberships = append(state.Memberships, TeamMembership{
+			TeamID:   strings.TrimSpace(membership.TeamID),
+			Alias:    strings.TrimSpace(membership.Alias),
+			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
+			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+		})
+	}
+	state.normalize()
+	return state
 }

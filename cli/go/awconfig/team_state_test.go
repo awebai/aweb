@@ -238,3 +238,96 @@ memberships:
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadTeamStateMigratesFromWorkspaceYAML(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	workspacePath := filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath())
+	if err := SaveWorktreeWorkspaceTo(workspacePath, &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai/api",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []WorktreeMembership{
+			{
+				TeamID:      "backend:acme.com",
+				Alias:       "alice",
+				RoleName:    "backend",
+				WorkspaceID: "ws-backend",
+				CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt:    "2026-04-13T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:acme.com",
+				Alias:       "alice-ops",
+				RoleName:    "ops",
+				WorkspaceID: "ws-ops",
+				CertPath:    TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt:    "2026-04-14T00:00:00Z",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+
+	got, err := LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+
+	want := canonicalTeamState()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated state mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+
+	data, err := os.ReadFile(TeamStatePath(tmp))
+	if err != nil {
+		t.Fatalf("read migrated teams.yaml: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "workspace_id:") {
+		t.Fatalf("teams.yaml should not contain workspace_id:\n%s", text)
+	}
+	if strings.Contains(text, "role_name:") {
+		t.Fatalf("teams.yaml should not contain role_name:\n%s", text)
+	}
+}
+
+func TestLoadTeamStatePrefersExistingTeamsYAMLOverWorkspaceYAML(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath()), &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai/api",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "workspace-alice",
+			WorkspaceID: "ws-backend",
+			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-13T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+
+	want := &TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []TeamMembership{{
+			TeamID:   "backend:acme.com",
+			Alias:    "teams-alice",
+			CertPath: TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt: "2026-04-15T00:00:00Z",
+		}},
+	}
+	if err := SaveTeamState(tmp, want); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	got, err := LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("loaded state mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}

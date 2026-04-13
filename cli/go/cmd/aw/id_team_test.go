@@ -965,6 +965,84 @@ func TestCertShow(t *testing.T) {
 	}
 }
 
+func TestTeamListMigratesMembershipsFromWorkspaceYAML(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai/api",
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.WorktreeMembership{
+			{
+				TeamID:      "backend:acme.com",
+				Alias:       "alice",
+				WorkspaceID: "ws-backend",
+				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt:    "2026-04-13T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:acme.com",
+				Alias:       "alice-ops",
+				WorkspaceID: "ws-ops",
+				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt:    "2026-04-14T00:00:00Z",
+			},
+		},
+	})
+
+	if _, err := os.Stat(awconfig.TeamStatePath(tmp)); !os.IsNotExist(err) {
+		t.Fatalf("teams.yaml should not exist before migration, stat err=%v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team list failed: %v\n%s", err, string(out))
+	}
+
+	var got struct {
+		ActiveTeam  string         `json:"active_team"`
+		Memberships []teamListItem `json:"memberships"`
+	}
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid list json: %v\n%s", err, string(out))
+	}
+	if got.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", got.ActiveTeam)
+	}
+	if len(got.Memberships) != 2 {
+		t.Fatalf("memberships=%d want 2", len(got.Memberships))
+	}
+
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+	if teamState.Membership("backend:acme.com") == nil || teamState.Membership("ops:acme.com") == nil {
+		t.Fatalf("unexpected migrated memberships: %#v", teamState.Memberships)
+	}
+
+	data, err := os.ReadFile(awconfig.TeamStatePath(tmp))
+	if err != nil {
+		t.Fatalf("read teams.yaml: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "workspace_id:") {
+		t.Fatalf("teams.yaml should not contain workspace_id:\n%s", text)
+	}
+	if strings.Contains(text, "role_name:") {
+		t.Fatalf("teams.yaml should not contain role_name:\n%s", text)
+	}
+}
+
 func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	var registeredCert map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
