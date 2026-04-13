@@ -116,6 +116,9 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 	if runIdx < coordinationIdx {
 		t.Fatalf("expected run in Coordination & Runtime group:\n%s", text)
 	}
+	if strings.Contains(text, "\n  spawn") || strings.Contains(text, "\nspawn") {
+		t.Fatalf("spawn should not appear in top-level help:\n%s", text)
+	}
 }
 
 func TestAwWhoAmIIsCanonicalCommandName(t *testing.T) {
