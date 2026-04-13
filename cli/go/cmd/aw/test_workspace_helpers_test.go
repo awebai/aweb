@@ -48,6 +48,23 @@ func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfi
 	return path
 }
 
+func writeTeamStateForTest(t *testing.T, workingDir string, state awconfig.TeamState) string {
+	t.Helper()
+	if err := awconfig.SaveTeamState(workingDir, &state); err != nil {
+		t.Fatalf("write team state: %v", err)
+	}
+	return awconfig.TeamStatePath(workingDir)
+}
+
+func defaultTeamState() awconfig.TeamState {
+	return teamStateBinding("backend:demo", "alice", "workspace-1")
+}
+
+func writeDefaultTeamStateForTest(t *testing.T, workingDir string) string {
+	t.Helper()
+	return writeTeamStateForTest(t, workingDir, defaultTeamState())
+}
+
 func writeContextForTest(t *testing.T, workingDir string, ctx awconfig.WorktreeContext) string {
 	t.Helper()
 	path := filepath.Join(workingDir, ".aw", "context")
@@ -81,6 +98,20 @@ func workspaceBinding(serverURL, teamID, alias, workspaceID string) awconfig.Wor
 		AwebURL:    strings.TrimSpace(serverURL),
 		ActiveTeam: teamID,
 		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       strings.TrimSpace(alias),
+			WorkspaceID: strings.TrimSpace(workspaceID),
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-04T00:00:00Z",
+		}},
+	}
+}
+
+func teamStateBinding(teamID, alias, workspaceID string) awconfig.TeamState {
+	teamID = resolvedTeamIDForTest(teamID)
+	return awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
 			TeamID:      teamID,
 			Alias:       strings.TrimSpace(alias),
 			WorkspaceID: strings.TrimSpace(workspaceID),

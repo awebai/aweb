@@ -163,6 +163,18 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if ws.AwebURL != server.URL {
 		t.Fatalf("workspace aweb_url=%q want %q", ws.AwebURL, server.URL)
 	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load teams state: %v", err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("teams active_team=%q", teamState.ActiveTeam)
+	}
+	if membership := teamState.Membership("backend:acme.com"); membership == nil {
+		t.Fatal("expected backend membership in teams.yaml")
+	} else if membership.WorkspaceID != "ws-uuid-1" {
+		t.Fatalf("teams workspace_id=%q", membership.WorkspaceID)
+	}
 
 	// Verify connect payload had expected fields
 	if gotConnectPayload["hostname"] == nil || gotConnectPayload["hostname"] == "" {
@@ -365,5 +377,17 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	}
 	if ws.RepoID != "repo-uuid-1" {
 		t.Fatalf("repo_id=%q", ws.RepoID)
+	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load teams state: %v", err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("teams active_team=%q", teamState.ActiveTeam)
+	}
+	if membership := teamState.Membership("backend:acme.com"); membership == nil {
+		t.Fatal("expected backend membership in teams.yaml")
+	} else if membership.WorkspaceID != "ws-uuid-2" {
+		t.Fatalf("teams workspace_id=%q", membership.WorkspaceID)
 	}
 }

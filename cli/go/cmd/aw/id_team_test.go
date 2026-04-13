@@ -343,6 +343,18 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if cert.Alias != "alice" {
 		t.Fatalf("cert alias=%q", cert.Alias)
 	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load teams state: %v", err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
+	}
+	if membership := teamState.Membership("backend:acme.com"); membership == nil {
+		t.Fatal("expected backend team membership in teams.yaml")
+	} else if strings.TrimSpace(membership.CertPath) == "" {
+		t.Fatal("teams.yaml membership missing cert_path")
+	}
 
 	// Verify certificate was registered at awid
 	if registeredCert["member_did_key"] != memberDIDKey {
@@ -457,6 +469,15 @@ func TestEphemeralAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T)
 	}
 	if _, ok := registeredCert["member_address"]; ok {
 		t.Fatalf("registered cert member_address=%v", registeredCert["member_address"])
+	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load teams state: %v", err)
+	}
+	if membership := teamState.Membership("default:local"); membership == nil {
+		t.Fatal("expected local team membership in teams.yaml")
+	} else if membership.WorkspaceID != "" {
+		t.Fatalf("workspace_id=%q want empty", membership.WorkspaceID)
 	}
 }
 
@@ -1021,6 +1042,16 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 			JoinedAt:    "2026-04-09T00:00:00Z",
 		}},
 	})
+	writeTeamStateForTest(t, tmp, awconfig.TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			WorkspaceID: "ws-backend",
+			CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
+	})
 
 	_, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -1078,6 +1109,19 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if workspace.Membership("ops:acme.com").WorkspaceID != "ws-ops" {
 		t.Fatalf("workspace_id=%q", workspace.Membership("ops:acme.com").WorkspaceID)
 	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
+	}
+	if teamState.Membership("ops:acme.com") == nil {
+		t.Fatal("expected ops team membership in teams.yaml")
+	}
+	if teamState.Membership("ops:acme.com").WorkspaceID != "ws-ops" {
+		t.Fatalf("teams workspace_id=%q", teamState.Membership("ops:acme.com").WorkspaceID)
+	}
 
 	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
 	runList.Env = testCommandEnv(tmp)
@@ -1111,6 +1155,13 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if switchGot["active_team"] != "ops:acme.com" {
 		t.Fatalf("active_team=%v", switchGot["active_team"])
 	}
+	teamState, err = awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if teamState.ActiveTeam != "ops:acme.com" {
+		t.Fatalf("teams active_team=%q", teamState.ActiveTeam)
+	}
 
 	runLeave := exec.CommandContext(ctx, bin, "id", "team", "leave", "ops:acme.com", "--json")
 	runLeave.Env = testCommandEnv(tmp)
@@ -1133,6 +1184,13 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if workspace.Membership("ops:acme.com") != nil {
 		t.Fatal("expected ops membership removed")
 	}
+	teamState, err = awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if teamState.Membership("ops:acme.com") != nil {
+		t.Fatal("expected ops team removed from teams.yaml")
+	}
 	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "ops:acme.com")); !os.IsNotExist(err) {
 		t.Fatalf("ops cert should be removed, stat err=%v", err)
 	}
@@ -1148,6 +1206,7 @@ func TestTeamLeaveRejectsOnlyMembership(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
+	writeDefaultTeamStateForTest(t, tmp)
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "leave", "backend:demo")
 	run.Env = testCommandEnv(tmp)
@@ -1171,8 +1230,13 @@ func TestTeamSwitchAlreadyActiveIsNoOp(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
+	writeDefaultTeamStateForTest(t, tmp)
 
 	before, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamStateBefore, err := os.ReadFile(awconfig.TeamStatePath(tmp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1194,6 +1258,13 @@ func TestTeamSwitchAlreadyActiveIsNoOp(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("workspace.yaml changed for already-active switch")
+	}
+	teamStateAfter, err := os.ReadFile(awconfig.TeamStatePath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(teamStateBefore, teamStateAfter) {
+		t.Fatal("teams.yaml changed for already-active switch")
 	}
 }
 
@@ -1226,6 +1297,25 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 			},
 		},
 	})
+	writeTeamStateForTest(t, tmp, awconfig.TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []awconfig.TeamMembership{
+			{
+				TeamID:      "backend:acme.com",
+				Alias:       "alice",
+				WorkspaceID: "ws-backend",
+				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+			{
+				TeamID:      "ops:acme.com",
+				Alias:       "alice-ops",
+				WorkspaceID: "ws-ops",
+				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt:    "2026-04-09T00:00:00Z",
+			},
+		},
+	})
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "switch", "unknown:acme.com")
 	run.Env = testCommandEnv(tmp)
@@ -1234,7 +1324,7 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), `team "unknown:acme.com" is not present in workspace memberships; available: backend:acme.com, ops:acme.com`) {
+	if !strings.Contains(string(out), `team "unknown:acme.com" is not present in local team memberships; available: backend:acme.com, ops:acme.com`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }

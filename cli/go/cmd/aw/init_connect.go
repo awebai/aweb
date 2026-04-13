@@ -109,7 +109,14 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if workspaceState == nil {
 		workspaceState = &awconfig.WorktreeWorkspace{}
 	}
-	membership := awconfig.WorktreeMembership{
+	teamState, err := loadOptionalTeamState(workingDir)
+	if err != nil {
+		return connectOutput{}, err
+	}
+	if teamState == nil {
+		teamState = &awconfig.TeamState{}
+	}
+	membership := awconfig.TeamMembership{
 		TeamID:      resp.TeamID,
 		Alias:       resp.Alias,
 		RoleName:    strings.TrimSpace(opts.Role),
@@ -117,19 +124,24 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		CertPath:    filepath.ToSlash(certPath),
 		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
 	}
-	if existing := workspaceState.Membership(resp.TeamID); existing != nil {
+	if existing := teamState.Membership(resp.TeamID); existing != nil {
 		if strings.TrimSpace(existing.JoinedAt) != "" {
 			membership.JoinedAt = existing.JoinedAt
 		}
 		*existing = membership
 	} else {
-		workspaceState.Memberships = append(workspaceState.Memberships, membership)
+		teamState.AddMembership(membership)
+	}
+	teamState.ActiveTeam = resp.TeamID
+	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
+		return connectOutput{}, err
 	}
 	workspaceState.AwebURL = awebURL
 	if strings.TrimSpace(opts.APIKey) != "" {
 		workspaceState.APIKey = strings.TrimSpace(opts.APIKey)
 	}
-	workspaceState.ActiveTeam = resp.TeamID
+	workspaceState.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
+	workspaceState.Memberships = teamStateMembershipsAsWorkspace(teamState)
 	workspaceState.RepoID = resp.RepoID
 	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
 	workspaceState.HumanName = reqBody.HumanName
@@ -156,10 +168,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 }
 
 func loadCertificateForConnect(workingDir string) (*awid.TeamCertificate, string, error) {
-	if workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil && workspace != nil {
-		activeMembership := workspace.ActiveMembership()
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+		activeMembership := teamState.ActiveMembership()
 		if activeMembership == nil {
-			return nil, "", fmt.Errorf("workspace is missing active_team membership")
+			return nil, "", fmt.Errorf("teams state is missing active_team membership")
 		}
 		certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(activeMembership.CertPath)))
 		cert, err := awid.LoadTeamCertificate(certPath)
