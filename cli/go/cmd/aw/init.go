@@ -113,6 +113,46 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if apiKey := resolveInitAPIKey(); apiKey != "" {
+		wd, _ := os.Getwd()
+		awebURL, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		if initBaseURLIsLocalhost(awebURL) {
+			return usageError("AWEB_API_KEY bootstrap is not supported with localhost AWEB_URL; use the local awid flow instead")
+		}
+		registryURL, err := resolveInitAWIDRegistryURL()
+		if err != nil {
+			return err
+		}
+		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+			WorkingDir:  wd,
+			AwebURL:     awebURL,
+			RegistryURL: registryURL,
+			APIKey:      apiKey,
+			Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
+			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			Persistent:  initPersistent,
+		})
+		if err != nil {
+			return err
+		}
+		printOutput(result, formatConnect)
+		if err := runRequestedInitPostSetup(wd); err != nil {
+			return err
+		}
+		if !jsonFlag {
+			printPostInitActions(&initResult{
+				ServerName:    hostFromBaseURL(result.AwebURL),
+				ExportBaseURL: result.AwebURL,
+				Alias:         strings.TrimSpace(result.Alias),
+			}, wd)
+		}
+		return nil
+	}
+
 	// Certificate-based init: when a team certificate exists and a server URL is provided.
 	{
 		wd, _ := os.Getwd()
@@ -263,7 +303,7 @@ func resolveInitAWIDRegistryURL() (string, error) {
 	return cleanBaseURL(value)
 }
 
-func initRegistryIsLocalhost(raw string) bool {
+func initBaseURLIsLocalhost(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return false
@@ -274,6 +314,10 @@ func initRegistryIsLocalhost(raw string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func initRegistryIsLocalhost(raw string) bool {
+	return initBaseURLIsLocalhost(raw)
 }
 
 func hostedInitRequested() bool {
