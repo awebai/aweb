@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,7 +138,7 @@ func validateAPIKeyBootstrapResponse(
 	if resp == nil {
 		return false, "", "", fmt.Errorf("missing workspace init response")
 	}
-	serverURL, err = normalizeAwebBaseURL(strings.TrimSpace(resp.ServerURL))
+	serverURL, err = normalizeBootstrapServerURL(strings.TrimSpace(resp.ServerURL))
 	if err != nil {
 		return false, "", "", fmt.Errorf("invalid server_url in workspace init response: %w", err)
 	}
@@ -213,6 +214,21 @@ func validateAPIKeyBootstrapResponse(
 		return false, "", "", fmt.Errorf("ephemeral workspace init response unexpectedly contains persistent identity fields")
 	}
 	return persistent, serverURL, "", nil
+}
+
+func normalizeBootstrapServerURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(u.Scheme) == "" || strings.TrimSpace(u.Host) == "" {
+		return "", fmt.Errorf("server_url must include scheme and host")
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return strings.TrimSuffix(u.String(), "/"), nil
 }
 
 func verifyAPIKeyBootstrapCertificate(cert *awid.TeamCertificate) error {

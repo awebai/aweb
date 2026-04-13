@@ -66,7 +66,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":   server.URL,
+				"server_url":   server.URL + "/api",
 				"team_cert":    encoded,
 				"alias":        "alice",
 				"team_id":      "backend:acme.com",
@@ -77,7 +77,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 				"custody":      awid.CustodySelf,
 				"api_key":      "workspace-sk-ephemeral",
 			})
-		case "/v1/connect":
+		case "/api/v1/connect":
 			requireCertificateAuthForTest(t, r)
 			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
 				t.Fatal(err)
@@ -123,6 +123,9 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	if result.TeamID != "backend:acme.com" {
 		t.Fatalf("team_id=%q", result.TeamID)
 	}
+	if result.AwebURL != server.URL+"/api" {
+		t.Fatalf("aweb_url=%q", result.AwebURL)
+	}
 
 	signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
 	if err != nil {
@@ -151,6 +154,9 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	}
 	if workspace.APIKey != "workspace-sk-ephemeral" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)
+	}
+	if workspace.AwebURL != server.URL+"/api" {
+		t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
 	}
 	if containsStringUnderTree(t, filepath.Join(tmp, ".aw"), apiKey) {
 		t.Fatal("AWEB_API_KEY was written to disk")
