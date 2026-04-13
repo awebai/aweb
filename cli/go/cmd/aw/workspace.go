@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"io"
 	"os"
@@ -337,6 +338,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%s: %w", step, cause)
 	}
 
+	if err := persistAcceptedWorktreeIdentity(worktreePath, acceptedInvite); err != nil {
+		return rollbackAcceptedInvite("persist new worktree identity", err)
+	}
+
 	if !jsonFlag {
 		fmt.Fprintln(os.Stderr, "Connecting new workspace...")
 	}
@@ -368,6 +373,34 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		fmt.Print(formatWorkspaceAddWorktree(output))
 	}
 	return nil
+}
+
+func persistAcceptedWorktreeIdentity(workingDir string, accepted *acceptedTeamInvite) error {
+	if accepted == nil || accepted.Certificate == nil {
+		return fmt.Errorf("accepted team invite is required")
+	}
+
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return fmt.Errorf("load new worktree signing key: %w", err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if strings.TrimSpace(accepted.Certificate.MemberDIDKey) != "" && memberDIDKey != strings.TrimSpace(accepted.Certificate.MemberDIDKey) {
+		return fmt.Errorf("accepted certificate member_did_key %q does not match local signing key %q", strings.TrimSpace(accepted.Certificate.MemberDIDKey), memberDIDKey)
+	}
+
+	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
+	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
+		DID:            memberDIDKey,
+		StableID:       strings.TrimSpace(accepted.Certificate.MemberDIDAW),
+		Address:        strings.TrimSpace(accepted.Certificate.MemberAddress),
+		Custody:        awid.CustodySelf,
+		Lifetime:       strings.TrimSpace(accepted.Certificate.Lifetime),
+		RegistryURL:    strings.TrimSpace(accepted.RegistryURL),
+		RegistryStatus: "registered",
+		CreatedAt:      strings.TrimSpace(accepted.Certificate.IssuedAt),
+	})
 }
 
 func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {

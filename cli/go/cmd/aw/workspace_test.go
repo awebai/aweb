@@ -300,7 +300,7 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 		t.Fatalf("default status failed: %v\n%s", err, string(defaultOut))
 	}
 	var defaultGot struct {
-		SelectedTeam string                         `json:"selected_team"`
+		SelectedTeam string                        `json:"selected_team"`
 		Memberships  []workspaceTeamMembershipItem `json:"memberships"`
 	}
 	if err := json.Unmarshal(extractJSON(t, defaultOut), &defaultGot); err != nil {
@@ -336,7 +336,7 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 		t.Fatalf("all status failed: %v\n%s", err, string(allOut))
 	}
 	var allGot struct {
-		SelectedTeam string                         `json:"selected_team"`
+		SelectedTeam string                        `json:"selected_team"`
 		Memberships  []workspaceTeamMembershipItem `json:"memberships"`
 	}
 	if err := json.Unmarshal(extractJSON(t, allOut), &allGot); err != nil {
@@ -1005,8 +1005,34 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	if cert.Lifetime != awid.LifetimeEphemeral {
 		t.Fatalf("cert lifetime=%q", cert.Lifetime)
 	}
-	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("ephemeral worktree should not create identity.yaml, stat err=%v", err)
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(child, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("load child identity.yaml: %v", err)
+	}
+	if identity.DID != cert.MemberDIDKey {
+		t.Fatalf("identity did=%q cert member_did_key=%q", identity.DID, cert.MemberDIDKey)
+	}
+	if identity.StableID != "" {
+		t.Fatalf("identity stable_id=%q", identity.StableID)
+	}
+	if identity.Address != "" {
+		t.Fatalf("identity address=%q", identity.Address)
+	}
+	if identity.Custody != awid.CustodySelf {
+		t.Fatalf("identity custody=%q", identity.Custody)
+	}
+	if identity.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("identity lifetime=%q", identity.Lifetime)
+	}
+	if identity.RegistryURL != server.URL {
+		t.Fatalf("identity registry_url=%q", identity.RegistryURL)
+	}
+	if identity.RegistryStatus != "registered" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+	if identity.CreatedAt != cert.IssuedAt {
+		t.Fatalf("identity created_at=%q cert issued_at=%q", identity.CreatedAt, cert.IssuedAt)
 	}
 }
 
