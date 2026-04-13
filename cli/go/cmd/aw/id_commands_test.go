@@ -1091,16 +1091,138 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, "https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", priv)
+	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected network call during ephemeral rotate-key failure: %s %s", r.Method, r.URL.Path)
+	}))
+	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected rotate-key to fail\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "this command requires a persistent identity") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+}
+
+func TestAwIDRegisterFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected network call during ephemeral register failure: %s %s", r.Method, r.URL.Path)
+	}))
+	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "register", "--json")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected register to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "this command requires a persistent identity") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+}
+
+func TestAwIDShowFailsForEmptyIdentityFile(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(awDir, "identity.yaml"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(awDir, "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected id show to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "current identity is invalid: .aw/identity.yaml is missing did") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+	if did := awid.ComputeDIDKey(pub); strings.Contains(string(out), did) {
+		t.Fatalf("unexpected silent fallback to signing key in output:\n%s", string(out))
+	}
+}
+
+func TestAwIDShowFailsForIdentityDIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       awid.ComputeDIDKey(wrongPub),
+		StableID:  awid.ComputeStableID(pub),
+		Address:   "alice.aweb.ai/alice-laptop",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-13T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(awDir, "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected id show to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "current identity is invalid: .aw/identity.yaml did") {
 		t.Fatalf("unexpected error output:\n%s", string(out))
 	}
 }

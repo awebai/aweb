@@ -86,6 +86,9 @@ func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
 	wd, _ := os.Getwd()
 	identity, err := awconfig.ResolveIdentity(wd)
 	if err == nil {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return nil, err
+		}
 		return identity, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -142,6 +145,45 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		RegistryStatus: "",
 		CreatedAt:      "",
 	}, nil
+}
+
+func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {
+	if identity == nil {
+		return fmt.Errorf("missing identity context")
+	}
+	if strings.TrimSpace(identity.DID) == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing did")
+	}
+	lifetime := strings.TrimSpace(identity.Lifetime)
+	if lifetime == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing lifetime")
+	}
+	custody := strings.TrimSpace(identity.Custody)
+	if custody == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing custody")
+	}
+	if lifetime == awid.LifetimePersistent && strings.TrimSpace(identity.StableID) == "" {
+		return usageError("current identity is invalid: persistent .aw/identity.yaml is missing stable_id")
+	}
+	if custody != awid.CustodySelf {
+		return nil
+	}
+	signingKeyPath := strings.TrimSpace(identity.SigningKeyPath)
+	if signingKeyPath == "" {
+		return usageError("current identity has no local signing key")
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return usageError("current identity has no local signing key")
+		}
+		return fmt.Errorf("failed to load signing key: %w", err)
+	}
+	computedDID := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if computedDID != strings.TrimSpace(identity.DID) {
+		return usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), computedDID)
+	}
+	return nil
 }
 
 func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
