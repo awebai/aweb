@@ -40,6 +40,11 @@ entry above and `main` at `ec5db2c` on 2026-04-11.
   carry the new team-binding shape, legacy worktrees can be migrated in
   place, and docs/help were updated around the team-scoped workspace
   model.
+- Self-hosted local bootstrap now has an implicit localhost path. A
+  localhost `awid` registry reserves the `local` namespace, and `aw init`
+  accepts explicit `--awid-registry` / `--aweb-url` overrides so one
+  command can create the local identity, join `default:local`, and bind
+  the workspace.
 - Dashboard reads now expose the full team event stream via
   `GET /v1/teams/{team_id}/events/stream`, including `task.created`,
   `task.status_changed`, `task.claimed`, `task.unclaimed`,

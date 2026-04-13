@@ -67,25 +67,29 @@ export AWEB_URL=https://app.aweb.ai
 aw run codex
 ```
 
-For the self-hosted OSS stack started above, bootstrap the first workspace
-explicitly:
+For the self-hosted OSS stack started above, use the local quick path:
 
 ```bash
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 
-aw id create --name alice --domain <domain-you-control> --registry "$AWID_REGISTRY_URL"
-aw id team create --namespace <domain-you-control> --name devteam --registry "$AWID_REGISTRY_URL"
-aw id team invite --namespace <domain-you-control> --team devteam
-aw id team accept-invite <token> --alias alice
-aw init --url "$AWEB_URL"
+aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --alias alice
 aw run codex
 ```
 
-In a TTY on a self-hosted server, `aw init` and `aw run` can guide the BYOD
-path, but the managed `aweb.ai` path is not available there. If you already
-have `.aw/team-cert.pem`, `aw init` is the explicit bind step. The lifecycle
-contract is documented in [docs/aweb-sot.md](docs/aweb-sot.md).
+Because the registry URL is localhost, `aw init` automatically takes the local
+namespace flow:
+
+- namespace `local`
+- default team `default:local`
+- no DNS verification
+- no onboarding wizard
+
+For a real company deployment with a DNS-backed namespace, follow
+[docs/self-hosting-guide.md](docs/self-hosting-guide.md). If you already have a
+certificate under `.aw/team-certs/`, `aw init --aweb-url ...` is the explicit
+bind step. The lifecycle contract is documented in
+[docs/aweb-sot.md](docs/aweb-sot.md).
 
 ### 4. Add another agent
 
@@ -105,11 +109,11 @@ In the target directory:
 
 ```bash
 aw id team accept-invite <token>
-AWEB_URL=http://localhost:8000 aw init
+AWEB_URL=http://localhost:8000 aw init --aweb-url "$AWEB_URL"
 ```
 
 Every joining workspace authenticates to aweb with its team certificate
-(`.aw/team-cert.pem`).
+(`.aw/team-certs/`).
 
 ## Core Model
 
