@@ -70,6 +70,10 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 				"alias":        "alice",
 				"team_id":      "backend:acme.com",
 				"workspace_id": "ws-1",
+				"did":          didKey,
+				"stable_id":    "",
+				"lifetime":     awid.LifetimeEphemeral,
+				"custody":      awid.CustodySelf,
 			})
 		case "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -185,6 +189,10 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"alias":        "alice",
 				"team_id":      "default:alice.aweb.ai",
 				"workspace_id": "ws-1",
+				"did":          didKey,
+				"stable_id":    "did:aw:alice",
+				"lifetime":     awid.LifetimePersistent,
+				"custody":      awid.CustodySelf,
 			})
 		case "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -321,6 +329,124 @@ func TestInitAPIKeyRejectsLocalhostAwebURL(t *testing.T) {
 	cmd.ResetFlagsForTest()
 	cmd.Command.SetContext(context.Background())
 	if err := runInit(&cmd.Command, nil); err == nil || !strings.Contains(err.Error(), "not supported with localhost AWEB_URL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = awid.ComputeDIDKey(teamPub)
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/workspaces/init":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did_key"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         "backend:acme.com",
+				MemberDIDKey: didKey,
+				Alias:        "alice",
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":   server.URL,
+				"team_cert":    encoded,
+				"alias":        "alice",
+				"team_id":      "backend:acme.com",
+				"workspace_id": "ws-1",
+				"did":          "did:key:z6MkrWrongResponseDid11111111111111111111111",
+				"stable_id":    "",
+				"lifetime":     awid.LifetimeEphemeral,
+				"custody":      awid.CustodySelf,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir: tmp,
+		AwebURL:    externalLikeTestURL(t, server.URL),
+		APIKey:     "aw_sk_test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match generated did:key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunAPIKeyBootstrapInitRejectsResponseLifetimeMismatch(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = awid.ComputeDIDKey(teamPub)
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/workspaces/init":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did_key"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:alice.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   "did:aw:alice",
+				MemberAddress: "alice.aweb.ai/alice",
+				Alias:         "alice",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":   server.URL,
+				"team_cert":    encoded,
+				"alias":        "alice",
+				"team_id":      "default:alice.aweb.ai",
+				"workspace_id": "ws-1",
+				"did":          didKey,
+				"stable_id":    "did:aw:alice",
+				"lifetime":     awid.LifetimePersistent,
+				"custody":      awid.CustodySelf,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir: tmp,
+		AwebURL:    externalLikeTestURL(t, server.URL),
+		APIKey:     "aw_sk_test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match requested lifetime") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
