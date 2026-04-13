@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,100 @@ func TestClaimHumanCommandSendsSignedOnboardingRequest(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeStandaloneSelfCustodyIdentity(t, tmp, "alice.aweb.ai/alice-laptop", didKey, stableID, "https://api.awid.ai", priv)
+
+	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--mock-url", server.URL)
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("claim-human failed: %v\n%s", err, string(out))
+	}
+
+	if gotBody["username"] != "alice" {
+		t.Fatalf("username=%v", gotBody["username"])
+	}
+	if gotBody["email"] != "alice@example.com" {
+		t.Fatalf("email=%v", gotBody["email"])
+	}
+	if gotBody["did_key"] != didKey {
+		t.Fatalf("did_key=%v want %v", gotBody["did_key"], didKey)
+	}
+
+	parts := strings.Fields(gotAuth)
+	if len(parts) != 3 || parts[0] != "DIDKey" {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
+	if parts[1] != didKey {
+		t.Fatalf("auth did=%q want %q", parts[1], didKey)
+	}
+
+	if !verifyCloudDIDPayload(t, pub, http.MethodPost, "/api/v1/onboarding/claim-human", gotTimestamp, gotBodyBytes, parts[2]) {
+		t.Fatal("signed claim-human payload did not verify")
+	}
+
+	output := string(out)
+	if !strings.Contains(output, "Verification email sent to alice@example.com. Click the link in the email to activate your dashboard login.") {
+		t.Fatalf("output=%q", output)
+	}
+}
+
+func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+
+	var gotBodyBytes []byte
+	var gotBody map[string]any
+	var gotAuth string
+	var gotTimestamp string
+	var onboardingURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   "https://api.awid.ai",
+				"version":        "1.7.0",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/claim-human":
+			gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+			gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+			var err error
+			gotBodyBytes, err = io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(gotBodyBytes, &gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "verification_sent",
+				"email":  "alice@example.com",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = server.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("save signing key: %v", err)
+	}
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "default:alice.aweb.ai", "alice-laptop", "workspace-1"))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should be absent, err=%v", err)
+	}
 
 	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--mock-url", server.URL)
 	run.Env = idCreateCommandEnv(tmp)

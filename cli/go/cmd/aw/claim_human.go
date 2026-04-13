@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,31 +82,13 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 		return nil, "", usageError("missing required flag: --email")
 	}
 
-	identity, err := awconfig.ResolveIdentity(opts.WorkingDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
-		}
-		return nil, "", err
-	}
-
-	username, err := usernameFromMemberAddress(identity.Address)
+	didKey, signingKey, identityAddress, err := resolveClaimHumanIdentity(opts.WorkingDir)
 	if err != nil {
 		return nil, "", err
 	}
-
-	didKey := strings.TrimSpace(identity.DID)
-	if didKey == "" {
-		return nil, "", fmt.Errorf("current identity is missing did in %s", identity.IdentityPath)
-	}
-
-	signingKeyPath := strings.TrimSpace(identity.SigningKeyPath)
-	if signingKeyPath == "" {
-		return nil, "", usageError("current identity has no local signing key")
-	}
-	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	username, err := resolveClaimHumanUsername(opts.WorkingDir, identityAddress)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to load signing key: %w", err)
+		return nil, "", err
 	}
 	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), signingKey, didKey)
 	if err != nil {
@@ -124,6 +107,67 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 		return nil, "", mapClaimHumanError(err)
 	}
 	return resp, username, nil
+}
+
+func resolveClaimHumanIdentity(workingDir string) (string, ed25519.PrivateKey, string, error) {
+	identity, err := awconfig.ResolveIdentity(workingDir)
+	identityMissing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !identityMissing {
+		return "", nil, "", err
+	}
+
+	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	didKey := ""
+	address := ""
+	if !identityMissing {
+		signingKeyPath = strings.TrimSpace(identity.SigningKeyPath)
+		didKey = strings.TrimSpace(identity.DID)
+		address = strings.TrimSpace(identity.Address)
+		if didKey == "" {
+			return "", nil, "", fmt.Errorf("current identity is missing did in %s", identity.IdentityPath)
+		}
+		if signingKeyPath == "" {
+			return "", nil, "", usageError("current identity has no local signing key")
+		}
+	}
+
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if identityMissing {
+				return "", nil, "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
+			}
+			return "", nil, "", usageError("current identity has no local signing key")
+		}
+		return "", nil, "", fmt.Errorf("failed to load signing key: %w", err)
+	}
+	if didKey == "" {
+		didKey = awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	}
+	return didKey, signingKey, address, nil
+}
+
+func resolveClaimHumanUsername(workingDir, address string) (string, error) {
+	if strings.TrimSpace(address) != "" {
+		return usernameFromMemberAddress(address)
+	}
+
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
+		}
+		return "", fmt.Errorf("failed to load workspace: %w", err)
+	}
+	activeMembership := workspace.ActiveMembership()
+	if activeMembership == nil {
+		return "", usageError("current workspace is missing active_team membership; run `aw init` first")
+	}
+	teamDomain, _, err := awid.ParseTeamID(strings.TrimSpace(activeMembership.TeamID))
+	if err != nil {
+		return "", fmt.Errorf("current workspace has invalid team_id %q: %w", activeMembership.TeamID, err)
+	}
+	return usernameFromManagedDomain(teamDomain)
 }
 
 func printClaimHumanSuccess(out io.Writer, requestedEmail string, resp *awid.ClaimHumanResponse) error {
@@ -148,13 +192,18 @@ func usernameFromMemberAddress(address string) (string, error) {
 	if !ok || strings.TrimSpace(domain) == "" {
 		return "", fmt.Errorf("current identity is missing member_address in .aw/identity.yaml")
 	}
+	return usernameFromManagedDomain(domain)
+}
+
+func usernameFromManagedDomain(domain string) (string, error) {
+	domain = strings.TrimSpace(domain)
 	const managedSuffix = ".aweb.ai"
 	if !strings.HasSuffix(domain, managedSuffix) {
 		return "", errors.New("claim-human is only for managed aweb.ai accounts; BYOD identities are not supported by this command")
 	}
 	username := strings.TrimSuffix(domain, managedSuffix)
 	if strings.TrimSpace(username) == "" {
-		return "", fmt.Errorf("current identity address %q does not contain a username", address)
+		return "", fmt.Errorf("current identity domain %q does not contain a username", domain)
 	}
 	return username, nil
 }
