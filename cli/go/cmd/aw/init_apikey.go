@@ -33,9 +33,9 @@ type apiKeyInitRequest struct {
 }
 
 type apiKeyBootstrapRequest struct {
-	DIDKey    string `json:"did_key"`
+	DID       string `json:"did"`
 	PublicKey string `json:"public_key"`
-	Role      string `json:"role,omitempty"`
+	RoleName  string `json:"role_name,omitempty"`
 	Lifetime  string `json:"lifetime"`
 }
 
@@ -88,9 +88,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	didKey := awid.ComputeDIDKey(pub)
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
-		DIDKey:    didKey,
+		DID:       didKey,
 		PublicKey: base64.StdEncoding.EncodeToString(pub),
-		Role:      strings.TrimSpace(req.Role),
+		RoleName:  strings.TrimSpace(req.Role),
 		Lifetime:  initLifetimeValue(req.Persistent),
 	})
 	if err != nil {

@@ -48,9 +48,9 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode public_key: %v", err)
 			}
-			didKey, _ := initBody["did_key"].(string)
+			didKey, _ := initBody["did"].(string)
 			if got := awid.ComputeDIDKey(ed25519.PublicKey(publicKeyBytes)); got != didKey {
-				t.Fatalf("did_key=%q does not match public_key => %q", didKey, got)
+				t.Fatalf("did=%q does not match public_key => %q", didKey, got)
 			}
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:         "backend:acme.com",
@@ -111,8 +111,8 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 	if initAuthHeader != "Bearer "+apiKey {
 		t.Fatalf("Authorization=%q", initAuthHeader)
 	}
-	if initBody["role"] != "backend" {
-		t.Fatalf("init role=%v", initBody["role"])
+	if initBody["role_name"] != "backend" {
+		t.Fatalf("init role_name=%v", initBody["role_name"])
 	}
 	if initBody["lifetime"] != awid.LifetimeEphemeral {
 		t.Fatalf("init lifetime=%v", initBody["lifetime"])
@@ -176,7 +176,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
 				t.Fatal(err)
 			}
-			didKey, _ := initBody["did_key"].(string)
+			didKey, _ := initBody["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:          "default:alice.aweb.ai",
 				MemberDIDKey:  didKey,
@@ -367,7 +367,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			didKey, _ := body["did_key"].(string)
+			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:         "backend:acme.com",
 				MemberDIDKey: didKey,
@@ -425,7 +425,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseLifetimeMismatch(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			didKey, _ := body["did_key"].(string)
+			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:          "default:alice.aweb.ai",
 				MemberDIDKey:  didKey,
@@ -484,7 +484,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			didKey, _ := body["did_key"].(string)
+			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:         "backend:acme.com",
 				MemberDIDKey: didKey,
@@ -552,7 +552,7 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
-					didKey, _ := body["did_key"].(string)
+					didKey, _ := body["did"].(string)
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 						Team:         "backend:acme.com",
 						MemberDIDKey: didKey,
@@ -611,7 +611,7 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			didKey, _ := body["did_key"].(string)
+			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:         "backend:acme.com",
 				MemberDIDKey: didKey,
