@@ -164,3 +164,83 @@ memberships: []
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadTeamStateRejectsMissingActiveTeam(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(TeamStatePath(tmp)), 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(TeamStatePath(tmp), []byte(strings.TrimSpace(`
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    cert_path: .aw/team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write teams.yaml: %v", err)
+	}
+
+	_, err := LoadTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected missing active_team to fail")
+	}
+	if !strings.Contains(err.Error(), "missing active_team") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadTeamStateRejectsDuplicateTeamID(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(TeamStatePath(tmp)), 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(TeamStatePath(tmp), []byte(strings.TrimSpace(`
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    cert_path: .aw/team-certs/backend__acme.com.pem
+  - team_id: backend:acme.com
+    alias: alice-2
+    cert_path: .aw/team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write teams.yaml: %v", err)
+	}
+
+	_, err := LoadTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected duplicate team_id to fail")
+	}
+	if !strings.Contains(err.Error(), "duplicate membership") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadTeamStateRejectsActiveTeamOutsideMemberships(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(TeamStatePath(tmp)), 0o755); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(TeamStatePath(tmp), []byte(strings.TrimSpace(`
+active_team: ops:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    cert_path: .aw/team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write teams.yaml: %v", err)
+	}
+
+	_, err := LoadTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected unmatched active_team to fail")
+	}
+	if !strings.Contains(err.Error(), "is not present in memberships") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
