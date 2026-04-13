@@ -11,7 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type TeamMembership = WorktreeMembership
+type TeamMembership struct {
+	TeamID   string `yaml:"team_id"`
+	Alias    string `yaml:"alias,omitempty"`
+	CertPath string `yaml:"cert_path"`
+	JoinedAt string `yaml:"joined_at,omitempty"`
+}
 
 type TeamState struct {
 	ActiveTeam  string           `yaml:"active_team,omitempty"`
@@ -19,8 +24,25 @@ type TeamState struct {
 }
 
 type teamStateYAML struct {
-	ActiveTeam  string                   `yaml:"active_team,omitempty"`
-	Memberships []worktreeMembershipYAML `yaml:"memberships,omitempty"`
+	ActiveTeam  string               `yaml:"active_team,omitempty"`
+	Memberships []teamMembershipYAML `yaml:"memberships,omitempty"`
+}
+
+type teamMembershipYAML struct {
+	TeamID   string `yaml:"team_id"`
+	Alias    string `yaml:"alias,omitempty"`
+	CertPath string `yaml:"cert_path"`
+	JoinedAt string `yaml:"joined_at,omitempty"`
+}
+
+func (m *TeamMembership) normalize() {
+	if m == nil {
+		return
+	}
+	m.TeamID = strings.TrimSpace(m.TeamID)
+	m.Alias = strings.TrimSpace(m.Alias)
+	m.CertPath = filepath.ToSlash(strings.TrimSpace(m.CertPath))
+	m.JoinedAt = strings.TrimSpace(m.JoinedAt)
 }
 
 func (s *TeamState) normalize() {
@@ -31,7 +53,7 @@ func (s *TeamState) normalize() {
 	normalized := make([]TeamMembership, 0, len(s.Memberships))
 	for _, membership := range s.Memberships {
 		membership.normalize()
-		if membership.TeamID == "" && membership.CertPath == "" && membership.Alias == "" && membership.JoinedAt == "" && membership.RoleName == "" && membership.WorkspaceID == "" {
+		if membership.TeamID == "" && membership.CertPath == "" && membership.Alias == "" && membership.JoinedAt == "" {
 			continue
 		}
 		normalized = append(normalized, membership)
@@ -171,12 +193,10 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, TeamMembership{
-			TeamID:      membership.TeamID,
-			Alias:       membership.Alias,
-			RoleName:    membership.RoleName,
-			WorkspaceID: membership.WorkspaceID,
-			CertPath:    membership.CertPath,
-			JoinedAt:    membership.JoinedAt,
+			TeamID:   membership.TeamID,
+			Alias:    membership.Alias,
+			CertPath: membership.CertPath,
+			JoinedAt: membership.JoinedAt,
 		})
 	}
 	*s = TeamState{
@@ -192,15 +212,13 @@ func (s TeamState) MarshalYAML() (any, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	memberships := make([]worktreeMembershipYAML, 0, len(s.Memberships))
+	memberships := make([]teamMembershipYAML, 0, len(s.Memberships))
 	for _, membership := range s.Memberships {
-		memberships = append(memberships, worktreeMembershipYAML{
-			TeamID:      membership.TeamID,
-			Alias:       membership.Alias,
-			RoleName:    membership.RoleName,
-			WorkspaceID: membership.WorkspaceID,
-			CertPath:    membership.CertPath,
-			JoinedAt:    membership.JoinedAt,
+		memberships = append(memberships, teamMembershipYAML{
+			TeamID:   membership.TeamID,
+			Alias:    membership.Alias,
+			CertPath: membership.CertPath,
+			JoinedAt: membership.JoinedAt,
 		})
 	}
 	return teamStateYAML{

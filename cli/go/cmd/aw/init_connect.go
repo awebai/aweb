@@ -117,12 +117,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		teamState = &awconfig.TeamState{}
 	}
 	membership := awconfig.TeamMembership{
-		TeamID:      resp.TeamID,
-		Alias:       resp.Alias,
-		RoleName:    strings.TrimSpace(opts.Role),
-		WorkspaceID: resp.WorkspaceID,
-		CertPath:    filepath.ToSlash(certPath),
-		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
+		TeamID:   resp.TeamID,
+		Alias:    resp.Alias,
+		CertPath: filepath.ToSlash(certPath),
+		JoinedAt: strings.TrimSpace(cert.IssuedAt),
 	}
 	if existing := teamState.Membership(resp.TeamID); existing != nil {
 		if strings.TrimSpace(existing.JoinedAt) != "" {
@@ -140,8 +138,15 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if strings.TrimSpace(opts.APIKey) != "" {
 		workspaceState.APIKey = strings.TrimSpace(opts.APIKey)
 	}
-	workspaceState.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
-	workspaceState.Memberships = teamStateMembershipsAsWorkspace(teamState)
+	upsertWorkspaceMembershipCache(workspaceState, awconfig.WorktreeMembership{
+		TeamID:      resp.TeamID,
+		Alias:       resp.Alias,
+		RoleName:    strings.TrimSpace(opts.Role),
+		WorkspaceID: resp.WorkspaceID,
+		CertPath:    filepath.ToSlash(certPath),
+		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
+	})
+	applyTeamStateToWorkspaceCache(workspaceState, teamState)
 	workspaceState.RepoID = resp.RepoID
 	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
 	workspaceState.HumanName = reqBody.HumanName

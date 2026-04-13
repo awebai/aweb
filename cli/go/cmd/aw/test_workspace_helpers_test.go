@@ -57,7 +57,7 @@ func writeTeamStateForTest(t *testing.T, workingDir string, state awconfig.TeamS
 }
 
 func defaultTeamState() awconfig.TeamState {
-	return teamStateBinding("backend:demo", "alice", "workspace-1")
+	return teamStateBinding("backend:demo", "alice")
 }
 
 func writeDefaultTeamStateForTest(t *testing.T, workingDir string) string {
@@ -107,16 +107,15 @@ func workspaceBinding(serverURL, teamID, alias, workspaceID string) awconfig.Wor
 	}
 }
 
-func teamStateBinding(teamID, alias, workspaceID string) awconfig.TeamState {
+func teamStateBinding(teamID, alias string) awconfig.TeamState {
 	teamID = resolvedTeamIDForTest(teamID)
 	return awconfig.TeamState{
 		ActiveTeam: teamID,
 		Memberships: []awconfig.TeamMembership{{
-			TeamID:      teamID,
-			Alias:       strings.TrimSpace(alias),
-			WorkspaceID: strings.TrimSpace(workspaceID),
-			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
-			JoinedAt:    "2026-04-04T00:00:00Z",
+			TeamID:   teamID,
+			Alias:    strings.TrimSpace(alias),
+			CertPath: awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt: "2026-04-04T00:00:00Z",
 		}},
 	}
 }

@@ -172,8 +172,6 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	}
 	if membership := teamState.Membership("backend:acme.com"); membership == nil {
 		t.Fatal("expected backend membership in teams.yaml")
-	} else if membership.WorkspaceID != "ws-uuid-1" {
-		t.Fatalf("teams workspace_id=%q", membership.WorkspaceID)
 	}
 
 	// Verify connect payload had expected fields
@@ -387,7 +385,5 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	}
 	if membership := teamState.Membership("backend:acme.com"); membership == nil {
 		t.Fatal("expected backend membership in teams.yaml")
-	} else if membership.WorkspaceID != "ws-uuid-2" {
-		t.Fatalf("teams workspace_id=%q", membership.WorkspaceID)
 	}
 }

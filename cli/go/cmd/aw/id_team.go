@@ -459,13 +459,18 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 	}
 
 	items := make([]teamListItem, 0, len(teamState.Memberships))
+	workspace, _, _ := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
 	for _, membership := range teamState.Memberships {
 		item := teamListItem{
-			TeamID:      strings.TrimSpace(membership.TeamID),
-			Alias:       strings.TrimSpace(membership.Alias),
-			RoleName:    strings.TrimSpace(membership.RoleName),
-			WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
-			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
+			TeamID: strings.TrimSpace(membership.TeamID),
+			Alias:  strings.TrimSpace(membership.Alias),
+			Active: strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
+		}
+		if workspace != nil {
+			if cached := workspace.Membership(membership.TeamID); cached != nil {
+				item.RoleName = strings.TrimSpace(cached.RoleName)
+				item.WorkspaceID = strings.TrimSpace(cached.WorkspaceID)
+			}
 		}
 		if cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, membership.TeamID); err == nil && cert != nil {
 			item.Lifetime = strings.TrimSpace(cert.Lifetime)
@@ -975,11 +980,10 @@ func connectAcceptedTeamMembership(
 	}
 
 	membership := awconfig.TeamMembership{
-		TeamID:      resp.TeamID,
-		Alias:       resp.Alias,
-		WorkspaceID: resp.WorkspaceID,
-		CertPath:    filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
-		JoinedAt:    strings.TrimSpace(accepted.Certificate.IssuedAt),
+		TeamID:   resp.TeamID,
+		Alias:    resp.Alias,
+		CertPath: filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
+		JoinedAt: strings.TrimSpace(accepted.Certificate.IssuedAt),
 	}
 	if existing := teamState.Membership(resp.TeamID); existing != nil {
 		if strings.TrimSpace(existing.JoinedAt) != "" {
@@ -992,8 +996,14 @@ func connectAcceptedTeamMembership(
 	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
 		return nil, err
 	}
-	workspace.Memberships = teamStateMembershipsAsWorkspace(teamState)
-	workspace.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
+	upsertWorkspaceMembershipCache(workspace, awconfig.WorktreeMembership{
+		TeamID:      resp.TeamID,
+		Alias:       resp.Alias,
+		WorkspaceID: resp.WorkspaceID,
+		CertPath:    filepath.ToSlash(strings.TrimSpace(accepted.Output.CertPath)),
+		JoinedAt:    strings.TrimSpace(accepted.Certificate.IssuedAt),
+	})
+	applyTeamStateToWorkspaceCache(workspace, teamState)
 	workspace.RepoID = resp.RepoID
 	workspace.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
 	workspace.Hostname = hostname
@@ -1068,21 +1078,61 @@ func syncWorkspaceTeamStateCache(workingDir string) error {
 	if err != nil {
 		return err
 	}
-	workspace.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
-	workspace.Memberships = teamStateMembershipsAsWorkspace(teamState)
+	applyTeamStateToWorkspaceCache(workspace, teamState)
 	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
-func teamStateMembershipsAsWorkspace(teamState *awconfig.TeamState) []awconfig.WorktreeMembership {
+func applyTeamStateToWorkspaceCache(workspace *awconfig.WorktreeWorkspace, teamState *awconfig.TeamState) {
+	if workspace == nil {
+		return
+	}
+	workspace.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
 	if teamState == nil || len(teamState.Memberships) == 0 {
-		return nil
+		workspace.Memberships = nil
+		return
 	}
 	memberships := make([]awconfig.WorktreeMembership, 0, len(teamState.Memberships))
 	for _, membership := range teamState.Memberships {
-		memberships = append(memberships, awconfig.WorktreeMembership(membership))
+		cached := awconfig.WorktreeMembership{
+			TeamID:   strings.TrimSpace(membership.TeamID),
+			Alias:    strings.TrimSpace(membership.Alias),
+			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
+			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+		}
+		if existing := workspace.Membership(membership.TeamID); existing != nil {
+			cached.RoleName = strings.TrimSpace(existing.RoleName)
+			cached.WorkspaceID = strings.TrimSpace(existing.WorkspaceID)
+		}
+		memberships = append(memberships, cached)
 	}
-	return memberships
+	workspace.Memberships = memberships
+}
+
+func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membership awconfig.WorktreeMembership) {
+	if workspace == nil {
+		return
+	}
+	membership.TeamID = strings.TrimSpace(membership.TeamID)
+	membership.Alias = strings.TrimSpace(membership.Alias)
+	membership.RoleName = strings.TrimSpace(membership.RoleName)
+	membership.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
+	membership.CertPath = filepath.ToSlash(strings.TrimSpace(membership.CertPath))
+	membership.JoinedAt = strings.TrimSpace(membership.JoinedAt)
+	if membership.TeamID == "" {
+		return
+	}
+	if existing := workspace.Membership(membership.TeamID); existing != nil {
+		if strings.TrimSpace(existing.RoleName) != "" && strings.TrimSpace(membership.RoleName) == "" {
+			membership.RoleName = strings.TrimSpace(existing.RoleName)
+		}
+		if strings.TrimSpace(existing.WorkspaceID) != "" && strings.TrimSpace(membership.WorkspaceID) == "" {
+			membership.WorkspaceID = strings.TrimSpace(existing.WorkspaceID)
+		}
+		*existing = membership
+		return
+	}
+	workspace.Memberships = append(workspace.Memberships, membership)
 }
 
 // --- helpers ---

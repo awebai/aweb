@@ -476,8 +476,6 @@ func TestEphemeralAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T)
 	}
 	if membership := teamState.Membership("default:local"); membership == nil {
 		t.Fatal("expected local team membership in teams.yaml")
-	} else if membership.WorkspaceID != "" {
-		t.Fatalf("workspace_id=%q want empty", membership.WorkspaceID)
 	}
 }
 
@@ -1045,11 +1043,10 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	writeTeamStateForTest(t, tmp, awconfig.TeamState{
 		ActiveTeam: "backend:acme.com",
 		Memberships: []awconfig.TeamMembership{{
-			TeamID:      "backend:acme.com",
-			Alias:       "alice",
-			WorkspaceID: "ws-backend",
-			CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
-			JoinedAt:    "2026-04-09T00:00:00Z",
+			TeamID:   "backend:acme.com",
+			Alias:    "alice",
+			CertPath: awconfig.TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt: "2026-04-09T00:00:00Z",
 		}},
 	})
 
@@ -1118,9 +1115,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
-	}
-	if teamState.Membership("ops:acme.com").WorkspaceID != "ws-ops" {
-		t.Fatalf("teams workspace_id=%q", teamState.Membership("ops:acme.com").WorkspaceID)
 	}
 
 	runList := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")
@@ -1301,18 +1295,16 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 		ActiveTeam: "backend:acme.com",
 		Memberships: []awconfig.TeamMembership{
 			{
-				TeamID:      "backend:acme.com",
-				Alias:       "alice",
-				WorkspaceID: "ws-backend",
-				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
-				JoinedAt:    "2026-04-09T00:00:00Z",
+				TeamID:   "backend:acme.com",
+				Alias:    "alice",
+				CertPath: awconfig.TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt: "2026-04-09T00:00:00Z",
 			},
 			{
-				TeamID:      "ops:acme.com",
-				Alias:       "alice-ops",
-				WorkspaceID: "ws-ops",
-				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
-				JoinedAt:    "2026-04-09T00:00:00Z",
+				TeamID:   "ops:acme.com",
+				Alias:    "alice-ops",
+				CertPath: awconfig.TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt: "2026-04-09T00:00:00Z",
 			},
 		},
 	})

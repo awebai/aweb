@@ -13,20 +13,16 @@ func canonicalTeamState() *TeamState {
 		ActiveTeam: "backend:acme.com",
 		Memberships: []TeamMembership{
 			{
-				TeamID:      "backend:acme.com",
-				Alias:       "alice",
-				RoleName:    "developer",
-				WorkspaceID: "ws-1",
-				CertPath:    TeamCertificateRelativePath("backend:acme.com"),
-				JoinedAt:    "2026-04-13T00:00:00Z",
+				TeamID:   "backend:acme.com",
+				Alias:    "alice",
+				CertPath: TeamCertificateRelativePath("backend:acme.com"),
+				JoinedAt: "2026-04-13T00:00:00Z",
 			},
 			{
-				TeamID:      "ops:acme.com",
-				Alias:       "alice-ops",
-				RoleName:    "operator",
-				WorkspaceID: "ws-2",
-				CertPath:    TeamCertificateRelativePath("ops:acme.com"),
-				JoinedAt:    "2026-04-14T00:00:00Z",
+				TeamID:   "ops:acme.com",
+				Alias:    "alice-ops",
+				CertPath: TeamCertificateRelativePath("ops:acme.com"),
+				JoinedAt: "2026-04-14T00:00:00Z",
 			},
 		},
 	}
@@ -50,7 +46,7 @@ func TestSaveAndLoadTeamStateRoundTrip(t *testing.T) {
 		"active_team: backend:acme.com",
 		"memberships:",
 		"team_id: backend:acme.com",
-		"role_name: developer",
+		"alias: alice",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("teams.yaml missing %q:\n%s", needle, text)
@@ -107,16 +103,14 @@ func TestTeamStateAddMembershipSetsActiveAndReplacesExisting(t *testing.T) {
 	}
 
 	state.AddMembership(TeamMembership{
-		TeamID:      "backend:acme.com",
-		Alias:       "alice-updated",
-		RoleName:    "developer",
-		CertPath:    TeamCertificateRelativePath("backend:acme.com"),
-		WorkspaceID: "ws-1",
+		TeamID:   "backend:acme.com",
+		Alias:    "alice-updated",
+		CertPath: TeamCertificateRelativePath("backend:acme.com"),
 	})
 	if len(state.Memberships) != 1 {
 		t.Fatalf("memberships=%d want 1", len(state.Memberships))
 	}
-	if got := state.Membership("backend:acme.com"); got == nil || got.Alias != "alice-updated" || got.RoleName != "developer" {
+	if got := state.Membership("backend:acme.com"); got == nil || got.Alias != "alice-updated" {
 		t.Fatalf("membership after replace=%#v", got)
 	}
 }
