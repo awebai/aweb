@@ -545,15 +545,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		t.Fatalf("connect agent_type=%v", gotConnectBody["agent_type"])
 	}
 
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
-	}
-	if identity.Address != "local/alice" {
-		t.Fatalf("identity address=%q", identity.Address)
-	}
-	if identity.RegistryURL != registryServer.URL {
-		t.Fatalf("identity registry_url=%q", identity.RegistryURL)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for implicit local init: %v", err)
 	}
 
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))

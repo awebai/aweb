@@ -208,6 +208,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
+			Persistent:         initPersistent,
 			AskPostCreateSetup: true,
 		})
 		if err != nil {

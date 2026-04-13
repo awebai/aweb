@@ -17,7 +17,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
+func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	t.Parallel()
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -139,6 +139,7 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		"--json",
 		"init",
 		"--hosted",
+		"--persistent",
 		"--username", "juanre",
 		"--alias", "laptop",
 		"--url", server.URL,
@@ -213,5 +214,125 @@ func TestInitHostedWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	}
 	if cert.MemberAddress != "juanre.aweb.ai/laptop" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+}
+
+func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"status":"registered"}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          didAW,
+				"current_did_key": "did:key:current",
+				"server":          "",
+				"address":         "juanre.aweb.ai/laptop",
+				"handle":          "laptop",
+				"created_at":      "2026-04-08T00:00:00Z",
+				"updated_at":      "2026-04-08T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			var signupBody map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := signupBody["did_key"].(string)
+			didAW, _ := signupBody["did_aw"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:juanre.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: "juanre.aweb.ai/laptop",
+				Alias:         "laptop",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         "juanre",
+				"org_id":           "org-1",
+				"namespace_domain": "juanre.aweb.ai",
+				"team_id":          "default:juanre.aweb.ai",
+				"certificate":      encoded,
+				"did_aw":           didAW,
+				"member_address":   "juanre.aweb.ai/laptop",
+				"alias":            "laptop",
+				"team_did_key":     teamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(
+		ctx,
+		bin,
+		"--json",
+		"init",
+		"--hosted",
+		"--username", "juanre",
+		"--alias", "laptop",
+		"--url", server.URL,
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init --hosted failed: %v\n%s", err, string(out))
+	}
+
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for ephemeral hosted init: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("signing.key missing: %v", err)
+	}
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:juanre.aweb.ai"))
+	if err != nil {
+		t.Fatalf("team certificate missing: %v", err)
+	}
+	if cert.MemberAddress != "juanre.aweb.ai/laptop" {
+		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if got["status"] != "signed_up" {
+		t.Fatalf("status=%v", got["status"])
 	}
 }

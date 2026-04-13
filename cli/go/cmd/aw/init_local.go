@@ -84,10 +84,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	if err := persistGuidedBYODIdentity(&guidedBYODProvision{
-		Identity:    prepared,
-		Certificate: team.Certificate,
-	}); err != nil {
+	if err := persistLocalSigningKeyAndCertificate(req.WorkingDir, prepared.IdentityKey, team.Certificate); err != nil {
 		return connectOutput{}, err
 	}
 

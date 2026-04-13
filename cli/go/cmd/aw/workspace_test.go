@@ -1006,33 +1006,8 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		t.Fatalf("cert lifetime=%q", cert.Lifetime)
 	}
 
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(child, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("load child identity.yaml: %v", err)
-	}
-	if identity.DID != cert.MemberDIDKey {
-		t.Fatalf("identity did=%q cert member_did_key=%q", identity.DID, cert.MemberDIDKey)
-	}
-	if identity.StableID != "" {
-		t.Fatalf("identity stable_id=%q", identity.StableID)
-	}
-	if identity.Address != "" {
-		t.Fatalf("identity address=%q", identity.Address)
-	}
-	if identity.Custody != awid.CustodySelf {
-		t.Fatalf("identity custody=%q", identity.Custody)
-	}
-	if identity.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("identity lifetime=%q", identity.Lifetime)
-	}
-	if identity.RegistryURL != server.URL {
-		t.Fatalf("identity registry_url=%q", identity.RegistryURL)
-	}
-	if identity.RegistryStatus != "registered" {
-		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
-	}
-	if identity.CreatedAt != cert.IssuedAt {
-		t.Fatalf("identity created_at=%q cert issued_at=%q", identity.CreatedAt, cert.IssuedAt)
+	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for add-worktree ephemeral agent: %v", err)
 	}
 }
 

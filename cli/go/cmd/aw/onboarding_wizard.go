@@ -47,6 +47,7 @@ type guidedOnboardingRequest struct {
 	HumanName          string
 	AgentType          string
 	Role               string
+	Persistent         bool
 	AskPostCreateSetup bool
 }
 
@@ -149,7 +150,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			}
 			return nil, err
 		}
-		if err := persistGuidedHostedIdentity(req.WorkingDir, registryURL, signingKey, cert, didKey, didAW, memberAddress); err != nil {
+		if err := persistGuidedHostedState(req.WorkingDir, registryURL, signingKey, cert, didKey, didAW, memberAddress, req.Persistent); err != nil {
 			return nil, err
 		}
 		break
@@ -165,8 +166,10 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	}
 	printOutput(result, formatConnect)
 
-	if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
-		return nil, err
+	if req.Persistent {
+		if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
+			return nil, err
+		}
 	}
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
@@ -394,10 +397,8 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 		return fmt.Errorf("missing BYOD team certificate")
 	}
 	plan := provisioned.Identity.Plan
-	if err := awid.SaveSigningKey(plan.SigningKeyPath, provisioned.Identity.IdentityKey); err != nil {
-		return err
-	}
-	if _, err := awconfig.SaveTeamCertificateForTeam(filepath.Dir(filepath.Dir(plan.IdentityPath)), provisioned.Certificate.Team, provisioned.Certificate); err != nil {
+	workingDir := filepath.Dir(filepath.Dir(plan.IdentityPath))
+	if err := persistLocalSigningKeyAndCertificate(workingDir, provisioned.Identity.IdentityKey, provisioned.Certificate); err != nil {
 		return err
 	}
 	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -410,6 +411,25 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 		RegistryStatus: "registered",
 		CreatedAt:      plan.CreatedAt,
 	})
+}
+
+func persistLocalSigningKeyAndCertificate(workingDir string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate) error {
+	if strings.TrimSpace(workingDir) == "" {
+		return fmt.Errorf("working directory is required")
+	}
+	if signingKey == nil {
+		return fmt.Errorf("signing key is required")
+	}
+	if cert == nil {
+		return fmt.Errorf("team certificate is required")
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), signingKey); err != nil {
+		return err
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ensureHostedOnboardingAvailable(awebURL string) error {
@@ -587,18 +607,18 @@ func validateHostedSignupResponse(
 	return cert, nil
 }
 
-func persistGuidedHostedIdentity(
+func persistGuidedHostedState(
 	workingDir, registryURL string,
 	signingKey ed25519.PrivateKey,
 	cert *awid.TeamCertificate,
 	didKey, didAW, memberAddress string,
+	persistent bool,
 ) error {
-	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
-	if err := awid.SaveSigningKey(signingKeyPath, signingKey); err != nil {
+	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
 		return err
 	}
-	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
-		return err
+	if !persistent {
+		return nil
 	}
 	identityPath := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())
 	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{

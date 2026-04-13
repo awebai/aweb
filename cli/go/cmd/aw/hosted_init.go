@@ -110,7 +110,7 @@ func runHostedInit(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := persistHostedInitState(workingDir, registry.DefaultRegistryURL, signingKey, didKey, stableID, resp); err != nil {
+	if err := persistHostedInitState(workingDir, registry.DefaultRegistryURL, signingKey, didKey, stableID, resp, initPersistent); err != nil {
 		return err
 	}
 
@@ -137,6 +137,7 @@ func persistHostedInitState(
 	signingKey []byte,
 	didKey, stableID string,
 	resp *awid.CliSignupResponse,
+	persistent bool,
 ) error {
 	if resp == nil {
 		return fmt.Errorf("missing cli-signup response")
@@ -159,11 +160,11 @@ func persistHostedInitState(
 		return fmt.Errorf("cli-signup certificate member_address %q does not match response %q", cert.MemberAddress, resp.MemberAddress)
 	}
 
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), signingKey); err != nil {
+	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
 		return err
 	}
-	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, cert.Team, cert); err != nil {
-		return err
+	if !persistent {
+		return nil
 	}
 	return awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
 		DID:            didKey,

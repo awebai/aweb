@@ -576,15 +576,6 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if signupBody["alias"] != "laptop" {
 		t.Fatalf("signup alias=%v", signupBody["alias"])
 	}
-	if claimBody["username"] != "jack" {
-		t.Fatalf("claim username=%v", claimBody["username"])
-	}
-	if claimBody["email"] != "jack@example.com" {
-		t.Fatalf("claim email=%v", claimBody["email"])
-	}
-	if claimBody["did_key"] != signupBody["did_key"] {
-		t.Fatalf("claim did_key=%v signup did_key=%v", claimBody["did_key"], signupBody["did_key"])
-	}
 	if connectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", connectBody["role"])
 	}
@@ -595,18 +586,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		t.Fatalf("connect agent_type=%v", connectBody["agent_type"])
 	}
 
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
-	}
-	if identity.Address != "jack.aweb.ai/laptop" {
-		t.Fatalf("identity address=%q", identity.Address)
-	}
-	if identity.RegistryURL != registryServer.URL {
-		t.Fatalf("registry_url=%q", identity.RegistryURL)
-	}
-	if identity.StableID != signupBody["did_aw"] {
-		t.Fatalf("stable_id=%q", identity.StableID)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for ephemeral hosted onboarding: %v", err)
 	}
 
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
@@ -640,8 +621,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
-	if got := awid.ComputeDIDKey(loadedKey.Public().(ed25519.PublicKey)); got != identity.DID {
-		t.Fatalf("saved signing key did=%q want %q", got, identity.DID)
+	if got := awid.ComputeDIDKey(loadedKey.Public().(ed25519.PublicKey)); got != strings.TrimSpace(signupBody["did_key"].(string)) {
+		t.Fatalf("saved signing key did=%q want %v", got, signupBody["did_key"])
 	}
 
 	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:jack.aweb.ai"))
@@ -656,11 +637,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "Your identity is in .aw/signing.key.") {
-		t.Fatalf("missing claim-human warning in output: %q", output)
-	}
-	if !strings.Contains(output, "Verification email sent to jack@example.com.") {
-		t.Fatalf("missing claim-human success in output: %q", output)
+	if strings.Contains(output, "Run aw claim-human now?") {
+		t.Fatalf("unexpected persistent claim-human prompt in ephemeral hosted output: %q", output)
 	}
 }
 
@@ -819,21 +797,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 		t.Fatalf("expected fresh did registration on retry")
 	}
 
-	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
-	if err != nil {
-		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for ephemeral hosted onboarding retry: %v", err)
 	}
-	if identity.Address != "jack-2.aweb.ai/laptop" {
-		t.Fatalf("identity address=%q", identity.Address)
-	}
-	if identity.StableID != strings.TrimSpace(signupBodies[1]["did_aw"].(string)) {
-		t.Fatalf("stable_id=%q want %v", identity.StableID, signupBodies[1]["did_aw"])
-	}
-	if !strings.Contains(out.String(), "Your identity is in .aw/signing.key.") {
-		t.Fatalf("expected warning, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "Run aw claim-human now?") {
-		t.Fatalf("expected claim-human prompt, got %q", out.String())
+	if strings.Contains(out.String(), "Run aw claim-human now?") {
+		t.Fatalf("unexpected persistent claim-human prompt in ephemeral hosted retry output: %q", out.String())
 	}
 	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
 		t.Fatalf("expected retry message, got %q", out.String())
