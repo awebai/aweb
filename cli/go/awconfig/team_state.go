@@ -241,7 +241,18 @@ func LoadTeamState(workingDir string) (*TeamState, error) {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
-		return migrateTeamStateFromWorkspace(workingDir)
+		state, migrateErr := migrateTeamStateFromWorkspace(workingDir)
+		if migrateErr != nil {
+			if os.IsNotExist(migrateErr) {
+				return nil, &os.PathError{
+					Op:   "load teams state",
+					Path: fmt.Sprintf("%s (neither teams.yaml nor workspace.yaml exists)", filepath.Join(filepath.Clean(workingDir), ".aw")),
+					Err:  os.ErrNotExist,
+				}
+			}
+			return nil, migrateErr
+		}
+		return state, nil
 	}
 	var state TeamState
 	if err := yaml.Unmarshal(data, &state); err != nil {

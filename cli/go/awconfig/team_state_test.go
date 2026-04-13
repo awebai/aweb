@@ -246,6 +246,7 @@ func TestLoadTeamStateMigratesFromWorkspaceYAML(t *testing.T) {
 	workspacePath := filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath())
 	if err := SaveWorktreeWorkspaceTo(workspacePath, &WorktreeWorkspace{
 		AwebURL:    "https://app.aweb.ai/api",
+		APIKey:     "aw_sk_secret",
 		ActiveTeam: "backend:acme.com",
 		Memberships: []WorktreeMembership{
 			{
@@ -290,6 +291,12 @@ func TestLoadTeamStateMigratesFromWorkspaceYAML(t *testing.T) {
 	if strings.Contains(text, "role_name:") {
 		t.Fatalf("teams.yaml should not contain role_name:\n%s", text)
 	}
+	if strings.Contains(text, "api_key:") {
+		t.Fatalf("teams.yaml should not contain api_key:\n%s", text)
+	}
+	if strings.Contains(text, "aw_sk_secret") {
+		t.Fatalf("teams.yaml leaked workspace api key:\n%s", text)
+	}
 }
 
 func TestLoadTeamStatePrefersExistingTeamsYAMLOverWorkspaceYAML(t *testing.T) {
@@ -329,5 +336,21 @@ func TestLoadTeamStatePrefersExistingTeamsYAMLOverWorkspaceYAML(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loaded state mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestLoadTeamStateRejectsWhenNoTeamsOrWorkspaceExist(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	_, err := LoadTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected missing teams/workspace to fail")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected not-exist error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "neither teams.yaml nor workspace.yaml exists") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
