@@ -292,7 +292,10 @@ func resolveExplicitInitAwebURL() (string, error) {
 func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, error) {
 	cert, _, err := loadCertificateForConnect(workingDir)
 	if err != nil {
-		return "", false, nil
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	teamDomain, _, err := awid.ParseTeamID(strings.TrimSpace(cert.Team))
 	if err != nil {
@@ -300,7 +303,10 @@ func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, erro
 	}
 	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "", teamDomain)
 	if err != nil {
-		return "", false, nil
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	if strings.TrimSpace(registryURL) != awid.DefaultAWIDRegistryURL {
 		return "", false, nil

@@ -232,6 +232,61 @@ func TestResolveExplicitInitAwebURLDefaultsForPublicAWIDTeam(t *testing.T) {
 	}
 }
 
+func TestResolveExplicitInitAwebURLOverrideWinsOverDiscoveryFallback(t *testing.T) {
+	oldAwebURL := initAwebURL
+	oldCompatURL := initURL
+	t.Cleanup(func() {
+		initAwebURL = oldAwebURL
+		initURL = oldCompatURL
+	})
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWEB_URL", "")
+	initAwebURL = "https://override.example"
+	initURL = ""
+
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	if err := awconfig.SaveControllerMeta("acme.com", &awconfig.ControllerMeta{
+		Domain:      "acme.com",
+		RegistryURL: awid.DefaultAWIDRegistryURL,
+		CreatedAt:   "2026-04-13T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save controller meta: %v", err)
+	}
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: "did:key:z6MkpPublicTeamMember111111111111111111111111111",
+		Alias:        "alice",
+		Lifetime:     awid.LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatalf("sign team certificate: %v", err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, "backend:acme.com", cert); err != nil {
+		t.Fatalf("save team certificate: %v", err)
+	}
+
+	awebURL, err := resolveExplicitInitAwebURL()
+	if err != nil {
+		t.Fatalf("resolveExplicitInitAwebURL: %v", err)
+	}
+	if awebURL != "https://override.example" {
+		t.Fatalf("awebURL=%q", awebURL)
+	}
+}
+
 func TestInitRegistryIsLocalhost(t *testing.T) {
 	t.Parallel()
 
