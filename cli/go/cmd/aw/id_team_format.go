@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"text/tabwriter"
 	"strings"
+	"text/tabwriter"
 )
 
 func formatTeamCreate(v any) string {
@@ -43,7 +43,7 @@ func formatTeamAddMember(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
-	sb.WriteString(fmt.Sprintf("Member:      %s\n", out.MemberAddress))
+	sb.WriteString(fmt.Sprintf("Member:      %s\n", firstNonEmpty(out.Member, out.MemberAddress)))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertificateID))
 	return sb.String()
 }

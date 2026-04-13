@@ -40,8 +40,9 @@ type teamAcceptInviteOutput struct {
 
 type teamAddMemberOutput struct {
 	Status        string `json:"status"`
+	Member        string `json:"member"`
 	TeamID        string `json:"team_id"`
-	MemberAddress string `json:"member_address"`
+	MemberAddress string `json:"member_address,omitempty"`
 	CertificateID string `json:"certificate_id"`
 }
 
@@ -134,9 +135,14 @@ var (
 	teamAcceptAlias string
 	teamAddAlias    string
 
-	teamAddTeam      string
-	teamAddNamespace string
-	teamAddMember    string
+	teamAddTeam           string
+	teamAddNamespace      string
+	teamAddMember         string
+	teamAddMemberDID      string
+	teamAddMemberAlias    string
+	teamAddMemberLifetime string
+	teamAddMemberDIDAW    string
+	teamAddMemberAddress  string
 
 	teamRemoveTeam        string
 	teamRemoveNamespace   string
@@ -244,6 +250,11 @@ func init() {
 	teamAddMemberCmd.Flags().StringVar(&teamAddTeam, "team", "", "Team name")
 	teamAddMemberCmd.Flags().StringVar(&teamAddNamespace, "namespace", "", "Namespace domain")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMember, "member", "", "Member address (e.g. acme.com/alice)")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDID, "did", "", "Member did:key for direct certificate issuance")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "alias", "", "Alias to use with --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Certificate lifetime for --did (ephemeral or persistent)")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Optional member address when using --did")
 	teamCmd.AddCommand(teamAddMemberCmd)
 
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveTeam, "team", "", "Team name")
@@ -690,14 +701,30 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamAddTeam))
 	domain := awconfig.NormalizeDomain(teamAddNamespace)
 	member := strings.TrimSpace(teamAddMember)
+	memberDID := strings.TrimSpace(teamAddMemberDID)
+	memberAlias := strings.TrimSpace(teamAddMemberAlias)
+	lifetime := strings.TrimSpace(teamAddMemberLifetime)
+	memberDIDAW := strings.TrimSpace(teamAddMemberDIDAW)
+	memberAddress := strings.TrimSpace(teamAddMemberAddress)
 	if team == "" {
 		return usageError("--team is required")
 	}
 	if domain == "" {
 		return usageError("--namespace is required")
 	}
-	if member == "" {
-		return usageError("--member is required")
+	if member == "" && memberDID == "" {
+		return usageError("one of --member or --did is required")
+	}
+	if member != "" && memberDID != "" {
+		return usageError("--member and --did are mutually exclusive")
+	}
+	if memberDID != "" {
+		if memberAlias == "" {
+			return usageError("--alias is required when using --did")
+		}
+		if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
+			return usageError("invalid --lifetime %q (use %q or %q)", lifetime, awid.LifetimeEphemeral, awid.LifetimePersistent)
+		}
 	}
 
 	teamID := awid.BuildTeamID(domain, team)
@@ -708,46 +735,54 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
 
-	// Resolve member's did:key from their address via awid
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	if member != "" {
+		// Resolve member's did:key from their address via awid.
+		memberDomain, memberName, err := parseAddress(member)
+		if err != nil {
+			return err
+		}
 
-	memberDomain, memberName, err := parseAddress(member)
-	if err != nil {
-		return err
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
+		if err != nil {
+			return err
+		}
+		var address *awid.RegistryAddress
+		if lookupSigningKey != nil {
+			address, _, err = registry.GetNamespaceAddressAtSigned(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName, lookupSigningKey)
+		} else {
+			address, _, err = registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+		}
+		if err != nil {
+			return fmt.Errorf("resolve member address %s: %w", member, err)
+		}
+
+		memberDID = address.CurrentDIDKey
+		memberDIDAW = address.DIDAW
+		memberAddress = member
+		memberAlias = memberName
+		// --lifetime only applies to the direct --did path; address-backed members are always persistent.
+		lifetime = awid.LifetimePersistent
 	}
 
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
-	if err != nil {
-		return err
-	}
-	var address *awid.RegistryAddress
-	if lookupSigningKey != nil {
-		address, _, err = registry.GetNamespaceAddressAtSigned(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName, lookupSigningKey)
-	} else {
-		address, _, err = registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
-	}
-	if err != nil {
-		return fmt.Errorf("resolve member address %s: %w", member, err)
-	}
-
-	// Sign certificate — include the member's stable identity from awid
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team:          teamID,
-		MemberDIDKey:  address.CurrentDIDKey,
-		MemberDIDAW:   address.DIDAW,
-		MemberAddress: member,
-		Alias:         memberName,
-		Lifetime:      awid.LifetimePersistent,
+		MemberDIDKey:  memberDID,
+		MemberDIDAW:   memberDIDAW,
+		MemberAddress: memberAddress,
+		Alias:         memberAlias,
+		Lifetime:      lifetime,
 	})
 	if err != nil {
 		return err
@@ -760,8 +795,9 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 
 	printOutput(teamAddMemberOutput{
 		Status:        "added",
+		Member:        firstNonEmpty(memberAddress, memberDID),
 		TeamID:        teamID,
-		MemberAddress: member,
+		MemberAddress: memberAddress,
 		CertificateID: cert.CertificateID,
 	}, formatTeamAddMember)
 	return nil

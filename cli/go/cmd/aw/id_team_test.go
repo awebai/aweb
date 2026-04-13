@@ -528,8 +528,20 @@ func TestTeamAddMemberFlow(t *testing.T) {
 	if got["team_id"] != "backend:acme.com" {
 		t.Fatalf("team_id=%v", got["team_id"])
 	}
+	if got["member"] != "acme.com/alice" {
+		t.Fatalf("member=%v", got["member"])
+	}
+	if got["member_address"] != "acme.com/alice" {
+		t.Fatalf("member_address=%v", got["member_address"])
+	}
 	if registeredCert["member_did_key"] != memberDIDKey {
 		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
+	}
+	if registeredCert["member_address"] != "acme.com/alice" {
+		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	}
+	if registeredCert["lifetime"] != awid.LifetimePersistent {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
 	}
 }
 
@@ -662,6 +674,220 @@ func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 	}
 	if gotRevokePayload["certificate_id"] != "cert-cross" {
 		t.Fatalf("revoke certificate_id=%v", gotRevokePayload["certificate_id"])
+	}
+}
+
+func TestTeamAddMemberByDIDIssuesEphemeralCertificate(t *testing.T) {
+	t.Parallel()
+
+	var registeredCert map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--did", memberDID,
+		"--alias", "laptop",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("add-member by did failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "added" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
+	}
+	if got["member"] != memberDID {
+		t.Fatalf("member=%v", got["member"])
+	}
+	if _, ok := got["member_address"]; ok {
+		t.Fatalf("member_address should be omitted in DID path: %v", got["member_address"])
+	}
+	if registeredCert["member_did_key"] != memberDID {
+		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
+	}
+	if registeredCert["alias"] != "laptop" {
+		t.Fatalf("registry cert alias=%v", registeredCert["alias"])
+	}
+	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	}
+	if _, ok := registeredCert["member_did_aw"]; ok {
+		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
+	}
+	if _, ok := registeredCert["member_address"]; ok {
+		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	}
+}
+
+func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t *testing.T) {
+	t.Parallel()
+
+	var registeredCert map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--did", memberDID,
+		"--alias", "alice",
+		"--lifetime", awid.LifetimePersistent,
+		"--did-aw", "did:aw:alice",
+		"--address", "acme.com/alice",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("add-member by did persistent failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["member"] != "acme.com/alice" {
+		t.Fatalf("member=%v", got["member"])
+	}
+	if got["member_address"] != "acme.com/alice" {
+		t.Fatalf("member_address=%v", got["member_address"])
+	}
+	if registeredCert["member_did_key"] != memberDID {
+		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
+	}
+	if registeredCert["member_did_aw"] != "did:aw:alice" {
+		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
+	}
+	if registeredCert["member_address"] != "acme.com/alice" {
+		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	}
+	if registeredCert["lifetime"] != awid.LifetimePersistent {
+		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	}
+}
+
+func TestTeamAddMemberRejectsDidAndMemberTogether(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--member", "acme.com/alice",
+		"--did", "did:key:z6Mkexample",
+		"--alias", "alice")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected add-member to fail:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "--member and --did are mutually exclusive") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestTeamAddMemberByDIDRequiresAlias(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--did", memberDID)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected add-member to fail:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "--alias is required when using --did") {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
 
