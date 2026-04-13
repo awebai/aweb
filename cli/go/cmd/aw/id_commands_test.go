@@ -1227,6 +1227,58 @@ func TestAwIDShowFailsForIdentityDIDMismatch(t *testing.T) {
 	}
 }
 
+func TestAwIDShowFailsWhenEphemeralCertMissingMemberDIDKey(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(awDir, "signing.key"), priv); err != nil {
+		t.Fatal(err)
+	}
+	workspace := workspaceBinding("https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", "workspace-1")
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(awDir, "workspace.yaml"), &workspace); err != nil {
+		t.Fatal(err)
+	}
+	cert := &awid.TeamCertificate{
+		Version:       1,
+		CertificateID: "cert-1",
+		Team:          "default:alice.aweb.ai",
+		TeamDIDKey:    "did:key:z6MkTeam",
+		MemberDIDKey:  "",
+		Alias:         "alice-laptop",
+		Lifetime:      awid.LifetimeEphemeral,
+		IssuedAt:      "2026-04-13T00:00:00Z",
+		Signature:     "invalid",
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(tmp, cert.Team, cert); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected id show to fail\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "active team certificate is missing member_did_key") {
+		t.Fatalf("unexpected error output:\n%s", string(out))
+	}
+}
+
 func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
 	t.Parallel()
 

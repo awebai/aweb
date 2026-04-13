@@ -126,7 +126,11 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		return nil, fmt.Errorf("failed to load signing key: %w", err)
 	}
 	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	if certDID := strings.TrimSpace(cert.MemberDIDKey); certDID != "" && certDID != didKey {
+	certDID := strings.TrimSpace(cert.MemberDIDKey)
+	if certDID == "" {
+		return nil, fmt.Errorf("active team certificate is missing member_did_key")
+	}
+	if certDID != didKey {
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
 
