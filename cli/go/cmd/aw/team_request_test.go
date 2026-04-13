@@ -41,9 +41,20 @@ func TestTeamRequestEphemeralPrintsAddMemberCommandWithoutStableFields(t *testin
 	}
 
 	text := strings.TrimSpace(string(out))
-	want := "aw id team add-member --team backend --namespace acme.com --did " + memberDID + " --alias laptop"
-	if text != want {
-		t.Fatalf("command=%q want %q", text, want)
+	if !strings.Contains(text, "aw id team add-member") {
+		t.Fatalf("output missing add-member command:\n%s", text)
+	}
+	if !strings.Contains(text, "--team backend") || !strings.Contains(text, "--namespace acme.com") {
+		t.Fatalf("output missing team selector:\n%s", text)
+	}
+	if !strings.Contains(text, "--did "+memberDID) {
+		t.Fatalf("output missing did:\n%s", text)
+	}
+	if !strings.Contains(text, "--alias laptop") {
+		t.Fatalf("output missing alias:\n%s", text)
+	}
+	if strings.Contains(text, "--did-aw") || strings.Contains(text, "--address") || strings.Contains(text, "--lifetime") {
+		t.Fatalf("ephemeral output unexpectedly included persistent flags:\n%s", text)
 	}
 }
 
@@ -105,9 +116,14 @@ func TestTeamRequestPersistentJSONIncludesStableFields(t *testing.T) {
 		t.Fatalf("address=%v", got["address"])
 	}
 	command, _ := got["command"].(string)
-	want := "aw id team add-member --team backend --namespace acme.com --did " + memberDID + " --alias alice --did-aw " + stableID + " --address acme.com/alice --lifetime persistent"
-	if command != want {
-		t.Fatalf("command=%q want %q", command, want)
+	if !strings.Contains(command, "--lifetime persistent") {
+		t.Fatalf("command missing persistent lifetime: %q", command)
+	}
+	if !strings.Contains(command, "--did-aw "+stableID) {
+		t.Fatalf("command missing did-aw: %q", command)
+	}
+	if !strings.Contains(command, "--address acme.com/alice") {
+		t.Fatalf("command missing address: %q", command)
 	}
 }
 

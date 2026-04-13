@@ -95,9 +95,9 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 			return usageError("current persistent identity is missing stable_id or address; restore .aw/identity.yaml or run `aw id create` again")
 		}
 		commandParts = append(commandParts,
+			"--lifetime", awid.LifetimePersistent,
 			"--did-aw", stableID,
 			"--address", address,
-			"--lifetime", awid.LifetimePersistent,
 		)
 		out.DIDAW = stableID
 		out.Address = address
