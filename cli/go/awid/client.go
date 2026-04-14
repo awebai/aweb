@@ -245,7 +245,7 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 		return from
 	}
 	if c.teamCertHeader != "" {
-		if alias := strings.TrimSpace(c.certAlias); alias != "" {
+		if alias := c.certAlias; alias != "" {
 			return alias
 		}
 	}

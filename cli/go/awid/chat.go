@@ -21,10 +21,6 @@ func (c *Client) namespaceSlug() string {
 	return ""
 }
 
-func (c *Client) alias() string {
-	return c.addressAlias()
-}
-
 func (c *Client) toAddressForAliases(aliases []string) string {
 	return deterministicTargetList(aliases)
 }
@@ -100,7 +96,7 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 		if toDIDs := deterministicTargetList(removeOneSelfIdentifier(s.ParticipantDIDs, c.stableID, c.did)); toDIDs != "" {
 			return toDIDs, nil
 		}
-		selfAlias := c.alias()
+		selfAlias := c.addressAlias()
 		if selfAlias == "" {
 			return "", nil
 		}

@@ -2656,6 +2656,56 @@ func TestChatSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 	}
 }
 
+func TestChatSendMessageIdentityAuthStillUsesAddressDerivedAlias(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{{
+					SessionID:    "sess-1",
+					Participants: []string{"owner", "bob"},
+				}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/sess-1/messages":
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{
+				MessageID: "msg-2",
+				Delivered: true,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("acme.com/owner")
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{
+		Body: "message in chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := signedPayloadMap(t, gotBody)
+	if env["from"] != "owner" {
+		t.Fatalf("signed payload from=%v, want address-derived alias owner", env["from"])
+	}
+}
+
 func TestChatSendMessageSignedPayloadIncludesReplyAndHangOn(t *testing.T) {
 	t.Parallel()
 
