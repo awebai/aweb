@@ -2,8 +2,10 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
+	release-awid-pypi-tag release-awid-pypi-push \
 	release-channel-check release-channel-tag release-channel-push \
 	release-cli-tag release-cli-push \
+	release-awid-site \
 	release-all-check release-all-tag release-all-push
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
@@ -30,8 +32,10 @@ help:
 	@echo ""
 	@echo "  release-server-check / -tag / -push   aweb server (PyPI)"
 	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
-	@echo "  release-awid-check / -tag / -push     awid service (GHCR)"
+	@echo "  release-awid-check / -tag / -push     awid service (GHCR Docker)"
+	@echo "  release-awid-pypi-tag / -push         awid service (PyPI)"
 	@echo "  release-cli-tag / -push               aw CLI (goreleaser)"
+	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -109,6 +113,25 @@ release-awid-push:
 	git push origin main
 	git push origin awid-v$(AWID_VERSION)
 
+# ── Awid PyPI release ───────────────────────────────────────────────
+
+release-awid-pypi-tag:
+	@git rev-parse --verify "awid-service-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-service-v$(AWID_VERSION) already exists."; exit 1) || true
+	git tag "awid-service-v$(AWID_VERSION)"
+	@echo "Created tag awid-service-v$(AWID_VERSION)."
+
+release-awid-pypi-push:
+	git push origin awid-service-v$(AWID_VERSION)
+
+# ── Awid site deploy ────────────────────────────────────────────────
+
+release-awid-site:
+	git checkout deploy-awid-landing
+	git merge main -m "Deploy awid site from main"
+	git push origin deploy-awid-landing
+	git checkout main
+	@echo "Awid site deployed via deploy-awid-landing."
+
 # ── Channel release ──────────────────────────────────────────────────
 
 release-channel-check:
@@ -162,13 +185,14 @@ release-all-check:
 
 release-all-tag:
 	@echo "=== Tagging all products ==="
-	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml
+	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml awid/uv.lock
 	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
 	git tag "server-v$(SERVER_VERSION)"
 	git tag "aw-v$(CLI_VERSION)"
 	git tag "channel-v$(CHANNEL_VERSION)"
 	git tag "awid-v$(AWID_VERSION)"
-	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION)"
+	git tag "awid-service-v$(AWID_VERSION)"
+	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION) awid-service-v$(AWID_VERSION)"
 
 release-all-push:
 	git push origin main
@@ -176,7 +200,9 @@ release-all-push:
 	git push origin aw-v$(CLI_VERSION)
 	git push origin channel-v$(CHANNEL_VERSION)
 	git push origin awid-v$(AWID_VERSION)
-	@echo "All tags pushed. CI will publish."
+	git push origin awid-service-v$(AWID_VERSION)
+	$(MAKE) release-awid-site
+	@echo "All tags pushed and awid site deployed. CI will publish."
 
 clean:
 	@echo "Cleaning build artifacts..."
