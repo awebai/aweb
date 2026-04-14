@@ -97,6 +97,62 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
 
 
 @pytest.mark.asyncio
+async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    agent_id = uuid4()
+    did_key = "did:key:z6MkAlice"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "ops",
+        "did:key:z6MkTeam",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, 'persistent', 'active')
+        """,
+        agent_id,
+        team_id,
+        did_key,
+        "alice",
+    )
+
+    async def _fake_verify_request_certificate(_request, _db_infra):
+        return {
+            "team_id": team_id,
+            "did_key": did_key,
+            "alias": "alice",
+            "member_did_aw": "did:aw:alice",
+            "member_address": "acme.com/alice",
+            "lifetime": "persistent",
+            "certificate_id": "cert-1",
+        }
+
+    monkeypatch.setattr(mcp_auth, "verify_request_certificate", _fake_verify_request_certificate)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=aweb_cloud_db.aweb_db)
+    ctx = await middleware._resolve_auth(
+        _request_with_headers(
+            {
+                "Authorization": "DIDKey did:key:z6MkAlice signature",
+                "X-AWID-Team-Certificate": "certificate",
+            }
+        )
+    )
+
+    assert ctx is not None
+    assert ctx.agent_id == str(agent_id)
+    assert ctx.did_aw == "did:aw:alice"
+
+
+@pytest.mark.asyncio
 async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db, monkeypatch):
     now = datetime.now(timezone.utc)
 

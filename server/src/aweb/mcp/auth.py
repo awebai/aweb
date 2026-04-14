@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from aweb.identity_auth_deps import resolve_identity_auth
-from aweb.team_auth_deps import verify_request_certificate
+from aweb.team_auth_deps import _aweb_db, verify_request_certificate
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class MCPAuthMiddleware:
 
         cert_info = await verify_request_certificate(request, self.db_infra)
 
-        aweb_db = self.db_infra.get_manager("aweb")
+        aweb_db = _aweb_db(self.db_infra)
         row = await aweb_db.fetch_one(
             """
             SELECT agent_id, alias, did_aw, address FROM {{tables.agents}}
