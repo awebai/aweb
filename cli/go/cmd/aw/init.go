@@ -128,6 +128,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AwebURL:     awebURL,
 			RegistryURL: registryURL,
 			APIKey:      apiKey,
+			Alias:       resolveAliasValue(strings.TrimSpace(initAlias)),
 			Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
 			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),

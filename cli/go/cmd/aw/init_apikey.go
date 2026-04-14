@@ -27,6 +27,7 @@ type apiKeyInitRequest struct {
 	AwebURL     string
 	RegistryURL string
 	APIKey      string
+	Alias       string
 	Role        string
 	HumanName   string
 	AgentType   string
@@ -36,6 +37,7 @@ type apiKeyInitRequest struct {
 type apiKeyBootstrapRequest struct {
 	DID       string `json:"did"`
 	PublicKey string `json:"public_key"`
+	Alias     string `json:"alias,omitempty"`
 	RoleName  string `json:"role_name,omitempty"`
 	Lifetime  string `json:"lifetime"`
 }
@@ -88,6 +90,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
 		DID:       didKey,
 		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		Alias:     strings.TrimSpace(req.Alias),
 		RoleName:  strings.TrimSpace(req.Role),
 		Lifetime:  initLifetimeValue(req.Persistent),
 	})

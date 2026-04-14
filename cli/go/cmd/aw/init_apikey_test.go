@@ -102,6 +102,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 		WorkingDir: tmp,
 		AwebURL:    externalLikeTestURL(t, server.URL),
 		APIKey:     apiKey,
+		Alias:      "requested-alias",
 		Role:       "backend",
 	})
 	if err != nil {
@@ -110,6 +111,9 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 
 	if initAuthHeader != "Bearer "+apiKey {
 		t.Fatalf("Authorization=%q", initAuthHeader)
+	}
+	if initBody["alias"] != "requested-alias" {
+		t.Fatalf("init alias=%v", initBody["alias"])
 	}
 	if initBody["role_name"] != "backend" {
 		t.Fatalf("init role_name=%v", initBody["role_name"])
