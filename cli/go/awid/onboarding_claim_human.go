@@ -28,7 +28,8 @@ type ClaimHumanResponse struct {
 	Email  string `json:"email,omitempty"`
 }
 
-// ClaimHuman attaches an email address to an existing CLI-created account.
+// ClaimHuman calls the cloud onboarding endpoint to attach a human account to
+// an existing CLI-created agent identity. It is not an awid registry route.
 func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*ClaimHumanResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("aweb: claim-human request is required")

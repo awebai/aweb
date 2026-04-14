@@ -29,7 +29,7 @@ var claimHumanCmd = &cobra.Command{
 }
 
 func init() {
-	claimHumanCmd.GroupID = groupIdentity
+	claimHumanCmd.GroupID = groupWorkspace
 	claimHumanCmd.Flags().StringVar(&claimHumanEmail, "email", "", "Email address to attach to the current CLI-created account")
 	claimHumanCmd.Flags().StringVar(&claimHumanUsername, "username", "", "Override the default dashboard username derived from the registered domain")
 	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the bootstrap base URL for local development")

@@ -98,8 +98,14 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 	identityIdx := strings.Index(text, "Identity")
 	networkIdx := strings.Index(text, "Messaging & Network")
 	coordinationIdx := strings.Index(text, "Coordination & Runtime")
-	if identityIdx < 0 || networkIdx < 0 || coordinationIdx < 0 {
+	workspaceIdx := strings.Index(text, "Workspace Setup")
+	if workspaceIdx < 0 || identityIdx < 0 || networkIdx < 0 || coordinationIdx < 0 {
 		t.Fatalf("missing expected group boundaries:\n%s", text)
+	}
+
+	claimHumanIdx := strings.Index(text, "claim-human")
+	if claimHumanIdx < workspaceIdx || claimHumanIdx > identityIdx {
+		t.Fatalf("expected claim-human in Workspace Setup group:\n%s", text)
 	}
 
 	mcpIdx := strings.Index(text, "mcp-config")
