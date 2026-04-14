@@ -1,5 +1,85 @@
 # Changelog
 
+## v1.8.1
+
+### awid/aweb separation
+
+- Team membership state moved from `.aw/workspace.yaml` to `.aw/teams.yaml`.
+  All `aw id team` commands (add, switch, list, leave, cert show) now operate
+  on `teams.yaml` only, fully independent of aweb. Existing workspaces are
+  migrated lazily on first access.
+- `TeamMembership` is a standalone awid struct with four fields: `team_id`,
+  `alias`, `cert_path`, `joined_at`. No aweb concepts (`workspace_id`,
+  `role_name`) leak into team state.
+- `aw id` registry resolution no longer reads `workspace.yaml` or `AWEB_URL`.
+  The chain is: `identity.yaml` registry_url, `AWID_REGISTRY_URL` env var,
+  DNS discovery, default `api.awid.ai`.
+- `AWID_REGISTRY_URL=local` is now rejected with a clear error.
+- DNS-discovered registry URLs are persisted in `identity.yaml` so BYOD
+  identities do not re-do DNS on every CLI session.
+- `claim-human` moved from the Identity command group to Workspace Setup.
+
+### Identity model
+
+- `identity.yaml` is now written only for persistent identities. Ephemeral
+  agents (local init, hosted default, add-worktree) do not create it.
+- The messaging client falls back to `.aw/signing.key` when `identity.yaml`
+  is absent, deriving the DID via `ComputeDIDKey`.
+- `aw id` read-only commands (`resolve`, `verify`, `namespace`) no longer
+  require `signing.key` when loading identity for registry URL lookup.
+- Validation hardening: empty/malformed `identity.yaml` fails loudly,
+  persistent agents with missing `identity.yaml` fail loudly, ephemeral
+  fallback rejects certs with empty `member_did_key`.
+
+### Local namespace and onboarding
+
+- awid reserves `local` as a domain that skips DNS verification by policy.
+  `namespace_type` column dropped from the awid schema entirely.
+- `aw init` with a localhost awid registry automatically uses the implicit
+  local flow: namespace `local`, team `default`, ephemeral identity, no
+  wizard.
+- `--awid-registry` and `--aweb-url` CLI flags override env vars and
+  defaults on `aw init`.
+- `aw init` with `AWEB_API_KEY` env var exchanges a one-time HMAC bearer
+  token for a team certificate. The token is never written to disk. Cert
+  signature, DID binding, custody, and lifetime are all validated.
+- Self-hosting guide rewritten for two audiences: local quickstart and
+  company DNS deployment.
+
+### Signed payload and messaging fixes
+
+- Signed payload `from` field now uses the team cert alias in cert-auth
+  mode, not the identity-derived address name. Fixes 422 mismatch when
+  identity name differs from team alias.
+- Ephemeral agents no longer register DID or address at awid, fixing
+  bidirectional mail delivery between ephemeral agents.
+- Default coordination server discovery: cert-based `aw init` defaults to
+  `app.aweb.ai/api` when the team registry is `api.awid.ai`.
+- `normalizeAwebBaseURL` no longer strips `/api` from user-provided URLs.
+
+### New commands
+
+- `aw id team request --team <team_id> --alias <alias>`: prints the exact
+  `aw id team add-member` command the team owner should run. Pure awid,
+  no workspace dependency.
+- `aw id team add-member --did <did:key>`: adds a team member by DID
+  (for ephemeral agents without addresses). Supports `--lifetime`,
+  `--did-aw`, `--address` for persistent agents.
+- `claim-human --username <override>`: works for any awid-registered
+  domain, not just `*.aweb.ai`.
+
+### Removed from CLI surface
+
+- `aw spawn create-invite` and `aw spawn accept-invite` are no longer
+  user-facing commands. The invite code is used internally by
+  `aw workspace add-worktree`.
+
+### Server fixes
+
+- MCP auth middleware, team auth, and messaging auth now accept both
+  `DatabaseInfra` and raw `AsyncDatabaseManager`, fixing crashes on the
+  cloud MCP mount path.
+
 ## v1.8.0
 
 This release note covers the user-visible changes between the `v1.7.0`
