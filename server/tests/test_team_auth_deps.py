@@ -12,6 +12,8 @@ from starlette.requests import Request
 
 from nacl.signing import SigningKey
 
+import aweb.identity_auth_deps as _identity_auth_mod
+import aweb.team_auth_deps as _team_auth_mod
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import get_messaging_auth
@@ -219,7 +221,7 @@ async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch)
             "certificate_id": "cert-raw-manager",
         }
 
-    monkeypatch.setattr("aweb.team_auth_deps.verify_request_certificate", _fake_verify_request_certificate)
+    monkeypatch.setattr(_team_auth_mod, "verify_request_certificate", _fake_verify_request_certificate)
 
     identity = await get_team_identity(_request_with_headers({}), db)
 
@@ -270,7 +272,7 @@ async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch
             certificate_id="cert-1",
         )
 
-    monkeypatch.setattr("aweb.identity_auth_deps.get_team_identity", _fake_get_team_identity)
+    monkeypatch.setattr(_identity_auth_mod, "get_team_identity", _fake_get_team_identity)
 
     auth = await get_messaging_auth(
         _request_with_headers(
