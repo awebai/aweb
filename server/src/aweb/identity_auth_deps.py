@@ -9,7 +9,7 @@ from fastapi import Depends, HTTPException, Request
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from aweb.deps import get_db
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, _aweb_db, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ async def get_identity_auth(request: Request, db=Depends(get_db)) -> IdentityAut
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
-        aweb_db = db.get_manager("aweb")
+        aweb_db = _aweb_db(db)
         row = await aweb_db.fetch_one(
             """
             SELECT did_aw, address

@@ -25,6 +25,10 @@ from aweb.team_auth import parse_and_verify_certificate
 logger = logging.getLogger(__name__)
 
 
+def _aweb_db(db_or_manager):
+    return db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
+
+
 @dataclass(frozen=True)
 class TeamIdentity:
     """Authenticated agent identity within a team.
@@ -197,7 +201,7 @@ async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentit
     """
     cert_info = await verify_request_certificate(request, db)
 
-    aweb_db = db.get_manager("aweb")
+    aweb_db = _aweb_db(db)
     try:
         return await resolve_team_identity(aweb_db, cert_info)
     except ValueError as e:

@@ -8,11 +8,14 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from starlette.requests import Request
 
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.identity_auth_deps import get_messaging_auth
+from aweb.team_auth_deps import TeamIdentity
 
 
 def _make_keypair():
@@ -43,6 +46,22 @@ def _make_certificate(team_sk, team_did_key, member_did_key, **kwargs):
 
 def _encode_certificate(cert):
     return base64.b64encode(json.dumps(cert).encode()).decode()
+
+
+def _request_with_headers(headers: dict[str, str]) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp",
+            "query_string": b"",
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "http_version": "1.1",
+        }
+    )
 
 
 class TestTeamIdentity:
@@ -158,3 +177,111 @@ class TestResolveTeamIdentity:
 
         with pytest.raises(ValueError, match="not connected"):
             await resolve_team_identity(db, cert_info)
+
+
+@pytest.mark.asyncio
+async def test_get_team_identity_accepts_raw_manager(aweb_cloud_db, monkeypatch):
+    from aweb.routes.connect import connect_agent
+    from aweb.team_auth_deps import get_team_identity
+
+    db = aweb_cloud_db.aweb_db
+    team_sk, _, team_did_key = _make_keypair()
+    _, _, agent_did_key = _make_keypair()
+
+    connected = await connect_agent(
+        db=db,
+        cert_info={
+            "team_id": "backend:acme.com",
+            "alias": "alice",
+            "did_key": agent_did_key,
+            "member_did_aw": "did:aw:alice",
+            "member_address": "acme.com/alice",
+            "lifetime": "persistent",
+            "certificate_id": "cert-raw-manager",
+        },
+        team_did_key=team_did_key,
+        hostname="Mac.local",
+        workspace_path="/project",
+        repo_origin="",
+        role="developer",
+        human_name="",
+        agent_type="agent",
+    )
+
+    async def _fake_verify_request_certificate(_request, _db):
+        return {
+            "team_id": "backend:acme.com",
+            "alias": "alice",
+            "did_key": agent_did_key,
+            "member_did_aw": "did:aw:alice",
+            "member_address": "acme.com/alice",
+            "lifetime": "persistent",
+            "certificate_id": "cert-raw-manager",
+        }
+
+    monkeypatch.setattr("aweb.team_auth_deps.verify_request_certificate", _fake_verify_request_certificate)
+
+    identity = await get_team_identity(_request_with_headers({}), db)
+
+    assert identity.agent_id == connected["agent_id"]
+    assert identity.did_aw == "did:aw:alice"
+    assert identity.address == "acme.com/alice"
+
+
+@pytest.mark.asyncio
+async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
+    db = aweb_cloud_db.aweb_db
+    agent_id = uuid.uuid4()
+
+    await db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        "backend:acme.com",
+        "acme.com",
+        "backend",
+        "did:key:z6MkTeam",
+    )
+
+    await db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'active')
+        """,
+        agent_id,
+        "backend:acme.com",
+        "did:key:z6MkAlice",
+        "did:aw:alice",
+        "acme.com/alice",
+        "alice",
+    )
+
+    async def _fake_get_team_identity(_request, _db):
+        return TeamIdentity(
+            team_id="backend:acme.com",
+            alias="alice",
+            did_key="did:key:z6MkAlice",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            agent_id=str(agent_id),
+            lifetime="persistent",
+            certificate_id="cert-1",
+        )
+
+    monkeypatch.setattr("aweb.identity_auth_deps.get_team_identity", _fake_get_team_identity)
+
+    auth = await get_messaging_auth(
+        _request_with_headers(
+            {
+                "Authorization": "DIDKey did:key:z6MkAlice signature",
+                "X-AWID-Team-Certificate": "certificate",
+            }
+        ),
+        db,
+    )
+
+    assert auth.agent_id == str(agent_id)
+    assert auth.did_aw == "did:aw:alice"
+    assert auth.address == "acme.com/alice"
