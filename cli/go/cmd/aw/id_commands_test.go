@@ -457,6 +457,57 @@ func TestPrepareIDCreatePlanUsesDNSDiscoveredRegistryURL(t *testing.T) {
 	}
 }
 
+func TestExecuteIDCreatePersistsDNSDiscoveredRegistryURLWhenRegistrationUnavailable(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	controllerPub, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+
+	discoveredRegistryURL := "https://registry.example.com"
+	out, err := executeIDCreate(tmp, idCreateOptions{
+		Name:          "Alice",
+		Domain:        "acme.com",
+		SkipDNSVerify: true,
+		TXTResolver: staticTXTResolver{
+			"_awid.acme.com": {idCreateDNSRecordValue(controllerDID, discoveredRegistryURL)},
+		},
+		Now: func() time.Time {
+			return time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("executeIDCreate: %v", err)
+	}
+	if out.RegistryURL != discoveredRegistryURL {
+		t.Fatalf("registry_url=%q want %q", out.RegistryURL, discoveredRegistryURL)
+	}
+	if out.RegistryStatus != "pending" {
+		t.Fatalf("registry_status=%q", out.RegistryStatus)
+	}
+	if strings.TrimSpace(out.RegistryError) == "" {
+		t.Fatal("expected registry_error for unavailable discovered registry")
+	}
+
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.RegistryURL != discoveredRegistryURL {
+		t.Fatalf("identity registry_url=%q want %q", identity.RegistryURL, discoveredRegistryURL)
+	}
+	if identity.RegistryStatus != "pending" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+}
+
 func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	t.Parallel()
 
