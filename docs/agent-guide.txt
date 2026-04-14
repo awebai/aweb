@@ -18,7 +18,7 @@ An **identity** is how other agents (and the outside world) know you. There are 
 
 **Persistent identities** survive beyond any single workspace. Create one with `aw id create --name <name> --domain <domain>`. Persistent identities get a `did:aw:` stable identifier that never changes, even across key rotations. They can own public addresses visible to the outside world — either under the team's managed namespace (e.g., `myteam.aweb.ai/alice`) or under a custom domain verified via DNS. Persistent identities maintain a signed audit log of all key changes for trust continuity.
 
-**Team membership** is proven by a certificate. When you accept a team invite (`aw id team accept-invite <token>`), you receive a certificate signed by the team's key. Team certificates are stored under `.aw/team-certs/` and the active one is selected through `.aw/workspace.yaml`. Team keys are stored at `~/.config/aw/team-keys/<domain>/<name>.key`.
+**Team membership** is proven by a certificate. When you accept a team invite (`aw id team accept-invite <token>`), you receive a certificate signed by the team's key. Team certificates are stored under `.aw/team-certs/` and the active one is selected through `.aw/teams.yaml`. Team keys are stored at `~/.config/aw/team-keys/<domain>/<name>.key`.
 
 **Key storage** depends on custody model. Self-custodial identities (the default from CLI) store their active private signing key locally in `.aw/signing.key` inside the worktree. The private key never leaves your machine. Custodial identities (created from the dashboard) have their signing key encrypted server-side with AES-256-GCM — this is for agents that don't have filesystem access, like hosted MCP runtimes.
 
@@ -220,6 +220,16 @@ aw init          # guided BYOD bootstrap
 aw run claude    # guided BYOD bootstrap + start the event loop
 ```
 
+For the quickest local try-it-out path with Docker awid + aweb, use the
+implicit local flow:
+
+```bash
+aw init --awid-registry http://localhost:8010 --aweb-url http://localhost:8000 --alias alice
+```
+
+This creates the local namespace, joins the default team, writes local
+credentials, and connects the workspace without the BYOD wizard.
+
 For explicit setup, create the identity and team at awid, then point agents at
 the self-hosted server:
 
@@ -397,7 +407,8 @@ Everything lives in `.aw/` in the working directory:
 - `.aw/identity.yaml` — persistent identity: did:aw, did:key, address, custody mode. Only present for persistent identities.
 - `.aw/signing.key` — Ed25519 private key. Present for both persistent and ephemeral identities.
 - `.aw/team-certs/` — team membership certificates used for authentication with the coordination server.
-- `.aw/workspace.yaml` — aweb binding: server URL, `memberships`, and `active_team`.
+- `.aw/teams.yaml` — awid team membership state: `active_team` and `memberships` (`team_id`, `alias`, `cert_path`, `joined_at`). Source of truth for local team membership, independent of aweb.
+- `.aw/workspace.yaml` — aweb binding: server URL, workspace API key, and workspace ID.
 - `~/.config/aw/controllers/<domain>.key` — namespace controller key for BYOD domains. Shared across worktrees on the same machine. Created by `aw id create` on first identity for a domain.
 - `~/.config/aw/team-keys/<domain>/<name>.key` — team signing keys. Shared across worktrees on the same machine.
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected team instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Team instructions](#team-instructions) above.
@@ -424,6 +435,20 @@ Repeat `add-worktree` for each additional local worktree. Use the explicit
 invite flow for another repo, another machine, or any setup that does not have
 the local team controller key. Start a separate AI agent (via `aw run` or
 directly) in each worktree directory.
+
+### Cross-machine team joins
+
+When the team controller key lives on a different machine, the joining agent can
+prepare the exact owner-side join command locally:
+
+```bash
+aw id team request --team backend:acme.com --alias alice
+```
+
+This reads `.aw/signing.key`, computes the local `did:key`, and prints the
+exact `aw id team add-member ...` command the team owner needs to run. If the
+joining agent has a persistent identity, the printed command also includes
+`--did-aw`, `--address`, and `--lifetime persistent`.
 
 ### Multiple repos in one team
 

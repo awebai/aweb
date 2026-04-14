@@ -99,7 +99,8 @@ For another local agent in the same git repo on the same controller machine:
 aw workspace add-worktree developer
 ```
 
-For another repo or machine:
+For another repo or machine when the same controller machine can mint the
+invite:
 
 ```bash
 aw id team invite --namespace <namespace> --team <team>
@@ -114,6 +115,15 @@ AWEB_URL=http://localhost:8000 aw init --aweb-url "$AWEB_URL"
 
 Every joining workspace authenticates to aweb with its team certificate
 (`.aw/team-certs/`).
+
+For agents joining from a different machine that does not hold the team
+controller key:
+
+- BYOIT / self-hosted: run `aw id team request --team <team_id> --alias <alias>`
+  in the joining directory, send the printed `aw id team add-member ...` command
+  to the team owner, then accept the resulting invite and run `aw init`.
+- Cloud-hosted: use the dashboard/API-key bootstrap path (`AWEB_API_KEY=... aw init ...`)
+  when the workspace is provisioned from the hosted service.
 
 ## Core Model
 
