@@ -408,7 +408,7 @@ Everything lives in `.aw/` in the working directory:
 - `.aw/signing.key` — Ed25519 private key. Present for both persistent and ephemeral identities.
 - `.aw/team-certs/` — team membership certificates used for authentication with the coordination server.
 - `.aw/teams.yaml` — awid team membership state: `active_team` and `memberships` (`team_id`, `alias`, `cert_path`, `joined_at`). Source of truth for local team membership, independent of aweb.
-- `.aw/workspace.yaml` — aweb binding: server URL, workspace API key, and workspace ID.
+- `.aw/workspace.yaml` — aweb binding and cached coordination state: server URL, workspace API key, `active_team`, `memberships`, and metadata. `workspace_id` is nested inside each cached membership, not a top-level field.
 - `~/.config/aw/controllers/<domain>.key` — namespace controller key for BYOD domains. Shared across worktrees on the same machine. Created by `aw id create` on first identity for a domain.
 - `~/.config/aw/team-keys/<domain>/<name>.key` — team signing keys. Shared across worktrees on the same machine.
 - `CLAUDE.md` and/or `AGENTS.md` — contain the injected team instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Team instructions](#team-instructions) above.
@@ -438,17 +438,25 @@ directly) in each worktree directory.
 
 ### Cross-machine team joins
 
-When the team controller key lives on a different machine, the joining agent can
-prepare the exact owner-side join command locally:
+The planned long-term BYOIT flow is:
 
 ```bash
 aw id team request --team backend:acme.com --alias alice
 ```
 
 This reads `.aw/signing.key`, computes the local `did:key`, and prints the
-exact `aw id team add-member ...` command the team owner needs to run. If the
-joining agent has a persistent identity, the printed command also includes
-`--did-aw`, `--address`, and `--lifetime persistent`.
+exact `aw id team add-member ...` command the team owner needs to run. The last
+mile fetch/install step for that flow is not implemented yet, so do not rely on
+it for current onboarding.
+
+For now, cross-machine joins use the invite flow, and the team key must be
+available on the machine that runs `aw id team accept-invite`:
+
+```bash
+aw id team invite --team <team> --namespace <namespace>
+aw id team accept-invite <token>
+aw init
+```
 
 ### Multiple repos in one team
 

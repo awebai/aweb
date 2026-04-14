@@ -119,9 +119,11 @@ Every joining workspace authenticates to aweb with its team certificate
 For agents joining from a different machine that does not hold the team
 controller key:
 
-- BYOIT / self-hosted: run `aw id team request --team <team_id> --alias <alias>`
-  in the joining directory, send the printed `aw id team add-member ...` command
-  to the team owner, then accept the resulting invite and run `aw init`.
+- BYOIT / self-hosted: the planned `aw id team request` + fetch-cert flow is
+  not complete yet. For now, use the invite flow: run
+  `aw id team invite --namespace <namespace> --team <team>` on the controller
+  machine, share the token, then run `aw id team accept-invite <token>` where
+  the team key is available and finish with `aw init`.
 - Cloud-hosted: use the dashboard/API-key bootstrap path (`AWEB_API_KEY=... aw init ...`)
   when the workspace is provisioned from the hosted service.
 
