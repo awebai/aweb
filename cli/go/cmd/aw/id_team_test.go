@@ -286,7 +286,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 		"--team", "backend",
 		"--namespace", "acme.com",
 		"--json")
-	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = tmp
 	inviteOut, err := runInvite.CombinedOutput()
 	if err != nil {

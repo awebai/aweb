@@ -125,10 +125,6 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	awebURL, err := resolveOptionalWorkspaceBaseURL()
-	if err != nil {
-		return err
-	}
 	registryURL, err := currentIdentityRegistryURL(ctx, identity, registry)
 	if err != nil {
 		return err
@@ -136,7 +132,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	mapping, err := registry.RegisterDID(
 		ctx,
 		registryURL,
-		awebURL,
+		"",
 		identity.Address,
 		identity.Handle,
 		identity.DID,
@@ -152,7 +148,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 		mapping = &awid.DIDMapping{
 			DIDAW:         identity.StableID,
 			CurrentDIDKey: identity.DID,
-			Server:        awebURL,
+			Server:        "",
 			Address:       identity.Address,
 		}
 	} else if err != nil {
@@ -221,7 +217,8 @@ func runIDResolve(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	registry, sel, err := resolveRegistryClientForLookup()
+	workingDir, _ := os.Getwd()
+	registry, identity, err := resolveRegistryClientForLookup(workingDir)
 	if err != nil {
 		return err
 	}
@@ -229,7 +226,7 @@ func runIDResolve(cmd *cobra.Command, args []string) error {
 	if !strings.HasPrefix(didAW, "did:aw:") {
 		return usageError("did_aw must start with did:aw:")
 	}
-	registryURL, err := registryLookupURL(ctx, registry, sel, didAW)
+	registryURL, err := registryLookupURL(ctx, registry, identity, didAW)
 	if err != nil {
 		return err
 	}
@@ -250,7 +247,8 @@ func runIDVerify(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	registry, sel, err := resolveRegistryClientForLookup()
+	workingDir, _ := os.Getwd()
+	registry, identity, err := resolveRegistryClientForLookup(workingDir)
 	if err != nil {
 		return err
 	}
@@ -258,7 +256,7 @@ func runIDVerify(cmd *cobra.Command, args []string) error {
 	if !strings.HasPrefix(didAW, "did:aw:") {
 		return usageError("did_aw must start with did:aw:")
 	}
-	registryURL, err := registryLookupURL(ctx, registry, sel, didAW)
+	registryURL, err := registryLookupURL(ctx, registry, identity, didAW)
 	if err != nil {
 		return err
 	}
@@ -297,7 +295,8 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	registry, sel, err := resolveRegistryClientForLookup()
+	workingDir, _ := os.Getwd()
+	registry, _, err := resolveRegistryClientForLookup(workingDir)
 	if err != nil {
 		return err
 	}
@@ -310,12 +309,9 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	var lookupSigningKey ed25519.PrivateKey
-	if sel != nil && strings.TrimSpace(sel.SigningKey) != "" {
-		lookupSigningKey, err = awid.LoadSigningKey(sel.SigningKey)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("load signing key: %w", err)
-		}
+	lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
+	if err != nil {
+		return fmt.Errorf("load signing key: %w", err)
 	}
 	var addresses []awid.RegistryAddress
 	if lookupSigningKey != nil {
@@ -363,6 +359,9 @@ func currentIdentityRegistryURL(ctx context.Context, identity *awconfig.Resolved
 	if registry == nil {
 		return "", fmt.Errorf("missing registry client")
 	}
+	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" {
+		return registry.DefaultRegistryURL, nil
+	}
 	if strings.TrimSpace(identity.RegistryURL) != "" {
 		return strings.TrimSpace(identity.RegistryURL), nil
 	}
@@ -372,50 +371,50 @@ func currentIdentityRegistryURL(ctx context.Context, identity *awconfig.Resolved
 	return registry.DefaultRegistryURL, nil
 }
 
-func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, sel *awconfig.Selection, didAW string) (string, error) {
+func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, identity *awconfig.ResolvedIdentity, didAW string) (string, error) {
 	if registry == nil {
 		return "", fmt.Errorf("missing registry client")
 	}
-	if sel != nil && strings.TrimSpace(sel.StableID) == strings.TrimSpace(didAW) {
-		address := selectionAddress(sel)
-		if domain, _, ok := awconfig.CutIdentityAddress(address); ok && strings.TrimSpace(domain) != "" {
-			return registry.DiscoverRegistry(ctx, domain)
+	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" {
+		return registry.DefaultRegistryURL, nil
+	}
+	if identity != nil && strings.TrimSpace(identity.StableID) == strings.TrimSpace(didAW) {
+		if strings.TrimSpace(identity.RegistryURL) != "" {
+			return strings.TrimSpace(identity.RegistryURL), nil
+		}
+		if strings.TrimSpace(identity.Domain) != "" {
+			return registry.DiscoverRegistry(ctx, identity.Domain)
 		}
 	}
 	return registry.DefaultRegistryURL, nil
 }
 
-func resolveRegistryClientForLookup() (*awid.RegistryClient, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
-	sel, err := resolveSelectionForDir(wd)
-	if err == nil && strings.TrimSpace(sel.BaseURL) != "" {
-		baseURL, baseErr := resolveAuthenticatedBaseURL(sel.BaseURL)
-		if baseErr != nil {
-			return nil, nil, baseErr
-		}
-		sel.BaseURL = baseURL
-		registry, regErr := newConfiguredRegistryClient(nil, baseURL)
-		return registry, sel, regErr
+func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *awconfig.ResolvedIdentity, error) {
+	identity, err := resolveOptionalPersistentIdentityForLookup(workingDir)
+	if err != nil {
+		return nil, nil, err
 	}
-	registry, regErr := newConfiguredRegistryClient(nil, strings.TrimSpace(os.Getenv("AWEB_URL")))
-	if err == nil {
-		return registry, sel, regErr
+	baseURL := ""
+	if identity != nil {
+		baseURL = strings.TrimSpace(identity.RegistryURL)
 	}
-	return registry, nil, regErr
+	registry, err := newRegistryClientWithPreferredBaseURL(baseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	return registry, identity, nil
 }
 
 func resolveIdentityRegistryClient(identity *awconfig.ResolvedIdentity) (*awid.RegistryClient, error) {
-	baseURL, err := resolveOptionalWorkspaceBaseURL()
+	baseURL := ""
+	if identity != nil {
+		baseURL = strings.TrimSpace(identity.RegistryURL)
+	}
+	registry, err := newRegistryClientWithPreferredBaseURL(baseURL)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(baseURL) == "" && identity != nil {
-		baseURL = strings.TrimSpace(identity.RegistryURL)
-	}
-	if strings.TrimSpace(baseURL) == "" {
-		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
-	}
-	return newConfiguredRegistryClient(nil, baseURL)
+	return registry, nil
 }
 
 func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.PrivateKey, error) {
@@ -432,15 +431,42 @@ func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.Pri
 	return priv, nil
 }
 
-func resolveOptionalWorkspaceBaseURL() (string, error) {
-	sel, err := resolveSelectionForDir("")
+func resolveOptionalPersistentIdentityForLookup(workingDir string) (*awconfig.ResolvedIdentity, error) {
+	identity, err := awconfig.ResolveIdentity(workingDir)
 	if err != nil {
-		return "", err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	if strings.TrimSpace(sel.BaseURL) == "" {
-		return "", nil
+	if err := validateRegistryLookupIdentity(identity); err != nil {
+		return nil, err
 	}
-	return resolveAuthenticatedBaseURL(sel.BaseURL)
+	return identity, nil
+}
+
+func newRegistryClientWithPreferredBaseURL(baseURL string) (*awid.RegistryClient, error) {
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" || strings.TrimSpace(baseURL) == "" {
+		return registry, nil
+	}
+	if err := registry.SetFallbackRegistryURL(baseURL); err != nil {
+		return nil, fmt.Errorf("invalid identity registry URL: %w", err)
+	}
+	return registry, nil
+}
+
+func validateRegistryLookupIdentity(identity *awconfig.ResolvedIdentity) error {
+	if identity == nil {
+		return fmt.Errorf("missing identity context")
+	}
+	if strings.TrimSpace(identity.DID) == "" {
+		return usageError("current identity is invalid: .aw/identity.yaml is missing did")
+	}
+	return nil
 }
 
 func registryStatusCode(err error) (int, bool) {

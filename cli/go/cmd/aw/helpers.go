@@ -553,10 +553,7 @@ func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) e
 		}
 		return nil
 	}
-	if err := setFallback(baseURL); err != nil {
-		return fmt.Errorf("invalid embedded registry base URL: %w", err)
-	}
-	return nil
+	return fmt.Errorf("AWID_REGISTRY_URL=local is not supported; use an explicit registry URL")
 }
 
 func persistResolvedAwebURL(workspacePath, baseURL string) error {

@@ -138,7 +138,7 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-123", "--address", "juanre.aweb.ai/laptop-agent", "--mock-url", server.URL)
-	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -273,7 +273,7 @@ func TestConnectBootstrapEphemeral(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-ephemeral", "--mock-url", server.URL)
-	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -328,7 +328,7 @@ func TestConnectBootstrapMapsConflict(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-expired", "--mock-url", server.URL)
-	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -444,7 +444,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-123", "--address", "juanre.aweb.ai/laptop-agent", "--mock-url", onboardingServer.URL)
-	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -101,7 +101,7 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	runJSON := func(args ...string) map[string]any {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+		run.Env = testCommandEnv(tmp)
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -796,7 +796,7 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 	writeStandaloneSelfCustodyIdentity(t, tmp, address, oldDID, stableID, registryURL, oldPriv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -974,6 +974,262 @@ func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 	}
 }
 
+func TestAwIDResolveUsesAWIDRegistryURLEnvWithoutWorkspace(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	var registryHits atomic.Int32
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/key":
+			registryHits.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("AWEB_URL should not be used for awid lookup: %s %s", r.Method, r.URL.Path)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, "", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
+	run.Env = append(testCommandEnv(tmp),
+		"AWID_REGISTRY_URL="+registryServer.URL,
+		"AWEB_URL="+awebServer.URL,
+	)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["registry_url"] != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	}
+	if got["current_did_key"] != did {
+		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	}
+	if registryHits.Load() != 1 {
+		t.Fatalf("registry hits=%d want 1", registryHits.Load())
+	}
+}
+
+func TestAwIDVerifyUsesIdentityRegistryURLWithoutWorkspace(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("b", 64))
+
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/log":
+			_ = json.NewEncoder(w).Encode([]map[string]any{didLogJSON(logEntry)})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, registryServer.URL, priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id verify failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "OK" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["registry_url"] != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	}
+}
+
+func TestAwIDVerifyAWIDRegistryURLEnvOverridesIdentityRegistryURL(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("c", 64))
+
+	var envHits atomic.Int32
+	envServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/log":
+			envHits.Add(1)
+			_ = json.NewEncoder(w).Encode([]map[string]any{didLogJSON(logEntry)})
+		default:
+			t.Fatalf("unexpected env registry request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	identityServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("identity registry should not be used when AWID_REGISTRY_URL is set: %s %s", r.Method, r.URL.Path)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, identityServer.URL, priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+envServer.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id verify failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["registry_url"] != envServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], envServer.URL)
+	}
+	if envHits.Load() != 1 {
+		t.Fatalf("env registry hits=%d want 1", envHits.Load())
+	}
+}
+
+func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": did,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:         did,
+		StableID:    stableID,
+		Address:     "acme.com/alice",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
+		CreatedAt:   "2026-04-14T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["current_did_key"] != did {
+		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	}
+	if got["registry_url"] != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	}
+}
+
+func TestResolveRegistryClientForLookupDefaultsWithoutIdentityOrEnv(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	registry, identity, err := resolveRegistryClientForLookup(tmp)
+	if err != nil {
+		t.Fatalf("resolveRegistryClientForLookup: %v", err)
+	}
+	if identity != nil {
+		t.Fatalf("identity=%+v want nil", identity)
+	}
+	if registry.DefaultRegistryURL != awid.DefaultAWIDRegistryURL {
+		t.Fatalf("default registry=%q want %q", registry.DefaultRegistryURL, awid.DefaultAWIDRegistryURL)
+	}
+}
+
+func TestResolveRegistryClientForLookupRejectsAWIDRegistryURLLocal(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "local")
+
+	tmp := t.TempDir()
+	_, _, err := resolveRegistryClientForLookup(tmp)
+	if err == nil {
+		t.Fatal("expected AWID_REGISTRY_URL=local to fail")
+	}
+	if !strings.Contains(err.Error(), "AWID_REGISTRY_URL=local is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAwIDShowWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -1058,7 +1314,7 @@ func TestAwIDVerifyWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
 	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, serverURL, "default:alice.aweb.ai", "alice-laptop", ephemeralKey)
 
 	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+serverURL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1097,7 +1353,7 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *te
 	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1128,7 +1384,7 @@ func TestAwIDRegisterFailsClearlyWithoutIdentityFileForEphemeralWorkspace(t *tes
 	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "register", "--json")
-	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=local")
+	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -1551,12 +1807,13 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Address:   address,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:         did,
+		StableID:    stableID,
+		Address:     address,
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: serverURL,
+		CreatedAt:   "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
