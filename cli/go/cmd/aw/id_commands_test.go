@@ -421,6 +421,42 @@ func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
 	}
 }
 
+func TestPrepareIDCreatePlanUsesDNSDiscoveredRegistryURL(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	controllerPub, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("acme.com", controllerKey); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared, err := prepareIDCreatePlan(tmp, idCreateOptions{
+		Name:          "Alice",
+		Domain:        "acme.com",
+		SkipDNSVerify: true,
+		TXTResolver: staticTXTResolver{
+			"_awid.acme.com": {idCreateDNSRecordValue(controllerDID, "https://registry.example.com")},
+		},
+		Now: func() time.Time {
+			return time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("prepareIDCreatePlan: %v", err)
+	}
+	if prepared.Plan.RegistryURL != "https://registry.example.com" {
+		t.Fatalf("registry_url=%q", prepared.Plan.RegistryURL)
+	}
+	if prepared.Plan.DNSRecordValue != idCreateDNSRecordValue(controllerDID, "https://registry.example.com") {
+		t.Fatalf("dns_record_value=%q", prepared.Plan.DNSRecordValue)
+	}
+}
+
 func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	t.Parallel()
 

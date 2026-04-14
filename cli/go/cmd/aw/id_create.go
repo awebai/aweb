@@ -212,13 +212,23 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 			return nil, fmt.Errorf("invalid --registry: %w", err)
 		}
 	}
+	registryURL := strings.TrimSpace(registry.DefaultRegistryURL)
+	if strings.TrimSpace(opts.RegistryURL) == "" {
+		discoveredRegistryURL, err := discoverIDCreateRegistryURL(domain, opts.TXTResolver)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(discoveredRegistryURL) != "" {
+			registryURL = strings.TrimSpace(discoveredRegistryURL)
+		}
+	}
 
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
 	}
 
-	controllerKey, controllerDID, createdController, err := resolveOrCreateControllerKey(domain, strings.TrimSpace(registry.DefaultRegistryURL), now().UTC().Format(time.RFC3339))
+	controllerKey, controllerDID, createdController, err := resolveOrCreateControllerKey(domain, registryURL, now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -235,9 +245,9 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		DIDAW:          awid.ComputeStableID(pub),
 		DIDKey:         didKey,
 		ControllerDID:  controllerDID,
-		RegistryURL:    strings.TrimSpace(registry.DefaultRegistryURL),
+		RegistryURL:    registryURL,
 		DNSRecordName:  awid.AWIDTXTName(domain),
-		DNSRecordValue: idCreateDNSRecordValue(controllerDID, strings.TrimSpace(registry.DefaultRegistryURL)),
+		DNSRecordValue: idCreateDNSRecordValue(controllerDID, registryURL),
 		IdentityPath:   identityPath,
 		SigningKeyPath: signingKeyPath,
 		CreatedAt:      now().UTC().Format(time.RFC3339),
@@ -248,6 +258,36 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		IdentityKey:   identityKey,
 		ControllerKey: controllerKey,
 	}, nil
+}
+
+func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
+	if err != nil {
+		if isIDCreateTXTLookupMiss(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	registryURL := strings.TrimSpace(authority.RegistryURL)
+	if registryURL == "" {
+		return awid.DefaultAWIDRegistryURL, nil
+	}
+	return registryURL, nil
+}
+
+func isIDCreateTXTLookupMiss(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no awid txt record found") || strings.Contains(msg, "no txt records found")
 }
 
 func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error {
