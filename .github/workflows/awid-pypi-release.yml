@@ -1,0 +1,49 @@
+name: Awid Service Release (PyPI)
+
+# Tag awid-service-vX.Y.Z to publish the awid-service package to PyPI.
+# Uses PYPI_TOKEN secret (__token__ API token from pypi.org).
+
+on:
+  push:
+    tags:
+      - 'awid-service-v*'
+
+jobs:
+  publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Verify version matches tag
+        working-directory: awid
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#awid-service-v}"
+          PKG_VERSION="$(python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          m = re.search(r'version\s*=\s*\"([^\"]+)\"', text)
+          print(m.group(1))
+          ")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match pyproject.toml version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version: $PKG_VERSION"
+
+      - name: Build
+        working-directory: awid
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: awid
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
