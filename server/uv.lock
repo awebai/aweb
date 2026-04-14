@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.6.2"
+version = "1.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "awid-service" },
@@ -113,7 +113,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "awid-service", directory = "../awid" },
+    { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
     { name = "dnspython", specifier = ">=2.8.0" },
@@ -140,7 +140,7 @@ dev = [
 [[package]]
 name = "awid-service"
 version = "0.1.2"
-source = { directory = "../awid" }
+source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },
     { name = "dnspython" },
