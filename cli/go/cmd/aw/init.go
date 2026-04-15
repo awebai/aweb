@@ -508,23 +508,23 @@ func printInitNextSteps(result *initResult, workingDir string, didInjectDocs, di
 }
 
 func initNextStepLines(result *initResult, workingDir string, didInjectDocs, didSetupHooks, didSetupChannel bool) []string {
-	lines := []string{
-		formatInitNextStep("aw run codex", "Start Codex in this directory"),
-		formatInitNextStep("aw run claude", "Start Claude in this directory"),
-	}
+	var lines []string
 
-	if shouldSuggestClaimHuman(result) {
-		lines = append(lines, formatInitNextStep("aw claim-human --email you@example.com", "Attach your human account for dashboard access"))
+	if !didSetupChannel {
+		lines = append(lines, formatInitNextStep("aw init --setup-channel", "Set up Claude Code channel for real-time coordination"))
 	}
 	if !didInjectDocs {
 		lines = append(lines, formatInitNextStep("aw init --inject-docs", "Add coordination instructions to CLAUDE.md / AGENTS.md"))
 	}
-	if !didSetupHooks {
-		lines = append(lines, formatInitNextStep("aw init --setup-hooks", "Set up Claude Code chat notification hook"))
+	if shouldSuggestClaimHuman(result) {
+		lines = append(lines, formatInitNextStep("aw claim-human --email you@example.com", "Attach your human account for dashboard access"))
 	}
-	if !didSetupChannel {
-		lines = append(lines, formatInitNextStep("aw init --setup-channel", "Set up Claude Code channel MCP server"))
-	}
+
+	lines = append(lines, "")
+	lines = append(lines, "  Start Claude Code with the channel enabled:")
+	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	lines = append(lines, "")
+	lines = append(lines, "  Agent guide: docs/agent-guide.txt")
 	return lines
 }
 
