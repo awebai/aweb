@@ -502,14 +502,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			alias := strings.TrimSpace(signupBody["alias"].(string))
 			didKey := strings.TrimSpace(signupBody["did_key"].(string))
 			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
+				Team:         "default:" + username + ".aweb.ai",
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -526,7 +523,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"team_id":          "default:" + username + ".aweb.ai",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
-				"member_address":   memberAddress,
+				"member_address":   "",
 				"alias":            alias,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
@@ -564,17 +561,17 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if checkBodies[0]["username"] != "jack" {
 		t.Fatalf("username=%v", checkBodies[0]["username"])
 	}
-	if len(didRequests) != 1 {
+	if len(didRequests) != 0 {
 		t.Fatalf("did registrations=%d", len(didRequests))
-	}
-	if didRequests[0]["address"] != "jack.aweb.ai/laptop" {
-		t.Fatalf("did address=%v", didRequests[0]["address"])
 	}
 	if signupBody["username"] != "jack" {
 		t.Fatalf("signup username=%v", signupBody["username"])
 	}
 	if signupBody["alias"] != "laptop" {
 		t.Fatalf("signup alias=%v", signupBody["alias"])
+	}
+	if signupBody["did_aw"] != "" {
+		t.Fatalf("signup did_aw=%v want empty string", signupBody["did_aw"])
 	}
 	if connectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", connectBody["role"])
@@ -632,8 +629,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if cert.Team != "default:jack.aweb.ai" {
 		t.Fatalf("cert team=%q", cert.Team)
 	}
-	if cert.MemberAddress != "jack.aweb.ai/laptop" {
-		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("cert member_did_aw=%q want empty", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("cert member_address=%q want empty", cert.MemberAddress)
 	}
 	if claimBody["username"] != "jack" {
 		t.Fatalf("claim username=%v", claimBody["username"])
@@ -736,14 +736,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			alias := strings.TrimSpace(body["alias"].(string))
 			didKey := strings.TrimSpace(body["did_key"].(string))
 			didAW := strings.TrimSpace(body["did_aw"].(string))
-			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:" + username + ".aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: memberAddress,
-				Alias:         alias,
-				Lifetime:      awid.LifetimePersistent,
+				Team:         "default:" + username + ".aweb.ai",
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -760,7 +757,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"team_id":          "default:" + username + ".aweb.ai",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
-				"member_address":   memberAddress,
+				"member_address":   "",
 				"alias":            alias,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
@@ -793,17 +790,14 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	if len(signupBodies) != 2 {
 		t.Fatalf("signup calls=%d", len(signupBodies))
 	}
-	if len(didRequests) != 2 {
+	if len(didRequests) != 0 {
 		t.Fatalf("did registrations=%d", len(didRequests))
 	}
 	if signupBodies[0]["username"] != "jack" || signupBodies[1]["username"] != "jack-2" {
 		t.Fatalf("signup usernames=%v", signupBodies)
 	}
-	if signupBodies[0]["did_aw"] == signupBodies[1]["did_aw"] {
-		t.Fatalf("expected fresh did_aw on retry, got %v", signupBodies[0]["did_aw"])
-	}
-	if didRequests[0]["did_aw"] == didRequests[1]["did_aw"] {
-		t.Fatalf("expected fresh did registration on retry")
+	if signupBodies[0]["did_aw"] != "" || signupBodies[1]["did_aw"] != "" {
+		t.Fatalf("expected empty ephemeral did_aw on retry, got %v", signupBodies)
 	}
 
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {

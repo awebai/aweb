@@ -210,6 +210,114 @@ func TestDeleteNamespaceAtRequiresControllerSigningKey(t *testing.T) {
 	}
 }
 
+func TestRotateNamespaceControllerAtSignsWithNewControllerKey(t *testing.T) {
+	t.Parallel()
+
+	oldPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldControllerDID := ComputeDIDKey(oldPub)
+
+	newPub, newPriv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newControllerDID := ComputeDIDKey(newPub)
+
+	var gotBody namespaceRotateControllerRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/namespaces/acme.com" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.Method != http.MethodPut {
+			t.Fatalf("method=%s", r.Method)
+		}
+
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		parts := strings.Split(auth, " ")
+		if len(parts) != 3 || parts[0] != "DIDKey" {
+			t.Fatalf("unexpected Authorization header %q", auth)
+		}
+		if parts[1] != newControllerDID {
+			t.Fatalf("authorization DID=%s want new controller DID=%s", parts[1], newControllerDID)
+		}
+
+		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		payload := canonicalRegistryJSON(map[string]string{
+			"domain":             "acme.com",
+			"new_controller_did": newControllerDID,
+			"operation":          "rotate_controller",
+			"timestamp":          timestamp,
+		})
+		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
+		if err != nil {
+			t.Fatalf("decode signature: %v", err)
+		}
+		if !ed25519.Verify(newPub, []byte(payload), sig) {
+			t.Fatalf("invalid controller signature for payload %s", payload)
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"namespace_id":        "ns-1",
+			"domain":              "acme.com",
+			"controller_did":      newControllerDID,
+			"verification_status": "verified",
+			"created_at":          "2026-04-15T00:00:00Z",
+			"last_verified_at":    "2026-04-15T00:00:00Z",
+			"previous_controller": oldControllerDID,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	namespace, err := client.RotateNamespaceControllerAt(
+		context.Background(),
+		server.URL,
+		"acme.com",
+		newControllerDID,
+		newPriv,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.NewControllerDID != newControllerDID {
+		t.Fatalf("new_controller_did=%q want %q", gotBody.NewControllerDID, newControllerDID)
+	}
+	if namespace.ControllerDID != newControllerDID {
+		t.Fatalf("controller_did=%s want %s", namespace.ControllerDID, newControllerDID)
+	}
+}
+
+func TestRotateNamespaceControllerAtRequiresMatchingSigningKey(t *testing.T) {
+	t.Parallel()
+
+	expectedPub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedDID := ComputeDIDKey(expectedPub)
+	_, wrongKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewAWIDRegistryClient(http.DefaultClient, nil)
+	_, err = client.RotateNamespaceControllerAt(
+		context.Background(),
+		"https://registry.example.com",
+		"acme.com",
+		expectedDID,
+		wrongKey,
+	)
+	if err == nil || !strings.Contains(err.Error(), "signing key does not match") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 	t.Parallel()
 

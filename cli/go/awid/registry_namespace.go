@@ -16,6 +16,10 @@ type namespaceRegisterRequest struct {
 	ControllerDID string `json:"controller_did"`
 }
 
+type namespaceRotateControllerRequest struct {
+	NewControllerDID string `json:"new_controller_did"`
+}
+
 type addressRegisterRequest struct {
 	Name            string  `json:"name"`
 	DIDAW           string  `json:"did_aw"`
@@ -164,6 +168,44 @@ func (c *RegistryClient) DeleteNamespaceAt(
 		body,
 		nil,
 	)
+}
+
+func (c *RegistryClient) RotateNamespaceControllerAt(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	newControllerDID string,
+	newControllerSigningKey ed25519.PrivateKey,
+) (*RegistryNamespace, error) {
+	domain = canonicalizeDomain(domain)
+	newControllerDID = strings.TrimSpace(newControllerDID)
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if !strings.HasPrefix(newControllerDID, "did:key:") {
+		return nil, fmt.Errorf("newControllerDID must start with did:key:")
+	}
+	if err := requireSigningKeyMatchesDID(newControllerSigningKey, newControllerDID); err != nil {
+		return nil, err
+	}
+
+	var out RegistryNamespace
+	if err := c.requestJSON(
+		ctx,
+		http.MethodPut,
+		registryURL,
+		"/v1/namespaces/"+urlPathEscape(domain),
+		signedNamespaceHeaders(domain, "rotate_controller", newControllerSigningKey, map[string]string{
+			"new_controller_did": newControllerDID,
+		}),
+		namespaceRotateControllerRequest{
+			NewControllerDID: newControllerDID,
+		},
+		&out,
+	); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *RegistryClient) RegisterAddress(

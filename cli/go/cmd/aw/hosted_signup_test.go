@@ -226,6 +226,11 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	}
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
+	var (
+		didRegisterCalls int
+		signupBody       map[string]any
+	)
+
 	var server *httptest.Server
 	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -238,33 +243,21 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"status":"registered"}`))
+			didRegisterCalls++
+			t.Fatalf("ephemeral hosted init should not register a did:aw")
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
-			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw":          didAW,
-				"current_did_key": "did:key:current",
-				"server":          "",
-				"address":         "juanre.aweb.ai/laptop",
-				"handle":          "laptop",
-				"created_at":      "2026-04-08T00:00:00Z",
-				"updated_at":      "2026-04-08T00:00:00Z",
-			})
+			t.Fatalf("ephemeral hosted init should not read back did:aw state")
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
-			var signupBody map[string]any
+			signupBody = map[string]any{}
 			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
 				t.Fatal(err)
 			}
 			didKey, _ := signupBody["did_key"].(string)
-			didAW, _ := signupBody["did_aw"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "default:juanre.aweb.ai",
-				MemberDIDKey:  didKey,
-				MemberDIDAW:   didAW,
-				MemberAddress: "juanre.aweb.ai/laptop",
-				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				Team:         "default:juanre.aweb.ai",
+				MemberDIDKey: didKey,
+				Alias:        "laptop",
+				Lifetime:     awid.LifetimeEphemeral,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -280,8 +273,8 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 				"namespace_domain": "juanre.aweb.ai",
 				"team_id":          "default:juanre.aweb.ai",
 				"certificate":      encoded,
-				"did_aw":           didAW,
-				"member_address":   "juanre.aweb.ai/laptop",
+				"did_aw":           "",
+				"member_address":   "",
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
 			})
@@ -317,6 +310,12 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not exist for ephemeral hosted init: %v", err)
 	}
+	if didRegisterCalls != 0 {
+		t.Fatalf("did registrations=%d want 0", didRegisterCalls)
+	}
+	if signupBody["did_aw"] != "" {
+		t.Fatalf("ephemeral signup did_aw=%v want empty string", signupBody["did_aw"])
+	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
 		t.Fatalf("signing.key missing: %v", err)
 	}
@@ -324,8 +323,14 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("team certificate missing: %v", err)
 	}
-	if cert.MemberAddress != "juanre.aweb.ai/laptop" {
-		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	if cert.MemberDIDAW != "" {
+		t.Fatalf("cert member_did_aw=%q want empty", cert.MemberDIDAW)
+	}
+	if cert.MemberAddress != "" {
+		t.Fatalf("cert member_address=%q want empty", cert.MemberAddress)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, awid.LifetimeEphemeral)
 	}
 
 	var got map[string]any
