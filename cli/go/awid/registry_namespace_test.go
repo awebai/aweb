@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,56 +211,28 @@ func TestDeleteNamespaceAtRequiresControllerSigningKey(t *testing.T) {
 	}
 }
 
-func TestRotateNamespaceControllerAtSignsWithNewControllerKey(t *testing.T) {
+func TestReverifyNamespaceAtPostsWithoutAuth(t *testing.T) {
 	t.Parallel()
 
-	oldPub, _, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldControllerDID := ComputeDIDKey(oldPub)
-
-	newPub, newPriv, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	newControllerDID := ComputeDIDKey(newPub)
-
-	var gotBody namespaceRotateControllerRequest
+	oldControllerDID := "did:key:z6Mkoldcontroller"
+	newControllerDID := "did:key:z6Mknewcontroller"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/namespaces/acme.com" {
+		if r.URL.Path != "/v1/namespaces/acme.com/reverify" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
-		if r.Method != http.MethodPut {
+		if r.Method != http.MethodPost {
 			t.Fatalf("method=%s", r.Method)
 		}
-
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		parts := strings.Split(auth, " ")
-		if len(parts) != 3 || parts[0] != "DIDKey" {
+		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
 			t.Fatalf("unexpected Authorization header %q", auth)
 		}
-		if parts[1] != newControllerDID {
-			t.Fatalf("authorization DID=%s want new controller DID=%s", parts[1], newControllerDID)
+		if timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp")); timestamp != "" {
+			t.Fatalf("unexpected X-AWEB-Timestamp header %q", timestamp)
 		}
-
-		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
-			"domain":             "acme.com",
-			"new_controller_did": newControllerDID,
-			"operation":          "rotate_controller",
-			"timestamp":          timestamp,
-		})
-		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-		if err != nil {
-			t.Fatalf("decode signature: %v", err)
-		}
-		if !ed25519.Verify(newPub, []byte(payload), sig) {
-			t.Fatalf("invalid controller signature for payload %s", payload)
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatalf("decode body: %v", err)
+		if body, err := io.ReadAll(r.Body); err != nil {
+			t.Fatalf("read body: %v", err)
+		} else if strings.TrimSpace(string(body)) != "" {
+			t.Fatalf("expected empty body, got %q", string(body))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"namespace_id":        "ns-1",
@@ -268,52 +241,42 @@ func TestRotateNamespaceControllerAtSignsWithNewControllerKey(t *testing.T) {
 			"verification_status": "verified",
 			"created_at":          "2026-04-15T00:00:00Z",
 			"last_verified_at":    "2026-04-15T00:00:00Z",
-			"previous_controller": oldControllerDID,
+			"old_controller_did":  oldControllerDID,
+			"new_controller_did":  newControllerDID,
 		})
 	}))
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
-	namespace, err := client.RotateNamespaceControllerAt(
+	result, err := client.ReverifyNamespaceAt(
 		context.Background(),
 		server.URL,
 		"acme.com",
-		newControllerDID,
-		newPriv,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotBody.NewControllerDID != newControllerDID {
-		t.Fatalf("new_controller_did=%q want %q", gotBody.NewControllerDID, newControllerDID)
+	if result.ControllerDID != newControllerDID {
+		t.Fatalf("controller_did=%s want %s", result.ControllerDID, newControllerDID)
 	}
-	if namespace.ControllerDID != newControllerDID {
-		t.Fatalf("controller_did=%s want %s", namespace.ControllerDID, newControllerDID)
+	if result.OldControllerDID != oldControllerDID {
+		t.Fatalf("old_controller_did=%s want %s", result.OldControllerDID, oldControllerDID)
+	}
+	if result.NewControllerDID != newControllerDID {
+		t.Fatalf("new_controller_did=%s want %s", result.NewControllerDID, newControllerDID)
 	}
 }
 
-func TestRotateNamespaceControllerAtRequiresMatchingSigningKey(t *testing.T) {
+func TestReverifyNamespaceAtRequiresDomain(t *testing.T) {
 	t.Parallel()
 
-	expectedPub, _, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedDID := ComputeDIDKey(expectedPub)
-	_, wrongKey, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	client := NewAWIDRegistryClient(http.DefaultClient, nil)
-	_, err = client.RotateNamespaceControllerAt(
+	_, err := client.ReverifyNamespaceAt(
 		context.Background(),
 		"https://registry.example.com",
-		"acme.com",
-		expectedDID,
-		wrongKey,
+		"",
 	)
-	if err == nil || !strings.Contains(err.Error(), "signing key does not match") {
+	if err == nil || !strings.Contains(err.Error(), "domain is required") {
 		t.Fatalf("err=%v", err)
 	}
 }

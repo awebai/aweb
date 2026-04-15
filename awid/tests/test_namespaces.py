@@ -5,9 +5,10 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import awid_service.routes.dns_namespace_reverify as dns_namespace_reverify_routes
 import awid_service.routes.dns_namespaces as dns_namespaces_routes
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
-from awid.dns_verify import DomainAuthority
+from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
@@ -349,6 +350,309 @@ async def test_rotate_namespace_controller_rejects_when_dns_still_points_to_old_
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == "DNS controller does not match new_controller_did"
+
+
+@pytest.mark.asyncio
+async def test_reverify_namespace_updates_controller_from_dns(
+    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+):
+    old_signing_key, old_controller_did = controller_identity
+    domain = "reverify.example"
+    await _register_namespace(client, old_signing_key, old_controller_did, domain)
+
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+
+    async def _rotated_domain_verifier(queried_domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=new_controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{queried_domain}",
+        )
+
+    logged: list[tuple[str, tuple[object, ...]]] = []
+
+    def _capture_warning(message: str, *args) -> None:
+        logged.append((message, args))
+
+    monkeypatch.setattr(dns_namespace_reverify_routes.logger, "warning", _capture_warning)
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["controller_did"] == new_controller_did
+            assert body["old_controller_did"] == old_controller_did
+            assert body["new_controller_did"] == new_controller_did
+            assert body["verification_status"] == "verified"
+
+            team_signing_key, team_pub = generate_keypair()
+            team_did_key = did_from_public_key(team_pub)
+            old_headers = _sign(
+                old_signing_key,
+                old_controller_did,
+                domain=domain,
+                operation="create_team",
+                name="backend",
+            )
+            old_resp = await recovery_client.post(
+                f"/v1/namespaces/{domain}/teams",
+                json={"name": "backend", "team_did_key": team_did_key},
+                headers=old_headers,
+            )
+            assert old_resp.status_code == 403
+            assert old_resp.json()["detail"] == "Only the namespace controller can manage teams"
+
+            new_headers = _sign(
+                new_signing_key,
+                new_controller_did,
+                domain=domain,
+                operation="create_team",
+                name="backend",
+            )
+            new_resp = await recovery_client.post(
+                f"/v1/namespaces/{domain}/teams",
+                json={"name": "backend", "team_did_key": team_did_key},
+                headers=new_headers,
+            )
+            assert new_resp.status_code == 200, new_resp.text
+
+    assert logged == [
+        (
+            "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
+            (domain, old_controller_did, new_controller_did),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reverify_namespace_matching_dns_refreshes_without_rotation(
+    client, awid_db_infra, fake_redis, controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    domain = "reverify-refresh.example"
+    await _register_namespace(client, signing_key, controller_did, domain)
+
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        """
+        UPDATE {{tables.dns_namespaces}}
+        SET last_verified_at = TIMESTAMPTZ '2026-04-01T00:00:00Z'
+        WHERE domain = $1
+        """,
+        domain,
+    )
+
+    async def _same_domain_verifier(queried_domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{queried_domain}",
+        )
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _same_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["controller_did"] == controller_did
+            assert body["old_controller_did"] == controller_did
+            assert body["new_controller_did"] == controller_did
+            assert body["verification_status"] == "verified"
+            assert body["last_verified_at"] != "2026-04-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_reverify_namespace_dns_failure_returns_422_without_revoking(
+    client, awid_db_infra, fake_redis, controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    domain = "reverify-fail.example"
+    await _register_namespace(client, signing_key, controller_did, domain)
+
+    async def _failing_domain_verifier(queried_domain: str) -> DomainAuthority:
+        raise DnsVerificationError(f"DNS lookup failed for _awid.{queried_domain}")
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _failing_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
+            assert resp.status_code == 422
+            assert resp.json()["detail"] == f"DNS lookup failed for _awid.{domain}"
+
+    db = awid_db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        """
+        SELECT controller_did, verification_status
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1
+        """,
+        domain,
+    )
+    assert row["controller_did"] == controller_did
+    assert row["verification_status"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_reverify_namespace_local_returns_400(client, controller_identity):
+    signing_key, controller_did = controller_identity
+    await _register_namespace(client, signing_key, controller_did, "local")
+
+    resp = await client.post("/v1/namespaces/local/reverify")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "local namespaces have no DNS to reverify"
+
+
+@pytest.mark.asyncio
+async def test_stale_address_verification_updates_controller_instead_of_revoking(
+    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+):
+    old_signing_key, old_controller_did = controller_identity
+    domain = "stale-update.example"
+    await _register_namespace(client, old_signing_key, old_controller_did, domain)
+
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        """
+        UPDATE {{tables.dns_namespaces}}
+        SET last_verified_at = TIMESTAMPTZ '2026-04-01T00:00:00Z'
+        WHERE domain = $1
+        """,
+        domain,
+    )
+
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+
+    async def _rotated_domain_verifier(queried_domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=new_controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{queried_domain}",
+        )
+
+    logged: list[tuple[str, tuple[object, ...]]] = []
+
+    def _capture_warning(message: str, *args) -> None:
+        logged.append((message, args))
+
+    monkeypatch.setattr(dns_namespace_reverify_routes.logger, "warning", _capture_warning)
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as address_client:
+            _, old_member_pub = generate_keypair()
+            old_member_did_key = did_from_public_key(old_member_pub)
+            old_headers = _sign(
+                old_signing_key,
+                old_controller_did,
+                domain=domain,
+                operation="register_address",
+                name="alice",
+            )
+            old_resp = await address_client.post(
+                f"/v1/namespaces/{domain}/addresses",
+                json={
+                    "name": "alice",
+                    "did_aw": stable_id_from_did_key(old_member_did_key),
+                    "current_did_key": old_member_did_key,
+                    "reachability": "public",
+                },
+                headers=old_headers,
+            )
+            assert old_resp.status_code == 403
+            assert old_resp.json()["detail"] == "Only the namespace controller can manage addresses"
+
+            new_address = await _register_address(address_client, new_signing_key, new_controller_did, domain, "alice")
+            assert new_address["name"] == "alice"
+
+    row = await db.fetch_one(
+        """
+        SELECT controller_did, verification_status
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1
+        """,
+        domain,
+    )
+    assert row["controller_did"] == new_controller_did
+    assert row["verification_status"] == "verified"
+    assert logged == [
+        (
+            "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
+            (domain, old_controller_did, new_controller_did),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_address_dns_failure_does_not_revoke_namespace(
+    client, awid_db_infra, fake_redis, controller_identity,
+):
+    signing_key, controller_did = controller_identity
+    domain = "stale-failure.example"
+    await _register_namespace(client, signing_key, controller_did, domain)
+
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        """
+        UPDATE {{tables.dns_namespaces}}
+        SET last_verified_at = TIMESTAMPTZ '2026-04-01T00:00:00Z'
+        WHERE domain = $1
+        """,
+        domain,
+    )
+
+    async def _failing_domain_verifier(queried_domain: str) -> DomainAuthority:
+        raise DnsVerificationError(f"DNS lookup failed for _awid.{queried_domain}")
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _failing_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as address_client:
+            _, member_pub = generate_keypair()
+            member_did_key = did_from_public_key(member_pub)
+            headers = _sign(
+                signing_key,
+                controller_did,
+                domain=domain,
+                operation="register_address",
+                name="alice",
+            )
+            resp = await address_client.post(
+                f"/v1/namespaces/{domain}/addresses",
+                json={
+                    "name": "alice",
+                    "did_aw": stable_id_from_did_key(member_did_key),
+                    "current_did_key": member_did_key,
+                    "reachability": "public",
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 403
+            assert resp.json()["detail"] == "Namespace DNS verification failed"
+
+    row = await db.fetch_one(
+        """
+        SELECT controller_did, verification_status
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1
+        """,
+        domain,
+    )
+    assert row["controller_did"] == controller_did
+    assert row["verification_status"] == "verified"
 
 
 @pytest.mark.asyncio

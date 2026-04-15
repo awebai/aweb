@@ -5,7 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
-	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -347,10 +347,8 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 
 type idNamespaceRotateControllerOptions struct {
 	Domain      string
-	PromptIn    io.Reader
-	PromptOut   io.Writer
 	TXTResolver awid.TXTResolver
-	Now         func() time.Time
+	HTTPClient  *http.Client
 }
 
 func runIDNamespaceRotateController(cmd *cobra.Command, args []string) error {
@@ -359,10 +357,7 @@ func runIDNamespaceRotateController(cmd *cobra.Command, args []string) error {
 	}
 	out, err := executeIDNamespaceRotateController(idNamespaceRotateControllerOptions{
 		Domain:      idNamespaceRotateControllerDomain,
-		PromptIn:    cmd.InOrStdin(),
-		PromptOut:   cmd.ErrOrStderr(),
 		TXTResolver: nil,
-		Now:         time.Now,
 	})
 	if err != nil {
 		return err
@@ -376,192 +371,30 @@ func executeIDNamespaceRotateController(opts idNamespaceRotateControllerOptions)
 	if domain == "" {
 		return idRotateOutput{}, usageError("--domain is required")
 	}
-
-	now := time.Now
-	if opts.Now != nil {
-		now = opts.Now
+	if domain == implicitLocalDomain {
+		return idRotateOutput{}, usageError("local namespaces cannot be reverified via DNS")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	registry, err := resolveNamespaceRegistryClient(domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 	if err != nil {
 		return idRotateOutput{}, err
 	}
-	registryURL, err := currentNamespaceRegistryURL(ctx, registry, domain)
+	registryURL := strings.TrimSpace(authority.RegistryURL)
+	registry := awid.NewAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	result, err := registry.ReverifyNamespaceAt(ctx, registryURL, domain)
 	if err != nil {
-		return idRotateOutput{}, err
-	}
-	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, domain)
-	if err != nil {
-		return idRotateOutput{}, err
-	}
-	oldControllerDID := strings.TrimSpace(namespace.ControllerDID)
-	if oldControllerDID == "" {
-		return idRotateOutput{}, fmt.Errorf("namespace %s is missing controller_did", domain)
-	}
-
-	controllerKey, newControllerDID, createdAt, err := resolveOrStageNamespaceRecoveryControllerKey(
-		domain,
-		oldControllerDID,
-		registryURL,
-		now().UTC().Format(time.RFC3339),
-	)
-	if err != nil {
-		return idRotateOutput{}, err
-	}
-
-	plan := &idCreatePlan{
-		Domain:         domain,
-		ControllerDID:  newControllerDID,
-		RegistryURL:    registryURL,
-		DNSRecordName:  awid.AWIDTXTName(domain),
-		DNSRecordValue: idCreateDNSRecordValue(newControllerDID, registryURL),
-		NeedsDNSSetup:  domain != implicitLocalDomain,
-	}
-	if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
-		return idRotateOutput{}, err
-	}
-	if err := confirmAndVerifyIDCreateDNS(plan, idCreateOptions{
-		PromptIn:    opts.PromptIn,
-		PromptOut:   opts.PromptOut,
-		TXTResolver: opts.TXTResolver,
-	}); err != nil {
-		return idRotateOutput{}, err
-	}
-
-	rotated, err := registry.RotateNamespaceControllerAt(ctx, registryURL, domain, newControllerDID, controllerKey)
-	if err != nil {
-		return idRotateOutput{}, err
-	}
-	if strings.TrimSpace(rotated.ControllerDID) != newControllerDID {
-		return idRotateOutput{}, fmt.Errorf("namespace %s rotated unexpected controller %s", domain, rotated.ControllerDID)
-	}
-
-	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-		Domain:        domain,
-		ControllerDID: newControllerDID,
-		RegistryURL:   registryURL,
-		CreatedAt:     createdAt,
-	}); err != nil {
 		return idRotateOutput{}, err
 	}
 
 	return idRotateOutput{
-		Status:      "rotated",
+		Status:      "reverified",
 		RegistryURL: registryURL,
-		OldDID:      oldControllerDID,
-		NewDID:      newControllerDID,
+		OldDID:      strings.TrimSpace(result.OldControllerDID),
+		NewDID:      strings.TrimSpace(result.NewControllerDID),
 	}, nil
-}
-
-func resolveNamespaceRegistryClient(domain string) (*awid.RegistryClient, error) {
-	baseURL := ""
-	meta, err := loadOptionalControllerMeta(domain)
-	if err != nil {
-		return nil, err
-	}
-	if meta != nil {
-		baseURL = strings.TrimSpace(meta.RegistryURL)
-	}
-	return newRegistryClientWithPreferredBaseURL(baseURL)
-}
-
-func currentNamespaceRegistryURL(ctx context.Context, registry *awid.RegistryClient, domain string) (string, error) {
-	if registry == nil {
-		return "", fmt.Errorf("missing registry client")
-	}
-	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" {
-		return strings.TrimSpace(registry.DefaultRegistryURL), nil
-	}
-	meta, err := loadOptionalControllerMeta(domain)
-	if err != nil {
-		return "", err
-	}
-	if meta != nil && strings.TrimSpace(meta.RegistryURL) != "" {
-		return strings.TrimSpace(meta.RegistryURL), nil
-	}
-	return registry.DiscoverRegistry(ctx, domain)
-}
-
-func loadOptionalControllerMeta(domain string) (*awconfig.ControllerMeta, error) {
-	meta, err := awconfig.LoadControllerMeta(domain)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return meta, nil
-}
-
-func resolveOrStageNamespaceRecoveryControllerKey(
-	domain string,
-	currentControllerDID string,
-	registryURL string,
-	createdAt string,
-) (ed25519.PrivateKey, string, string, error) {
-	var previousKey ed25519.PrivateKey
-	exists, err := awconfig.ControllerKeyExists(domain)
-	if err != nil {
-		return nil, "", "", err
-	}
-	if exists {
-		key, err := awconfig.LoadControllerKey(domain)
-		if err != nil {
-			return nil, "", "", err
-		}
-		did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-		meta, err := loadOptionalControllerMeta(domain)
-		if err != nil {
-			return nil, "", "", err
-		}
-		metaCreatedAt := createdAt
-		if meta != nil && strings.TrimSpace(meta.CreatedAt) != "" {
-			metaCreatedAt = strings.TrimSpace(meta.CreatedAt)
-		}
-		if did != strings.TrimSpace(currentControllerDID) {
-			if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-				Domain:        domain,
-				ControllerDID: did,
-				RegistryURL:   registryURL,
-				CreatedAt:     metaCreatedAt,
-			}); err != nil {
-				return nil, "", "", err
-			}
-			return key, did, metaCreatedAt, nil
-		}
-		previousKey = key
-	}
-
-	// Stage the recovery key locally before DNS verification so reruns reuse the
-	// same TXT record while propagation catches up.
-	pub, key, err := awid.GenerateKeypair()
-	if err != nil {
-		return nil, "", "", err
-	}
-	did := awid.ComputeDIDKey(pub)
-	if err := awconfig.SaveControllerKey(domain, key); err != nil {
-		return nil, "", "", err
-	}
-	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-		Domain:        domain,
-		ControllerDID: did,
-		RegistryURL:   registryURL,
-		CreatedAt:     createdAt,
-	}); err != nil {
-		if previousKey != nil {
-			_ = awconfig.SaveControllerKey(domain, previousKey)
-		} else {
-			keyPath, _ := awconfig.ControllerKeyPath(domain)
-			if keyPath != "" {
-				_ = os.Remove(keyPath)
-			}
-		}
-		return nil, "", "", err
-	}
-	return key, did, createdAt, nil
 }
 
 func requirePersistentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey) error {

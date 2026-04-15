@@ -12,12 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.did import stable_id_from_did_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
 from awid.team_ids import build_team_id, parse_team_id
-from awid.dns_verify import DnsVerificationError
 from awid.dns_auth import validate_did_key as _validate_dns_did_key
 from awid.dns_auth import verify_signed_json_request
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
+from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
 
@@ -100,11 +100,11 @@ async def _require_namespace(db, domain: str):
     return row
 
 
-async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: DomainVerifier) -> None:
+async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: DomainVerifier):
     """Re-verify DNS if the namespace verification is stale (>24h).
 
-    Updates the namespace record on success. Raises 403 on failure or
-    controller mismatch.
+    Returns the current namespace row. Raises 403 on DNS failure without
+    mutating namespace verification state.
     """
     # A revoked namespace always requires re-verification, regardless of timestamp
     if ns_row["verification_status"] == "verified":
@@ -116,48 +116,18 @@ async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: Dom
                 last_verified = last_verified.astimezone(timezone.utc)
             age = datetime.now(timezone.utc) - last_verified
             if age <= _STALE_THRESHOLD:
-                return
+                return ns_row
 
-    # Stale, revoked, or never verified — re-check DNS
-    try:
-        dns_authority = await verify_domain(domain)
-    except DnsVerificationError:
-        await db.execute(
-            """
-            UPDATE {{tables.dns_namespaces}}
-            SET verification_status = 'revoked'
-            WHERE namespace_id = $1 AND deleted_at IS NULL
-            """,
-            ns_row["namespace_id"],
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Namespace DNS verification failed — namespace revoked",
-        )
-
-    if dns_authority.controller_did != ns_row["controller_did"]:
-        await db.execute(
-            """
-            UPDATE {{tables.dns_namespaces}}
-            SET verification_status = 'revoked'
-            WHERE namespace_id = $1 AND deleted_at IS NULL
-            """,
-            ns_row["namespace_id"],
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="DNS controller has changed — namespace revoked",
-        )
-
-    # Verification passed — refresh timestamp
-    await db.execute(
-        """
-        UPDATE {{tables.dns_namespaces}}
-        SET last_verified_at = NOW(), verification_status = 'verified'
-        WHERE namespace_id = $1 AND deleted_at IS NULL
-        """,
-        ns_row["namespace_id"],
+    result = await reverify_namespace_row(
+        db,
+        ns_row,
+        domain=domain,
+        verify_domain=verify_domain,
+        allow_local_bypass=True,
+        dns_failure_status=403,
+        dns_failure_detail="Namespace DNS verification failed",
     )
+    return result.row
 
 
 def _require_controller(caller_did: str, ns_row) -> None:
@@ -430,8 +400,8 @@ async def register_address(
     # The namespace is re-fetched with FOR SHARE inside the transaction to
     # prevent concurrent soft-delete from invalidating these checks.
     ns_row = await _require_namespace(db, domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
     _require_controller(caller_did, ns_row)
-    await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
 
     async with db.transaction() as tx:
         # Re-fetch namespace with lock to prevent concurrent deletion
@@ -625,8 +595,8 @@ async def update_address(
     )
 
     ns_row = await _require_namespace(db, domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
     _require_controller(caller_did, ns_row)
-    await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
 
     async with db.transaction() as tx:
         # Lock namespace to prevent concurrent deletion
@@ -780,8 +750,8 @@ async def reassign_address(
     )
 
     ns_row = await _require_namespace(db, domain)
+    ns_row = await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
     _require_controller(caller_did, ns_row)
-    await _ensure_fresh_verification(db, ns_row, domain, verify_domain)
 
     async with db.transaction() as tx:
         # Lock namespace to prevent concurrent deletion

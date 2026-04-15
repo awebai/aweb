@@ -16,10 +16,6 @@ type namespaceRegisterRequest struct {
 	ControllerDID string `json:"controller_did"`
 }
 
-type namespaceRotateControllerRequest struct {
-	NewControllerDID string `json:"new_controller_did"`
-}
-
 type addressRegisterRequest struct {
 	Name            string  `json:"name"`
 	DIDAW           string  `json:"did_aw"`
@@ -30,6 +26,17 @@ type addressRegisterRequest struct {
 
 type deleteReasonRequest struct {
 	Reason string `json:"reason,omitempty"`
+}
+
+type NamespaceReverifyResult struct {
+	NamespaceID        string `json:"namespace_id"`
+	Domain             string `json:"domain"`
+	ControllerDID      string `json:"controller_did,omitempty"`
+	VerificationStatus string `json:"verification_status"`
+	LastVerifiedAt     string `json:"last_verified_at,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	OldControllerDID   string `json:"old_controller_did,omitempty"`
+	NewControllerDID   string `json:"new_controller_did,omitempty"`
 }
 
 func (c *RegistryClient) GetNamespaceAddress(ctx context.Context, domain, name string) (*RegistryAddress, string, error) {
@@ -170,37 +177,24 @@ func (c *RegistryClient) DeleteNamespaceAt(
 	)
 }
 
-func (c *RegistryClient) RotateNamespaceControllerAt(
+func (c *RegistryClient) ReverifyNamespaceAt(
 	ctx context.Context,
 	registryURL string,
 	domain string,
-	newControllerDID string,
-	newControllerSigningKey ed25519.PrivateKey,
-) (*RegistryNamespace, error) {
+) (*NamespaceReverifyResult, error) {
 	domain = canonicalizeDomain(domain)
-	newControllerDID = strings.TrimSpace(newControllerDID)
 	if domain == "" {
 		return nil, fmt.Errorf("domain is required")
 	}
-	if !strings.HasPrefix(newControllerDID, "did:key:") {
-		return nil, fmt.Errorf("newControllerDID must start with did:key:")
-	}
-	if err := requireSigningKeyMatchesDID(newControllerSigningKey, newControllerDID); err != nil {
-		return nil, err
-	}
 
-	var out RegistryNamespace
+	var out NamespaceReverifyResult
 	if err := c.requestJSON(
 		ctx,
-		http.MethodPut,
+		http.MethodPost,
 		registryURL,
-		"/v1/namespaces/"+urlPathEscape(domain),
-		signedNamespaceHeaders(domain, "rotate_controller", newControllerSigningKey, map[string]string{
-			"new_controller_did": newControllerDID,
-		}),
-		namespaceRotateControllerRequest{
-			NewControllerDID: newControllerDID,
-		},
+		"/v1/namespaces/"+urlPathEscape(domain)+"/reverify",
+		nil,
+		nil,
 		&out,
 	); err != nil {
 		return nil, err

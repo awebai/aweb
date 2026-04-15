@@ -18,6 +18,10 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.dns_auth import verify_signed_json_request
+from awid_service.routes.dns_namespace_reverify import (
+    is_reserved_local_domain,
+    reverify_namespace_row,
+)
 
 router = APIRouter(prefix="/v1/namespaces", tags=["namespaces"])
 logger = logging.getLogger(__name__)
@@ -25,9 +29,6 @@ logger = logging.getLogger(__name__)
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
-_RESERVED_LOCAL_DOMAINS = {"local"}
-
-
 def _verify_controller_signature(
     request: Request,
     *,
@@ -156,6 +157,11 @@ class NamespaceResponse(BaseModel):
     created_at: str
 
 
+class NamespaceReverifyResponse(NamespaceResponse):
+    old_controller_did: str | None = None
+    new_controller_did: str | None = None
+
+
 class NamespaceListResponse(BaseModel):
     namespaces: list[NamespaceResponse]
     has_more: bool
@@ -202,7 +208,7 @@ async def register_namespace(
 
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    domain_is_local = domain in _RESERVED_LOCAL_DOMAINS
+    domain_is_local = is_reserved_local_domain(domain)
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -269,6 +275,41 @@ async def register_namespace(
     )
 
 
+@router.post(
+    "/{domain}/reverify",
+    response_model=NamespaceReverifyResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+)
+async def reverify_namespace(
+    domain: str,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> NamespaceReverifyResponse:
+    db = db_infra.get_manager("aweb")
+    domain = _validate_domain(domain)
+    ns_row = await db.fetch_one(
+        """
+        SELECT namespace_id, domain, controller_did, verification_status,
+               last_verified_at, created_at
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1 AND deleted_at IS NULL
+        """,
+        domain,
+    )
+    if ns_row is None:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+
+    result = await reverify_namespace_row(
+        db,
+        ns_row,
+        domain=domain,
+        verify_domain=verify_domain,
+        allow_local_bypass=False,
+        dns_failure_status=422,
+    )
+    return _namespace_reverify_response(result)
+
+
 @router.get(
     "/{domain}",
     response_model=NamespaceResponse,
@@ -321,7 +362,7 @@ async def rotate_namespace_controller(
     )
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    domain_is_local = domain in _RESERVED_LOCAL_DOMAINS
+    domain_is_local = is_reserved_local_domain(domain)
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -559,4 +600,18 @@ def _namespace_response(row) -> NamespaceResponse:
         verification_status=row["verification_status"],
         last_verified_at=row["last_verified_at"].isoformat() if row["last_verified_at"] else None,
         created_at=row["created_at"].isoformat(),
+    )
+
+
+def _namespace_reverify_response(result) -> NamespaceReverifyResponse:
+    response = _namespace_response(result.row)
+    return NamespaceReverifyResponse(
+        namespace_id=response.namespace_id,
+        domain=response.domain,
+        controller_did=response.controller_did,
+        verification_status=response.verification_status,
+        last_verified_at=response.last_verified_at,
+        created_at=response.created_at,
+        old_controller_did=result.old_controller_did,
+        new_controller_did=result.new_controller_did,
     )
