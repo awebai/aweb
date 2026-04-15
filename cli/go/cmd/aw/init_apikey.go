@@ -91,6 +91,32 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 	didKey := awid.ComputeDIDKey(pub)
 
+	if req.Persistent {
+		stableID := awid.ComputeStableID(pub)
+		alias := strings.TrimSpace(req.Alias)
+		if alias == "" {
+			alias = strings.TrimSpace(req.Name)
+		}
+		registry, regErr := newConfiguredRegistryClient(nil, "")
+		if regErr != nil {
+			return connectOutput{}, regErr
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, regErr := registry.RegisterDID(
+			ctx,
+			registry.DefaultRegistryURL,
+			"",          // server
+			alias,       // address (the cloud assigns the full namespace/name later)
+			alias,       // handle
+			didKey,
+			stableID,
+			signingKey,
+		); regErr != nil {
+			return connectOutput{}, fmt.Errorf("failed to register did:aw before api-key bootstrap: %w", regErr)
+		}
+	}
+
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
 		DID:                 didKey,
 		PublicKey:            base64.StdEncoding.EncodeToString(pub),

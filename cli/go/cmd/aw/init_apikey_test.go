@@ -168,7 +168,6 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 }
 
 func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
-	t.Parallel()
 
 	const apiKey = "aw_sk_test_persistent"
 
@@ -179,10 +178,25 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var initBody map[string]any
+	var didRegistered bool
 	var server *httptest.Server
 	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/workspaces/init":
+		switch {
+		case r.URL.Path == "/v1/did":
+			didRegistered = true
+			w.WriteHeader(http.StatusCreated)
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": "",
+				"server":          "",
+				"address":         "",
+				"handle":          nil,
+				"created_at":      "2026-04-15T00:00:00Z",
+				"updated_at":      "2026-04-15T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/workspaces/init":
 			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
 				t.Fatal(err)
 			}
@@ -214,7 +228,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"custody":      awid.CustodySelf,
 				"api_key":      "workspace-sk-persistent",
 			})
-		case "/v1/connect":
+		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_id":      "default:alice.aweb.ai",
@@ -224,19 +238,23 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
-		case "/v1/agents/heartbeat":
+		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
 
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
 	tmp := t.TempDir()
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
-		RegistryURL: "https://api.awid.ai",
+		RegistryURL: server.URL,
 		APIKey:      apiKey,
+		Name:        "alice",
+		Alias:       "alice",
 		Role:        "backend",
 		Persistent:  true,
 	})
@@ -244,6 +262,9 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 		t.Fatalf("runAPIKeyBootstrapInit persistent: %v", err)
 	}
 
+	if !didRegistered {
+		t.Fatal("expected DID registration for persistent API key bootstrap")
+	}
 	if initBody["lifetime"] != awid.LifetimePersistent {
 		t.Fatalf("init lifetime=%v", initBody["lifetime"])
 	}
