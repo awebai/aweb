@@ -95,18 +95,20 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	didKey := awid.ComputeDIDKey(pub)
 	localStableID := awid.ComputeStableID(pub)
 
-	// For persistent identities, do NOT use AWEB_ALIAS env var fallback —
-	// only explicit --alias flag. An env var from a prior ephemeral session
-	// should not silently become a persistent address.
+	// Cloud contract: persistent uses name (not alias), ephemeral uses alias (not name).
+	name := strings.TrimSpace(req.Name)
 	alias := strings.TrimSpace(req.Alias)
-	if req.Persistent && alias == "" {
-		return connectOutput{}, usageError("--alias is required for persistent API key bootstrap")
+	if req.Persistent {
+		if name == "" {
+			return connectOutput{}, usageError("--name is required for persistent API key bootstrap")
+		}
+		alias = "" // cloud rejects alias for persistent
 	}
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
 		DID:                 didKey,
 		PublicKey:            base64.StdEncoding.EncodeToString(pub),
-		Name:                strings.TrimSpace(req.Name),
+		Name:                name,
 		Alias:               alias,
 		Custody:             awid.CustodySelf,
 		AddressReachability: strings.TrimSpace(req.Reachability),
@@ -152,9 +154,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		if _, regErr := registry.RegisterDID(
 			ctx,
 			registry.DefaultRegistryURL,
-			"",
+			"",          // server
 			memberAddress,
-			alias,
+			name,        // handle = name for persistent
 			didKey,
 			localStableID,
 			signingKey,

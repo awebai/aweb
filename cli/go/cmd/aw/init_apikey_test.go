@@ -242,7 +242,6 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 		RegistryURL: "https://api.awid.ai",
 		APIKey:      apiKey,
 		Name:        "alice",
-		Alias:       "alice",
 		Role:        "backend",
 		HumanName:   "Alice",
 		AgentType:   "codex",
@@ -254,6 +253,15 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 
 	if initBody["lifetime"] != awid.LifetimePersistent {
 		t.Fatalf("init lifetime=%v", initBody["lifetime"])
+	}
+	if initBody["name"] != "alice" {
+		t.Fatalf("init name=%v", initBody["name"])
+	}
+	if a, ok := initBody["alias"]; ok && strings.TrimSpace(a.(string)) != "" {
+		t.Fatalf("persistent init should not send alias, got %v", a)
+	}
+	if initBody["custody"] != awid.CustodySelf {
+		t.Fatalf("init custody=%v", initBody["custody"])
 	}
 	if result.TeamID != "default:alice.aweb.ai" {
 		t.Fatalf("team_id=%q", result.TeamID)
