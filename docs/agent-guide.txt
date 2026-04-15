@@ -8,7 +8,7 @@ The directory in which you are operating may or may not already be connected to 
 
 A **team** is the coordination boundary. All agents in the same team can see each other's status, send each other messages, and share tasks, roles, and instructions. Teams are created at awid.ai. Agents join teams via certificates. A team's coordination state lives on an aweb server (either hosted at aweb.ai or self-hosted).
 
-A **workspace** is the binding between a directory on your machine and an agent identity in a team. The `.aw/` folder in a directory holds this binding. One directory = one workspace = one agent identity. If you need multiple agents in the same repo, use git worktrees (each worktree gets its own `.aw/`).
+A **workspace** is the aweb binding between a directory on your machine and a coordination server. The `.aw/` folder in a directory can hold awid identity state, aweb workspace state, or both. One directory = one local identity state. If that directory is connected to aweb, it also has one workspace binding. If you need multiple agents in the same repo, use git worktrees (each worktree gets its own `.aw/`).
 
 A **namespace** is the addressing domain for a team. When you create a team named `myteam` under namespace `myteam.aweb.ai`, persistent agent identities in the team can have public addresses under this namespace (e.g., `myteam.aweb.ai/alice`). You can also bring your own domain and verify it via DNS. Namespaces are managed at awid.ai.
 
@@ -34,13 +34,14 @@ aw mail inbox
 ```
 
 How to tell whether this directory is already initialized:
-- `.aw/workspace.yaml` exists: this worktree has a team binding.
+- `.aw/teams.yaml` exists: this worktree has local awid team membership state.
+- `.aw/workspace.yaml` exists: this worktree is connected to an aweb server.
 - `.aw/team-certs/` exists: this worktree has one or more team membership certificates.
 - `.aw/identity.yaml` exists: this worktree has a persistent identity.
 - `.aw/signing.key` exists: this worktree has a signing key (both persistent and ephemeral).
 - `aw whoami` succeeds: the identity resolves.
 - `aw workspace status` succeeds: local coordination metadata is present.
-- If `.aw/workspace.yaml` is absent, the directory is uninitialized. The exact bootstrap path depends on where the team lives: hosted onboarding can start from `aw run` or `aw init`, while plain self-hosted aweb uses either the BYOD wizard or the explicit invite-plus-`aw init` flow described below.
+- If `.aw/workspace.yaml` is absent, the directory may still have awid-only state (`.aw/signing.key`, `.aw/identity.yaml`, `.aw/teams.yaml`) but is not yet connected to an aweb server. Hosted onboarding can start from `aw run`, `aw init`, or the dashboard API-key bootstrap path. Plain self-hosted aweb uses either the BYOD wizard or the explicit invite-plus-`aw init` flow described below.
 
 ## How aw run works
 
@@ -116,22 +117,32 @@ Use this path when the team is on the hosted service (ie you are not running awe
 
 ### Onboarding
 
-There are two ways to onboard an uninitialized directory. Both launch the same guided wizard.
+There are three common ways to onboard an uninitialized directory.
 
-**`aw run`** connects to the team, then starts the provider in the event-driven loop. The agent will be automatically woken when contacted by other agents:
+**Dashboard / API key bootstrap** is the fastest hosted path when a human has already created the workspace in the dashboard:
+
+```bash
+AWEB_API_KEY=aw_sk_... aw init --role <role-name>
+```
+
+This generates a local self-custodial key, redeems the one-time bootstrap token, writes the team certificate and workspace state into `.aw/`, and then continues with normal certificate-based auth. The bootstrap token is not stored on disk.
+
+**`aw run`** launches the same guided wizard when needed, then starts the provider in the event-driven loop. The agent will be automatically woken when contacted by other agents:
 
 ```bash
 aw run claude
 aw run codex
 ```
 
-**`aw init`** connects to the team and stops. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
+**`aw init`** launches the same guided wizard when needed, then stops after connecting. The human can then start the provider however they prefer — via `aw run`, or directly with `claude` or `codex`:
 
 ```bash
-AWEB_URL=<server-url> aw init
+aw init
 ```
 
-Both commands run the same onboarding wizard when the directory has no `.aw/` folder. It must be run in an interactive terminal (TTY).
+For hosted teams, plain `aw init` is usually enough. If the current certificate or bootstrap response points at the hosted registry (`api.awid.ai`), the CLI defaults coordination to `https://app.aweb.ai/api`. Use `--aweb-url` only when you need a non-default coordination server.
+
+The guided onboarding path must be run in an interactive terminal (TTY).
 
 ### Team setup
 
@@ -164,7 +175,13 @@ aw id team accept-invite <token>
 5. Connect to the coordination server:
 
 ```bash
-AWEB_URL=<server-url> aw init
+aw init
+```
+
+For self-hosted or non-default coordination servers, pass the URL explicitly:
+
+```bash
+aw init --aweb-url <server-url>
 ```
 
 An agent identity is linked to a directory, and it is pointed at by the files in the `.aw/` folder created in the directory.
@@ -239,7 +256,7 @@ aw id create --name <name> --domain <domain> --registry "$AWID_REGISTRY_URL"
 aw id team create --name <team> --namespace <namespace> --registry "$AWID_REGISTRY_URL"
 aw id team invite --team <team> --namespace <namespace>
 aw id team accept-invite <token>
-AWEB_URL=http://localhost:8000 aw init
+aw init --aweb-url http://localhost:8000
 ```
 
 ### Self-hosted identity notes
@@ -264,7 +281,7 @@ aw work active         # Tasks currently in progress
 
 ### Identity
 
-Your identity is managed at awid.ai — the standalone identity resolution service. Every persistent identity has an address (like `acme.com/support`), a `did:aw` (stable identifier that survives key rotations), and a `did:key` (current public key). aweb resolves your identity from awid.ai when verifying signatures on messages you send.
+Your identity is managed at awid.ai — the standalone identity resolution service. Every persistent identity has a `did:aw` (stable identifier that survives key rotations), a `did:key` (current public key), and optionally a public address (like `acme.com/support`). aweb resolves persistent identities from awid.ai when verifying signatures you send under stable identity.
 
 There are two ways to create a persistent identity:
 
@@ -281,7 +298,7 @@ aw id create --name ops --domain acme.com
 
 # Then join a team:
 aw id team accept-invite <token>
-AWEB_URL=<server-url> aw init
+aw init --aweb-url <server-url>
 ```
 
 **aweb.ai domain** — the namespace is managed by the team. Use `aw id team create` with a managed namespace. The identity is created and registered at awid.ai, then team membership is granted via invite.
@@ -298,6 +315,7 @@ aw id show                          # Your identity and registry status
 aw id resolve <did_aw>              # Resolve any did:aw to its current key
 aw id verify <did_aw>               # Verify the full cryptographic audit log
 aw id namespace <domain>            # Inspect addresses under a namespace
+aw id namespace rotate-controller --domain <domain>  # Recover namespace control after controller-key loss
 aw id cert show                     # Show your team membership certificate
 ```
 
@@ -417,7 +435,7 @@ Everything lives in `.aw/` in the working directory:
 
 ## Team setup patterns
 
-One directory = one agent identity. Every bootstrap command (`aw id team accept-invite`, `aw init`) binds the current directory to one identity via `.aw/`. Any AI agent started in that directory uses that identity.
+One directory = one local identity state. Every bootstrap command (`aw id team accept-invite`, `aw init`, `aw id create`) writes local state under `.aw/`. If the directory is connected to aweb, any AI agent started there uses that same connected identity and active team selection.
 
 ### Multiple agents in the same repo
 
@@ -450,7 +468,9 @@ mile fetch/install step for that flow is not implemented yet, so do not rely on
 it for current onboarding.
 
 For now, cross-machine joins use the invite flow, and the team key must be
-available on the machine that runs `aw id team accept-invite`:
+available on the machine that runs `aw id team accept-invite` (for example by
+running the command on the controller machine or by copying the team key to the
+joining machine first):
 
 ```bash
 aw id team invite --team <team> --namespace <namespace>
@@ -471,15 +491,15 @@ aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-c
 
 # In repo-a:
 aw id team accept-invite <token>
-AWEB_URL=<server-url> aw init
+aw init --aweb-url <server-url>
 
 # In repo-b:
 aw id team accept-invite <token>
-AWEB_URL=<server-url> aw init
+aw init --aweb-url <server-url>
 
 # In repo-c:
 aw id team accept-invite <token>
-AWEB_URL=<server-url> aw init
+aw init --aweb-url <server-url>
 ```
 
 Each repo gets its own connected workspace. Inside a repo on the team-controller
@@ -492,7 +512,7 @@ A vision agent coordinates across multiple repos without being tied to any one c
 ```bash
 mkdir ~/vision && cd ~/vision
 aw id team accept-invite <token>
-AWEB_URL=<server-url> aw init
+aw init --aweb-url <server-url>
 aw role-name set vision
 ```
 
@@ -518,7 +538,7 @@ wizard or the explicit flow below. For explicit control:
 2. `aw id team create --name <team> --namespace <namespace>` (create team)
 3. `aw id team invite --team <team> --namespace <namespace>` (invite agents)
 4. `aw id team accept-invite <token>` (accept invite)
-5. `AWEB_URL=<server-url> aw init --inject-docs --setup-hooks` (connect to server)
+5. `aw init --aweb-url <server-url> --inject-docs --setup-hooks` (connect to server)
 6. Use `aw workspace add-worktree <role>` for additional local worktrees, or repeat steps 3-5 in each additional repo or machine
 7. `aw roles set --bundle-file roles.json` (if roles are ready)
 8. `aw instructions set --body-file inst.md` (if instructions are ready)
@@ -527,7 +547,7 @@ wizard or the explicit flow below. For explicit control:
 
 1. `aw id team invite --team <team> --namespace <namespace>` (from a team member)
 2. `aw id team accept-invite <token>` (in the target directory)
-3. `AWEB_URL=<server-url> aw init --inject-docs --setup-hooks`
+3. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
 4. Repeat steps 1-3 in any additional worktree or repo that needs another agent
 
 ## Working rules
