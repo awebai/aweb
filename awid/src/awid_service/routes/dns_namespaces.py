@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.dns_auth import verify_signed_json_request
 
 router = APIRouter(prefix="/v1/namespaces", tags=["namespaces"])
+logger = logging.getLogger(__name__)
 
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
@@ -334,6 +336,18 @@ async def rotate_namespace_controller(
 
     now = datetime.now(timezone.utc)
     async with db.transaction() as tx:
+        existing = await tx.fetch_one(
+            """
+            SELECT namespace_id, controller_did
+            FROM {{tables.dns_namespaces}}
+            WHERE domain = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            domain,
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+
         if parent_auth_present:
             parent_namespace = await _find_parent_namespace(tx, domain=domain, lock_for_share=True)
             if parent_namespace is None:
@@ -362,6 +376,13 @@ async def rotate_namespace_controller(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
+    if existing["controller_did"] != new_controller_did:
+        logger.warning(
+            "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
+            domain,
+            existing["controller_did"],
+            new_controller_did,
+        )
     return _namespace_response(row)
 
 

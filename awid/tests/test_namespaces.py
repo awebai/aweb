@@ -3,11 +3,16 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+import awid_service.routes.dns_namespaces as dns_namespaces_routes
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.dns_verify import DomainAuthority
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
+from awid_service.deps import get_domain_verifier
+from awid_service.main import create_app
 
 
 async def _register_namespace(client, signing_key, controller_did, domain):
@@ -232,6 +237,118 @@ async def test_rotate_local_namespace_controller_skips_dns_verification(client):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["controller_did"] == new_controller_did
+
+
+@pytest.mark.asyncio
+async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
+    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+):
+    old_signing_key, old_controller_did = controller_identity
+    domain = "recover.example"
+    await _register_namespace(client, old_signing_key, old_controller_did, domain)
+
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+
+    async def _rotated_domain_verifier(queried_domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=new_controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{queried_domain}",
+        )
+
+    logged: list[tuple[str, tuple[object, ...]]] = []
+
+    def _capture_warning(message: str, *args) -> None:
+        logged.append((message, args))
+
+    monkeypatch.setattr(dns_namespaces_routes.logger, "warning", _capture_warning)
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            headers = _sign(
+                new_signing_key,
+                new_controller_did,
+                domain=domain,
+                operation="rotate_controller",
+                new_controller_did=new_controller_did,
+            )
+            resp = await recovery_client.put(
+                f"/v1/namespaces/{domain}",
+                json={"new_controller_did": new_controller_did},
+                headers=headers,
+            )
+
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["controller_did"] == new_controller_did
+            assert resp.json()["verification_status"] == "verified"
+
+            team_signing_key, team_pub = generate_keypair()
+            team_did_key = did_from_public_key(team_pub)
+            old_headers = _sign(
+                old_signing_key,
+                old_controller_did,
+                domain=domain,
+                operation="create_team",
+                name="backend",
+            )
+            old_resp = await recovery_client.post(
+                f"/v1/namespaces/{domain}/teams",
+                json={"name": "backend", "team_did_key": team_did_key},
+                headers=old_headers,
+            )
+            assert old_resp.status_code == 403
+            assert old_resp.json()["detail"] == "Only the namespace controller can manage teams"
+
+    assert logged == [
+        (
+            "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
+            (domain, old_controller_did, new_controller_did),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rotate_namespace_controller_rejects_when_dns_still_points_to_old_did(
+    client, awid_db_infra, fake_redis, controller_identity,
+):
+    old_signing_key, old_controller_did = controller_identity
+    domain = "recover-mismatch.example"
+    await _register_namespace(client, old_signing_key, old_controller_did, domain)
+
+    new_signing_key, new_public_key = generate_keypair()
+    new_controller_did = did_from_public_key(new_public_key)
+
+    async def _stale_domain_verifier(queried_domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=old_controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{queried_domain}",
+        )
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _stale_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            headers = _sign(
+                new_signing_key,
+                new_controller_did,
+                domain=domain,
+                operation="rotate_controller",
+                new_controller_did=new_controller_did,
+            )
+            resp = await recovery_client.put(
+                f"/v1/namespaces/{domain}",
+                json={"new_controller_did": new_controller_did},
+                headers=headers,
+            )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "DNS controller does not match new_controller_did"
 
 
 @pytest.mark.asyncio
