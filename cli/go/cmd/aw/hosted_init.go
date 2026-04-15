@@ -75,8 +75,12 @@ func runHostedInit(cmd *cobra.Command) error {
 		return err
 	}
 	didKey := awid.ComputeDIDKey(pub)
-	stableID := awid.ComputeStableID(pub)
-	memberAddress := fmt.Sprintf("%s.aweb.ai/%s", username, alias)
+	stableID := ""
+	memberAddress := ""
+	if initPersistent {
+		stableID = awid.ComputeStableID(pub)
+		memberAddress = fmt.Sprintf("%s.aweb.ai/%s", username, alias)
+	}
 
 	registry, err := newConfiguredRegistryClient(nil, serviceURLs.OnboardingURL)
 	if err != nil {
@@ -88,17 +92,19 @@ func runHostedInit(cmd *cobra.Command) error {
 			return fmt.Errorf("invalid discovered registry url: %w", err)
 		}
 	}
-	if _, err := registry.RegisterDID(
-		ctx,
-		registry.DefaultRegistryURL,
-		"",
-		memberAddress,
-		alias,
-		didKey,
-		stableID,
-		signingKey,
-	); err != nil {
-		return fmt.Errorf("failed to register hosted did:aw before cli-signup: %w", err)
+	if initPersistent {
+		if _, err := registry.RegisterDID(
+			ctx,
+			registry.DefaultRegistryURL,
+			"",
+			memberAddress,
+			alias,
+			didKey,
+			stableID,
+			signingKey,
+		); err != nil {
+			return fmt.Errorf("failed to register hosted did:aw before cli-signup: %w", err)
+		}
 	}
 
 	resp, err := awid.CliSignup(ctx, serviceURLs.OnboardingURL, &awid.CliSignupRequest{
@@ -150,14 +156,23 @@ func persistHostedInitState(
 	if cert.MemberDIDKey != didKey {
 		return fmt.Errorf("cli-signup certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
 	}
-	if cert.MemberDIDAW != stableID {
-		return fmt.Errorf("cli-signup certificate member_did_aw %q does not match generated did:aw %q", cert.MemberDIDAW, stableID)
-	}
-	if strings.TrimSpace(resp.MemberAddress) == "" {
-		return fmt.Errorf("cli-signup response missing member_address")
-	}
-	if cert.MemberAddress != strings.TrimSpace(resp.MemberAddress) {
-		return fmt.Errorf("cli-signup certificate member_address %q does not match response %q", cert.MemberAddress, resp.MemberAddress)
+	if persistent {
+		if cert.MemberDIDAW != stableID {
+			return fmt.Errorf("cli-signup certificate member_did_aw %q does not match generated did:aw %q", cert.MemberDIDAW, stableID)
+		}
+		if strings.TrimSpace(resp.MemberAddress) == "" {
+			return fmt.Errorf("cli-signup response missing member_address")
+		}
+		if cert.MemberAddress != strings.TrimSpace(resp.MemberAddress) {
+			return fmt.Errorf("cli-signup certificate member_address %q does not match response %q", cert.MemberAddress, resp.MemberAddress)
+		}
+	} else {
+		if strings.TrimSpace(resp.DIDAW) != "" || cert.MemberDIDAW != "" {
+			return fmt.Errorf("ephemeral cli-signup unexpectedly returned persistent did:aw fields")
+		}
+		if strings.TrimSpace(resp.MemberAddress) != "" || cert.MemberAddress != "" {
+			return fmt.Errorf("ephemeral cli-signup unexpectedly returned persistent address fields")
+		}
 	}
 
 	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {

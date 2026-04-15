@@ -138,7 +138,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	}
 
 	for {
-		signingKey, cert, didKey, didAW, memberAddress, registryURL, err := provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias)
+		signingKey, cert, didKey, didAW, memberAddress, registryURL, err := provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
 				fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
@@ -503,7 +503,7 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL st
 }
 
 func provisionHostedIdentity(
-	onboardingURL, registryURL, username, alias string,
+	onboardingURL, registryURL, username, alias string, persistent bool,
 ) (ed25519.PrivateKey, *awid.TeamCertificate, string, string, string, string, error) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -520,14 +520,20 @@ func provisionHostedIdentity(
 		return nil, nil, "", "", "", "", err
 	}
 	didKey := awid.ComputeDIDKey(pub)
-	didAW := awid.ComputeStableID(pub)
-	memberAddress := username + guidedOnboardingManagedDomainSuffix + "/" + alias
+	didAW := ""
+	memberAddress := ""
+	if persistent {
+		didAW = awid.ComputeStableID(pub)
+		memberAddress = username + guidedOnboardingManagedDomainSuffix + "/" + alias
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := registerHostedDID(ctx, registry, didKey, didAW, memberAddress, alias, signingKey); err != nil {
-		return nil, nil, "", "", "", "", err
+	if persistent {
+		if err := registerHostedDID(ctx, registry, didKey, didAW, memberAddress, alias, signingKey); err != nil {
+			return nil, nil, "", "", "", "", err
+		}
 	}
 
 	resp, err := guidedOnboardingCliSignup(ctx, onboardingURL, &awid.CliSignupRequest{
