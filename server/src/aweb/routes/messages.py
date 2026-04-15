@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
-from aweb.identity_auth_deps import IdentityAuth, MessagingAuth, auth_dids, get_identity_auth, get_messaging_auth
+from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -414,10 +414,10 @@ async def get_inbox(
     limit: int = Query(default=50, ge=1, le=200),
     unread_only: bool = Query(default=False),
     message_id: str | None = Query(default=None),
-    identity: IdentityAuth = Depends(get_identity_auth),
+    auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
-    inbox_dids = auth_dids(identity)
+    inbox_dids = auth_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -487,7 +487,7 @@ async def get_inbox(
 @router.post("/{message_id}/ack", response_model=AckResponse)
 async def ack_message(
     request: Request, message_id: str, db=Depends(get_db),
-    identity: IdentityAuth = Depends(get_identity_auth),
+    auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> AckResponse:
 
     try:
@@ -497,7 +497,7 @@ async def ack_message(
 
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-    inbox_dids = auth_dids(identity)
+    inbox_dids = auth_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
