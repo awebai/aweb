@@ -210,5 +210,10 @@ async def _resolve_proxy_team_id(aweb_db, internal_team_id: str) -> str:
             UUID(internal_team_id),
         )
     except Exception:
+        logger.warning(
+            "Falling back to proxy team id without server.teams mapping",
+            extra={"internal_team_id": internal_team_id},
+            exc_info=True,
+        )
         return internal_team_id
     return str(row["aweb_team_id"]) if row and row.get("aweb_team_id") else internal_team_id

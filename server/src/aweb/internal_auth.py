@@ -38,7 +38,7 @@ class InternalAuthContext(TypedDict):
 
 
 def _get_internal_auth_secret() -> Optional[str]:
-    return os.getenv("AWEB_INTERNAL_AUTH_SECRET") or os.getenv("SESSION_SECRET_KEY")
+    return os.getenv("AWEB_INTERNAL_AUTH_SECRET")
 
 
 def build_internal_auth_header_value(
