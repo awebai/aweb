@@ -539,9 +539,12 @@ class RegistryClient:
         controller_signing_key: bytes,
         reachability: str,
         visible_to_team_id: str | None = None,
+        current_did_key: str | None = None,
     ) -> Address:
         registry_url = await self._registry_url_for_domain(domain)
-        key_resolution = await self.resolve_key(did_aw)
+        if current_did_key is None:
+            key_resolution = await self.resolve_key(did_aw)
+            current_did_key = key_resolution.current_did_key
         return _address_from_json(
             await self._request_json(
                 "POST",
@@ -555,7 +558,7 @@ class RegistryClient:
                 json={
                     "name": name,
                     "did_aw": did_aw,
-                    "current_did_key": key_resolution.current_did_key,
+                    "current_did_key": current_did_key,
                     "reachability": reachability,
                     **(
                         {}
@@ -1144,6 +1147,7 @@ class CachedRegistryClient(RegistryClient):
         controller_signing_key: bytes,
         reachability: str,
         visible_to_team_id: str | None = None,
+        current_did_key: str | None = None,
     ) -> Address:
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[])
@@ -1154,6 +1158,7 @@ class CachedRegistryClient(RegistryClient):
             controller_signing_key,
             reachability,
             visible_to_team_id,
+            current_did_key,
         )
         await self._invalidate_address_cache(domain=domain, name=name, did_aws=[address.did_aw])
         return address

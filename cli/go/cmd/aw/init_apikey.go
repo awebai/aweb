@@ -41,8 +41,11 @@ type apiKeyBootstrapRequest struct {
 	PublicKey           string `json:"public_key"`
 	Name                string `json:"name,omitempty"`
 	Alias               string `json:"alias,omitempty"`
+	Custody             string `json:"custody"`
 	AddressReachability string `json:"address_reachability,omitempty"`
 	RoleName            string `json:"role_name,omitempty"`
+	HumanName           string `json:"human_name,omitempty"`
+	AgentType           string `json:"agent_type,omitempty"`
 	Lifetime            string `json:"lifetime"`
 }
 
@@ -90,14 +93,26 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 	didKey := awid.ComputeDIDKey(pub)
+	localStableID := awid.ComputeStableID(pub)
+
+	// For persistent identities, do NOT use AWEB_ALIAS env var fallback —
+	// only explicit --alias flag. An env var from a prior ephemeral session
+	// should not silently become a persistent address.
+	alias := strings.TrimSpace(req.Alias)
+	if req.Persistent && alias == "" {
+		return connectOutput{}, usageError("--alias is required for persistent API key bootstrap")
+	}
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
 		DID:                 didKey,
 		PublicKey:            base64.StdEncoding.EncodeToString(pub),
 		Name:                strings.TrimSpace(req.Name),
-		Alias:               strings.TrimSpace(req.Alias),
+		Alias:               alias,
+		Custody:             awid.CustodySelf,
 		AddressReachability: strings.TrimSpace(req.Reachability),
 		RoleName:            strings.TrimSpace(req.Role),
+		HumanName:           strings.TrimSpace(req.HumanName),
+		AgentType:           strings.TrimSpace(req.AgentType),
 		Lifetime:            initLifetimeValue(req.Persistent),
 	})
 	if err != nil {
@@ -116,6 +131,40 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if err != nil {
 		return connectOutput{}, err
 	}
+	if persistent && stableID != localStableID {
+		return connectOutput{}, fmt.Errorf("workspace init response stable_id %q does not match locally computed %q", stableID, localStableID)
+	}
+	if strings.TrimSpace(resp.APIKey) == "" {
+		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
+	}
+
+	// Register DID at awid AFTER the cloud assigns the address.
+	// The cloud creates the address with current_did_key directly (no resolve_key).
+	// The CLI registers the did:aw → did:key mapping so others can resolve the identity.
+	if persistent {
+		registry, regErr := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
+		if regErr != nil {
+			return connectOutput{}, regErr
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		memberAddress := strings.TrimSpace(cert.MemberAddress)
+		if _, regErr := registry.RegisterDID(
+			ctx,
+			registry.DefaultRegistryURL,
+			"",
+			memberAddress,
+			alias,
+			didKey,
+			localStableID,
+			signingKey,
+		); regErr != nil {
+			// Non-fatal: coordination works via team cert. DID resolution
+			// can be retried later. Log but do not block the init.
+			debugLog("warning: failed to register did:aw at awid: %v", regErr)
+		}
+	}
+
 	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
 		return connectOutput{}, err
 	}

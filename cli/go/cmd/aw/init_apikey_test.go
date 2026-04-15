@@ -187,11 +187,15 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			didKey, _ := initBody["did"].(string)
+			pubKeyB64, _ := initBody["public_key"].(string)
+			pubKeyBytes, _ := base64.StdEncoding.DecodeString(pubKeyB64)
+			stableID := awid.ComputeStableID(ed25519.PublicKey(pubKeyBytes))
+			memberAddress := "alice.aweb.ai/alice"
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 				Team:          "default:alice.aweb.ai",
 				MemberDIDKey:  didKey,
-				MemberDIDAW:   "did:aw:alice",
-				MemberAddress: "alice.aweb.ai/alice",
+				MemberDIDAW:   stableID,
+				MemberAddress: memberAddress,
 				Alias:         "alice",
 				Lifetime:      awid.LifetimePersistent,
 			})
@@ -209,7 +213,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"team_id":      "default:alice.aweb.ai",
 				"workspace_id": "ws-1",
 				"did":          didKey,
-				"stable_id":    "did:aw:alice",
+				"stable_id":    stableID,
 				"lifetime":     awid.LifetimePersistent,
 				"custody":      awid.CustodySelf,
 				"api_key":      "workspace-sk-persistent",
@@ -237,7 +241,11 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 		AwebURL:     externalLikeTestURL(t, server.URL),
 		RegistryURL: "https://api.awid.ai",
 		APIKey:      apiKey,
+		Name:        "alice",
+		Alias:       "alice",
 		Role:        "backend",
+		HumanName:   "Alice",
+		AgentType:   "codex",
 		Persistent:  true,
 	})
 	if err != nil {
@@ -261,8 +269,11 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	if identity.DID != cert.MemberDIDKey {
 		t.Fatalf("identity did=%q want %q", identity.DID, cert.MemberDIDKey)
 	}
-	if identity.StableID != "did:aw:alice" {
-		t.Fatalf("stable_id=%q", identity.StableID)
+	if !strings.HasPrefix(identity.StableID, "did:aw:") || identity.StableID == "" {
+		t.Fatalf("stable_id=%q want did:aw:...", identity.StableID)
+	}
+	if identity.StableID != cert.MemberDIDAW {
+		t.Fatalf("identity stable_id=%q does not match cert member_did_aw=%q", identity.StableID, cert.MemberDIDAW)
 	}
 	if identity.Address != "alice.aweb.ai/alice" {
 		t.Fatalf("address=%q", identity.Address)
