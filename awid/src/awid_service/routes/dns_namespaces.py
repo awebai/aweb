@@ -278,13 +278,14 @@ async def register_namespace(
 @router.post(
     "/{domain}/reverify",
     response_model=NamespaceReverifyResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+    dependencies=[Depends(rate_limit_dep("namespace_reverify"))],
 )
 async def reverify_namespace(
     domain: str,
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> NamespaceReverifyResponse:
+    """Reverify namespace control from live DNS and refresh stored authority."""
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
     ns_row = await db.fetch_one(

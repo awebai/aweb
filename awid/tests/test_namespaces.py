@@ -513,6 +513,14 @@ async def test_reverify_namespace_local_returns_400(client, controller_identity)
 
 
 @pytest.mark.asyncio
+async def test_reverify_namespace_missing_returns_404(client):
+    resp = await client.post("/v1/namespaces/nonexistent.example/reverify")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Namespace not found"
+
+
+@pytest.mark.asyncio
 async def test_stale_address_verification_updates_controller_instead_of_revoking(
     client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
 ):

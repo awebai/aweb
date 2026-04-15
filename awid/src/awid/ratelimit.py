@@ -121,6 +121,7 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "namespace_register": (10, 3600),
     "namespace_get": (60, 60),
     "namespace_rotate": (30, 3600),
+    "namespace_reverify": (10, 3600),
     "namespace_list": (30, 60),
     "namespace_delete": (10, 3600),
     "address_register": (30, 3600),
