@@ -23,25 +23,27 @@ const initAPIKeyEnvVar = "AWEB_API_KEY"
 const maxWorkspaceAPIKeyLength = 4096
 
 type apiKeyInitRequest struct {
-	WorkingDir  string
-	AwebURL     string
-	RegistryURL string
-	APIKey      string
-	Name        string
-	Alias       string
-	Role        string
-	HumanName   string
-	AgentType   string
-	Persistent  bool
+	WorkingDir   string
+	AwebURL      string
+	RegistryURL  string
+	APIKey       string
+	Name         string
+	Alias        string
+	Reachability string
+	Role         string
+	HumanName    string
+	AgentType    string
+	Persistent   bool
 }
 
 type apiKeyBootstrapRequest struct {
-	DID       string `json:"did"`
-	PublicKey string `json:"public_key"`
-	Name      string `json:"name,omitempty"`
-	Alias     string `json:"alias,omitempty"`
-	RoleName  string `json:"role_name,omitempty"`
-	Lifetime  string `json:"lifetime"`
+	DID                 string `json:"did"`
+	PublicKey           string `json:"public_key"`
+	Name                string `json:"name,omitempty"`
+	Alias               string `json:"alias,omitempty"`
+	AddressReachability string `json:"address_reachability,omitempty"`
+	RoleName            string `json:"role_name,omitempty"`
+	Lifetime            string `json:"lifetime"`
 }
 
 type apiKeyBootstrapResponse struct {
@@ -90,12 +92,13 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	didKey := awid.ComputeDIDKey(pub)
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
-		DID:       didKey,
-		PublicKey: base64.StdEncoding.EncodeToString(pub),
-		Name:      strings.TrimSpace(req.Name),
-		Alias:     strings.TrimSpace(req.Alias),
-		RoleName:  strings.TrimSpace(req.Role),
-		Lifetime:  initLifetimeValue(req.Persistent),
+		DID:                 didKey,
+		PublicKey:            base64.StdEncoding.EncodeToString(pub),
+		Name:                strings.TrimSpace(req.Name),
+		Alias:               strings.TrimSpace(req.Alias),
+		AddressReachability: strings.TrimSpace(req.Reachability),
+		RoleName:            strings.TrimSpace(req.Role),
+		Lifetime:            initLifetimeValue(req.Persistent),
 	})
 	if err != nil {
 		return connectOutput{}, err
