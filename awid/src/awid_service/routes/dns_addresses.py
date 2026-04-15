@@ -136,17 +136,17 @@ async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: Dom
         )
 
     if dns_authority.controller_did != ns_row["controller_did"]:
-        # DNS is the source of truth for namespace authority. A changed
-        # controller DID means the owner rotated their key — update the
-        # registry to match DNS rather than revoking.
         await db.execute(
             """
             UPDATE {{tables.dns_namespaces}}
-            SET controller_did = $1, last_verified_at = NOW(), verification_status = 'verified'
-            WHERE namespace_id = $2 AND deleted_at IS NULL
+            SET verification_status = 'revoked'
+            WHERE namespace_id = $1 AND deleted_at IS NULL
             """,
-            dns_authority.controller_did,
             ns_row["namespace_id"],
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="DNS controller has changed — namespace revoked",
         )
 
     # Verification passed — refresh timestamp
