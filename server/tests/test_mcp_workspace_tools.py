@@ -25,6 +25,7 @@ class DBInfra:
 @pytest.mark.asyncio
 async def test_work_ready_uses_workspace_id_not_agent_id(aweb_cloud_db, monkeypatch):
     workspace_id = uuid4()
+    other_workspace_id = uuid4()
     agent_id = uuid4()
     team_id = "backend:acme.com"
 
@@ -37,6 +38,17 @@ async def test_work_ready_uses_workspace_id_not_agent_id(aweb_cloud_db, monkeypa
         """,
         team_id,
         workspace_id,
+        datetime.now(timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (
+            team_id, workspace_id, alias, human_name, task_ref, claimed_at
+        )
+        VALUES ($1, $2, 'bob', 'Bob', 'backend-5678', $3)
+        """,
+        team_id,
+        other_workspace_id,
         datetime.now(timezone.utc),
     )
 
@@ -57,7 +69,12 @@ async def test_work_ready_uses_workspace_id_not_agent_id(aweb_cloud_db, monkeypa
                 "task_ref": "backend-1234",
                 "title": "Fix workspace split",
                 "priority": 1,
-            }
+            },
+            {
+                "task_ref": "backend-5678",
+                "title": "Held elsewhere",
+                "priority": 1,
+            },
         ]
 
     monkeypatch.setattr(work_tools, "list_ready_tasks", _list_ready_tasks)

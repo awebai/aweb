@@ -38,6 +38,8 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
     presence_map = {}
     for presence in presences:
+        # Presence writes should already key by workspace_id. The agent_id fallback
+        # exists only to tolerate older payloads during the transition.
         presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
         if presence_id:
             presence_map[presence_id] = presence
