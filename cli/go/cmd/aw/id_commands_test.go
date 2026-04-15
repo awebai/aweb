@@ -1317,6 +1317,201 @@ func TestResolveRegistryClientForLookupRejectsAWIDRegistryURLLocal(t *testing.T)
 	}
 }
 
+func TestExecuteIDNamespaceRotateControllerStagesAndRotatesController(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	domain := "local"
+	oldPub, oldKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldControllerDID := awid.ComputeDIDKey(oldPub)
+
+	var rotateCalls int
+	var gotRotateAuth string
+	var gotRotateBody map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              domain,
+				"controller_did":      oldControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-15T00:00:00Z",
+				"created_at":          "2026-04-15T00:00:00Z",
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/namespaces/local":
+			rotateCalls++
+			gotRotateAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+			if err := json.NewDecoder(r.Body).Decode(&gotRotateBody); err != nil {
+				t.Fatalf("decode rotate body: %v", err)
+			}
+			newControllerDID, _ := gotRotateBody["new_controller_did"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              domain,
+				"controller_did":      newControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-16T00:00:00Z",
+				"created_at":          "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	if err := awconfig.SaveControllerKey(domain, oldKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
+		Domain:        domain,
+		ControllerDID: oldControllerDID,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-15T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var promptOut strings.Builder
+	out, err := executeIDNamespaceRotateController(idNamespaceRotateControllerOptions{
+		Domain:    domain,
+		PromptOut: &promptOut,
+		Now:       func() time.Time { return time.Date(2026, 4, 16, 1, 2, 3, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("executeIDNamespaceRotateController: %v\nprompt output:\n%s", err, promptOut.String())
+	}
+	if out.Status != "rotated" {
+		t.Fatalf("status=%q", out.Status)
+	}
+	if out.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%q want %q", out.RegistryURL, registryServer.URL)
+	}
+	if out.OldDID != oldControllerDID {
+		t.Fatalf("old_did=%q want %q", out.OldDID, oldControllerDID)
+	}
+	if strings.TrimSpace(out.NewDID) == "" || out.NewDID == oldControllerDID {
+		t.Fatalf("new_did=%q want non-empty value distinct from %q", out.NewDID, oldControllerDID)
+	}
+	if rotateCalls != 1 {
+		t.Fatalf("rotate calls=%d want 1", rotateCalls)
+	}
+	if gotRotateBody["new_controller_did"] != out.NewDID {
+		t.Fatalf("new_controller_did=%v want %q", gotRotateBody["new_controller_did"], out.NewDID)
+	}
+	if !strings.Contains(gotRotateAuth, "DIDKey "+out.NewDID+" ") {
+		t.Fatalf("authorization=%q missing new controller did %q", gotRotateAuth, out.NewDID)
+	}
+	if strings.TrimSpace(promptOut.String()) != "" {
+		t.Fatalf("local namespace rotation should not prompt for dns:\n%s", promptOut.String())
+	}
+
+	savedKey, err := awconfig.LoadControllerKey(domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if savedDID := awid.ComputeDIDKey(savedKey.Public().(ed25519.PublicKey)); savedDID != out.NewDID {
+		t.Fatalf("saved controller did=%q want %q", savedDID, out.NewDID)
+	}
+	meta, err := awconfig.LoadControllerMeta(domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ControllerDID != out.NewDID {
+		t.Fatalf("meta controller_did=%q want %q", meta.ControllerDID, out.NewDID)
+	}
+	if meta.RegistryURL != registryServer.URL {
+		t.Fatalf("meta registry_url=%q want %q", meta.RegistryURL, registryServer.URL)
+	}
+	if meta.CreatedAt != "2026-04-16T01:02:03Z" {
+		t.Fatalf("meta created_at=%q", meta.CreatedAt)
+	}
+}
+
+func TestExecuteIDNamespaceRotateControllerReusesStagedRecoveryKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	domain := "local"
+	oldPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldControllerDID := awid.ComputeDIDKey(oldPub)
+	stagedPub, stagedKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedControllerDID := awid.ComputeDIDKey(stagedPub)
+
+	var rotateCalls int
+	var gotRotateBody map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              domain,
+				"controller_did":      oldControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-15T00:00:00Z",
+				"created_at":          "2026-04-15T00:00:00Z",
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/namespaces/local":
+			rotateCalls++
+			if err := json.NewDecoder(r.Body).Decode(&gotRotateBody); err != nil {
+				t.Fatalf("decode rotate body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              domain,
+				"controller_did":      stagedControllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-16T00:00:00Z",
+				"created_at":          "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	if err := awconfig.SaveControllerKey(domain, stagedKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
+		Domain:        domain,
+		ControllerDID: stagedControllerDID,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-15T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var promptOut strings.Builder
+	out, err := executeIDNamespaceRotateController(idNamespaceRotateControllerOptions{
+		Domain:    domain,
+		PromptOut: &promptOut,
+		Now:       func() time.Time { return time.Date(2026, 4, 16, 1, 2, 3, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("executeIDNamespaceRotateController: %v", err)
+	}
+	if out.NewDID != stagedControllerDID {
+		t.Fatalf("new_did=%q want staged did %q", out.NewDID, stagedControllerDID)
+	}
+	if gotRotateBody["new_controller_did"] != stagedControllerDID {
+		t.Fatalf("new_controller_did=%v want %q", gotRotateBody["new_controller_did"], stagedControllerDID)
+	}
+	if rotateCalls != 1 {
+		t.Fatalf("rotate calls=%d want 1", rotateCalls)
+	}
+	if strings.TrimSpace(promptOut.String()) != "" {
+		t.Fatalf("staged local rotation should not prompt for dns:\n%s", promptOut.String())
+	}
+}
+
 func TestAwIDShowWorksWithoutIdentityFileForEphemeralWorkspace(t *testing.T) {
 	t.Parallel()
 
