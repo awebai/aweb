@@ -89,7 +89,7 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	if connectWorkingDir != tmp {
 		t.Fatalf("working_dir=%q", connectWorkingDir)
 	}
-	if connectServerURL != "https://app.aweb.ai" {
+	if connectServerURL != "https://app.aweb.ai/api" {
 		t.Fatalf("server_url=%q", connectServerURL)
 	}
 	if connectOpts.Role != "reviewer" {
