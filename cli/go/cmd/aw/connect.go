@@ -32,6 +32,7 @@ func init() {
 	connectCmd.Flags().StringVar(&connectBootstrapToken, "bootstrap-token", "", "One-time bootstrap token from the dashboard")
 	connectCmd.Flags().StringVar(&connectAddress, "address", "", "Persistent public address from the dashboard copy command")
 	connectCmd.Flags().StringVar(&connectMockURL, "mock-url", "", "Override the bootstrap/aweb base URL for local development")
+	connectCmd.Hidden = true
 	rootCmd.AddCommand(connectCmd)
 }
 
