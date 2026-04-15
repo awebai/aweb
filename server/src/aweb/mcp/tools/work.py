@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from aweb.coordination.tasks_service import list_blocked_tasks, list_ready_tasks, list_tasks
 from aweb.mcp.tools._common import require_team_context
+
+logger = logging.getLogger(__name__)
 
 
 async def _claim_rows(aweb_db, *, team_id: str) -> list[dict]:
@@ -28,10 +31,13 @@ async def work_ready(db_infra) -> str:
     aweb_db = db_infra.get_manager("aweb")
 
     claim_rows = await _claim_rows(aweb_db, team_id=auth.team_id)
+    current_workspace_id = (auth.workspace_id or "").strip()
+    if not current_workspace_id:
+        logger.warning("work_ready: missing workspace_id for team-authenticated MCP caller agent_id=%s", auth.agent_id)
     claimed_by_others = {
         row["task_ref"]
         for row in claim_rows
-        if str(row["workspace_id"]) != auth.agent_id
+        if str(row["workspace_id"]) != current_workspace_id
     }
 
     tasks = await list_ready_tasks(db_infra, team_id=auth.team_id)

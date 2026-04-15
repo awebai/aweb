@@ -80,6 +80,51 @@ async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> 
     return ctx
 
 
+async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) -> dict:
+    ctx = dict(context)
+    workspace_fields = (
+        ("actor_workspace_id", "actor_agent_id", "team_id"),
+        ("holder_workspace_id", "holder_agent_id", "team_id"),
+    )
+
+    agent_ids = [
+        str(ctx.get(agent_key, "")).strip()
+        for workspace_key, agent_key, _team_key in workspace_fields
+        if not str(ctx.get(workspace_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+    ]
+    if not agent_ids:
+        return ctx
+
+    aweb_db = db_infra.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT agent_id, team_id, workspace_id
+        FROM {{tables.workspaces}}
+        WHERE deleted_at IS NULL AND agent_id = ANY($1::uuid[])
+        ORDER BY updated_at DESC, workspace_id DESC
+        """,
+        [UUID(agent_id) for agent_id in agent_ids],
+    )
+    workspace_by_agent_team: dict[tuple[str, str], str] = {}
+    workspace_by_agent: dict[str, str] = {}
+    for row in rows:
+        agent_id = str(row["agent_id"])
+        team_id = str(row["team_id"])
+        workspace_id = str(row["workspace_id"])
+        workspace_by_agent_team.setdefault((agent_id, team_id), workspace_id)
+        workspace_by_agent.setdefault(agent_id, workspace_id)
+
+    for workspace_key, agent_key, team_key in workspace_fields:
+        if str(ctx.get(workspace_key, "")).strip():
+            continue
+        agent_id = str(ctx.get(agent_key, "")).strip()
+        team_id = str(ctx.get(team_key, "")).strip()
+        workspace_id = workspace_by_agent_team.get((agent_id, team_id), "") if team_id else workspace_by_agent.get(agent_id, "")
+        if workspace_id:
+            ctx[workspace_key] = workspace_id
+    return ctx
+
+
 def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
     """Create an on_mutation callback that publishes SSE events.
 
@@ -89,6 +134,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
 
     async def on_mutation(event_type: str, context: dict) -> None:
         context = await _enrich_identity_context(db_infra, context)
+        context = await _enrich_workspace_context(db_infra, context)
 
         # Side-effect hooks (cascades that modify state).
         # These run before SSE translation and do NOT prevent SSE publication.
@@ -149,8 +195,8 @@ async def _cascade_agent_deleted(
 ) -> None:
     """Cascade ephemeral identity deletion to workspace cleanup.
 
-    workspace_id = agent_id (v1 mapping). Soft-deletes the workspace,
-    releases task claims, publishes unclaim events, and clears presence.
+    Soft-deletes the agent's workspace, releases task claims, publishes
+    unclaim events, and clears presence.
 
     Note: agent.retired is intentionally NOT cascaded here. Retired agents
     designate a successor and their workspace data may be needed for handoff.
@@ -161,18 +207,20 @@ async def _cascade_agent_deleted(
 
     aweb_db = db_infra.get_manager("aweb")
 
-    # Check if a workspace exists for this agent (workspace_id = agent_id)
     workspace = await aweb_db.fetch_one(
         """
         SELECT workspace_id, alias, team_id
         FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND deleted_at IS NULL
+        WHERE agent_id = $1 AND deleted_at IS NULL
+        ORDER BY updated_at DESC, workspace_id DESC
+        LIMIT 1
         """,
         agent_id,
     )
     if workspace is None:
         return
 
+    workspace_id = str(workspace["workspace_id"])
     alias = workspace["alias"]
     team_id = str(workspace["team_id"])
 
@@ -184,7 +232,7 @@ async def _cascade_agent_deleted(
             SET deleted_at = NOW()
             WHERE workspace_id = $1
             """,
-            agent_id,
+            workspace_id,
         )
         claimed_rows = await tx.fetch_all(
             """
@@ -192,7 +240,7 @@ async def _cascade_agent_deleted(
             WHERE workspace_id = $1
             RETURNING task_ref
             """,
-            agent_id,
+            workspace_id,
         )
 
     # Publish unclaim events for each released task claim
@@ -200,7 +248,7 @@ async def _cascade_agent_deleted(
         await publish_event(
             redis,
             TaskUnclaimedEvent(
-                workspace_id=agent_id,
+                workspace_id=workspace_id,
                 task_ref=row["task_ref"],
                 alias=alias,
             ),
@@ -216,11 +264,11 @@ async def _cascade_agent_deleted(
         )
 
     # Clear presence from Redis (best-effort, not transactional with SQL)
-    await clear_workspace_presence(redis, [agent_id])
+    await clear_workspace_presence(redis, [workspace_id])
 
     logger.info(
         "Cascaded agent deletion to workspace %s (alias=%s, claims_released=%d)",
-        agent_id,
+        workspace_id,
         alias,
         len(claimed_rows),
     )
@@ -235,13 +283,13 @@ async def _cascade_task_status_changed(
     acting workspace. When it moves away from in_progress (closed, etc.),
     release all claims on that task.
     """
-    actor_id = context.get("actor_agent_id", "").strip()
+    actor_workspace_id = context.get("actor_workspace_id", "").strip()
     task_ref = context.get("task_ref", "").strip()
     new_status = context.get("new_status", "")
     title = context.get("title")
     claim_preacquired = bool(context.get("claim_preacquired", False))
 
-    if not actor_id or not task_ref:
+    if not actor_workspace_id or not task_ref:
         return
 
     aweb_db = db_infra.get_manager("aweb")
@@ -251,10 +299,10 @@ async def _cascade_task_status_changed(
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND deleted_at IS NULL
         """,
-        actor_id,
+        actor_workspace_id,
     )
     if workspace is None:
-        logger.warning("task.status_changed: no workspace for actor %s", actor_id)
+        logger.warning("task.status_changed: no workspace for actor %s", actor_workspace_id)
         return
 
     team_id = str(workspace["team_id"])
@@ -264,7 +312,7 @@ async def _cascade_task_status_changed(
             conflict = await upsert_claim(
                 db_infra,
                 team_id=team_id,
-                workspace_id=actor_id,
+                workspace_id=actor_workspace_id,
                 alias=alias,
                 human_name=workspace["human_name"] or "",
                 task_ref=task_ref,
@@ -278,7 +326,7 @@ async def _cascade_task_status_changed(
         await publish_event(
             redis,
             TaskClaimedEvent(
-                workspace_id=actor_id,
+                workspace_id=actor_workspace_id,
                 task_ref=task_ref,
                 alias=alias,
                 title=title,
@@ -324,7 +372,7 @@ async def _cascade_task_status_changed(
     await publish_event(
         redis,
         TaskStatusChangedEvent(
-            workspace_id=actor_id,
+            workspace_id=actor_workspace_id,
             team_id=team_id,
             task_ref=task_ref,
             old_status=context.get("old_status", "") or "",
@@ -484,7 +532,7 @@ def _translate(event_type: str, ctx: dict):
 
     if event_type == "task.created":
         return TaskCreatedEvent(
-            workspace_id=ctx.get("actor_agent_id", ""),
+            workspace_id=ctx.get("actor_workspace_id", ""),
             team_id=ctx.get("team_id", ""),
             task_ref=ctx.get("task_ref", ""),
             title=ctx.get("title"),
@@ -492,14 +540,14 @@ def _translate(event_type: str, ctx: dict):
 
     if event_type == "reservation.acquired":
         return ReservationAcquiredEvent(
-            workspace_id=ctx.get("holder_agent_id", ""),
+            workspace_id=ctx.get("holder_workspace_id", ""),
             paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
             ttl_seconds=ctx.get("ttl_seconds", 0),
         )
 
     if event_type == "reservation.released":
         return ReservationReleasedEvent(
-            workspace_id=ctx.get("holder_agent_id", ""),
+            workspace_id=ctx.get("holder_workspace_id", ""),
             paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
         )
 

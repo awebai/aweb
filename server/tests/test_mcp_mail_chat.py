@@ -44,6 +44,7 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
 async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     agent_id = uuid4()
+    workspace_id = uuid4()
     did_key = "did:key:z6MkAlice"
 
     await aweb_cloud_db.aweb_db.execute(
@@ -65,6 +66,17 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         agent_id,
         team_id,
         did_key,
+        "alice",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_type)
+        VALUES ($1, $2, $3, $4, 'manual')
+        """,
+        workspace_id,
+        team_id,
+        agent_id,
         "alice",
     )
 
@@ -94,6 +106,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     assert ctx is not None
     assert ctx.did_aw == "did:aw:alice"
     assert ctx.address == "acme.com/alice"
+    assert ctx.workspace_id == str(workspace_id)
 
 
 @pytest.mark.asyncio
