@@ -28,6 +28,7 @@ class AuthContext:
     did_key: str
     did_aw: str | None = None
     address: str | None = None
+    workspace_id: str | None = None
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -111,6 +112,7 @@ class MCPAuthMiddleware:
             return AuthContext(
                 team_id=None,
                 agent_id=None,
+                workspace_id=None,
                 alias=None,
                 did_key=identity.did_key,
                 did_aw=identity.did_aw,
@@ -131,9 +133,22 @@ class MCPAuthMiddleware:
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
 
+        workspace = await aweb_db.fetch_one(
+            """
+            SELECT workspace_id
+            FROM {{tables.workspaces}}
+            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+            ORDER BY updated_at DESC, workspace_id DESC
+            LIMIT 1
+            """,
+            row["agent_id"],
+            cert_info["team_id"],
+        )
+
         return AuthContext(
             team_id=cert_info["team_id"],
             agent_id=str(row["agent_id"]),
+            workspace_id=(str(workspace["workspace_id"]) if workspace else None),
             alias=row["alias"],
             did_key=cert_info["did_key"],
             did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,

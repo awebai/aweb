@@ -28,10 +28,11 @@ async def work_ready(db_infra) -> str:
     aweb_db = db_infra.get_manager("aweb")
 
     claim_rows = await _claim_rows(aweb_db, team_id=auth.team_id)
+    current_workspace_id = (auth.workspace_id or "").strip()
     claimed_by_others = {
         row["task_ref"]
         for row in claim_rows
-        if str(row["workspace_id"]) != auth.agent_id
+        if str(row["workspace_id"]) != current_workspace_id
     }
 
     tasks = await list_ready_tasks(db_infra, team_id=auth.team_id)
