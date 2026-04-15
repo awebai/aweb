@@ -6,12 +6,14 @@ import contextvars
 import logging
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from aweb.internal_auth import parse_internal_auth_context
 from aweb.identity_auth_deps import resolve_identity_auth
 from aweb.team_auth_deps import _aweb_db, verify_request_certificate
 
@@ -102,6 +104,10 @@ class MCPAuthMiddleware:
             _auth_context.reset(cv_token)
 
     async def _resolve_auth(self, request: Request) -> AuthContext | None:
+        internal = parse_internal_auth_context(request)
+        if internal is not None:
+            return await self._resolve_proxy_auth(internal)
+
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("DIDKey "):
             return None
@@ -154,3 +160,55 @@ class MCPAuthMiddleware:
             did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,
             address=(cert_info.get("member_address") or row.get("address") or "").strip() or None,
         )
+
+    async def _resolve_proxy_auth(self, internal: dict[str, str]) -> AuthContext:
+        aweb_db = _aweb_db(self.db_infra)
+        resolved_team_id = await _resolve_proxy_team_id(aweb_db, internal["team_id"])
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, alias, did_key, did_aw, address
+            FROM {{tables.agents}}
+            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+            """,
+            UUID(internal["actor_id"]),
+            resolved_team_id,
+        )
+        if not row:
+            raise HTTPException(status_code=403, detail="Agent not connected")
+
+        workspace = await aweb_db.fetch_one(
+            """
+            SELECT workspace_id
+            FROM {{tables.workspaces}}
+            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+            ORDER BY updated_at DESC, workspace_id DESC
+            LIMIT 1
+            """,
+            row["agent_id"],
+            resolved_team_id,
+        )
+
+        return AuthContext(
+            team_id=resolved_team_id,
+            agent_id=str(row["agent_id"]),
+            workspace_id=(str(workspace["workspace_id"]) if workspace else None),
+            alias=row["alias"],
+            did_key=str(row["did_key"]),
+            did_aw=(str(row.get("did_aw") or "").strip() or None),
+            address=(str(row.get("address") or "").strip() or None),
+        )
+
+
+async def _resolve_proxy_team_id(aweb_db, internal_team_id: str) -> str:
+    try:
+        row = await aweb_db.fetch_one(
+            """
+            SELECT aweb_team_id
+            FROM server.teams
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            UUID(internal_team_id),
+        )
+    except Exception:
+        return internal_team_id
+    return str(row["aweb_team_id"]) if row and row.get("aweb_team_id") else internal_team_id

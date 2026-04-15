@@ -5,8 +5,10 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
+from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.tools import contacts as contacts_tools
@@ -163,6 +165,122 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     assert ctx is not None
     assert ctx.agent_id == str(agent_id)
     assert ctx.did_aw == "did:aw:alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    internal_team_id = str(uuid4())
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    secret = "proxy-secret"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status)
+        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active')
+        """,
+        agent_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'hosted_mcp')
+        """,
+        workspace_id,
+        team_id,
+        agent_id,
+    )
+
+    async def _fake_resolve_proxy_team_id(_aweb_db, _internal_team_id: str) -> str:
+        return team_id
+
+    monkeypatch.setattr(mcp_auth, "_resolve_proxy_team_id", _fake_resolve_proxy_team_id)
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    ctx = await middleware._resolve_auth(
+        _request_with_headers(
+            {
+                "X-Team-ID": internal_team_id,
+                "X-AWEB-Actor-ID": str(agent_id),
+                "X-AWEB-Auth": build_internal_auth_header_value(
+                    secret=secret,
+                    team_id=internal_team_id,
+                    principal_type="m",
+                    principal_id=str(uuid4()),
+                    actor_id=str(agent_id),
+                ),
+            }
+        )
+    )
+
+    assert ctx is not None
+    assert ctx.team_id == team_id
+    assert ctx.agent_id == str(agent_id)
+    assert ctx.workspace_id == str(workspace_id)
+    assert ctx.alias == "alice"
+    assert ctx.did_key == "did:key:z6MkAlice"
+    assert ctx.did_aw == "did:aw:alice"
+    assert ctx.address == "acme.com/alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monkeypatch):
+    secret = "proxy-secret"
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    with pytest.raises(HTTPException) as exc_info:
+        await middleware._resolve_auth(
+            _request_with_headers(
+                {
+                    "X-Team-ID": str(uuid4()),
+                    "X-AWEB-Actor-ID": str(uuid4()),
+                    "X-AWEB-Auth": "v2:bad:signature",
+                }
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_mcp_auth_ignores_trusted_proxy_headers_when_not_enabled(aweb_cloud_db, monkeypatch):
+    secret = "proxy-secret"
+    monkeypatch.delenv("AWEB_TRUST_PROXY_HEADERS", raising=False)
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    ctx = await middleware._resolve_auth(
+        _request_with_headers(
+            {
+                "X-Team-ID": str(uuid4()),
+                "X-AWEB-Actor-ID": str(uuid4()),
+                "X-AWEB-Auth": build_internal_auth_header_value(
+                    secret=secret,
+                    team_id=str(uuid4()),
+                    principal_type="m",
+                    principal_id=str(uuid4()),
+                    actor_id=str(uuid4()),
+                ),
+            }
+        )
+    )
+
+    assert ctx is None
 
 
 @pytest.mark.asyncio
