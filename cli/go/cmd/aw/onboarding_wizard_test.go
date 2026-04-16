@@ -912,6 +912,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	var gotConnectBody map[string]any
 	connectServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			if err := json.NewDecoder(r.Body).Decode(&gotConnectBody); err != nil {
 				t.Fatal(err)
@@ -1008,6 +1010,103 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	}
 	if cert.Team != "default:acme.com" {
 		t.Fatalf("cert team=%q", cert.Team)
+	}
+}
+
+func TestExecuteBYODPathUsesServiceDiscoveryForConnectURL(t *testing.T) {
+	oldProvision := guidedOnboardingProvisionBYODIdentity
+	oldConnect := guidedOnboardingConnect
+	t.Cleanup(func() {
+		guidedOnboardingProvisionBYODIdentity = oldProvision
+		guidedOnboardingConnect = oldConnect
+	})
+
+	tmp := t.TempDir()
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	didAW := awid.ComputeStableID(pub)
+
+	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
+		Team:          "default:acme.com",
+		MemberDIDKey:  didKey,
+		MemberDIDAW:   didAW,
+		MemberAddress: "acme.com/alice",
+		Alias:         "alice",
+		Lifetime:      awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	guidedOnboardingProvisionBYODIdentity = func(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
+		normalizedDomain := awconfig.NormalizeDomain(domain)
+		return &guidedBYODProvision{
+			Identity: &preparedIDCreate{
+				Plan: &idCreatePlan{
+					Name:           name,
+					Domain:         normalizedDomain,
+					Address:        normalizedDomain + "/" + name,
+					DIDAW:          didAW,
+					DIDKey:         didKey,
+					RegistryURL:    "https://registry.example",
+					IdentityPath:   filepath.Join(tmp, ".aw", "identity.yaml"),
+					SigningKeyPath: filepath.Join(tmp, ".aw", "signing.key"),
+					CreatedAt:      "2026-04-07T00:00:00Z",
+				},
+				IdentityKey: signingKey,
+			},
+			Certificate: cert,
+		}, nil
+	}
+
+	// The discovery endpoint returns aweb_url with /api suffix,
+	// which is what the connect call needs for hosted deployments.
+	discoveryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"aweb_url":       "http://" + r.Host + "/api",
+				"onboarding_url": "http://" + r.Host,
+				"registry_url":   "https://api.awid.ai",
+			})
+			return
+		}
+		// Heartbeat probe from the connect path.
+		if r.URL.Path == "/api/v1/agents/heartbeat" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	var connectServerURL string
+	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
+		connectServerURL = serverURL
+		return connectOutput{
+			Status:  "connected",
+			TeamID:  "default:acme.com",
+			Alias:   "alice",
+			AwebURL: serverURL,
+		}, nil
+	}
+
+	_, err = executeBYODPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
+		PromptOut:  &bytes.Buffer{},
+		BaseURL:    discoveryServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("executeBYODPath: %v", err)
+	}
+
+	// The connect URL must come from discovery (with /api), not be the
+	// raw base URL. Before the fix, this was discoveryServer.URL (no /api).
+	expectedURL := discoveryServer.URL + "/api"
+	if connectServerURL != expectedURL {
+		t.Fatalf("connect server_url=%q, want %q (discovery should resolve the /api path)", connectServerURL, expectedURL)
 	}
 }
 

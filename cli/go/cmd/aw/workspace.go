@@ -739,6 +739,11 @@ func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (st
 		return "", fmt.Errorf("load worktree identity: %w", err)
 	}
 	if strings.TrimSpace(awebURL) != "" {
+		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
+			if registryURL := strings.TrimSpace(discovered.RegistryURL); registryURL != "" {
+				return registryURL, nil
+			}
+		}
 		return "", usageError("current worktree is missing identity registry_url; run `aw init` again or restore .aw/identity.yaml")
 	}
 	return "", usageError("current worktree is missing registry configuration for %s", teamDomain)

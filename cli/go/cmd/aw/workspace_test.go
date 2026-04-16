@@ -1402,7 +1402,8 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 		t.Fatalf("save controller meta: %v", err)
 	}
 
-	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), "https://app.aweb.ai", "source")
+	// Use a URL that will fail discovery quickly (no server listening).
+	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), "http://127.0.0.1:1", "source")
 	if err == nil {
 		t.Fatalf("expected error, got registry_url=%q", registryURL)
 	}
@@ -1411,6 +1412,31 @@ func TestResolveWorkspaceTeamRegistryURLRejectsEmptyControllerRegistry(t *testin
 	}
 	if !strings.Contains(err.Error(), "missing identity registry_url") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveWorkspaceTeamRegistryURLFallsBackToServiceDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	discoveryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"aweb_url":     "http://" + r.Host + "/api",
+				"registry_url": "https://discovered-registry.example",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	// No controller meta, no identity.yaml — discovery is the only source.
+	registryURL, err := resolveWorkspaceTeamRegistryURL(t.TempDir(), discoveryServer.URL, "source")
+	if err != nil {
+		t.Fatalf("resolveWorkspaceTeamRegistryURL: %v", err)
+	}
+	if registryURL != "https://discovered-registry.example" {
+		t.Fatalf("registry_url=%q, want https://discovered-registry.example", registryURL)
 	}
 }
 

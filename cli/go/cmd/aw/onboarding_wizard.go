@@ -196,11 +196,11 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
-	awebURL, err := resolveGuidedOnboardingAwebURL(req.BaseURL)
+	serviceURLs, err := resolveOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	result, err := guidedOnboardingConnect(req.WorkingDir, awebURL, certificateConnectOptions{
+	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
 		Role:      req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
