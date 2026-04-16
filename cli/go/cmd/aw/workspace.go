@@ -398,15 +398,6 @@ func addWorktreeViaLocalTeamKey(
 			fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
 		)
 	}
-	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		err := fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
-		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		if rollbackErr != nil {
-			return connectOutput{}, fmt.Errorf("%w (rollback revoke failed: %v)", err, rollbackErr)
-		}
-		return connectOutput{}, err
-	}
 	return connectResult, nil
 }
 
