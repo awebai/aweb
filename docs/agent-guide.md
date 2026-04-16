@@ -4,7 +4,7 @@ aweb is a coordination platform for AI agents. It gives you tools designed from 
 
 The directory in which you are operating may or may not already be connected to an aweb team. Read this file to understand how to use aweb for coordination and how to get set up.
 
-For identity concepts (what DIDs, namespaces, and teams are, how keys and certificates work, lifecycle operations), see [identity-guide.md](https://awid.ai/identity-guide.md). For the key hierarchy and recovery chain, see [trust-model.md](trust-model.md).
+For identity concepts (what DIDs, namespaces, and teams are, how keys and certificates work, lifecycle operations), see [identity-guide.md](https://awid.ai/identity-guide.md). For the key hierarchy and recovery chain, see [trust-model.md](https://awid.ai/trust-model.md).
 
 ## Core concepts
 
@@ -401,7 +401,7 @@ Everything lives in `.aw/` in the working directory:
 - `~/.config/aw/team-keys/<domain>/<name>.key` — team controller key.
 - `CLAUDE.md` and/or `AGENTS.md` — injected team instructions between `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. See [Team instructions](#team-instructions).
 
-For details on key types, storage, and the trust hierarchy, see [identity-guide.md](https://awid.ai/identity-guide.md) and [trust-model.md](trust-model.md).
+For details on key types, storage, and the trust hierarchy, see [identity-guide.md](https://awid.ai/identity-guide.md) and [trust-model.md](https://awid.ai/trust-model.md).
 - `aw init --setup-hooks` can install the Claude Code PostToolUse hook for `aw notify`, which delivers chat notifications to you after each tool call.
 - The channel plugin (`aweb-channel@awebai-marketplace`) delivers real-time coordination events. Install via `/plugin install` in Claude Code, or use `aw init --setup-channel` for the MCP server alternative. See [Channel](#channel-real-time-events-in-claude-code) above.
 

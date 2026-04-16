@@ -4,9 +4,9 @@ This guide explains the identity and team system built on awid.  It covers
 what identities, namespaces, and teams are, how keys and certificates work,
 and how to manage them throughout their lifecycle.
 
-For the protocol-level contract, see [awid-sot.md](awid-sot.md).  For the
+For the protocol-level contract, see [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md).  For the
 complete key hierarchy and recovery chain, see
-[trust-model.md](https://aweb.ai/trust-model.md).
+[trust-model.md](https://awid.ai/trust-model.md).
 
 ---
 
@@ -73,7 +73,7 @@ Persistent identities have two custody modes:
   hosted or browser MCP runtimes that don't have filesystem access.
 
 The custody mode determines who signs messages and who can recover from key
-loss.  See [trust-model.md](https://aweb.ai/trust-model.md) for the full recovery chain.
+loss.  See [trust-model.md](https://awid.ai/trust-model.md) for the full recovery chain.
 
 ### Creating identities
 
@@ -248,7 +248,7 @@ the old `did:key`).
 ### Key loss
 
 What to do when a key is lost depends on the key type.  See
-[trust-model.md](https://aweb.ai/trust-model.md) for the complete recovery chain.
+[trust-model.md](https://awid.ai/trust-model.md) for the complete recovery chain.
 
 Summary:
 
@@ -307,7 +307,7 @@ against that pin unless a valid rotation or replacement explains the
 change.
 
 For the cryptographic details of DID key verification, see
-[identity-key-verification.md](identity-key-verification.md).
+[identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md).
 
 ---
 
@@ -333,10 +333,10 @@ Shared across workspaces on the same machine:
 
 ## Further reading
 
-- [trust-model.md](https://aweb.ai/trust-model.md) — complete key hierarchy and recovery
+- [trust-model.md](https://awid.ai/trust-model.md) — complete key hierarchy and recovery
   chain
-- [awid-sot.md](awid-sot.md) — awid registry API contract
-- [aweb-sot.md](aweb-sot.md) — aweb coordination contract (identity and
+- [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) — awid registry API contract
+- [aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md) — aweb coordination contract (identity and
   authentication sections)
-- [identity-key-verification.md](identity-key-verification.md) — DID key
+- [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md) — DID key
   verification algorithm

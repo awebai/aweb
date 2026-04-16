@@ -6,7 +6,7 @@ understand "what keys exist, who holds them, and what happens when one is
 lost."
 
 For protocol-level details of each key's signed envelope format, see
-[awid-sot.md](awid-sot.md) and [aweb-sot.md](aweb-sot.md).
+[awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) and [aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md).
 
 ---
 
@@ -247,7 +247,7 @@ this successor."
 
 ## Further Reading
 
-- [aweb-sot.md](aweb-sot.md) — identity model, authentication, lifecycle
-- [awid-sot.md](awid-sot.md) — registry API, signed envelopes, certificate format
-- [identity.md](identity.md) — identity concepts and TOFU model
-- [identity-key-verification.md](identity-key-verification.md) — DID key verification rules
+- [aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md) — identity model, authentication, lifecycle
+- [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) — registry API, signed envelopes, certificate format
+- [identity.md](https://github.com/awebai/aweb/blob/main/docs/identity.md) — identity concepts and TOFU model
+- [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md) — DID key verification rules
