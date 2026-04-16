@@ -356,7 +356,7 @@ async def chat_send(
         session_actor_did = await _resolve_session_actor_did(
             db_infra,
             session_id=sid,
-            actor_dids=actor_dids,
+            actor_dids=[actor_did] if auth.trusted_proxy else actor_dids,
         )
         if not session_actor_did:
             return json.dumps({"error": "Not a participant in this session"})
@@ -382,6 +382,8 @@ async def chat_send(
             signed_fields["from_stable_id"] = auth.did_aw
         if hang_on:
             signed_fields["hang_on"] = True
+        if wait:
+            signed_fields["wait_seconds"] = wait_seconds
         try:
             signed = await sign_hosted_message(
                 auth=auth,

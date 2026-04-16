@@ -32,6 +32,29 @@ class DBInfra:
         return self._aweb_db
 
 
+async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_agent_id, alice_did: str) -> None:
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        alice_did,
+    )
+
+
 def _request_with_headers(headers: dict[str, str]) -> Request:
     return Request(
         {
@@ -499,25 +522,12 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     alice_sk, alice_pub = generate_keypair()
     alice_did = did_from_public_key(alice_pub)
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
-        """,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
-        VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
-        """,
-        alice_agent_id,
-        bob_agent_id,
-        team_id,
-        alice_did,
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
     )
 
     monkeypatch.setattr(
@@ -574,6 +584,150 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert row["from_did"] == alice_did
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    session_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES
+            ($1, $2, $3, 'alice'),
+            ($1, 'did:key:z6MkBob', $4, 'bob')
+        """,
+        session_id,
+        alice_did,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> dict:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return {
+            "from_did": alice_did,
+            "signature": sign_message(alice_sk, signed_payload.encode("utf-8")),
+            "signed_payload": signed_payload,
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_signer=_signer,
+            session_id=str(session_id),
+            message="existing session",
+            wait=True,
+            wait_seconds=7,
+            hang_on=True,
+        )
+    )
+
+    assert result["delivered"] is True
+    assert len(seen) == 1
+    assert seen[0]["message_type"] == "chat"
+    assert seen[0]["payload"]["from_did"] == alice_did
+    assert seen[0]["payload"]["wait_seconds"] == 7
+    assert seen[0]["payload"]["hang_on"] is True
+    assert seen[0]["payload"]["to"] == "bob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
+    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
+    assert row["from_did"] == alice_did
+    assert row["signature"]
+    assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_rejects_forged_hosted_signature(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+    other_sk, _ = generate_keypair()
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _signer(**kwargs) -> dict:
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return {
+            "from_did": alice_did,
+            "signature": sign_message(other_sk, signed_payload.encode("utf-8")),
+            "signed_payload": signed_payload,
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_signer=_signer,
+            to_alias="bob",
+            message="forged",
+        )
+    )
+
+    assert result["error"] == "hosted custodial signer returned invalid signature"
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+    assert count == 0
 
 
 @pytest.mark.asyncio
