@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from typing import cast
 
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.signing import (
+    HostedMessageSigner,
+    HostedMessageSigningError,
+    sign_hosted_message,
+)
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -21,6 +28,7 @@ async def send_mail(
     db_infra,
     *,
     registry_client,
+    hosted_signer: HostedMessageSigner | None = None,
     to: str,
     subject: str = "",
     body: str,
@@ -67,11 +75,51 @@ async def send_mail(
     if not recipient_alias:
         recipient_alias = recipient.get("alias") or recipient_ref
 
+    message_id = uuid_mod.uuid4()
+    created_at = datetime.now(timezone.utc).replace(microsecond=0)
+    sender_did = primary_auth_did(auth)
+    signature: str | None = None
+    signed_payload: str | None = None
+    to_stable_id = (recipient.get("did_aw") or "").strip()
+    to_current_did = (recipient.get("did_key") or "").strip()
+    signed_to = recipient_ref if recipient_ref.startswith("did:") or "/" in recipient_ref else recipient_alias
+    signed_fields = {
+        "body": body,
+        "from": (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
+        "from_did": (auth.did_key or "").strip(),
+        "message_id": str(message_id),
+        "subject": subject,
+        "timestamp": _utc_iso(created_at),
+        "to": signed_to,
+        "to_did": to_current_did,
+        "type": "mail",
+    }
+    if to_stable_id:
+        signed_fields["to_stable_id"] = to_stable_id
+    if auth.did_aw:
+        signed_fields["from_stable_id"] = auth.did_aw
+    if priority != "normal":
+        signed_fields["priority"] = priority
+
+    try:
+        signed = await sign_hosted_message(
+            auth=auth,
+            signer=hosted_signer,
+            message_type="mail",
+            payload=signed_fields,
+        )
+    except HostedMessageSigningError as exc:
+        return json.dumps({"error": str(exc)})
+    if signed is not None:
+        sender_did = signed.from_did
+        signature = signed.signature
+        signed_payload = signed.signed_payload
+
     try:
         message_id, created_at = await deliver_message(
             db_infra,
             registry_client=registry_client,
-            from_did=primary_auth_did(auth),
+            from_did=sender_did,
             to_did=recipient_did,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
@@ -82,6 +130,10 @@ async def send_mail(
             subject=subject,
             body=body,
             priority=cast(MessagePriority, priority),
+            signature=signature,
+            signed_payload=signed_payload,
+            created_at=created_at,
+            message_id=message_id,
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None)

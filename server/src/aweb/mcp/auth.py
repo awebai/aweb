@@ -31,6 +31,7 @@ class AuthContext:
     did_aw: str | None = None
     address: str | None = None
     workspace_id: str | None = None
+    trusted_proxy: bool = False
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -196,6 +197,7 @@ class MCPAuthMiddleware:
             did_key=str(row["did_key"]),
             did_aw=(str(row.get("did_aw") or "").strip() or None),
             address=(str(row.get("address") or "").strip() or None),
+            trusted_proxy=True,
         )
 
 

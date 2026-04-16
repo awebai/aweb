@@ -21,6 +21,7 @@ from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
+from aweb.mcp.signing import HostedMessageSigner
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
 from aweb.mcp.tools.agents import list_agents as _list_agents_impl
 from aweb.mcp.tools.chat import chat_history as _chat_history_impl
@@ -136,6 +137,7 @@ def register_tools(
     db_infra: DatabaseInfra,
     redis: Optional[Redis],
     registry_client: RegistryClient,
+    hosted_signer: HostedMessageSigner | None = None,
 ) -> None:
     """Register all aweb MCP tools on *mcp*.
 
@@ -168,6 +170,7 @@ def register_tools(
         return await _send_mail_impl(
             db_infra,
             registry_client=registry_client,
+            hosted_signer=hosted_signer,
             to=to,
             subject=subject,
             body=body,
@@ -229,6 +232,7 @@ def register_tools(
             db_infra,
             redis,
             registry_client=registry_client,
+            hosted_signer=hosted_signer,
             message=message,
             to_alias=to_alias,
             to_did=to_did,
@@ -488,6 +492,7 @@ def create_mcp_app(
     db_infra: DatabaseInfra,
     redis: Optional[Redis] = None,
     registry_client: RegistryClient | None = None,
+    hosted_signer: HostedMessageSigner | None = None,
     streamable_http_path: str = "/",
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
@@ -519,7 +524,7 @@ def create_mcp_app(
     if registry_client is None:
         registry_client = RegistryClient(registry_url=get_awid_registry_url())
 
-    register_tools(mcp, db_infra, redis, registry_client)
+    register_tools(mcp, db_infra, redis, registry_client, hosted_signer=hosted_signer)
 
     # streamable_http_app() returns a Starlette app with its own lifespan, but
     # mounted sub-applications do not receive lifespan events from FastAPI.

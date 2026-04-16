@@ -22,6 +22,11 @@ from aweb.messaging.chat import (
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.signing import (
+    HostedMessageSigner,
+    HostedMessageSigningError,
+    sign_hosted_message,
+)
 from aweb.service_errors import ServiceError
 
 MAX_TOTAL_WAIT_SECONDS = 600
@@ -43,6 +48,63 @@ def _actor_alias(actor_agent: dict | None) -> str:
         or ((actor_agent or {}).get("alias") or "").strip()
         or ((actor_agent or {}).get("address") or "").strip()
         or _actor_did()
+    )
+
+
+def _signed_timestamp(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_target_list(values: list[str]) -> str:
+    cleaned = sorted({value.strip() for value in values if value and value.strip()})
+    return ",".join(cleaned)
+
+
+def _signed_from(auth, actor_alias: str) -> str:
+    return (
+        (actor_alias or "").strip()
+        or (auth.address or "").strip()
+        or (auth.did_aw or "").strip()
+        or (auth.did_key or "").strip()
+    )
+
+
+def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
+    to_values: list[str] = []
+    to_dids: list[str] = []
+    to_stable_ids: list[str] = []
+    for row in rows:
+        to_values.append(
+            (row.get("alias") or row.get("address") or row.get("did_aw") or row.get("did_key") or row.get("did") or "")
+        )
+        if row.get("did_key"):
+            to_dids.append(row["did_key"])
+        elif row.get("did") and str(row["did"]).startswith("did:key:"):
+            to_dids.append(row["did"])
+        if row.get("did_aw"):
+            to_stable_ids.append(row["did_aw"])
+        elif row.get("did") and str(row["did"]).startswith("did:aw:"):
+            to_stable_ids.append(row["did"])
+    return (
+        _canonical_target_list(to_values),
+        _canonical_target_list(to_dids),
+        _canonical_target_list(to_stable_ids),
+    )
+
+
+async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: list[str]) -> list[dict]:
+    aweb_db = db_infra.get_manager("aweb")
+    return await aweb_db.fetch_all(
+        """
+        SELECT p.did, p.alias, a.did_key, a.did_aw, a.address
+        FROM {{tables.chat_participants}} p
+        LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
+        WHERE p.session_id = $1
+          AND p.did <> ALL($2::text[])
+        ORDER BY p.alias ASC, p.did ASC
+        """,
+        session_id,
+        actor_dids,
     )
 
 
@@ -151,6 +213,7 @@ async def chat_send(
     redis,
     *,
     registry_client,
+    hosted_signer: HostedMessageSigner | None = None,
     message: str,
     to_alias: str = "",
     to_did: str = "",
@@ -163,7 +226,7 @@ async def chat_send(
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
-    actor_did = actor_dids[0] if actor_dids else ""
+    actor_did = (auth.did_key or "").strip() if auth.trusted_proxy else (actor_dids[0] if actor_dids else "")
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(actor_agent)
@@ -234,16 +297,47 @@ async def chat_send(
         except ServiceError:
             return json.dumps({"error": "Failed to create chat session"})
 
-        msg_created_at = datetime.now(timezone.utc)
+        msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
+        to_value, to_current_did, to_stable_id = _recipient_signed_fields([target])
+        signed_fields = {
+            "body": message,
+            "from": _signed_from(auth, actor_alias),
+            "from_did": (auth.did_key or "").strip(),
+            "message_id": str(pre_message_id),
+            "subject": "",
+            "timestamp": _signed_timestamp(msg_created_at),
+            "to": to_value,
+            "to_did": to_current_did,
+            "type": "chat",
+        }
+        if to_stable_id:
+            signed_fields["to_stable_id"] = to_stable_id
+        if auth.did_aw:
+            signed_fields["from_stable_id"] = auth.did_aw
+        if wait:
+            signed_fields["wait_seconds"] = wait_seconds
+        if leaving:
+            signed_fields["sender_leaving"] = True
+        try:
+            signed = await sign_hosted_message(
+                auth=auth,
+                signer=hosted_signer,
+                message_type="chat",
+                payload=signed_fields,
+            )
+        except HostedMessageSigningError as exc:
+            return json.dumps({"error": str(exc)})
         msg = await send_in_session(
             db_infra,
             session_id=sid,
-            sender_did=actor_did,
+            sender_did=signed.from_did if signed else actor_did,
             sender_agent_id=actor_agent_id,
             body=message,
             leaving=leaving,
             hang_on=hang_on,
+            signature=signed.signature if signed else None,
+            signed_payload=signed.signed_payload if signed else None,
             created_at=msg_created_at,
             message_id=pre_message_id,
         )
@@ -267,6 +361,37 @@ async def chat_send(
         if not session_actor_did:
             return json.dumps({"error": "Not a participant in this session"})
 
+        msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
+        pre_message_id = uuid_mod.uuid4()
+        recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        to_value, to_current_did, to_stable_id = _recipient_signed_fields(recipient_rows)
+        signed_fields = {
+            "body": message,
+            "from": _signed_from(auth, actor_alias),
+            "from_did": (auth.did_key or "").strip(),
+            "message_id": str(pre_message_id),
+            "subject": "",
+            "timestamp": _signed_timestamp(msg_created_at),
+            "to": to_value,
+            "to_did": to_current_did,
+            "type": "chat",
+        }
+        if to_stable_id:
+            signed_fields["to_stable_id"] = to_stable_id
+        if auth.did_aw:
+            signed_fields["from_stable_id"] = auth.did_aw
+        if hang_on:
+            signed_fields["hang_on"] = True
+        try:
+            signed = await sign_hosted_message(
+                auth=auth,
+                signer=hosted_signer,
+                message_type="chat",
+                payload=signed_fields,
+            )
+        except HostedMessageSigningError as exc:
+            return json.dumps({"error": str(exc)})
+
         msg = await send_in_session(
             db_infra,
             session_id=sid,
@@ -275,8 +400,10 @@ async def chat_send(
             body=message,
             leaving=leaving,
             hang_on=hang_on,
-            created_at=datetime.now(timezone.utc),
-            message_id=uuid_mod.uuid4(),
+            signature=signed.signature if signed else None,
+            signed_payload=signed.signed_payload if signed else None,
+            created_at=msg_created_at,
+            message_id=pre_message_id,
         )
         if msg is None:
             return json.dumps({"error": "Not a participant in this session"})
