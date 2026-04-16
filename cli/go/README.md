@@ -14,7 +14,7 @@ You can use the public hosted server at [app.aweb.ai](https://app.aweb.ai) to te
 - aweb team architecture: <https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md>
 - awid identity registry: <https://github.com/awebai/aweb/blob/main/docs/awid-sot.md>
 - CLI command reference: <https://github.com/awebai/aweb/blob/main/docs/cli-command-reference.md>
-- Agent guide: <https://github.com/awebai/aweb/blob/main/docs/agent-guide.txt>
+- Agent guide: <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md>
 
 ## Install
 

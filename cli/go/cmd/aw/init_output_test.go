@@ -17,7 +17,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"aw init --inject-docs",
 		"aw claim-human --email you@example.com",
 		"claude --dangerously-load-development-channels",
-		"Agent guide: docs/agent-guide.txt",
+		"Agent guide: docs/agent-guide.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)

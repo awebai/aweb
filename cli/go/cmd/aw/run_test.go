@@ -580,7 +580,7 @@ func TestRunInteractiveOnboardsBeforeRunning(t *testing.T) {
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 		capturedReq = req
 		return &guidedOnboardingResult{
-			InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else.",
+			InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.md before doing anything else.",
 		}, nil
 	}
 
@@ -607,7 +607,7 @@ func TestRunInteractiveOnboardsBeforeRunning(t *testing.T) {
 	if !capturedReq.AskPostCreateSetup {
 		t.Fatal("expected guided onboarding to keep post-init setup prompts enabled")
 	}
-	if strings.TrimSpace(capturedLoopOpts.InitialPrompt) != "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else." {
+	if strings.TrimSpace(capturedLoopOpts.InitialPrompt) != "Download and study the agent guide at https://aweb.ai/agent-guide.md before doing anything else." {
 		t.Fatalf("expected onboarding guide prompt, got %q", capturedLoopOpts.InitialPrompt)
 	}
 	if resolveCalls != 1 {

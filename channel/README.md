@@ -49,5 +49,5 @@ The directory must already be connected to an aweb team workspace
 ## More info
 
 - [Channel documentation](https://github.com/awebai/aweb/blob/main/docs/channel.md)
-- [Agent guide](https://github.com/awebai/aweb/blob/main/docs/agent-guide.txt)
+- [Agent guide](https://github.com/awebai/aweb/blob/main/docs/agent-guide.md)
 - [aweb.ai](https://aweb.ai)

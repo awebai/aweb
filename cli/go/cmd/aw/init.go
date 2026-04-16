@@ -395,7 +395,7 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	fmt.Println("Start your agent here with:")
 	fmt.Println("  aw run claude")
 	fmt.Println("  aw run codex")
-	fmt.Println("Ask it to read the agent guide at https://aweb.ai/agent-guide.txt")
+	fmt.Println("Ask it to read the agent guide at https://aweb.ai/agent-guide.md")
 }
 
 func resolveHumanName() string {
@@ -526,7 +526,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "  Start Claude Code with the channel enabled:")
 	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
-	lines = append(lines, "  Agent guide: docs/agent-guide.txt")
+	lines = append(lines, "  Agent guide: docs/agent-guide.md")
 	return lines
 }
 

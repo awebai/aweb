@@ -79,4 +79,4 @@ Diagnose and fix the aweb channel setup for this project.
    ```
 
 Reference model: `docs/aweb-sot.md`, `docs/awid-sot.md`, and
-`docs/agent-guide.txt`.
+`docs/agent-guide.md`.

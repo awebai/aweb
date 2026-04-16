@@ -17,7 +17,7 @@ These two documents define the system:
 
 ## User guides
 
-- [agent-guide.txt](agent-guide.txt): canonical onboarding guide delivered to
+- [agent-guide.md](agent-guide.md): canonical onboarding guide delivered to
   agents by `aw run`
 - [aw-run.md](aw-run.md): `aw run` wizard, providers, session continuity, and
   safety mode

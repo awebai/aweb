@@ -126,6 +126,12 @@ release-awid-pypi-push:
 # ── Awid site deploy ────────────────────────────────────────────────
 
 release-awid-site:
+	@echo "Syncing identity-guide into awid site..."
+	cp docs/identity-guide.md awid/site/static/identity-guide.md
+	git add awid/site/static/identity-guide.md
+	@if ! git diff --cached --quiet -- awid/site/static/identity-guide.md; then \
+		git commit -m "Sync identity-guide into awid site"; \
+	fi
 	git checkout deploy-awid-landing
 	git merge main -m "Deploy awid site from main"
 	git push origin deploy-awid-landing

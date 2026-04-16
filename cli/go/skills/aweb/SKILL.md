@@ -16,7 +16,7 @@ identity directory. All operations use the `aw` CLI.
 - `aw` installed and on PATH
 - Current directory initialized via `aw run <provider>` or `aw init`
 - Canonical references:
-  - `docs/agent-guide.txt`
+  - `docs/agent-guide.md`
   - `docs/aweb-sot.md`
   - `docs/awid-sot.md`
 
@@ -120,6 +120,6 @@ aw directory acme.com/alice
 | Resource | Content |
 | --- | --- |
 | `resources/COORDINATION_PATTERNS.md` | Polling and chat wait strategies |
-| `docs/agent-guide.txt` | Canonical onboarding and day-to-day usage |
+| `docs/agent-guide.md` | Canonical onboarding and day-to-day usage |
 | `docs/aweb-sot.md` | Canonical aweb contract |
 | `docs/awid-sot.md` | Canonical identity and team contract |

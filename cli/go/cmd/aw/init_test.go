@@ -45,7 +45,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	var readyCalls int
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 		captured = req
-		return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.txt before doing anything else."}, nil
+		return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.md before doing anything else."}, nil
 	}
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {
 		readyCalls++

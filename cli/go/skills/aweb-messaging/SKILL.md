@@ -12,7 +12,7 @@ need to diagnose whether messaging is ready to use.
 
 Authoritative references:
 
-- `docs/agent-guide.txt`
+- `docs/agent-guide.md`
 - `docs/aweb-sot.md`
 - `docs/awid-sot.md`
 

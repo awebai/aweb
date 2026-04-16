@@ -11,7 +11,7 @@ API. This repository is the self-hostable open-source stack.
 Start with the canonical docs:
 
 - [docs/README.md](docs/README.md)
-- [docs/agent-guide.txt](docs/agent-guide.txt)
+- [docs/agent-guide.md](docs/agent-guide.md)
 - [docs/identity-guide.md](docs/identity-guide.md)
 - [docs/trust-model.md](docs/trust-model.md)
 - [docs/aweb-sot.md](docs/aweb-sot.md)
