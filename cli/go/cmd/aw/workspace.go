@@ -322,25 +322,20 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("check team key: %w", err)
 	}
 
-	var connectResult connectOutput
 	if hasTeamKey {
-		connectResult, err = addWorktreeViaLocalTeamKey(
+		_, err = addWorktreeViaLocalTeamKey(
 			worktreePath, root, branchName, branchCreated,
 			teamID, teamDomain, teamName, sourceServerURL, workingDir,
 			alias, role, state,
 		)
 	} else {
-		connectResult, err = addWorktreeViaCloudBootstrap(
+		_, err = addWorktreeViaCloudBootstrap(
 			worktreePath, root, branchName, branchCreated,
 			sourceServerURL, alias, role, state,
 		)
 	}
 	if err != nil {
 		return err
-	}
-	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
 	}
 
 	output := workspaceAddWorktreeOutput{
@@ -379,6 +374,15 @@ func addWorktreeViaLocalTeamKey(
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
 	}
 
+	rollback := func(step string, cause error) (connectOutput, error) {
+		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		if rollbackErr != nil {
+			return connectOutput{}, fmt.Errorf("%s: %w (rollback revoke failed: %v)", step, cause, rollbackErr)
+		}
+		return connectOutput{}, fmt.Errorf("%s: %w", step, cause)
+	}
+
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
 	connectResult, err := initCertificateConnectWithOptions(worktreePath, sourceServerURL, certificateConnectOptions{
 		Role:      role,
@@ -386,12 +390,13 @@ func addWorktreeViaLocalTeamKey(
 		AgentType: strings.TrimSpace(state.AgentType),
 	})
 	if err != nil {
-		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		if rollbackErr != nil {
-			return connectOutput{}, fmt.Errorf("connect new worktree: %w (rollback revoke failed: %v)", err, rollbackErr)
-		}
-		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
+		return rollback("connect new worktree", err)
+	}
+	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
+		return rollback(
+			"validate new worktree alias",
+			fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
+		)
 	}
 	return connectResult, nil
 }
@@ -430,6 +435,10 @@ func addWorktreeViaCloudBootstrap(
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("cloud bootstrap for new worktree: %w", err)
+	}
+	if strings.TrimSpace(result.Alias) != "" && !strings.EqualFold(strings.TrimSpace(result.Alias), alias) {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return connectOutput{}, fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(result.Alias), alias)
 	}
 	return result, nil
 }
