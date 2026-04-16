@@ -384,6 +384,8 @@ async def chat_send(
             signed_fields["hang_on"] = True
         if wait:
             signed_fields["wait_seconds"] = wait_seconds
+        if leaving:
+            signed_fields["sender_leaving"] = True
         try:
             signed = await sign_hosted_message(
                 auth=auth,
@@ -397,7 +399,7 @@ async def chat_send(
         msg = await send_in_session(
             db_infra,
             session_id=sid,
-            sender_did=session_actor_did,
+            sender_did=signed.from_did if signed else session_actor_did,
             sender_agent_id=actor_agent_id,
             body=message,
             leaving=leaving,
