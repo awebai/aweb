@@ -775,13 +775,13 @@ func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[str
 		IncludeClaims:            false,
 		IncludePresence:          false,
 		AlwaysIncludeWorkspaceID: strings.TrimSpace(workspaceID),
-		Limit:                    1000,
+		Limit:                    200,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list team aliases: %w", err)
 	}
 	if resp.HasMore {
-		return nil, usageError("team has more than 1000 workspaces; specify --alias explicitly")
+		return nil, usageError("team has more than 200 workspaces; specify --alias explicitly")
 	}
 
 	aliases := make(map[string]bool, len(resp.Workspaces))
