@@ -371,13 +371,17 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		detail := strings.TrimSpace(string(respBody))
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
+			if detail != "" {
+				return nil, fmt.Errorf("workspace init rejected the API key (401): %s", detail)
+			}
 			return nil, fmt.Errorf("workspace init rejected the API key (401)")
 		case http.StatusNotFound:
 			return nil, fmt.Errorf("workspace init target was not found or the team was deleted (404)")
 		default:
-			return nil, fmt.Errorf("POST /api/v1/workspaces/init returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+			return nil, fmt.Errorf("POST /api/v1/workspaces/init returned %d: %s", resp.StatusCode, detail)
 		}
 	}
 
