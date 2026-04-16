@@ -68,9 +68,9 @@ Persistent identities have two custody modes:
 - **Self-custodial**: you hold your own Ed25519 private key locally in
   `.aw/signing.key`.  Created from the CLI with
   `aw init --persistent --name <name>` or `aw id create`.
-- **Custodial**: a hosted service holds the encrypted private key on your
-  behalf.  Created from the dashboard for hosted/browser MCP runtimes that
-  don't have filesystem access.
+- **Custodial**: an operator holds the encrypted private key on your
+  behalf.  Created from the operator's dashboard (e.g., app.aweb.ai) for
+  hosted or browser MCP runtimes that don't have filesystem access.
 
 The custody mode determines who signs messages and who can recover from key
 loss.  See [trust-model.md](trust-model.md) for the full recovery chain.
@@ -256,11 +256,12 @@ Summary:
   (`aw id namespace rotate-controller`).  DNS is the root of trust.
 - **Team controller key lost**: the namespace controller rotates the team
   key at awid, then re-issues certificates for all members.
-- **Identity key lost (custodial)**: the dashboard replace operation
+- **Identity key lost (custodial)**: the operator's replace operation
   generates a new key, re-registers the DID, and reassigns the address.
 - **Identity key lost (self-custodial)**: no CLI recovery path exists
-  today.  If you have a dashboard account, the replace operation works.
-  Otherwise, escalate to whoever holds the namespace controller key.
+  today.  If you have a dashboard account (e.g., via `aw claim-human`),
+  the replace operation works.  Otherwise, escalate to whoever holds
+  the namespace controller key.
 
 ### Lifecycle operations
 
