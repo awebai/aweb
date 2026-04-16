@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -1182,6 +1183,154 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `alias "bob" is already in use by this team`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestAwWorkspaceAddWorktreeUsesCloudBootstrapWhenNoTeamKey(t *testing.T) {
+	t.Parallel()
+
+	const origin = "https://github.com/acme/repo.git"
+	const teamID = "backend:source"
+
+	// Team key for the cloud to sign certs — NOT saved locally.
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var initBody map[string]any
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "pol-1",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case "/v1/agents/suggest-alias-prefix":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":     teamID,
+				"name_prefix": "grace",
+			})
+		case "/api/v1/workspaces/init":
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "Bearer aw_sk_parent_key" {
+				t.Fatalf("expected parent API key, got %q", authHeader)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
+				t.Fatalf("decode init body: %v", err)
+			}
+			didKey, _ := initBody["did"].(string)
+			alias, _ := initBody["alias"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatalf("sign cert: %v", err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatalf("encode cert: %v", err)
+			}
+			teamDIDKey := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":   "http://" + r.Host,
+				"team_cert":    encoded,
+				"alias":        alias,
+				"team_id":      teamID,
+				"workspace_id": "ws-grace",
+				"did":          didKey,
+				"stable_id":    "",
+				"lifetime":     awid.LifetimeEphemeral,
+				"custody":      awid.CustodySelf,
+				"api_key":      "aw_sk_child_key",
+				"team_did_key": teamDIDKey,
+			})
+		case "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        "grace",
+				"agent_id":     "agent-grace",
+				"workspace_id": "ws-grace",
+				"repo_id":      "repo-grace",
+				"team_did_key": "did:key:z6MkTeam",
+				"role":         "developer",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, origin)
+	buildAwBinary(t, ctx, bin)
+
+	// No team key written — simulate hosted/API-key bootstrapped workspace.
+	// No identity.yaml — ephemeral.
+	binding := workspaceBinding(server.URL, teamID, "alice", "source-1")
+	binding.APIKey = "aw_sk_parent_key"
+	writeWorkspaceBindingForTest(t, repo, binding)
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("seed .aw/context: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run.Env = testCommandEnv(tmp)
+	run.Stdin = strings.NewReader("")
+	run.Dir = repo
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "New agent worktree created at") {
+		t.Fatalf("unexpected output:\n%s", text)
+	}
+	if !strings.Contains(text, "grace") {
+		t.Fatalf("expected alias 'grace' in output:\n%s", text)
+	}
+
+	// Verify the cloud init request used the right parameters.
+	if initBody["custody"] != awid.CustodySelf {
+		t.Fatalf("init custody=%v", initBody["custody"])
+	}
+	if initBody["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("init lifetime=%v", initBody["lifetime"])
+	}
+	if initBody["alias"] != "grace" {
+		t.Fatalf("init alias=%v", initBody["alias"])
+	}
+
+	// Verify child worktree exists and has correct state.
+	child := filepath.Join(tmp, "repo-grace")
+	if _, err := os.Stat(child); err != nil {
+		t.Fatalf("expected sibling worktree: %v", err)
+	}
+
+	childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load child workspace: %v", err)
+	}
+	if childWorkspace.APIKey != "aw_sk_child_key" {
+		t.Fatalf("child api_key=%q, want aw_sk_child_key", childWorkspace.APIKey)
+	}
+
+	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml should not exist for ephemeral add-worktree agent: %v", err)
 	}
 }
 
