@@ -256,9 +256,9 @@ Summary:
   (`aw id namespace rotate-controller`).  DNS is the root of trust.
 - **Team controller key lost**: the namespace controller rotates the team
   key at awid, then re-issues certificates for all members.
-- **Custodial identity key lost**: the dashboard replace operation
+- **Identity key lost (custodial)**: the dashboard replace operation
   generates a new key, re-registers the DID, and reassigns the address.
-- **Self-custodial identity key lost**: no CLI recovery path exists
+- **Identity key lost (self-custodial)**: no CLI recovery path exists
   today.  If you have a dashboard account, the replace operation works.
   Otherwise, escalate to whoever holds the namespace controller key.
 

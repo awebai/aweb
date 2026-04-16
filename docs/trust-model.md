@@ -12,72 +12,74 @@ For protocol-level details of each key's signed envelope format, see
 
 ## Key Hierarchy
 
-Five distinct key types form a trust chain.  Each key is recoverable by
-the authority one level above it, except where noted.
+Three key types form a trust chain.  DNS is the root of trust.  Each key
+is recoverable by the authority one level above it.
 
 ```
-DNS (root of trust for BYOD namespaces)
+DNS (root of trust)
   |
-  +-- Parent controller key (managed namespaces only)
+  +-- Namespace controller key
   |     |
-  +-----+-- Namespace controller key
-              |
-              +-- Team controller key
-              |     |
-              |     +-- Identity signing key (self-custodial)
-              |     +-- Custodial identity key (hosted)
-              |
-              +-- Addresses (namespace/name handles)
+  |     +-- Team controller key
+  |     |     |
+  |     |     +-- Identity signing key
+  |     |
+  |     +-- Addresses (namespace/name handles)
+  |
+  +-- Parent delegation (namespace controllers can authorize
+        child namespace creation, e.g. aweb.ai → juan.aweb.ai)
 ```
+
+Each key type has two custody modes: **locally held** (BYOD / CLI) or
+**deployment held** (managed / hosted).  Custody determines who stores the
+private key and who can perform recovery, but the key type and its
+authority are the same regardless of custody.
 
 ---
 
 ## Key Types
 
-### 1. Parent Controller Key
+### 1. Namespace Controller Key
 
-The root authority for managed `*.aweb.ai` namespaces.
-
-| Aspect | Detail |
-|--------|--------|
-| **Algorithm** | Ed25519 |
-| **Private key location** | Hosted deployment only (`AWEB_PARENT_CONTROLLER_KEY` env var) |
-| **Public key location** | Implicit at awid via parent namespace |
-| **Authorizes** | Child namespace creation under `*.aweb.ai` |
-| **Created by** | Deployment operator |
-| **Rotation** | Deployment operator rotates |
-| **Recovery if lost** | Deployment operator re-provisions |
-
-Not accessible from the CLI.  Only the hosted deployment uses this key.
-
-### 2. Namespace Controller Key
-
-The authority over a DNS-verified organizational domain.  Controls
-addresses, teams, and team key rotation within the namespace.
+The authority over a DNS-verified domain.  Controls addresses, teams, and
+team key rotation within the namespace.
 
 | Aspect | Detail |
 |--------|--------|
 | **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key` (local). Managed: hosted deployment |
+| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key`. Managed: hosted deployment |
 | **Public key location** | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`) |
-| **Authorizes** | Namespace operations, team creation/deletion, team key rotation, address create/delete/reassign |
+| **Authorizes** | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign |
 | **Created by** | BYOD: `aw id create` on first identity for a domain. Managed: hosted deployment |
 | **Rotation** | `aw id namespace rotate-controller` (requires DNS reverify) |
-| **Recovery if lost** | DNS reverify: DNS is the root of trust for BYOD namespaces.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
+| **Recovery if lost** | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
 
-Key distinction: the namespace controller can rotate the team controller
-key (via `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid), but
-the team controller cannot rotate the namespace controller key.  Authority
-flows downward.
+#### Parent delegation
 
-### 3. Team Controller Key
+A namespace controller can authorize child namespace creation.  For
+example, the `aweb.ai` namespace controller can create `juan.aweb.ai` or
+`myteam.aweb.ai`.  awid verifies this by looking up the parent namespace
+(`aweb.ai`) and checking that the signer matches the parent's
+`controller_did`.
+
+This is the standard mechanism, not a special case.  Any namespace owner
+can delegate child namespaces.  The hosted deployment at `app.aweb.ai`
+holds the `aweb.ai` namespace controller key (configured as
+`AWEB_PARENT_CONTROLLER_KEY`) and uses standard parent delegation to
+create managed child namespaces.
+
+Authority flows downward: a namespace controller can rotate the team
+controller key, but the team controller cannot rotate the namespace
+controller key.
+
+### 2. Team Controller Key
 
 The authority over team membership.  Issues and revokes team certificates.
 
 | Aspect | Detail |
 |--------|--------|
 | **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key` (local). Managed: hosted deployment (encrypted) |
+| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key`. Managed: hosted deployment (encrypted) |
 | **Public key location** | awid `teams.team_did_key` |
 | **Authorizes** | Certificate issuance, certificate revocation, team visibility toggle |
 | **Created by** | `aw id team create` generates the keypair and registers the public key at awid |
@@ -87,35 +89,36 @@ The authority over team membership.  Issues and revokes team certificates.
 The team controller does NOT control addresses.  Address operations are
 namespace controller authority.
 
-### 4. Identity Signing Key (Self-Custodial)
+### 3. Identity Signing Key
 
-The agent's own Ed25519 key, held locally.  Used for message signing,
-coordination auth, and DID operations.
+The agent's Ed25519 key.  Used for message signing, coordination auth, and
+DID operations.
 
 | Aspect | Detail |
 |--------|--------|
 | **Algorithm** | Ed25519 |
-| **Private key location** | `.aw/signing.key` in the workspace directory |
+| **Private key location** | Self-custodial: `.aw/signing.key` in the workspace directory.  Custodial: cloud encrypted database (`cloud_custodial_keys` table) |
 | **Public key location** | awid `did_aw_mappings.current_did_key` (for persistent identities).  Also embedded in the team certificate as `member_did_key` |
 | **Authorizes** | Message signing, DID registration, DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
-| **Created by** | `aw init` (ephemeral) or `aw init --persistent --name <name>` (persistent) |
-| **Rotation** | `aw id rotate-key` — requires the old key to sign the rotation.  Updates `did:key` at awid while preserving `did:aw`.  Triggers certificate re-issuance (old cert has old `did:key`) |
-| **Recovery if lost** | **No CLI recovery path exists today.**  See [Identity Key Loss](#identity-key-loss) below |
+| **Created by** | Self-custodial: `aw init` (ephemeral) or `aw init --persistent --name <name>` (persistent).  Custodial: dashboard (`POST /api/v1/identities/create-permanent-custodial`) |
+| **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: cloud re-generates server-side |
+| **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: dashboard replace operation generates a new key, re-registers DID, reassigns address |
 
-### 5. Custodial Identity Key
+#### Custody modes
 
-Functionally identical to the identity signing key, but held by the hosted
-service rather than locally.
+The identity signing key has two custody modes:
 
-| Aspect | Detail |
-|--------|--------|
-| **Algorithm** | Ed25519 |
-| **Private key location** | Cloud encrypted database (`cloud_custodial_keys` table, encrypted with `AWEB_CONTROLLER_ENCRYPTION_KEY`) |
-| **Public key location** | awid `did_aw_mappings.current_did_key` |
-| **Authorizes** | Same as identity signing key, but the server signs on behalf of the identity |
-| **Created by** | Dashboard (`POST /api/v1/identities/create-permanent-custodial`) |
-| **Rotation** | Cloud re-generates server-side |
-| **Recovery if lost** | Cloud re-issues: the dashboard replace operation generates a new keypair, registers the new DID at awid, and reassigns the address using the namespace controller key |
+- **Self-custodial**: the agent holds its own private key locally in
+  `.aw/signing.key`.  Created from the CLI.  The private key never leaves
+  the local machine.
+- **Custodial**: the hosted service holds the encrypted private key in
+  its database.  Created from the dashboard for hosted/browser MCP
+  runtimes that don't have filesystem access.  The server signs on behalf
+  of the identity.
+
+The key type is the same — Ed25519, same operations, same authority.
+Custody determines who stores the private key and who can perform
+recovery.
 
 ---
 
@@ -133,8 +136,10 @@ service rather than locally.
 ### Managed (hosted at app.aweb.ai)
 
 All controller keys and custodial identity keys are held encrypted in the
-hosted deployment's database.  The human interacts through the dashboard;
-the CLI interacts through API keys.
+hosted deployment's database.  The `aweb.ai` namespace controller key is
+configured via `AWEB_PARENT_CONTROLLER_KEY`.  Child namespace controller
+keys are generated per-organization and stored encrypted.  The human
+interacts through the dashboard; the CLI interacts through API keys.
 
 ---
 
@@ -144,11 +149,10 @@ Each key type is recoverable by the authority one level above it:
 
 | Key lost | Recovered by | Mechanism | Status |
 |----------|-------------|-----------|--------|
-| Parent controller | Deployment operator | Re-provision | Operational procedure |
 | Namespace controller | DNS ownership | `aw id namespace rotate-controller` — DNS reverify | **Implemented** |
 | Team controller | Namespace controller | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
-| Custodial identity | Cloud (namespace controller) | Dashboard replace — new keypair, re-register DID, reassign address | **Implemented** |
-| Self-custodial identity | ??? | No mechanism exists | **Gap** |
+| Identity (custodial) | Cloud (namespace controller) | Dashboard replace — new keypair, re-register DID, reassign address | **Implemented** |
+| Identity (self-custodial) | ??? | No mechanism exists | **Gap** |
 
 ---
 
