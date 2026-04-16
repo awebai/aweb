@@ -58,7 +58,7 @@ addresses, teams, and team key rotation within the namespace.
 | Aspect | Detail |
 |--------|--------|
 | **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.aw/controllers/<domain>.key` (local). Managed: hosted deployment |
+| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key` (local). Managed: hosted deployment |
 | **Public key location** | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`) |
 | **Authorizes** | Namespace operations, team creation/deletion, team key rotation, address create/delete/reassign |
 | **Created by** | BYOD: `aw id create` on first identity for a domain. Managed: hosted deployment |
@@ -77,7 +77,7 @@ The authority over team membership.  Issues and revokes team certificates.
 | Aspect | Detail |
 |--------|--------|
 | **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.aw/team-keys/<domain>/<team>.key` (local). Managed: hosted deployment (encrypted) |
+| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key` (local). Managed: hosted deployment (encrypted) |
 | **Public key location** | awid `teams.team_did_key` |
 | **Authorizes** | Certificate issuance, certificate revocation, team visibility toggle |
 | **Created by** | `aw id team create` generates the keypair and registers the public key at awid |
@@ -124,10 +124,10 @@ service rather than locally.
 ### BYOD (self-hosted / CLI-only)
 
 ```
-~/.aw/controllers/<domain>.key     # Namespace controller key
-~/.aw/team-keys/<domain>/<team>.key  # Team controller key
-<repo>/.aw/signing.key              # Identity signing key (per workspace)
-<repo>/.aw/team-certs/<team_id>.pem  # Team membership certificate (not a key)
+~/.config/aw/controllers/<domain>.key       # Namespace controller key
+~/.config/aw/team-keys/<domain>/<team>.key  # Team controller key
+<repo>/.aw/signing.key                      # Identity signing key (per workspace)
+<repo>/.aw/team-certs/<team_id>.pem         # Team membership certificate (not a key)
 ```
 
 ### Managed (hosted at app.aweb.ai)
@@ -187,6 +187,13 @@ controls address assignment, and the pattern is consistent with how team
 controller loss is recovered (by the namespace controller above it).  The
 team controller is not the right authority here because it controls
 membership, not addresses.
+
+Full recovery requires both authorities to cooperate: the namespace
+controller reassigns the address (steps 1-3 from the custodial flow), and
+the team controller issues a new certificate for the new `did:key` (step
+5).  If the team controller is uncooperative, the namespace controller can
+force the issue by rotating the team key — but the cooperative path is the
+expected one.
 
 ### Ephemeral identity
 
