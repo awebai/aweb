@@ -1013,100 +1013,186 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	}
 }
 
-func TestExecuteBYODPathUsesServiceDiscoveryForConnectURL(t *testing.T) {
-	oldProvision := guidedOnboardingProvisionBYODIdentity
-	oldConnect := guidedOnboardingConnect
-	t.Cleanup(func() {
-		guidedOnboardingProvisionBYODIdentity = oldProvision
-		guidedOnboardingConnect = oldConnect
-	})
+func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "true")
 
-	tmp := t.TempDir()
-	pub, signingKey, err := awid.GenerateKeypair()
+	domain := "acme.com"
+	_, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	didKey := awid.ComputeDIDKey(pub)
-	didAW := awid.ComputeStableID(pub)
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 
-	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
-		Team:          "default:acme.com",
-		MemberDIDKey:  didKey,
-		MemberDIDAW:   didAW,
-		MemberAddress: "acme.com/alice",
-		Alias:         "alice",
-		Lifetime:      awid.LifetimePersistent,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	guidedOnboardingProvisionBYODIdentity = func(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
-		normalizedDomain := awconfig.NormalizeDomain(domain)
-		return &guidedBYODProvision{
-			Identity: &preparedIDCreate{
-				Plan: &idCreatePlan{
-					Name:           name,
-					Domain:         normalizedDomain,
-					Address:        normalizedDomain + "/" + name,
-					DIDAW:          didAW,
-					DIDKey:         didKey,
-					RegistryURL:    "https://registry.example",
-					IdentityPath:   filepath.Join(tmp, ".aw", "identity.yaml"),
-					SigningKeyPath: filepath.Join(tmp, ".aw", "signing.key"),
-					CreatedAt:      "2026-04-07T00:00:00Z",
-				},
-				IdentityKey: signingKey,
-			},
-			Certificate: cert,
-		}, nil
-	}
-
-	// The discovery endpoint returns aweb_url with /api suffix,
-	// which is what the connect call needs for hosted deployments.
-	discoveryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
+	var gotNamespacePayload map[string]any
+	var gotAddressPayload map[string]any
+	var gotDIDPayload map[string]any
+	var gotTeamPayload map[string]any
+	var gotCertPayload map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			if err := json.NewDecoder(r.Body).Decode(&gotNamespacePayload); err != nil {
+				t.Fatal(err)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"aweb_url":       "http://" + r.Host + "/api",
-				"onboarding_url": "http://" + r.Host,
-				"registry_url":   "https://api.awid.ai",
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-07T00:00:00Z",
+				"created_at":          "2026-04-07T00:00:00Z",
 			})
-			return
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/addresses":
+			if err := json.NewDecoder(r.Body).Decode(&gotAddressPayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          gotAddressPayload["did_aw"],
+				"current_did_key": gotAddressPayload["current_did_key"],
+				"reachability":    gotAddressPayload["reachability"],
+				"created_at":      "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			handle := "alice"
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": gotDIDPayload["did_key"],
+				"server":          "",
+				"address":         "acme.com/alice",
+				"handle":          &handle,
+				"created_at":      "2026-04-07T00:00:00Z",
+				"updated_at":      "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			if err := json.NewDecoder(r.Body).Decode(&gotTeamPayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "team-1",
+				"domain":       "acme.com",
+				"name":         "default",
+				"team_did_key": gotTeamPayload["team_did_key"],
+				"created_at":   "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/default/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&gotCertPayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
-		// Heartbeat probe from the connect path.
-		if r.URL.Path == "/api/v1/agents/heartbeat" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.NotFound(w, r)
 	}))
 
-	var connectServerURL string
-	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
-		connectServerURL = serverURL
-		return connectOutput{
-			Status:  "connected",
-			TeamID:  "default:acme.com",
-			Alias:   "alice",
-			AwebURL: serverURL,
-		}, nil
+	if err := awconfig.SaveControllerKey(domain, controllerKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
+		Domain:        domain,
+		ControllerDID: controllerDID,
+		CreatedAt:     "2026-04-07T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
 	}
 
+	var gotConnectBody map[string]any
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
+			if err := json.NewDecoder(r.Body).Decode(&gotConnectBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:acme.com",
+				"alias":        "alice",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": gotTeamPayload["team_did_key"],
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			t.Fatal("connect should use discovered aweb_url with /api")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	var discoveryHit bool
+	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			discoveryHit = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": "http://" + r.Host,
+				"aweb_url":       awebServer.URL + "/api",
+				"registry_url":   registryServer.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			t.Fatal("connect should use discovered aweb_url, not onboarding_url")
+		default:
+			t.Fatalf("unexpected onboarding %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
-		BaseURL:    discoveryServer.URL,
+		BaseURL:    onboardingServer.URL,
+		Role:       "developer",
+		HumanName:  "Operator Jane",
+		AgentType:  "codex",
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
 	}
+	if !discoveryHit {
+		t.Fatal("expected discovery endpoint to be used")
+	}
+	if gotNamespacePayload["domain"] != "acme.com" {
+		t.Fatalf("namespace domain=%v", gotNamespacePayload["domain"])
+	}
+	if gotDIDPayload["address"] != "acme.com/alice" {
+		t.Fatalf("did address=%v", gotDIDPayload["address"])
+	}
+	if gotCertPayload["member_address"] != "acme.com/alice" {
+		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])
+	}
+	if gotConnectBody["role"] != "developer" {
+		t.Fatalf("connect role=%v", gotConnectBody["role"])
+	}
 
-	// The connect URL must come from discovery (with /api), not be the
-	// raw base URL. Before the fix, this was discoveryServer.URL (no /api).
-	expectedURL := discoveryServer.URL + "/api"
-	if connectServerURL != expectedURL {
-		t.Fatalf("connect server_url=%q, want %q (discovery should resolve the /api path)", connectServerURL, expectedURL)
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
+	}
+	if identity.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%q", identity.RegistryURL)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
+	}
+	if workspace.AwebURL != awebServer.URL+"/api" {
+		t.Fatalf("aweb_url=%q", workspace.AwebURL)
 	}
 }
 

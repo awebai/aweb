@@ -5,11 +5,14 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1024,6 +1027,565 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	}
 }
 
+func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const origin = "https://github.com/acme/repo.git"
+	const teamID = "backend:source"
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	parentPub, parentKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentDID := awid.ComputeDIDKey(parentPub)
+
+	type journeyMessage struct {
+		ID        string
+		FromAlias string
+		FromDID   string
+		ToAlias   string
+		Body      string
+	}
+	var (
+		mu                 sync.Mutex
+		didToAlias         = map[string]string{parentDID: "alice"}
+		inboxByAlias       = map[string][]journeyMessage{}
+		registeredChild    map[string]any
+		childConnectPath   string
+		discoveryHit       bool
+		nextMessageOrdinal int
+	)
+
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			registeredChild = body
+			if did, _ := body["member_did_key"].(string); did != "" {
+				if alias, _ := body["alias"].(string); alias != "" {
+					didToAlias[did] = alias
+				}
+			}
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			mu.Lock()
+			discoveryHit = true
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"aweb_url":     "http://" + r.Host + "/api",
+				"registry_url": registryServer.URL,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"team_id":       teamID,
+				"version":       1,
+				"updated_at":    "2026-04-16T00:00:00Z",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/team"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{{
+					"workspace_id": "workspace-parent",
+					"alias":        "alice",
+					"status":       "online",
+				}},
+				"has_more": false,
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/workspaces/team"):
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
+			cert := requireCertificateAuthForTest(t, r)
+			mu.Lock()
+			childConnectPath = r.URL.Path
+			didToAlias[cert.MemberDIDKey] = cert.Alias
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        cert.Alias,
+				"agent_id":     "agent-child",
+				"workspace_id": "workspace-child",
+				"repo_id":      "repo-child",
+				"team_did_key": teamDIDKey,
+				"role":         "developer",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			t.Fatal("child connect should use discovered /api aweb_url")
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/messages":
+			cert := requireCertificateAuthForTest(t, r)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			toAlias, _ := body["to_alias"].(string)
+			messageBody, _ := body["body"].(string)
+			fromDID, _ := body["from_did"].(string)
+			mu.Lock()
+			nextMessageOrdinal++
+			msg := journeyMessage{
+				ID:        "msg-" + string(rune('0'+nextMessageOrdinal)),
+				FromAlias: cert.Alias,
+				FromDID:   fromDID,
+				ToAlias:   toAlias,
+				Body:      messageBody,
+			}
+			inboxByAlias[toAlias] = append(inboxByAlias[toAlias], msg)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message_id":   msg.ID,
+				"status":       "delivered",
+				"delivered_at": "2026-04-16T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
+			t.Fatal("mail send should use discovered /api aweb_url")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/messages/inbox"):
+			did := didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization"))
+			mu.Lock()
+			alias := didToAlias[did]
+			messages := append([]journeyMessage(nil), inboxByAlias[alias]...)
+			mu.Unlock()
+			resp := awid.InboxResponse{Messages: make([]awid.InboxMessage, 0, len(messages))}
+			for _, msg := range messages {
+				resp.Messages = append(resp.Messages, awid.InboxMessage{
+					MessageID: msg.ID,
+					FromAlias: msg.FromAlias,
+					ToAlias:   msg.ToAlias,
+					FromDID:   msg.FromDID,
+					Subject:   "",
+					Body:      msg.Body,
+					Priority:  awid.PriorityNormal,
+					CreatedAt: "2026-04-16T00:00:00Z",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/messages/inbox"):
+			t.Fatal("mail inbox should use discovered /api aweb_url")
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "acked"})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, origin)
+	buildAwBinary(t, ctx, bin)
+	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(repo), parentKey); err != nil {
+		t.Fatalf("save parent signing key: %v", err)
+	}
+	parentCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         teamID,
+		MemberDIDKey: parentDID,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(repo, teamID, parentCert); err != nil {
+		t.Fatalf("save parent cert: %v", err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
+		AwebURL:    awebServer.URL,
+		APIKey:     "workspace-sk-parent",
+		ActiveTeam: teamID,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "alice",
+			WorkspaceID: "workspace-parent",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-16T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatalf("save parent workspace: %v", err)
+	}
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("save context: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("parent identity.yaml should not exist: %v", err)
+	}
+
+	runAW := func(dir string, args ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL")
+		run.Dir = dir
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("aw %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+		}
+		return string(out)
+	}
+
+	runAW(repo, "workspace", "add-worktree", "developer", "--alias", "charlie")
+	child := filepath.Join(tmp, "repo-charlie")
+	if _, err := os.Stat(child); err != nil {
+		t.Fatalf("expected child worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("child identity.yaml should not exist: %v", err)
+	}
+
+	mu.Lock()
+	if !discoveryHit {
+		t.Fatal("expected add-worktree to use service discovery for registry_url")
+	}
+	if childConnectPath != "/api/v1/connect" {
+		t.Fatalf("child connect path=%q", childConnectPath)
+	}
+	if registeredChild == nil {
+		t.Fatal("expected child certificate registration")
+	}
+	if _, ok := registeredChild["member_did_aw"]; ok {
+		t.Fatalf("ephemeral child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
+	}
+	if _, ok := registeredChild["member_address"]; ok {
+		t.Fatalf("ephemeral child cert registration should omit member_address: %v", registeredChild["member_address"])
+	}
+	mu.Unlock()
+
+	parentWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(repo, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load parent workspace: %v", err)
+	}
+	if parentWorkspace.AwebURL != awebServer.URL+"/api" {
+		t.Fatalf("parent aweb_url=%q", parentWorkspace.AwebURL)
+	}
+	childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load child workspace: %v", err)
+	}
+	if childWorkspace.AwebURL != awebServer.URL+"/api" {
+		t.Fatalf("child aweb_url=%q", childWorkspace.AwebURL)
+	}
+
+	runAW(repo, "mail", "send", "--to", "charlie", "--body", "hello child", "--json")
+	childInbox := runAW(child, "mail", "inbox", "--show-all", "--json")
+	if !strings.Contains(childInbox, "hello child") {
+		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
+	}
+	runAW(child, "mail", "send", "--to", "alice", "--body", "hello parent", "--json")
+	parentInbox := runAW(repo, "mail", "inbox", "--show-all", "--json")
+	if !strings.Contains(parentInbox, "hello parent") {
+		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
+	}
+}
+
+func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const apiKey = "aw_sk_bootstrap_journey"
+	const origin = "https://github.com/acme/api-key-repo.git"
+	const teamID = "backend:acme.com"
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+
+	type journeyMessage struct {
+		ID        string
+		FromAlias string
+		FromDID   string
+		ToAlias   string
+		Body      string
+	}
+	var (
+		mu                 sync.Mutex
+		didToAlias         = map[string]string{}
+		inboxByAlias       = map[string][]journeyMessage{}
+		nextMessageOrdinal int
+		initRequestCount   int
+	)
+
+	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"aweb_url":     "http://" + r.Host + "/api",
+				"registry_url": "http://" + r.Host + "/registry",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			mu.Lock()
+			initRequestCount++
+			expectedAPIKey := apiKey
+			if initRequestCount > 1 {
+				expectedAPIKey = "workspace-sk-parent"
+			}
+			mu.Unlock()
+			if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer "+expectedAPIKey {
+				t.Fatalf("Authorization=%q, want Bearer %s", got, expectedAPIKey)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			alias, _ := body["alias"].(string)
+			if strings.TrimSpace(alias) == "" {
+				alias = "alice"
+			}
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			didToAlias[didKey] = alias
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":   "http://" + r.Host + "/api",
+				"team_cert":    encoded,
+				"alias":        alias,
+				"team_id":      teamID,
+				"workspace_id": "workspace-parent",
+				"did":          didKey,
+				"stable_id":    "",
+				"lifetime":     awid.LifetimeEphemeral,
+				"custody":      awid.CustodySelf,
+				"api_key":      "workspace-sk-parent",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
+			cert := requireCertificateAuthForTest(t, r)
+			mu.Lock()
+			didToAlias[cert.MemberDIDKey] = cert.Alias
+			workspaceID := "workspace-parent"
+			agentID := "agent-parent"
+			if cert.Alias == "charlie" {
+				workspaceID = "workspace-child"
+				agentID = "agent-child"
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        cert.Alias,
+				"agent_id":     agentID,
+				"workspace_id": workspaceID,
+				"repo_id":      workspaceID + "-repo",
+				"team_did_key": teamDIDKey,
+				"role":         "developer",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"team_id":       teamID,
+				"version":       1,
+				"updated_at":    "2026-04-16T00:00:00Z",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/team"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspaces": []map[string]any{{
+					"workspace_id": "workspace-parent",
+					"alias":        "alice",
+					"status":       "online",
+				}},
+				"has_more": false,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/messages":
+			cert := requireCertificateAuthForTest(t, r)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			toAlias, _ := body["to_alias"].(string)
+			messageBody, _ := body["body"].(string)
+			fromDID, _ := body["from_did"].(string)
+			mu.Lock()
+			nextMessageOrdinal++
+			msg := journeyMessage{
+				ID:        "api-msg-" + string(rune('0'+nextMessageOrdinal)),
+				FromAlias: cert.Alias,
+				FromDID:   fromDID,
+				ToAlias:   toAlias,
+				Body:      messageBody,
+			}
+			inboxByAlias[toAlias] = append(inboxByAlias[toAlias], msg)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message_id":   msg.ID,
+				"status":       "delivered",
+				"delivered_at": "2026-04-16T00:00:00Z",
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/messages/inbox"):
+			did := didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization"))
+			mu.Lock()
+			alias := didToAlias[did]
+			messages := append([]journeyMessage(nil), inboxByAlias[alias]...)
+			mu.Unlock()
+			resp := awid.InboxResponse{Messages: make([]awid.InboxMessage, 0, len(messages))}
+			for _, msg := range messages {
+				resp.Messages = append(resp.Messages, awid.InboxMessage{
+					MessageID: msg.ID,
+					FromAlias: msg.FromAlias,
+					ToAlias:   msg.ToAlias,
+					FromDID:   msg.FromDID,
+					Body:      msg.Body,
+					Priority:  awid.PriorityNormal,
+					CreatedAt: "2026-04-16T00:00:00Z",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "acked"})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, origin)
+	buildAwBinary(t, ctx, bin)
+
+	runAW := func(dir string, env []string, args ...string) string {
+		t.Helper()
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = env
+		run.Dir = dir
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("aw %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+		}
+		return string(out)
+	}
+	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL", "AWEB_API_KEY")
+	initEnv := append(append([]string{}, baseEnv...), "AWEB_API_KEY="+apiKey)
+	runAW(repo, initEnv, "init", "--aweb-url", externalLikeTestURL(t, awebServer.URL), "--alias", "alice", "--role", "developer")
+
+	if _, err := os.Stat(filepath.Join(repo, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("parent identity.yaml should not exist after ephemeral API-key bootstrap: %v", err)
+	}
+	parentCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(repo, teamID))
+	if err != nil {
+		t.Fatalf("load parent cert: %v", err)
+	}
+	if parentCert.MemberDIDAW != "" {
+		t.Fatalf("parent ephemeral cert member_did_aw=%q", parentCert.MemberDIDAW)
+	}
+
+	runAW(repo, baseEnv, "workspace", "add-worktree", "developer", "--alias", "charlie")
+	child := filepath.Join(tmp, "repo-charlie")
+	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("child identity.yaml should not exist after ephemeral add-worktree: %v", err)
+	}
+	childCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(child, teamID))
+	if err != nil {
+		t.Fatalf("load child cert: %v", err)
+	}
+	if childCert.MemberDIDAW != "" {
+		t.Fatalf("child ephemeral cert member_did_aw=%q", childCert.MemberDIDAW)
+	}
+
+	runAW(repo, baseEnv, "mail", "send", "--to", "charlie", "--body", "hello child", "--json")
+	childInbox := runAW(child, baseEnv, "mail", "inbox", "--show-all", "--json")
+	if !strings.Contains(childInbox, "hello child") {
+		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
+	}
+	runAW(child, baseEnv, "mail", "send", "--to", "alice", "--body", "hello parent", "--json")
+	parentInbox := runAW(repo, baseEnv, "mail", "inbox", "--show-all", "--json")
+	if !strings.Contains(parentInbox, "hello parent") {
+		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
+	}
+}
+
+func withoutEnvForTest(env []string, names ...string) []string {
+	blocked := make(map[string]bool, len(names))
+	for _, name := range names {
+		blocked[name] = true
+	}
+	out := make([]string, 0, len(env)+len(names))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if blocked[name] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	for _, name := range names {
+		out = append(out, name+"=")
+	}
+	return out
+}
+
+func newRawLocalHTTPServerForTest(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &httptest.Server{
+		Listener: l,
+		Config:   &http.Server{Handler: handler},
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func didFromDIDKeyAuthorizationForTest(authHeader string) string {
+	parts := strings.Fields(strings.TrimSpace(authHeader))
+	if len(parts) < 2 || parts[0] != "DIDKey" {
+		return ""
+	}
+	return parts[1]
+}
+
 func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) {
 	t.Parallel()
 
@@ -1112,6 +1674,117 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		t.Fatalf("expected error, got success:\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "connect new worktree") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
+		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
+	}
+	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
+		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
+	}
+
+	child := filepath.Join(tmp, "repo-charlie")
+	if _, err := os.Stat(child); !os.IsNotExist(err) {
+		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
+	}
+}
+
+func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *testing.T) {
+	t.Parallel()
+
+	const origin = "https://github.com/acme/repo.git"
+	const teamID = "backend:source"
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var registeredCert map[string]any
+	var revokedCert map[string]any
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "pol-1",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case "/v1/agents/suggest-alias-prefix":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":     teamID,
+				"name_prefix": "charlie",
+			})
+		case "/v1/namespaces/source/teams/backend/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatalf("decode registered certificate: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case "/v1/namespaces/source/teams/backend/certificates/revoke":
+			if err := json.NewDecoder(r.Body).Decode(&revokedCert); err != nil {
+				t.Fatalf("decode revoked certificate: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        "mallory",
+				"agent_id":     "agent-3",
+				"workspace_id": "workspace-3",
+				"repo_id":      "repo-3",
+				"team_did_key": "did:key:z6MkTeam",
+				"role":         "developer",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, origin)
+	buildAwBinary(t, ctx, bin)
+
+	writeTeamKeyForTest(t, tmp, "source", "backend", teamKey)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(repo, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:            "did:key:z6MkParent",
+		StableID:       "did:aw:parent",
+		Address:        "source/alice",
+		Custody:        awid.CustodySelf,
+		Lifetime:       awid.LifetimePersistent,
+		RegistryURL:    server.URL,
+		RegistryStatus: "registered",
+		CreatedAt:      "2026-04-08T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed identity.yaml: %v", err)
+	}
+	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, teamID, "alice", "source-1"))
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("seed .aw/context: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run.Env = testCommandEnv(tmp)
+	run.Stdin = strings.NewReader("")
+	run.Dir = repo
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `new workspace connected as alias "mallory", expected "charlie"`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {

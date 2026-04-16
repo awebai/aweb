@@ -393,6 +393,15 @@ func addWorktreeViaLocalTeamKey(
 		}
 		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
 	}
+	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
+		err := fmt.Errorf("new workspace connected as alias %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
+		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		if rollbackErr != nil {
+			return connectOutput{}, fmt.Errorf("%w (rollback revoke failed: %v)", err, rollbackErr)
+		}
+		return connectOutput{}, err
+	}
 	return connectResult, nil
 }
 
@@ -418,14 +427,14 @@ func addWorktreeViaCloudBootstrap(
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir:   worktreePath,
-		AwebURL:      awebURL,
-		APIKey:       apiKey,
-		Alias:        alias,
-		Role:         role,
-		HumanName:    strings.TrimSpace(state.HumanName),
-		AgentType:    strings.TrimSpace(state.AgentType),
-		Persistent:   false,
+		WorkingDir: worktreePath,
+		AwebURL:    awebURL,
+		APIKey:     apiKey,
+		Alias:      alias,
+		Role:       role,
+		HumanName:  strings.TrimSpace(state.HumanName),
+		AgentType:  strings.TrimSpace(state.AgentType),
+		Persistent: false,
 	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)

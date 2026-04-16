@@ -283,14 +283,20 @@ func resolvedTeamIDForTest(teamID string) string {
 	return "backend:demo"
 }
 
-func requireCertificateAuthForTest(t *testing.T, r *http.Request) {
+func requireCertificateAuthForTest(t *testing.T, r *http.Request) *awid.TeamCertificate {
 	t.Helper()
 	if !strings.HasPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "DIDKey ") {
 		t.Fatalf("auth=%q", r.Header.Get("Authorization"))
 	}
-	if strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")) == "" {
+	certHeader := strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
+	if certHeader == "" {
 		t.Fatal("missing X-AWID-Team-Certificate header")
 	}
+	cert, err := awid.DecodeTeamCertificateHeader(certHeader)
+	if err != nil {
+		t.Fatalf("decode team certificate header: %v", err)
+	}
+	return cert
 }
 
 func mirrorLegacyKnownAgentsFixture(workingDir string) {

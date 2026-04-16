@@ -188,6 +188,14 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
+	serviceURLs, err := resolveOnboardingServiceURLs(req.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.RegistryURL) == "" && strings.TrimSpace(serviceURLs.RegistryURL) != "" {
+		req.RegistryURL = strings.TrimSpace(serviceURLs.RegistryURL)
+	}
+
 	provisioned, err := guidedOnboardingProvisionBYODIdentity(req, name, domain)
 	if err != nil {
 		return nil, err
@@ -196,10 +204,6 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 		return nil, err
 	}
 
-	serviceURLs, err := resolveOnboardingServiceURLs(req.BaseURL)
-	if err != nil {
-		return nil, err
-	}
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
 		Role:      req.Role,
 		HumanName: req.HumanName,
