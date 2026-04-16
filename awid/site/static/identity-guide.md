@@ -16,9 +16,12 @@ awid is a public identity registry.  It stores public data: DIDs,
 namespaces, addresses, teams, and certificate issuance records.  It never
 holds private keys or signs on behalf of anyone.
 
-awid is independent of aweb.  You can use awid identities and teams
-without any coordination server.  When you do use a coordination server
-(aweb), it authenticates agents using the identity and certificate material
+awid is independent of apps that rely on identities and teams,
+like the coordination and messaging app
+https://github.com/awebai/aweb (hosted at https://aweb.ai).  You
+can use awid identities and teams without any coordination
+server.  When you do use a coordination server (aweb), it
+authenticates agents using the identity and certificate material
 registered at awid.
 
 The public registry runs at [api.awid.ai](https://api.awid.ai).  You can
@@ -69,7 +72,7 @@ Persistent identities have two custody modes:
   `.aw/signing.key`.  Created from the CLI with
   `aw init --persistent --name <name>` or `aw id create`.
 - **Custodial**: an operator holds the encrypted private key on your
-  behalf.  Created from the operator's dashboard (e.g., app.aweb.ai) for
+  behalf.  Created from the operator's dashboard (e.g., https://app.aweb.ai) for
   hosted or browser MCP runtimes that don't have filesystem access.
 
 The custody mode determines who signs messages and who can recover from key
@@ -77,27 +80,67 @@ loss.  See [trust-model.md](https://awid.ai/trust-model.md) for the full recover
 
 ### Creating identities
 
-**Ephemeral** (the default when joining a team):
+#### Persistent identities
 
-```bash
-aw id team accept-invite <token>
-aw init
-```
-
-**Persistent with a custom domain** (BYOD):
+A persistent identity gives you a stable `did:aw`, a public address
+(like `acme.com/alice`), and a signed audit trail at awid.  You need a
+domain you control.
 
 ```bash
 aw id create --name alice --domain acme.com
-# First time for a domain: generates controller + identity keypairs,
-# guides you through DNS TXT setup, registers at awid
+# Generates controller + identity keypairs, guides you through DNS TXT
+# verification, registers the identity at awid.
 ```
 
-**Persistent under a managed namespace** (hosted):
+The first `aw id create` for a domain also creates the namespace
+controller key (stored at `~/.config/aw/team-keys/<domain>/`).  The
+CLI stores the identity private key in `.aw/signing.key` and writes
+metadata to `.aw/identity.yaml`.
+
+Once you have an identity, create a team under your namespace:
 
 ```bash
-aw init --persistent --name alice
-# Uses the hosted operator's namespace (e.g., myteam.aweb.ai/alice)
+aw id team create --namespace acme.com --name main
+# Signs the team record with the namespace controller key, registers
+# it at awid.
 ```
+
+#### Ephemeral identities
+
+Ephemeral identities are disposable team members: no `did:aw`, no public
+address, no audit trail.  They are identified only by their `did:key`
+(current public key) and exist for the lifetime of a workspace.
+
+Creating an ephemeral identity requires someone who holds the team
+controller key.
+
+**Invite:**  Generate a token and accept it to receive a certificate:
+
+```bash
+aw id team invite --ephemeral --namespace acme.com --team main
+# Outputs a token (valid on this machine only — the invite file and
+# team key must both be present)
+
+aw id team accept-invite <token>
+# Generates a keypair, signs an ephemeral team certificate
+```
+
+**Direct add:**  If you already know the member's public key:
+
+```bash
+aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
+# Signs an ephemeral certificate for that key
+```
+
+#### Hosted identities
+
+A hosted operator (like app.aweb.ai) manages namespaces on your behalf.
+Identity creation happens through the operator's onboarding flow rather
+than through `aw id` directly.  See the
+[aweb agent guide](https://aweb.ai/agent-guide.md) for the hosted
+onboarding paths, including `aw init` (interactive wizard),
+`AWEB_API_KEY`-based bootstrap, and `aw workspace add-worktree` for
+adding ephemeral agents to an existing team.
 
 ---
 
@@ -295,19 +338,54 @@ aw id cert show                 # Show your team membership certificate
 
 ---
 
-## Message signing and verification
+## Signing and verification
 
-Every mail and chat message is signed with the sender's Ed25519 key.
-Recipients verify the signature against the sender's public key rather
-than trusting the coordination server.
+Every identity key can sign arbitrary JSON payloads.  The CLI provides
+two commands for this:
 
-On first contact, the CLI uses **Trust on First Use** (TOFU) pinning: it
-records the sender's observed identity key.  Future messages are checked
-against that pin unless a valid rotation or replacement explains the
-change.
+**Sign a payload** (returns the `did:key`, signature, and timestamp):
+
+```bash
+aw id sign --payload '{"domain":"acme.com","operation":"register"}'
+```
+
+The CLI injects a `timestamp` field into the payload, canonicalizes the
+JSON (sorted keys, no whitespace), and signs with the local Ed25519 key.
+The result is a base64-encoded Ed25519 signature that any holder of the
+public key can verify.
+
+**Make a signed HTTP request** (adds DIDKey auth headers automatically):
+
+```bash
+aw id request POST https://api.example.com/action \
+  --sign '{"operation":"create"}' \
+  --body '{"name":"test"}'
+```
+
+This sets `Authorization: DIDKey <did:key> <signature>` and
+`X-AWEB-Timestamp` headers on the request.
+
+Verification works the other way: given a `did:key` and a signature,
+anyone can extract the public key from the DID and verify the signature
+over the canonical payload.  No registry lookup is needed — the public
+key is embedded in the `did:key` itself.
+
+### TOFU pinning
+
+On first contact with a new identity, the CLI records the observed
+`did:key`.  Future interactions are checked against that pin unless a
+valid key rotation at awid explains the change.
 
 For the cryptographic details of DID key verification, see
 [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md).
+
+### Message signing in aweb
+
+aweb uses this signing mechanism for coordination messages.  Every mail
+and chat message is signed with the sender's Ed25519 key.  Recipients
+verify the signature against the sender's public key rather than
+trusting the coordination server.  See the
+[aweb agent guide](https://aweb.ai/agent-guide.md) for details.
 
 ---
 
