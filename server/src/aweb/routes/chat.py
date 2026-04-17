@@ -23,6 +23,7 @@ from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.messaging.alias_targets import resolve_alias_target, team_exists, validate_alias_selector
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -85,6 +86,7 @@ def _validate_signed_chat_payload(
     *,
     signed_payload: str | None,
     recipient_rows: list[dict[str, Any]] | None = None,
+    requested_to_aliases: list[str] | None = None,
     from_alias: str | None = None,
     from_address: str | None = None,
     from_stable_id: str | None = None,
@@ -122,13 +124,21 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload from must match the authenticated sender")
     recipient_rows = recipient_rows or []
     allowed_to_values: set[str] = set()
+    requested_aliases = sorted(value.strip() for value in requested_to_aliases or [] if value.strip())
+    has_cross_team_alias = any("~" in value for value in requested_aliases)
+    if requested_aliases and len(requested_aliases) == len(recipient_rows):
+        allowed_to_values.add(",".join(requested_aliases))
     if recipient_rows:
-        candidate_lists = (
-            [(row.get("alias") or "").strip() for row in recipient_rows],
-            [(row.get("address") or "").strip() for row in recipient_rows],
-            [(row.get("did_aw") or "").strip() for row in recipient_rows],
-            [(row.get("did_key") or "").strip() for row in recipient_rows],
-            [(row.get("did") or "").strip() for row in recipient_rows],
+        candidate_lists = []
+        if not has_cross_team_alias:
+            candidate_lists.append([(row.get("alias") or "").strip() for row in recipient_rows])
+        candidate_lists.extend(
+            (
+                [(row.get("address") or "").strip() for row in recipient_rows],
+                [(row.get("did_aw") or "").strip() for row in recipient_rows],
+                [(row.get("did_key") or "").strip() for row in recipient_rows],
+                [(row.get("did") or "").strip() for row in recipient_rows],
+            )
         )
         for values in candidate_lists:
             cleaned = sorted(value for value in values if value)
@@ -304,11 +314,26 @@ async def _resolve_chat_targets(
     if to_aliases:
         if auth.team_id is None:
             raise HTTPException(status_code=422, detail="to_aliases requires team context")
-        target_rows = await get_agents_by_aliases(db, team_id=auth.team_id, aliases=to_aliases)
-        resolved_aliases = {row["alias"] for row in target_rows}
-        missing = [alias for alias in to_aliases if alias not in resolved_aliases]
-        if missing:
-            raise HTTPException(status_code=404, detail=f"Unknown aliases: {', '.join(missing)}")
+        target_rows: list[dict[str, Any]] = []
+        local_aliases: list[str] = []
+        for alias in to_aliases:
+            if "~" not in alias:
+                local_aliases.append(alias)
+                continue
+            target = resolve_alias_target(auth.team_id, alias, field="to_aliases")
+            if not await team_exists(db, target.team_id):
+                raise HTTPException(status_code=404, detail=f"Unknown team: {target.team_id}")
+            row = await get_agent_by_alias(db, team_id=target.team_id, alias=target.alias)
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Unknown aliases: {alias}")
+            target_rows.append(row)
+        if local_aliases:
+            local_rows = await get_agents_by_aliases(db, team_id=auth.team_id, aliases=local_aliases)
+            resolved_aliases = {row["alias"] for row in local_rows}
+            missing = [alias for alias in local_aliases if alias not in resolved_aliases]
+            if missing:
+                raise HTTPException(status_code=404, detail=f"Unknown aliases: {', '.join(missing)}")
+            target_rows.extend(local_rows)
         for row in target_rows:
             target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
             if target_did:
@@ -414,6 +439,11 @@ class CreateSessionRequest(BaseModel):
             if value:
                 cleaned.append(value)
         return cleaned
+
+    @field_validator("to_aliases")
+    @classmethod
+    def _validate_aliases(cls, values: list[str]) -> list[str]:
+        return [validate_alias_selector(value, field="to_aliases") for value in values]
 
     @model_validator(mode="after")
     def _validate_targets(self) -> "CreateSessionRequest":
@@ -521,6 +551,7 @@ async def create_or_send(
         _validate_signed_chat_payload(
             signed_payload=payload.signed_payload,
             recipient_rows=target_rows,
+            requested_to_aliases=payload.to_aliases,
             from_alias=auth.alias,
             from_address=auth.address,
             from_stable_id=auth.did_aw,

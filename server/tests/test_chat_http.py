@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -219,6 +219,130 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
     assert {participant["did"] for participant in body["participants"]} == {"did:aw:alice", "did:aw:bob"}
     assert {participant["address"] for participant in body["participants"]} == {"acme.com/alice", "otherco.com/bob"}
     registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:team-eng')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    message_id = str(uuid4())
+    timestamp = "2026-04-17T12:00:00Z"
+    signed_payload = json.dumps(
+        {
+            "type": "chat",
+            "from": "alice",
+            "to": "eng~bob",
+            "body": "hello eng",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "timestamp": timestamp,
+        }
+    )
+    payload = {
+        "to_aliases": ["eng~bob"],
+        "message": "hello eng",
+        "from_did": alice_did_key,
+        "signature": "test-signature",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signed_payload": signed_payload,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["session_id"]
+    assert {participant["did"] for participant in body["participants"]} == {"did:aw:alice", "did:aw:bob"}
+    assert {participant["address"] for participant in body["participants"]} == {"acme.com/alice", "acme.com/bob"}
+    registry.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "expected_status"),
+    [
+        ("missing~bob", 404),
+        ("eng~missing", 404),
+        ("~bob", 422),
+        ("eng~", 422),
+        ("eng~team~bob", 422),
+    ],
+)
+async def test_create_chat_session_rejects_invalid_tilde_alias_targets(
+    aweb_cloud_db,
+    target,
+    expected_status,
+):
+    _, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:team-eng')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json={"to_aliases": [target], "message": "hello"})
+
+    assert resp.status_code == expected_status, resp.text
 
 
 @pytest.mark.asyncio

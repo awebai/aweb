@@ -55,12 +55,14 @@ E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
 CAROL_DIR="$E2E_CWD/carol"
+DAVE_DIR="$E2E_CWD/dave"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
+DAVE_DIR="$(canonicalize_dir "$DAVE_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
@@ -609,6 +611,32 @@ run_aw_in "$CAROL_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
 carol_init_exit=$?
 assert_eq "carol init exit" "0" "$carol_init_exit"
 
+dave_create="$(run_aw_in "$DAVE_DIR" id create \
+  --name dave \
+  --domain test.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+DAVE_DID_KEY="$(echo "$dave_create" | jq_field did_key)"
+assert_not_empty "dave did_key" "$DAVE_DID_KEY"
+
+dave_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+  --team ops \
+  --namespace test.local \
+  --json 2>/dev/null)"
+DAVE_INVITE_TOKEN="$(echo "$dave_invite_out" | jq_field token)"
+assert_not_empty "dave ops invite token" "$DAVE_INVITE_TOKEN"
+
+dave_accept="$(run_aw_in "$DAVE_DIR" id team accept-invite "$DAVE_INVITE_TOKEN" \
+  --alias dave \
+  --json 2>/dev/null)"
+DAVE_ACCEPT_STATUS="$(echo "$dave_accept" | jq_field status)"
+assert_eq "dave accepted to ops" "accepted" "$DAVE_ACCEPT_STATUS"
+
+run_aw_in "$DAVE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+dave_init_exit=$?
+assert_eq "dave init exit" "0" "$dave_init_exit"
+
 set_messaging_policy "$ALICE_DID_AW" "contacts"
 run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>&1
 contacts_add_exit=$?
@@ -671,6 +699,43 @@ assert_eq "bob→alice chat reply exit" "0" "$chat_reply_exit"
 
 alice_history="$(run_aw_in "$ALICE_DIR" chat history bob 2>/dev/null)"
 assert_contains "alice sees bob's reply" "$alice_history" "Chat reply from bob"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 12b: Cross-team tilde addressing
+# ---------------------------------------------------------------------------
+echo "=== Phase 12b: Cross-team tilde addressing ==="
+
+if tilde_mail_out="$(run_aw_in "$DAVE_DIR" mail send \
+  --to devteam~alice \
+  --subject "Cross-team tilde mail" \
+  --body "Cross-team hello from dave" 2>&1)"; then
+  tilde_mail_exit=0
+else
+  tilde_mail_exit=$?
+fi
+assert_eq "dave→devteam~alice mail exit" "0" "$tilde_mail_exit"
+if [[ "$tilde_mail_exit" != "0" ]]; then
+  echo "  tilde mail output: ${tilde_mail_out:0:240}"
+fi
+
+alice_tilde_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_dave_message="$(echo "$alice_tilde_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Cross-team hello from dave'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives dave cross-team mail" "Cross-team hello from dave" "$alice_dave_message"
+
+if tilde_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave ops~dave \
+  "Cross-team chat from alice" 2>&1)"; then
+  tilde_chat_exit=0
+else
+  tilde_chat_exit=$?
+fi
+assert_eq "alice→ops~dave chat exit" "0" "$tilde_chat_exit"
+if [[ "$tilde_chat_exit" != "0" ]]; then
+  echo "  tilde chat output: ${tilde_chat_out:0:240}"
+fi
+
+dave_pending="$(run_aw_in "$DAVE_DIR" chat pending 2>/dev/null)"
+assert_contains "dave sees cross-team chat from alice" "$dave_pending" "alice"
 echo ""
 
 # ---------------------------------------------------------------------------

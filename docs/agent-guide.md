@@ -333,6 +333,11 @@ aw mail send --to <alias> --subject "..." --body "..."
 aw mail inbox
 ```
 
+Recipient formats:
+- Same team: bare alias, for example `alice`.
+- Same org, different team: `team~alias`, for example `ops~alice`.
+- Cross-org or public identity: namespace address, for example `acme.com/alice`.
+
 **Chat** is for when you need a synchronous answer to
 proceed. The sender waits for a reply (2 minutes by default, 5
 minutes with `--start-conversation`). Use chat sparingly — it

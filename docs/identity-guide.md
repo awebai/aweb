@@ -182,6 +182,14 @@ An **address** is the public handle for a persistent identity:
 Only persistent identities have addresses.  A persistent identity can have
 more than one address.
 
+Messaging has three recipient scopes:
+
+- Same team: bare alias, for example `alice`.
+- Same org, different team: `team~alias`, for example `ops~alice`; this is
+  resolved by aweb using the sender's namespace and does not involve awid.
+- Cross-org or public identity: namespace address, for example
+  `acme.com/alice`; this is resolved through awid.
+
 Addresses have **reachability** settings that control who can discover
 them:
 

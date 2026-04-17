@@ -125,13 +125,14 @@ For the full conceptual model see the Concepts section of
 
 ### Addressing
 
-- **Intra-team**: use the bare alias (`alice`) or the cross-team form within
-  the same org (`ops~alice`)
+- **Same team**: use the bare alias (`alice`)
+- **Same org, different team**: use `team~alias` (`ops~alice`). This resolves
+  on the aweb server using your current team's namespace.
 - **Cross-network**: use the namespace address (`myteam.aweb.ai/alice` or
-  `acme.com/billing`)
+  `acme.com/billing`). This resolves through awid.
 
-Chat, mail, and contacts all accept all formats. Cross-network messages route
-through the aweb network automatically.
+Chat and mail accept all three formats. Cross-network messages route through
+the aweb network automatically.
 
 ### Access modes
 

@@ -12,6 +12,7 @@ from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
+from aweb.messaging.alias_targets import resolve_alias_target, team_exists, validate_alias_selector
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -25,11 +26,18 @@ from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
 
+async def _resolve_message_alias(db, auth: MessagingAuth, raw_alias: str) -> dict | None:
+    target = resolve_alias_target(auth.team_id, raw_alias, field="to_alias")
+    if "~" in str(raw_alias or "") and not await team_exists(db, target.team_id):
+        raise HTTPException(status_code=404, detail=f"Unknown team: {target.team_id}")
+    return await get_agent_by_alias(db, team_id=target.team_id, alias=target.alias)
+
+
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     to_agent_id: Optional[str] = Field(default=None, min_length=1)
-    to_alias: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    to_alias: Optional[str] = Field(default=None, min_length=1)
     to_did: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
@@ -51,6 +59,13 @@ class SendMessageRequest(BaseModel):
             return str(UUID(str(v).strip()))
         except Exception:
             raise ValueError("Invalid agent_id format")
+
+    @field_validator("to_alias")
+    @classmethod
+    def _validate_to_alias(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return validate_alias_selector(v, field="to_alias")
 
     @field_validator("message_id")
     @classmethod
@@ -117,6 +132,7 @@ def _validate_signed_mail_payload(
     recipient: dict | None,
     to_agent_id: str | None,
     to_alias: str | None,
+    requested_to_alias: str | None,
     from_alias: str | None,
     from_address: str | None,
     from_stable_id: str | None,
@@ -154,15 +170,20 @@ def _validate_signed_mail_payload(
     recipient_address = (recipient or {}).get("address") or ""
     recipient_stable_id = (recipient or {}).get("did_aw") or ""
     recipient_current_did = (recipient or {}).get("did_key") or ""
+    alias_values = (
+        ()
+        if "~" in str(requested_to_alias or "")
+        else (str(to_alias or "").strip(), str(recipient_alias).strip())
+    )
     allowed_to_values = {
         value
         for value in (
             str(to_agent_id or "").strip(),
-            str(to_alias or "").strip(),
-            str(recipient_alias).strip(),
+            str(requested_to_alias or "").strip(),
             str(recipient_address).strip(),
             str(recipient_stable_id).strip(),
             str(recipient_current_did).strip(),
+            *alias_values,
         )
         if value
     }
@@ -223,9 +244,7 @@ async def send_message(
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_stable_id recipient")
         if payload.to_alias is not None and payload.to_alias.strip():
-            if auth.team_id is None:
-                raise HTTPException(status_code=422, detail="to_alias requires team context")
-            bound_recipient = await get_agent_by_alias(db, team_id=auth.team_id, alias=payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_stable_id recipient")
         if payload.to_address is not None and payload.to_address.strip():
@@ -249,9 +268,7 @@ async def send_message(
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
-            if auth.team_id is None:
-                raise HTTPException(status_code=422, detail="to_alias requires team context")
-            bound_recipient = await get_agent_by_alias(db, team_id=auth.team_id, alias=payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_did recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
@@ -288,9 +305,7 @@ async def send_message(
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
-            if auth.team_id is None:
-                raise HTTPException(status_code=422, detail="to_alias requires team context")
-            bound_recipient = await get_agent_by_alias(db, team_id=auth.team_id, alias=payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
@@ -305,19 +320,13 @@ async def send_message(
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
-            if auth.team_id is None:
-                raise HTTPException(status_code=422, detail="to_alias requires team context")
-            bound_recipient = await get_agent_by_alias(db, team_id=auth.team_id, alias=payload.to_alias.strip())
+            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_agent_id recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         to_alias = recipient.get("alias")
     elif payload.to_alias is not None:
-        if auth.team_id is None:
-            raise HTTPException(status_code=422, detail="to_alias requires team context")
-        recipient = await get_agent_by_alias(
-            db, team_id=auth.team_id, alias=payload.to_alias,
-        )
+        recipient = await _resolve_message_alias(db, auth, payload.to_alias)
         if recipient is None:
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
@@ -348,6 +357,7 @@ async def send_message(
             recipient=recipient,
             to_agent_id=to_agent_id,
             to_alias=to_alias,
+            requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
             from_address=auth.address,
             from_stable_id=auth.did_aw,

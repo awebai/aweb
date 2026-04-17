@@ -22,6 +22,21 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func TestClassifyChatTargetsKeepsTildeAliasAsAlias(t *testing.T) {
+	t.Parallel()
+
+	aliases, dids, addresses := classifyChatTargets([]string{"ops~alice"})
+	if len(aliases) != 1 || aliases[0] != "ops~alice" {
+		t.Fatalf("aliases=%v", aliases)
+	}
+	if len(dids) != 0 {
+		t.Fatalf("dids=%v", dids)
+	}
+	if len(addresses) != 0 {
+		t.Fatalf("addresses=%v", addresses)
+	}
+}
+
 // mockHandler dispatches requests to registered handlers by exact method+path match.
 type mockHandler struct {
 	handlers map[string]http.HandlerFunc
