@@ -1028,6 +1028,47 @@ async def test_list_addresses_filters_nobody_to_owner(client, controller_identit
 
 
 @pytest.mark.asyncio
+async def test_list_addresses_namespace_controller_bypasses_visibility_filters(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    outsider_key, outsider_pub = generate_keypair()
+    outsider_did_key = did_from_public_key(outsider_pub)
+    domain = "list-controller-bypass.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "nobody-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="nobody",
+    )
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "public-alice",
+        member_did_key=did_from_public_key(generate_keypair()[1]),
+        reachability="public",
+    )
+
+    controller_headers = _sign(ns_key, ns_did, domain=domain, operation="list_addresses")
+    controller_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=controller_headers)
+    assert controller_resp.status_code == 200, controller_resp.text
+    assert [item["name"] for item in controller_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+
+    outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
+    outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
+    assert outsider_resp.status_code == 200, outsider_resp.text
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["public-alice"]
+
+    anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
+    assert anon_resp.status_code == 200, anon_resp.text
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
+
+
+@pytest.mark.asyncio
 async def test_org_only_address_get_allows_same_org_persistent_members_only(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
