@@ -536,11 +536,13 @@ async def list_addresses(
 
     params: list[object] = [ns_row["namespace_id"]]
     where_clauses = ["pa.namespace_id = $1", "pa.deleted_at IS NULL", "ns.deleted_at IS NULL"]
-    if caller_did_aw:
-        params.append(caller_did_aw)
-        where_clauses.append(_address_visibility_sql(caller_did_aw_param=len(params)))
-    else:
-        where_clauses.append(_address_visibility_sql(caller_did_aw_param=None))
+    is_namespace_controller = caller_did_key is not None and caller_did_key == ns_row["controller_did"]
+    if not is_namespace_controller:
+        if caller_did_aw:
+            params.append(caller_did_aw)
+            where_clauses.append(_address_visibility_sql(caller_did_aw_param=len(params)))
+        else:
+            where_clauses.append(_address_visibility_sql(caller_did_aw_param=None))
     if decoded_cursor is not None:
         cursor_name = decoded_cursor.get("name")
         if not isinstance(cursor_name, str):
