@@ -220,6 +220,84 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	}
 }
 
+func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+
+	var gotPath string
+	var gotBody map[string]any
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/messages":
+			gotPath = r.URL.Path
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message_id":   "auto-msg-1",
+				"status":       "sent",
+				"delivered_at": "2026-02-06T00:00:00Z",
+			})
+		case "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, _ := os.Getwd()
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL + "/api",
+		TeamID:      "backend:demo",
+		Alias:       "eve",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    awid.ComputeStableID(pub),
+		Address:     "demo/eve",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+	})
+
+	// Use --to with a full address (contains /). Should auto-detect as address
+	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "acme/researcher", "--body", "hello auto-detect", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	if gotPath != "/api/v1/messages" {
+		t.Fatalf("path=%s, want /api/v1/messages (identity endpoint)", gotPath)
+	}
+	if gotBody["to_address"] != "acme/researcher" {
+		t.Fatalf("to_address=%v, want acme/researcher", gotBody["to_address"])
+	}
+	if gotBody["to_alias"] != nil {
+		t.Fatalf("to_alias should be absent for address target, got %v", gotBody["to_alias"])
+	}
+}
+
 func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	t.Parallel()
 

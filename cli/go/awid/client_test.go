@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -2502,6 +2503,50 @@ func TestChatCreateSessionSingleAddressTargetSignsResolvedRecipientBinding(t *te
 	}
 	if env.To != recipientAddress {
 		t.Fatalf("signed payload to=%q, want %q", env.To, recipientAddress)
+	}
+}
+
+func TestChatCreateSessionAddressTargetOmitsToAliasesKey(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var rawBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess-1",
+			"message_id": "msg-1",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAddresses: []string{"otherco.com/bob"},
+		Message:     "cross-team hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &raw); err != nil {
+		t.Fatalf("unmarshal raw body: %v", err)
+	}
+	if _, present := raw["to_aliases"]; present {
+		t.Fatalf("to_aliases key should be absent when only address targets are used, got %s", raw["to_aliases"])
+	}
+	if _, present := raw["to_addresses"]; !present {
+		t.Fatal("to_addresses key should be present")
 	}
 }
 

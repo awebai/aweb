@@ -120,7 +120,7 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 }
 
 type ChatCreateSessionRequest struct {
-	ToAliases     []string `json:"to_aliases"`
+	ToAliases     []string `json:"to_aliases,omitempty"`
 	ToDIDs        []string `json:"to_dids,omitempty"`
 	ToAddresses   []string `json:"to_addresses,omitempty"`
 	Message       string   `json:"message"`

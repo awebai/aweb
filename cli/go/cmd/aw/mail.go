@@ -135,7 +135,14 @@ func resolveMailTarget() (string, string, error) {
 		return "", "", usageError("recipient flags are mutually exclusive: use only one of --to, --to-did, or --to-address")
 	}
 	if value := strings.TrimSpace(mailSendTo); value != "" {
-		return "alias", value, nil
+		switch {
+		case strings.HasPrefix(value, "did:"):
+			return "did", value, nil
+		case strings.Contains(value, "/"):
+			return "address", value, nil
+		default:
+			return "alias", value, nil
+		}
 	}
 	if value := strings.TrimSpace(mailSendToDID); value != "" {
 		return "did", value, nil
