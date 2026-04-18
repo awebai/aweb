@@ -65,7 +65,7 @@ def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
     }
 
 
-def _build_test_app(aweb_db, team_did_key):
+def _build_test_app(aweb_db, team_did_key, redis=None):
     app = FastAPI()
     app.include_router(workspaces_router)
 
@@ -105,13 +105,44 @@ def _build_test_app(aweb_db, team_did_key):
         return await call_next(request)
 
     app.state.db = _DbShim()
-    app.state.redis = None
+    app.state.redis = redis
 
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
     registry.get_team_revocations = AsyncMock(return_value=set())
     app.state.awid_registry_client = registry
     return app
+
+
+class _FakeRedisPipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.actions = []
+
+    def delete(self, key):
+        self.actions.append(("delete", key))
+        return self
+
+    def srem(self, key, member):
+        self.actions.append(("srem", key, member))
+        return self
+
+    async def execute(self):
+        self.redis.pipeline_actions.extend(self.actions)
+        return [1 for _ in self.actions]
+
+
+class _FakeRedis:
+    def __init__(self):
+        self.published = []
+        self.pipeline_actions = []
+
+    async def publish(self, channel, message):
+        self.published.append((channel, json.loads(message)))
+        return 1
+
+    def pipeline(self):
+        return _FakeRedisPipeline(self)
 
 
 @pytest.mark.asyncio
@@ -181,7 +212,8 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
         datetime.now(timezone.utc),
     )
 
-    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    redis = _FakeRedis()
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -220,6 +252,24 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     assert agent_row["deleted_at"] is not None
     assert agent_row["status"] == "deleted"
     assert claims_row["count"] == 0
+    assert any(
+        channel == f"events:{workspace_id}"
+        and payload["type"] == "task.unclaimed"
+        and payload["workspace_id"] == str(workspace_id)
+        and payload["task_ref"] == "backend-1"
+        and payload["alias"] == "bob"
+        for channel, payload in redis.published
+    )
+    assert any(
+        channel == f"team-events:{team_id}"
+        and payload["type"] == "task.unclaimed"
+        and payload["team_id"] == team_id
+        and payload["task_ref"] == "backend-1"
+        and payload["alias"] == "bob"
+        for channel, payload in redis.published
+    )
+    assert ("delete", f"presence:{workspace_id}") in redis.pipeline_actions
+    assert ("srem", "idx:all_workspaces", str(workspace_id)) in redis.pipeline_actions
 
 
 @pytest.mark.asyncio
@@ -254,12 +304,14 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, lifetime, role)
-        VALUES ($1, $2, $3, $4, 'persistent', 'developer')
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, role)
+        VALUES ($1, $2, $3, $4, $5, $6, 'persistent', 'developer')
         """,
         agent_id,
         team_id,
         agent_did_key,
+        "did:aw:maintainer",
+        "acme.com/maintainer",
         "maintainer",
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -274,6 +326,19 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
         "maintainer",
         "/tmp/gone-worktree",
         datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}}
+            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        team_id,
+        workspace_id,
+        "maintainer",
+        "",
+        "backend-2",
+        datetime.now(timezone.utc),
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -299,13 +364,26 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     )
     agent_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT deleted_at FROM {{tables.agents}}
+        SELECT deleted_at, status, did_key, did_aw, address, lifetime FROM {{tables.agents}}
         WHERE agent_id = $1
         """,
         agent_id,
     )
+    claims_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT COUNT(*) AS count FROM {{tables.task_claims}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
     assert workspace_row["deleted_at"] is None
     assert agent_row["deleted_at"] is None
+    assert agent_row["status"] == "active"
+    assert agent_row["did_key"] == agent_did_key
+    assert agent_row["did_aw"] == "did:aw:maintainer"
+    assert agent_row["address"] == "acme.com/maintainer"
+    assert agent_row["lifetime"] == "persistent"
+    assert claims_row["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -360,6 +438,19 @@ async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
         "/tmp/gone-worktree",
         datetime.now(timezone.utc) - timedelta(hours=1),
     )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}}
+            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        team_id,
+        workspace_id,
+        "orphan",
+        "",
+        "backend-3",
+        datetime.now(timezone.utc),
+    )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     async with AsyncClient(
@@ -382,7 +473,15 @@ async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
         """,
         workspace_id,
     )
+    claims_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT COUNT(*) AS count FROM {{tables.task_claims}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
     assert workspace_row["deleted_at"] is None
+    assert claims_row["count"] == 1
 
 
 @pytest.mark.asyncio
