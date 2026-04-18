@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,9 +106,30 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		alias = "" // cloud rejects alias for persistent
 	}
 
+	if req.Persistent {
+		registry, regErr := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
+		if regErr != nil {
+			return connectOutput{}, regErr
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, regErr := registry.RegisterIdentity(
+			ctx,
+			registry.DefaultRegistryURL,
+			didKey,
+			localStableID,
+			signingKey,
+		); regErr != nil {
+			var already *awid.AlreadyRegisteredError
+			if !errors.As(regErr, &already) || strings.TrimSpace(already.ExistingDIDKey) != didKey {
+				return connectOutput{}, fmt.Errorf("failed to register did:aw at awid before workspace init: %w", regErr)
+			}
+		}
+	}
+
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
 		DID:                 didKey,
-		PublicKey:            base64.StdEncoding.EncodeToString(pub),
+		PublicKey:           base64.StdEncoding.EncodeToString(pub),
 		Name:                name,
 		Alias:               alias,
 		Custody:             awid.CustodySelf,
@@ -138,33 +160,6 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 	if strings.TrimSpace(resp.APIKey) == "" {
 		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
-	}
-
-	// Register DID at awid AFTER the cloud assigns the address.
-	// The cloud creates the address with current_did_key directly (no resolve_key).
-	// The CLI registers the did:aw → did:key mapping so others can resolve the identity.
-	if persistent {
-		registry, regErr := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
-		if regErr != nil {
-			return connectOutput{}, regErr
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		memberAddress := strings.TrimSpace(cert.MemberAddress)
-		if _, regErr := registry.RegisterDID(
-			ctx,
-			registry.DefaultRegistryURL,
-			"",          // server
-			memberAddress,
-			name,        // handle = name for persistent
-			didKey,
-			localStableID,
-			signingKey,
-		); regErr != nil {
-			// Non-fatal: coordination works via team cert. DID resolution
-			// can be retried later. Log but do not block the init.
-			debugLog("warning: failed to register did:aw at awid: %v", regErr)
-		}
 	}
 
 	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {

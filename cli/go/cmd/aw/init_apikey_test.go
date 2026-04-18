@@ -168,7 +168,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 }
 
 func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
-	t.Parallel()
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	const apiKey = "aw_sk_test_persistent"
 
@@ -179,10 +179,38 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var initBody map[string]any
+	var requestOrder []string
+	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/workspaces/init":
+		switch {
+		case r.URL.Path == "/v1/did":
+			requestOrder = append(requestOrder, "register_identity")
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			registeredDIDKey, _ = body["new_did_key"].(string)
+			for _, field := range []string{"address", "server", "handle", "did_key"} {
+				if _, ok := body[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			requestOrder = append(requestOrder, "did_full")
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          stableID,
+				"current_did_key": registeredDIDKey,
+				"server":          "",
+				"address":         "",
+				"handle":          nil,
+				"created_at":      "2026-04-18T00:00:00Z",
+				"updated_at":      "2026-04-18T00:00:00Z",
+			})
+		case r.URL.Path == "/api/v1/workspaces/init":
+			requestOrder = append(requestOrder, "workspace_init")
 			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
 				t.Fatal(err)
 			}
@@ -218,7 +246,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"custody":      awid.CustodySelf,
 				"api_key":      "workspace-sk-persistent",
 			})
-		case "/v1/connect":
+		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_id":      "default:alice.aweb.ai",
@@ -228,7 +256,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
-		case "/v1/agents/heartbeat":
+		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -239,7 +267,7 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
-		RegistryURL: "https://api.awid.ai",
+		RegistryURL: server.URL,
 		APIKey:      apiKey,
 		Name:        "alice",
 		Role:        "backend",
@@ -251,6 +279,9 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 		t.Fatalf("runAPIKeyBootstrapInit persistent: %v", err)
 	}
 
+	if got, want := strings.Join(requestOrder[:3], ","), "register_identity,did_full,workspace_init"; got != want {
+		t.Fatalf("request order=%q want %q", got, want)
+	}
 	if initBody["lifetime"] != awid.LifetimePersistent {
 		t.Fatalf("init lifetime=%v", initBody["lifetime"])
 	}
@@ -292,6 +323,48 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	}
 	if workspace.APIKey != "workspace-sk-persistent" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)
+	}
+}
+
+func TestRunAPIKeyBootstrapInitRegisterIdentityFailureShortCircuitsWorkspaceInit(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "")
+
+	registerCalls := 0
+	initCalls := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did":
+			registerCalls++
+			http.Error(w, `{"detail":"registry unavailable"}`, http.StatusBadGateway)
+		case "/api/v1/workspaces/init":
+			initCalls++
+			t.Fatalf("workspace init should not be called after register identity failure")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	_, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+		WorkingDir:  tmp,
+		AwebURL:     externalLikeTestURL(t, server.URL),
+		RegistryURL: server.URL,
+		APIKey:      "aw_sk_test_persistent",
+		Name:        "alice",
+		Persistent:  true,
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "before workspace init") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if registerCalls != 1 {
+		t.Fatalf("register calls=%d", registerCalls)
+	}
+	if initCalls != 0 {
+		t.Fatalf("workspace init calls=%d", initCalls)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("workspace.yaml should not be written: %v", statErr)
 	}
 }
 

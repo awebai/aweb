@@ -75,6 +75,8 @@ type RegistryClient struct {
 	HTTPClient         *http.Client
 }
 
+var registryNow = func() time.Time { return time.Now().UTC() }
+
 type didUpdateRequest struct {
 	Operation     string  `json:"operation"`
 	NewDIDKey     string  `json:"new_did_key"`
@@ -198,20 +200,14 @@ func (c *RegistryClient) ListNamespaceAddressesAtSigned(
 	return out.Addresses, registryURL, nil
 }
 
-func (c *RegistryClient) RegisterDID(
+func (c *RegistryClient) RegisterIdentity(
 	ctx context.Context,
 	registryURL string,
-	serverURL string,
-	address string,
-	handle string,
 	did string,
 	stableID string,
 	signingKey ed25519.PrivateKey,
 ) (*DIDMapping, error) {
 	registryURL = strings.TrimSpace(registryURL)
-	serverURL = strings.TrimSpace(serverURL)
-	address = strings.TrimSpace(address)
-	handle = strings.TrimSpace(handle)
 	did = strings.TrimSpace(did)
 	stableID = strings.TrimSpace(stableID)
 
@@ -229,7 +225,7 @@ func (c *RegistryClient) RegisterDID(
 	}
 
 	stateHash := stableIdentityStateHash(stableID, did)
-	timestamp := time.Now().UTC().Format(time.RFC3339)
+	timestamp := registryNow().Format(time.RFC3339)
 	proofPayload := CanonicalDidLogPayload(stableID, &DidKeyEvidence{
 		Seq:            1,
 		Operation:      "register_did",
@@ -269,6 +265,22 @@ func (c *RegistryClient) RegisterDID(
 	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
 }
 
+// RegisterDID is a compatibility wrapper for older callers. The DID
+// registration envelope is identity-only; serverURL, address, and handle are
+// intentionally ignored.
+func (c *RegistryClient) RegisterDID(
+	ctx context.Context,
+	registryURL string,
+	serverURL string,
+	address string,
+	handle string,
+	did string,
+	stableID string,
+	signingKey ed25519.PrivateKey,
+) (*DIDMapping, error) {
+	return c.RegisterIdentity(ctx, registryURL, did, stableID, signingKey)
+}
+
 func (c *RegistryClient) RotateDIDKey(
 	ctx context.Context,
 	registryURL string,
@@ -295,7 +307,7 @@ func (c *RegistryClient) RotateDIDKey(
 	if resolution.LogHead == nil {
 		return nil, fmt.Errorf("DID registry response is missing log_head")
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
+	timestamp := registryNow().Format(time.RFC3339)
 	prevEntryHash := strings.TrimSpace(resolution.LogHead.EntryHash)
 	stateHash := stableIdentityStateHash(didAW, newDID)
 	signaturePayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{
@@ -354,7 +366,7 @@ func (c *RegistryClient) UpdateDIDServer(
 	if err != nil {
 		return nil, fmt.Errorf("invalid server URL: %w", err)
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
+	timestamp := registryNow().Format(time.RFC3339)
 	prevEntryHash := strings.TrimSpace(resolution.LogHead.EntryHash)
 	stateHash := stableIdentityStateHash(didAW, currentDID)
 	signaturePayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{
