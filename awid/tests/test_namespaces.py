@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, MockTransport, Response
 
 import awid_service.routes.dns_namespace_reverify as dns_namespace_reverify_routes
 import awid_service.routes.dns_namespaces as dns_namespaces_routes
@@ -12,6 +13,7 @@ import awid_service.routes.dns_addresses as dns_addresses_routes
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.log import identity_state_hash, log_entry_payload
+from awid.registry import AddressAlreadyBoundError, RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
@@ -194,6 +196,23 @@ async def _register_address_for_identity(
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _active_address_count(awid_db_infra, domain: str, name: str) -> int:
+    db = awid_db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        """
+        SELECT COUNT(*) AS count
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
+        WHERE ns.domain = $1
+          AND pa.name = $2
+          AND pa.deleted_at IS NULL
+        """,
+        domain,
+        name,
+    )
+    return row["count"]
 
 
 async def _register_certificate(
@@ -1642,6 +1661,162 @@ async def test_register_address_accepts_registered_did_without_extra_identity_ro
     )
     assert address["did_aw"] == owner_did_aw
     assert address["current_did_key"] == owner_did_key
+
+
+@pytest.mark.asyncio
+async def test_register_address_is_idempotent_for_same_did_and_key(
+    client,
+    controller_identity,
+    awid_db_infra,
+):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    owner_did_aw = stable_id_from_did_key(owner_did_key)
+    domain = "address-idempotent.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    payload = {
+        "name": "alice",
+        "did_aw": owner_did_aw,
+        "current_did_key": owner_did_key,
+        "reachability": "public",
+    }
+    first = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+
+    second = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json() == first.json()
+    assert await _active_address_count(awid_db_infra, domain, "alice") == 1
+
+
+@pytest.mark.asyncio
+async def test_register_address_rejects_existing_name_for_different_did_aw(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    first_key, first_pub = generate_keypair()
+    first_did_key = did_from_public_key(first_pub)
+    second_key, second_pub = generate_keypair()
+    second_did_key = did_from_public_key(second_pub)
+    domain = "address-bound-conflict.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, first_key, first_did_key)
+    await _register_identity(client, second_key, second_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    first = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(first_did_key),
+            "current_did_key": first_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(second_did_key),
+            "current_did_key": second_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+    assert second.status_code == 409
+    assert second.json()["detail"] == "address already bound to a different did_aw"
+
+
+@pytest.mark.asyncio
+async def test_reregister_address_rejects_stale_did_key_after_rotation(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    old_key, old_pub = generate_keypair()
+    old_did_key = did_from_public_key(old_pub)
+    _, new_pub = generate_keypair()
+    new_did_key = did_from_public_key(new_pub)
+    owner_did_aw = stable_id_from_did_key(old_did_key)
+    domain = "address-idempotent-rotated.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, old_key, old_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    payload = {
+        "name": "alice",
+        "did_aw": owner_did_aw,
+        "current_did_key": old_did_key,
+        "reachability": "public",
+    }
+    first = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+
+    await _rotate_identity(client, old_key, owner_did_aw, old_did_key, new_did_key)
+
+    second = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    assert second.status_code == 409
+    assert second.json()["detail"] == "did_aw current key does not match"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_address_exact_match_creates_one_row(
+    client,
+    controller_identity,
+    awid_db_infra,
+):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    owner_did_aw = stable_id_from_did_key(owner_did_key)
+    domain = "address-idempotent-race.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    payload = {
+        "name": "alice",
+        "did_aw": owner_did_aw,
+        "current_did_key": owner_did_key,
+        "reachability": "public",
+    }
+
+    responses = await asyncio.gather(
+        client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers),
+        client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers),
+    )
+
+    assert [resp.status_code for resp in responses] == [200, 200]
+    assert responses[0].json() == responses[1].json()
+    assert await _active_address_count(awid_db_infra, domain, "alice") == 1
+
+
+@pytest.mark.asyncio
+async def test_registry_client_maps_address_already_bound_error():
+    async def handler(request):
+        assert request.method == "POST"
+        assert request.url.path == "/v1/namespaces/example.com/addresses"
+        return Response(409, json={"detail": "address already bound to a different did_aw"})
+
+    controller_key, _ = generate_keypair()
+    registry = RegistryClient(
+        registry_url="http://registry.test",
+        transport=MockTransport(handler),
+    )
+    try:
+        with pytest.raises(AddressAlreadyBoundError):
+            await registry.register_address(
+                "example.com",
+                "alice",
+                "did:aw:bound",
+                controller_key,
+                "public",
+                current_did_key="did:key:z6MkBound",
+            )
+    finally:
+        await registry.aclose()
 
 
 @pytest.mark.asyncio
