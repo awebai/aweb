@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS {{tables.agents}} (
     messaging_policy TEXT NOT NULL DEFAULT 'everyone'
                     CHECK (messaging_policy IN ('everyone', 'contacts', 'team', 'org', 'nobody')),
     status          TEXT NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active', 'retired', 'deleted')),
+                    CHECK (status IN ('active', 'retired', 'archived', 'deleted')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ
 );
