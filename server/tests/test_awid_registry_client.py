@@ -21,7 +21,7 @@ from awid.did import (
 )
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 import awid.registry as registry_module
-from awid.log import log_entry_payload
+from awid.log import log_entry_payload, register_did_entry_payload
 
 
 def _authorization_parts(header: str) -> tuple[str, str]:
@@ -78,18 +78,19 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
             payload = json.loads(request.content.decode("utf-8"))
             assert payload["did_aw"] == did_aw
             assert payload["did_key"] == did_key
+            assert payload["operation"] == "register_did"
             assert payload["authorized_by"] == did_key
-            assert payload["server"] == "https://registry.example"
+            assert "server" not in payload
+            assert "address" not in payload
+            assert "handle" not in payload
+            assert "state_hash" not in payload
             verify_did_key_signature(
                 did_key=payload["did_key"],
-                payload=log_entry_payload(
+                payload=register_did_entry_payload(
                     did_aw=payload["did_aw"],
-                    seq=payload["seq"],
-                    operation="create",
-                    previous_did_key=None,
-                    new_did_key=payload["did_key"],
+                    did_key=payload["did_key"],
                     prev_entry_hash=payload["prev_entry_hash"],
-                    state_hash=payload["state_hash"],
+                    seq=payload["seq"],
                     authorized_by=payload["authorized_by"],
                     timestamp=payload["timestamp"],
                 ),
@@ -110,7 +111,7 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
                 json={
                     "did_aw": did_aw,
                     "current_did_key": did_key,
-                    "server": "https://registry.example",
+                    "server": "",
                     "address": "",
                     "handle": None,
                     "created_at": "2026-04-03T00:00:00Z",
@@ -128,6 +129,7 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
 
     assert mapping.did_aw == did_aw
     assert mapping.current_did_key == did_key
+    assert mapping.server == ""
     assert [request.url.path for request in requests] == ["/v1/did", f"/v1/did/{did_aw}/full"]
 
 
@@ -140,18 +142,17 @@ async def test_register_did_allows_standalone_creation_without_server():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/v1/did":
             payload = json.loads(request.content.decode("utf-8"))
-            assert payload["server"] == ""
-            assert payload["address"] == ""
+            assert "server" not in payload
+            assert "address" not in payload
+            assert "handle" not in payload
+            assert "state_hash" not in payload
             verify_did_key_signature(
                 did_key=payload["did_key"],
-                payload=log_entry_payload(
+                payload=register_did_entry_payload(
                     did_aw=payload["did_aw"],
-                    seq=payload["seq"],
-                    operation="create",
-                    previous_did_key=None,
-                    new_did_key=payload["did_key"],
+                    did_key=payload["did_key"],
                     prev_entry_hash=payload["prev_entry_hash"],
-                    state_hash=payload["state_hash"],
+                    seq=payload["seq"],
                     authorized_by=payload["authorized_by"],
                     timestamp=payload["timestamp"],
                 ),

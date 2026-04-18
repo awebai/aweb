@@ -17,7 +17,12 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.did import did_from_public_key, stable_id_from_did_key
-from awid.log import canonical_server_origin, log_entry_payload, state_hash
+from awid.log import (
+    canonical_server_origin,
+    log_entry_payload,
+    register_did_entry_payload,
+    state_hash,
+)
 from awid.signing import canonical_json_bytes, sign_message
 
 
@@ -257,25 +262,14 @@ class RegistryClient:
             raise ValueError("signing_key must match did_key for DID registration")
 
         did_aw = stable_id_from_did_key(did_key)
-        canonical_server = "" if server_url is None or not server_url.strip() else canonical_server_origin(server_url)
         timestamp = _utc_timestamp()
-        mapping_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=did_key,
-            server=canonical_server,
-            address="",
-            handle=None,
-        )
         proof = sign_message(
             signing_key,
-            log_entry_payload(
+            register_did_entry_payload(
                 did_aw=did_aw,
-                seq=1,
-                operation="create",
-                previous_did_key=None,
-                new_did_key=did_key,
+                did_key=did_key,
                 prev_entry_hash=None,
-                state_hash=mapping_state_hash,
+                seq=1,
                 authorized_by=did_key,
                 timestamp=timestamp,
             ),
@@ -287,12 +281,9 @@ class RegistryClient:
                 json={
                     "did_aw": did_aw,
                     "did_key": did_key,
-                    "server": canonical_server,
-                    "address": "",
-                    "handle": None,
+                    "operation": "register_did",
                     "seq": 1,
                     "prev_entry_hash": None,
-                    "state_hash": mapping_state_hash,
                     "authorized_by": did_key,
                     "timestamp": timestamp,
                     "proof": proof,

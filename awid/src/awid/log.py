@@ -75,6 +75,38 @@ def log_entry_payload(
     )
 
 
+def register_did_entry_payload(
+    *,
+    did_aw: str,
+    did_key: str,
+    prev_entry_hash: str | None,
+    seq: int,
+    authorized_by: str,
+    timestamp: str,
+) -> bytes:
+    return canonical_json_bytes(
+        {
+            "authorized_by": authorized_by,
+            "did_aw": did_aw,
+            "did_key": did_key,
+            "operation": "register_did",
+            "prev_entry_hash": prev_entry_hash,
+            "seq": seq,
+            "timestamp": timestamp,
+        }
+    )
+
+
+def identity_state_hash(*, did_aw: str, current_did_key: str) -> str:
+    payload = canonical_json_bytes(
+        {
+            "current_did_key": current_did_key,
+            "did_aw": did_aw,
+        }
+    )
+    return sha256_hex(payload)
+
+
 def state_hash(
     *,
     did_aw: str,
