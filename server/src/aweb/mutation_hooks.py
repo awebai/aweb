@@ -35,7 +35,12 @@ from .events import (
     publish_team_event,
 )
 from .identity_metadata import lookup_identity_metadata_by_agent_id, lookup_identity_metadata_by_did
-from .presence import clear_workspace_presence, get_agent_presence
+from .lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
+from .presence import get_agent_presence
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -206,71 +211,40 @@ async def _cascade_agent_deleted(
         return
 
     aweb_db = db_infra.get_manager("aweb")
-
-    workspace = await aweb_db.fetch_one(
-        """
-        SELECT workspace_id, alias, team_id
-        FROM {{tables.workspaces}}
-        WHERE agent_id = $1 AND deleted_at IS NULL
-        ORDER BY updated_at DESC, workspace_id DESC
-        LIMIT 1
-        """,
-        agent_id,
+    result = await apply_lifecycle_cascade(
+        aweb_db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="agent_deleted_cascade",
+            actor=LifecycleActor(
+                actor_id=str(
+                    context.get("actor_agent_id") or context.get("agent_id") or ""
+                ),
+                actor_type="system",
+                authority="mutation_hook",
+            ),
+            team_id=str(context.get("team_id") or "") or None,
+            target_agent_id=agent_id,
+            workspace_scope="latest_for_agent",
+        ),
     )
-    if workspace is None:
+    if result.errors:
+        logger.warning(
+            "agent.deleted cascade skipped due to lifecycle precondition errors",
+            extra={
+                "agent_id": agent_id,
+                "errors": [error.code for error in result.errors],
+            },
+        )
         return
 
-    workspace_id = str(workspace["workspace_id"])
-    alias = workspace["alias"]
-    team_id = str(workspace["team_id"])
-
-    # Soft-delete the workspace and capture claimed tasks before releasing
-    async with aweb_db.transaction() as tx:
-        await tx.execute(
-            """
-            UPDATE {{tables.workspaces}}
-            SET deleted_at = NOW()
-            WHERE workspace_id = $1
-            """,
-            workspace_id,
-        )
-        claimed_rows = await tx.fetch_all(
-            """
-            DELETE FROM {{tables.task_claims}}
-            WHERE workspace_id = $1
-            RETURNING task_ref
-            """,
-            workspace_id,
-        )
-
-    # Publish unclaim events for each released task claim
-    for row in claimed_rows:
-        await publish_event(
-            redis,
-            TaskUnclaimedEvent(
-                workspace_id=workspace_id,
-                task_ref=row["task_ref"],
-                alias=alias,
-            ),
-        )
-        await publish_team_event(
-            redis,
-            TeamTaskUnclaimedEvent(
-                team_id=team_id,
-                task_ref=row["task_ref"],
-                alias=alias,
-                title="",
-            ),
-        )
-
-    # Clear presence from Redis (best-effort, not transactional with SQL)
-    await clear_workspace_presence(redis, [workspace_id])
-
     logger.info(
-        "Cascaded agent deletion to workspace %s (alias=%s, claims_released=%d)",
-        workspace_id,
-        alias,
-        len(claimed_rows),
+        "Cascaded agent deletion coordination cleanup "
+        "(agent_id=%s, workspaces=%d, claims_released=%d, post_commit_status=%s)",
+        agent_id,
+        len(result.workspace_changes),
+        result.task_unclaim_count,
+        result.post_commit_status,
     )
 
 
