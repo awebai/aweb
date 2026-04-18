@@ -118,9 +118,6 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
                 json={
                     "did_aw": did_aw,
                     "current_did_key": did_key,
-                    "server": "",
-                    "address": "",
-                    "handle": None,
                     "created_at": "2026-04-03T00:00:00Z",
                     "updated_at": "2026-04-03T00:00:00Z",
                 },
@@ -132,71 +129,11 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
         transport=httpx.MockTransport(handler),
     )
 
-    mapping = await client.register_did(did_key, signing_key, "https://registry.example")
+    mapping = await client.register_did(did_key, signing_key)
 
     assert mapping.did_aw == did_aw
     assert mapping.current_did_key == did_key
-    assert mapping.server == ""
     assert [request.url.path for request in requests] == ["/v1/did", f"/v1/did/{did_aw}/full"]
-
-
-@pytest.mark.asyncio
-async def test_register_did_allows_standalone_creation_without_server():
-    signing_key, public_key = generate_keypair()
-    did_key = did_from_public_key(public_key)
-    did_aw = stable_id_from_did_key(did_key)
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and request.url.path == "/v1/did":
-            payload = json.loads(request.content.decode("utf-8"))
-            assert payload["new_did_key"] == did_key
-            assert payload["previous_did_key"] is None
-            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
-            assert "did_key" not in payload
-            assert "server" not in payload
-            assert "address" not in payload
-            assert "handle" not in payload
-            verify_did_key_signature(
-                did_key=payload["new_did_key"],
-                payload=log_entry_payload(
-                    did_aw=payload["did_aw"],
-                    seq=payload["seq"],
-                    operation=payload["operation"],
-                    previous_did_key=payload["previous_did_key"],
-                    new_did_key=payload["new_did_key"],
-                    prev_entry_hash=payload["prev_entry_hash"],
-                    state_hash=payload["state_hash"],
-                    authorized_by=payload["authorized_by"],
-                    timestamp=payload["timestamp"],
-                ),
-                signature_b64=payload["proof"],
-            )
-            return httpx.Response(200, json={"registered": True})
-        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
-            return httpx.Response(
-                200,
-                json={
-                    "did_aw": did_aw,
-                    "current_did_key": did_key,
-                    "server": "",
-                    "address": "",
-                    "handle": None,
-                    "created_at": "2026-04-03T00:00:00Z",
-                    "updated_at": "2026-04-03T00:00:00Z",
-                },
-            )
-        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
-
-    client = RegistryClient(
-        registry_url="https://api.awid.ai",
-        transport=httpx.MockTransport(handler),
-    )
-
-    mapping = await client.register_did(did_key, signing_key, None)
-
-    assert mapping.did_aw == did_aw
-    assert mapping.server == ""
-    assert mapping.address == ""
 
 
 @pytest.mark.asyncio
@@ -225,7 +162,7 @@ async def test_register_did_raises_already_registered_error_with_existing_key():
     )
 
     with pytest.raises(AlreadyRegisteredError) as exc_info:
-        await client.register_did(did_key, signing_key, "https://registry.example")
+        await client.register_did(did_key, signing_key)
 
     assert exc_info.value.did_aw == did_aw
     assert exc_info.value.existing_did_key == did_key
@@ -890,98 +827,6 @@ async def test_resolve_address_signs_lookup_when_identity_supplied():
 
 
 @pytest.mark.asyncio
-async def test_update_server_uses_current_key_and_signed_audit_payload():
-    signing_key, public_key = generate_keypair()
-    did_key = did_from_public_key(public_key)
-    did_aw = stable_id_from_did_key(did_key)
-    requests: list[httpx.Request] = []
-    current_server = {"value": "https://old.example"}
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
-            timestamp = request.headers["x-aweb-timestamp"]
-            assert auth_did_key == did_key
-            verify_did_key_signature(
-                did_key=auth_did_key,
-                payload=f"{timestamp}\nGET\n{request.url.path}".encode("utf-8"),
-                signature_b64=signature,
-            )
-            return httpx.Response(
-                200,
-                json={
-                    "did_aw": did_aw,
-                    "current_did_key": did_key,
-                    "server": current_server["value"],
-                    "address": "",
-                    "handle": None,
-                    "created_at": "2026-04-03T00:00:00Z",
-                    "updated_at": "2026-04-03T00:00:00Z",
-                },
-            )
-        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/key":
-            return httpx.Response(
-                200,
-                json={
-                    "did_aw": did_aw,
-                    "current_did_key": did_key,
-                    "log_head": {
-                        "seq": 3,
-                        "operation": "rotate_key",
-                        "previous_did_key": did_key,
-                        "new_did_key": did_key,
-                        "prev_entry_hash": "prev-prev",
-                        "entry_hash": "head-3",
-                        "state_hash": "state-3",
-                        "authorized_by": did_key,
-                        "signature": "sig",
-                        "timestamp": "2026-04-03T00:00:00Z",
-                    },
-                },
-            )
-        if request.method == "PUT" and request.url.path == f"/v1/did/{did_aw}":
-            payload = json.loads(request.content.decode("utf-8"))
-            assert payload["operation"] == "update_server"
-            assert payload["new_did_key"] == did_key
-            assert payload["server"] == "https://new.example"
-            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
-            verify_did_key_signature(
-                did_key=did_key,
-                payload=log_entry_payload(
-                    did_aw=did_aw,
-                    seq=payload["seq"],
-                    operation="update_server",
-                    previous_did_key=did_key,
-                    new_did_key=did_key,
-                    prev_entry_hash=payload["prev_entry_hash"],
-                    state_hash=payload["state_hash"],
-                    authorized_by=payload["authorized_by"],
-                    timestamp=payload["timestamp"],
-                ),
-                signature_b64=payload["signature"],
-            )
-            current_server["value"] = payload["server"]
-            return httpx.Response(200, json={"updated": True})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
-
-    client = RegistryClient(
-        registry_url="https://api.awid.ai",
-        transport=httpx.MockTransport(handler),
-    )
-
-    mapping = await client.update_server(did_aw, "https://new.example", signing_key)
-
-    assert mapping.server == "https://new.example"
-    assert [request.url.path for request in requests] == [
-        f"/v1/did/{did_aw}/full",
-        f"/v1/did/{did_aw}/key",
-        f"/v1/did/{did_aw}",
-        f"/v1/did/{did_aw}/full",
-    ]
-
-
-@pytest.mark.asyncio
 async def test_base_url_override_is_used_when_provided():
     client = RegistryClient(
         registry_url="https://api.awid.ai",
@@ -1515,7 +1360,7 @@ async def test_cached_registry_client_register_did_invalidates_stale_key_cache_o
     )
 
     with pytest.raises(AlreadyRegisteredError) as exc_info:
-        await client.register_did(current_did_key, current_signing_key, "https://registry.example")
+        await client.register_did(current_did_key, current_signing_key)
 
     assert exc_info.value.existing_did_key == current_did_key
 
@@ -1722,75 +1567,6 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
     assert created.name == "support"
     assert refreshed is not None
     assert refreshed.name == "support"
-
-
-@pytest.mark.asyncio
-async def test_cached_registry_client_invalidates_did_cache_before_update_server():
-    signing_key, public_key = generate_keypair()
-    did_key = did_from_public_key(public_key)
-    did_aw = stable_id_from_did_key(did_key)
-    head = {"seq": 3, "entry_hash": "head-3"}
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/key":
-            return httpx.Response(
-                200,
-                json={
-                    "did_aw": did_aw,
-                    "current_did_key": did_key,
-                    "log_head": {
-                        "seq": head["seq"],
-                        "operation": "update_server",
-                        "previous_did_key": did_key,
-                        "new_did_key": did_key,
-                        "prev_entry_hash": "prev",
-                        "entry_hash": head["entry_hash"],
-                        "state_hash": "state",
-                        "authorized_by": did_key,
-                        "signature": "sig",
-                        "timestamp": "2026-04-03T00:00:00Z",
-                    },
-                },
-            )
-        if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
-            timestamp = request.headers["x-aweb-timestamp"]
-            assert auth_did_key == did_key
-            verify_did_key_signature(
-                did_key=auth_did_key,
-                payload=f"{timestamp}\nGET\n{request.url.path}".encode("utf-8"),
-                signature_b64=signature,
-            )
-            return httpx.Response(
-                200,
-                json={
-                    "did_aw": did_aw,
-                    "current_did_key": did_key,
-                    "server": "https://old.example",
-                    "address": "",
-                    "handle": None,
-                    "created_at": "2026-04-03T00:00:00Z",
-                    "updated_at": "2026-04-03T00:00:00Z",
-                },
-            )
-        if request.method == "PUT" and request.url.path == f"/v1/did/{did_aw}":
-            payload = json.loads(request.content.decode("utf-8"))
-            assert payload["seq"] == 8
-            assert payload["prev_entry_hash"] == "head-7"
-            return httpx.Response(200, json={"updated": True})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
-
-    client = CachedRegistryClient(
-        registry_url="https://api.awid.ai",
-        redis_client=_FakeRedis(),
-        transport=httpx.MockTransport(handler),
-    )
-
-    await client.resolve_key(did_aw)
-    head["seq"] = 7
-    head["entry_hash"] = "head-7"
-
-    await client.update_server(did_aw, "https://new.example", signing_key)
 
 
 @pytest.mark.asyncio
