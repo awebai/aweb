@@ -156,8 +156,14 @@ func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	if got.SupportBundle != nil {
 		t.Fatalf("plain doctor output unexpectedly included support_bundle")
 	}
+	if len(got.Fixes) != 0 {
+		t.Fatalf("plain doctor output unexpectedly included fixes: %#v", got.Fixes)
+	}
 	if strings.Contains(string(out), "support_bundle") {
 		t.Fatalf("plain doctor JSON included support_bundle:\n%s", string(out))
+	}
+	if strings.Contains(string(out), `"fixes"`) {
+		t.Fatalf("plain doctor JSON included fixes:\n%s", string(out))
 	}
 	if got.Mode != doctorModeAuto {
 		t.Fatalf("mode=%q", got.Mode)
@@ -478,7 +484,7 @@ func TestAwDoctorFixReportsBlockedWithoutMutation(t *testing.T) {
 	if got.Status != doctorStatusBlocked {
 		t.Fatalf("status=%q", got.Status)
 	}
-	check, ok := doctorCheckByID(got, "doctor.fix.not_implemented")
+	check, ok := doctorCheckByID(got, "doctor.fix.fix_not_advertised")
 	if !ok {
 		t.Fatalf("missing fix blocked check: %#v", got.Checks)
 	}
@@ -490,6 +496,291 @@ func TestAwDoctorFixReportsBlockedWithoutMutation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("doctor --fix skeleton mutated workspace; .aw stat err=%v", err)
+	}
+}
+
+func TestAwDoctorFixRootNoCandidatesBlocked(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--fix", "--json")
+	if err != nil {
+		t.Fatalf("doctor fix failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	if got.Status != doctorStatusBlocked {
+		t.Fatalf("status=%q", got.Status)
+	}
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.fix_not_advertised", doctorStatusBlocked)
+	if check.Detail["reason"] != "fix_not_advertised" {
+		t.Fatalf("reason=%v", check.Detail["reason"])
+	}
+	if len(got.Fixes) != 1 || got.Fixes[0].RefusalReason != "fix_not_advertised" {
+		t.Fatalf("fixes=%#v", got.Fixes)
+	}
+}
+
+func TestAwDoctorFixTargetNotFound(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--fix", "missing.check", "--json")
+	if err != nil {
+		t.Fatalf("doctor fix failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.target_not_found", doctorStatusBlocked)
+	if check.Detail["reason"] != "target_not_found" {
+		t.Fatalf("reason=%v", check.Detail["reason"])
+	}
+}
+
+type fakeDoctorFixHandler struct {
+	id          string
+	plan        doctorFixPlan
+	planErr     error
+	applyErr    error
+	applyCalled int
+}
+
+func (h *fakeDoctorFixHandler) CheckID() string {
+	return h.id
+}
+
+func (h *fakeDoctorFixHandler) Plan(context.Context, doctorFixContext, doctorCheck) (doctorFixPlan, error) {
+	if h.planErr != nil {
+		return doctorFixPlan{}, h.planErr
+	}
+	return h.plan, nil
+}
+
+func (h *fakeDoctorFixHandler) Apply(context.Context, doctorFixContext, doctorFixPlan) (doctorFixPlan, error) {
+	h.applyCalled++
+	if h.applyErr != nil {
+		return doctorFixPlan{}, h.applyErr
+	}
+	out := h.plan
+	out.Status = doctorFixStatusApplied
+	return out, nil
+}
+
+func setDoctorFixHandlersForTest(t *testing.T, handlers map[string]doctorFixHandler) func() {
+	t.Helper()
+	old := doctorFixHandlers
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		doctorFixHandlers = old
+		restored = true
+	}
+	doctorFixHandlers = handlers
+	t.Cleanup(restore)
+	return restore
+}
+
+func advertisedDoctorFixCheck(id string, safe bool) doctorCheck {
+	return doctorCheck{
+		ID:        id,
+		Status:    doctorStatusFail,
+		Source:    doctorSourceLocal,
+		Authority: doctorAuthorityCaller,
+		Target:    &doctorTarget{Type: "check", ID: id},
+		Message:   "fake check",
+		Fix: &doctorFixInfo{
+			Available: true,
+			Safe:      safe,
+		},
+	}
+}
+
+func runDoctorFixFrameworkForTest(check doctorCheck, opts doctorRunOptions) doctorOutput {
+	runner := doctorRunner{
+		opts:       opts,
+		workingDir: ".",
+		output: doctorOutput{
+			Version: doctorVersion,
+			Status:  doctorStatusInfo,
+			Mode:    opts.Mode,
+			Checks:  []doctorCheck{check},
+		},
+	}
+	runner.runFixFramework()
+	runner.output.Status = aggregateDoctorStatus(runner.output.Checks)
+	return runner.output
+}
+
+func TestAwDoctorFixAdvertisedNoHandler(t *testing.T) {
+	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{})
+
+	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck("fake.safe", true), doctorRunOptions{Fix: true, DryRun: true})
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.no_fix_registered", doctorStatusBlocked)
+	if check.Detail["reason"] != "no_fix_registered" {
+		t.Fatalf("reason=%v", check.Detail["reason"])
+	}
+	if len(got.Fixes) != 1 || got.Fixes[0].RefusalReason != "no_fix_registered" {
+		t.Fatalf("fixes=%#v", got.Fixes)
+	}
+}
+
+func TestAwDoctorFixFakeSafeDryRunDoesNotApply(t *testing.T) {
+	handler := &fakeDoctorFixHandler{
+		id: "fake.safe",
+		plan: doctorFixPlan{
+			CheckID:   "fake.safe",
+			Safe:      true,
+			Authority: doctorAuthorityCaller,
+			Target:    &doctorTarget{Type: "local_path", ID: ".aw/workspace.yaml"},
+			PlannedMutations: []doctorFixMutation{{
+				Operation:   "write_metadata",
+				Description: "write non-secret metadata",
+				Path:        ".aw/workspace.yaml",
+			}},
+		},
+	}
+	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
+
+	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true, DryRun: true})
+	requireDoctorCheckStatus(t, got, "doctor.fix.planned", doctorStatusInfo)
+	if handler.applyCalled != 0 {
+		t.Fatalf("dry-run called Apply %d times", handler.applyCalled)
+	}
+	if len(got.Fixes) != 1 || got.Fixes[0].Status != doctorFixStatusPlanned || !got.Fixes[0].DryRun {
+		t.Fatalf("fixes=%#v", got.Fixes)
+	}
+}
+
+func TestAwDoctorFixApplyRequiresAdvertisedSafe(t *testing.T) {
+	handler := &fakeDoctorFixHandler{
+		id: "fake.safe",
+		plan: doctorFixPlan{
+			CheckID:   "fake.safe",
+			Safe:      true,
+			Authority: doctorAuthorityCaller,
+			PlannedMutations: []doctorFixMutation{{
+				Operation:   "write_metadata",
+				Description: "write non-secret metadata",
+				Path:        ".aw/workspace.yaml",
+			}},
+		},
+	}
+	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
+
+	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, false), doctorRunOptions{Fix: true})
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.safety_refused", doctorStatusBlocked)
+	if check.Detail["safety_reason"] != "unsafe" {
+		t.Fatalf("safety_reason=%v", check.Detail["safety_reason"])
+	}
+	if handler.applyCalled != 0 {
+		t.Fatalf("unsafe advertised fix called Apply")
+	}
+
+	got = runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
+	requireDoctorCheckStatus(t, got, "doctor.fix.applied", doctorStatusOK)
+	if handler.applyCalled != 1 {
+		t.Fatalf("applyCalled=%d, want 1", handler.applyCalled)
+	}
+}
+
+func TestAwDoctorFixSafetyValidatorRefusesSensitivePlans(t *testing.T) {
+	cases := []struct {
+		name string
+		plan doctorFixPlan
+		want string
+	}{
+		{name: "unsafe", plan: doctorFixPlan{Safe: false, Authority: doctorAuthorityCaller}, want: "unsafe"},
+		{name: "high-impact", plan: doctorFixPlan{Safe: true, HighImpact: true, Authority: doctorAuthorityCaller}, want: "high_impact"},
+		{name: "authority", plan: doctorFixPlan{Safe: true, Authority: doctorAuthoritySupport}, want: "authority"},
+		{name: "precondition", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, Preconditions: []doctorFixPrecondition{{ID: "fresh_state", Passed: false}}}, want: "precondition"},
+		{name: "persistent lifecycle", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete persistent identity lifecycle"}}}, want: "persistent_identity_lifecycle"},
+		{name: "did aw delete", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "delete", Target: &doctorTarget{Type: "did", ID: "did:aw:example"}}}}, want: "persistent_identity_lifecycle"},
+		{name: "identity reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign identity binding"}}}, want: "persistent_identity_lifecycle"},
+		{name: "managed address reassign", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "reassign managed address"}}}, want: "persistent_identity_lifecycle"},
+		{name: "private key", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write", Path: ".aw/signing.key"}}}, want: "private_key_material"},
+		{name: "signing key underscore", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "rotate signing_key"}}}, want: "private_key_material"},
+		{name: "private key hyphen", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "write private-key material"}}}, want: "private_key_material"},
+		{name: "task unclaim", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "task unclaim"}}}, want: "coordination_cleanup"},
+		{name: "presence cleanup", plan: doctorFixPlan{Safe: true, Authority: doctorAuthorityCaller, PlannedMutations: []doctorFixMutation{{Operation: "clear presence"}}}, want: "coordination_cleanup"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &fakeDoctorFixHandler{id: "fake.sensitive", plan: tc.plan}
+			setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
+			got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
+			check := requireDoctorCheckStatus(t, got, "doctor.fix.safety_refused", doctorStatusBlocked)
+			if check.Detail["safety_reason"] != tc.want {
+				t.Fatalf("safety_reason=%v, want %s", check.Detail["safety_reason"], tc.want)
+			}
+			if handler.applyCalled != 0 {
+				t.Fatalf("refused plan called Apply")
+			}
+		})
+	}
+}
+
+func TestAwDoctorFixPlanErrorDoesNotLeakHandlerError(t *testing.T) {
+	handler := &fakeDoctorFixHandler{
+		id:      "fake.plan_error",
+		planErr: errors.New("synthetic-secret-plan-body"),
+	}
+	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
+
+	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.safety_refused", doctorStatusBlocked)
+	if check.Detail["safety_reason"] != "precondition" {
+		t.Fatalf("safety_reason=%v", check.Detail["safety_reason"])
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	if strings.Contains(string(data), "synthetic-secret-plan-body") {
+		t.Fatalf("plan error leaked into output:\n%s", string(data))
+	}
+}
+
+func TestAwDoctorFixApplyErrorDoesNotLeakHandlerError(t *testing.T) {
+	handler := &fakeDoctorFixHandler{
+		id: "fake.apply_error",
+		plan: doctorFixPlan{
+			CheckID:   "fake.apply_error",
+			Safe:      true,
+			Authority: doctorAuthorityCaller,
+			PlannedMutations: []doctorFixMutation{{
+				Operation:   "write_metadata",
+				Description: "write non-secret metadata",
+				Path:        ".aw/workspace.yaml",
+			}},
+		},
+		applyErr: errors.New("synthetic-secret-apply-body"),
+	}
+	setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{handler.id: handler})
+
+	got := runDoctorFixFrameworkForTest(advertisedDoctorFixCheck(handler.id, true), doctorRunOptions{Fix: true})
+	check := requireDoctorCheckStatus(t, got, "doctor.fix.failed", doctorStatusFail)
+	if check.Detail["reason"] != "apply_failed" {
+		t.Fatalf("reason=%v", check.Detail["reason"])
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	if strings.Contains(string(data), "synthetic-secret-apply-body") {
+		t.Fatalf("apply error leaked into output:\n%s", string(data))
+	}
+}
+
+func TestAwDoctorFixHandlerRegistryCleanup(t *testing.T) {
+	restore := setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{
+		"fake.cleanup": &fakeDoctorFixHandler{id: "fake.cleanup"},
+	})
+	if _, ok := doctorFixHandlers["fake.cleanup"]; !ok {
+		t.Fatalf("fake handler was not installed")
+	}
+	restore()
+	if _, ok := doctorFixHandlers["fake.cleanup"]; ok {
+		t.Fatalf("fake handler leaked after cleanup")
 	}
 }
 

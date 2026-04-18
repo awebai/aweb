@@ -113,6 +113,7 @@ type doctorOutput struct {
 	Checks        []doctorCheck            `json:"checks"`
 	Redactions    []doctorRedaction        `json:"redactions"`
 	SupportBundle *doctorSupportBundleInfo `json:"support_bundle,omitempty"`
+	Fixes         []doctorFixPlan          `json:"fixes,omitempty"`
 }
 
 type doctorSubject struct {
@@ -277,7 +278,7 @@ func buildDoctorOutput(opts doctorRunOptions) doctorOutput {
 		runner.runCategory(category)
 	}
 	if opts.Fix {
-		runner.addFixNotImplementedCheck()
+		runner.runFixFramework()
 	}
 	runner.output.Status = aggregateDoctorStatus(runner.output.Checks)
 	return runner.output
@@ -346,29 +347,6 @@ func categoryPlaceholderCheck(category string) doctorCheck {
 		Message:       fmt.Sprintf("%s doctor checks are not implemented in this release.", category),
 		NextStep:      "This category will be populated by AWEB-06/AWEB-07/AWEB-08.",
 	}
-}
-
-func (r *doctorRunner) addFixNotImplementedCheck() {
-	target := strings.TrimSpace(r.opts.FixTarget)
-	if target == "" {
-		target = "all"
-	}
-	r.add(doctorCheck{
-		ID:            "doctor.fix.not_implemented",
-		Status:        doctorStatusBlocked,
-		Source:        doctorSourceLocal,
-		Authority:     doctorAuthorityCaller,
-		Target:        &doctorTarget{Type: "check", ID: target},
-		Authoritative: true,
-		Message:       "Doctor fix mode is not implemented in this release.",
-		NextStep:      "Use diagnostic output only; safe repair plumbing is scheduled for AWEB-10.",
-		Fix: &doctorFixInfo{
-			Available: false,
-			Safe:      false,
-			DryRun:    r.opts.DryRun,
-			Reason:    "not_implemented",
-		},
-	})
 }
 
 func collectDoctorSubject(workingDir string) doctorSubject {
