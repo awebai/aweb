@@ -273,11 +273,17 @@ func (r *doctorRunner) addIdentitySigningKeyCheck(state *doctorIdentityState) {
 		if errors.Is(state.signingKeyErr, os.ErrNotExist) {
 			message = "Local signing key is missing."
 		}
-		r.add(localPathCheck(doctorCheckIdentityLocalSigningKey, status, state.signingKeyPath, message, "Restore .aw/signing.key or reconnect this identity.", map[string]any{"error": safeLocalKeyError(state.signingKeyErr)}))
+		check := localPathCheck(doctorCheckIdentityLocalSigningKey, status, state.signingKeyPath, message, "Restore .aw/signing.key or reconnect this identity.", map[string]any{"error": safeLocalKeyError(state.signingKeyErr)})
+		if strings.TrimSpace(state.lifetime) == awid.LifetimePersistent {
+			check.Handoff = persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		}
+		r.add(check)
 		return
 	}
 	if state.signingKeyDID != strings.TrimSpace(state.did) {
-		r.add(localCheck(doctorCheckIdentityLocalSigningKey, doctorStatusFail, &doctorTarget{Type: "did", ID: state.signingKeyDID}, "Local signing key did:key does not match identity did.", "Restore the signing key that belongs to this identity before using awid operations.", map[string]any{"signing_key_did": state.signingKeyDID, "identity_did": strings.TrimSpace(state.did)}))
+		check := localCheck(doctorCheckIdentityLocalSigningKey, doctorStatusFail, &doctorTarget{Type: "did", ID: state.signingKeyDID}, "Local signing key did:key does not match identity did.", "Restore the signing key that belongs to this identity before using awid operations.", map[string]any{"signing_key_did": state.signingKeyDID, "identity_did": strings.TrimSpace(state.did)})
+		check.Handoff = suspectedKeyMismatchReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		r.add(check)
 		return
 	}
 	r.add(localCheck(doctorCheckIdentityLocalSigningKey, doctorStatusOK, &doctorTarget{Type: "did", ID: state.signingKeyDID}, "Local signing key matches identity did.", "", map[string]any{"did_key": state.signingKeyDID}))
@@ -383,12 +389,15 @@ func (r *doctorRunner) runOnlineRegistryChecks(state *doctorIdentityState, clien
 }
 
 func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIdentityState, client doctorRegistryClient) (*awid.DidKeyResolution, bool, string) {
+	authorityStatus, authorityEvidence := identityCallerAuthorityEvidence(state)
 	resolution, err := client.ResolveKeyAt(ctx, state.registryURL, state.stableID)
 	if err != nil {
 		statusCode, hasStatus := doctorRegistryStatusCode(err)
 		switch {
 		case hasStatus && statusCode == http.StatusNotFound:
-			r.add(awidCheck(doctorCheckAWIDDIDResolve, doctorStatusFail, "Persistent did:aw was not found in awid.", "Register or repair this persistent identity under caller authority; do not replace it automatically.", map[string]any{"reason": "did_not_found", "registry_url": state.registryURL, "did_aw": state.stableID}))
+			check := awidCheck(doctorCheckAWIDDIDResolve, doctorStatusFail, "Persistent did:aw was not found in awid.", "Register or repair this persistent identity under caller authority; do not replace it automatically.", map[string]any{"reason": "did_not_found", "registry_url": state.registryURL, "did_aw": state.stableID})
+			check.Handoff = persistentIdentityRegistryRepairReviewHandoff(authorityStatus, authorityEvidence)
+			r.add(check)
 		case hasStatus && statusCode == http.StatusForbidden:
 			r.add(awidCheck(doctorCheckAWIDDIDResolve, doctorStatusBlocked, "Caller lacks visibility to resolve this did:aw.", "Retry with the identity that has visibility or escalate with the support bundle.", map[string]any{"reason": "caller_lacks_visibility", "status_code": statusCode, "registry_url": state.registryURL}))
 		case hasStatus && statusCode >= 500:
@@ -406,7 +415,9 @@ func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIde
 	}
 	r.add(awidCheck(doctorCheckAWIDDIDResolve, doctorStatusOK, "Persistent did:aw resolves at awid.", "", map[string]any{"registry_url": state.registryURL, "did_aw": state.stableID}))
 	if strings.TrimSpace(resolution.CurrentDIDKey) != strings.TrimSpace(state.did) {
-		r.add(awidCheck(doctorCheckAWIDDIDCurrentKey, doctorStatusFail, "awid current did:key does not match local identity did.", "Escalate key mismatch; do not replace identity automatically.", map[string]any{"local_did": state.did, "registry_current_did_key": strings.TrimSpace(resolution.CurrentDIDKey)}))
+		check := awidCheck(doctorCheckAWIDDIDCurrentKey, doctorStatusFail, "awid current did:key does not match local identity did.", "Escalate key mismatch; do not replace identity automatically.", map[string]any{"local_did": state.did, "registry_current_did_key": strings.TrimSpace(resolution.CurrentDIDKey)})
+		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
+		r.add(check)
 		return resolution, false, doctorCheckAWIDDIDCurrentKey
 	}
 	r.add(awidCheck(doctorCheckAWIDDIDCurrentKey, doctorStatusOK, "awid current did:key matches local identity did.", "", map[string]any{"did_key": state.did}))
@@ -414,6 +425,7 @@ func (r *doctorRunner) addDIDResolveChecks(ctx context.Context, state *doctorIde
 }
 
 func (r *doctorRunner) addDIDLogCheck(ctx context.Context, state *doctorIdentityState, client doctorRegistryClient, resolution *awid.DidKeyResolution) {
+	authorityStatus, authorityEvidence := identityCallerAuthorityEvidence(state)
 	entries, err := client.GetDIDLog(ctx, state.registryURL, state.stableID)
 	if err != nil {
 		statusCode, hasStatus := doctorRegistryStatusCode(err)
@@ -426,15 +438,21 @@ func (r *doctorRunner) addDIDLogCheck(ctx context.Context, state *doctorIdentity
 	}
 	head, err := awid.VerifyDidLogEntries(state.stableID, entries, time.Now().UTC())
 	if err != nil {
-		r.add(awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log verification failed.", "Escalate the registry log inconsistency; do not mutate identity automatically.", map[string]any{"reason": "did_log_invalid"}))
+		check := awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log verification failed.", "Escalate the registry log inconsistency; do not mutate identity automatically.", map[string]any{"reason": "did_log_invalid"})
+		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
+		r.add(check)
 		return
 	}
 	if head == nil || strings.TrimSpace(head.CurrentDIDKey) == "" {
-		r.add(awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log is missing a current key head.", "Escalate the registry log inconsistency.", map[string]any{"reason": "did_log_missing_head"}))
+		check := awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log is missing a current key head.", "Escalate the registry log inconsistency.", map[string]any{"reason": "did_log_missing_head"})
+		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
+		r.add(check)
 		return
 	}
 	if resolution != nil && strings.TrimSpace(resolution.CurrentDIDKey) != "" && strings.TrimSpace(head.CurrentDIDKey) != strings.TrimSpace(resolution.CurrentDIDKey) {
-		r.add(awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log head does not match resolved current did:key.", "Escalate the registry log inconsistency.", map[string]any{"reason": "did_log_current_key_mismatch"}))
+		check := awidCheck(doctorCheckAWIDDIDLog, doctorStatusFail, "DID audit log head does not match resolved current did:key.", "Escalate the registry log inconsistency.", map[string]any{"reason": "did_log_current_key_mismatch"})
+		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
+		r.add(check)
 		return
 	}
 	r.add(awidCheck(doctorCheckAWIDDIDLog, doctorStatusOK, "DID audit log verifies.", "", map[string]any{"entry_count": len(entries), "current_did_key": strings.TrimSpace(head.CurrentDIDKey)}))
@@ -455,7 +473,9 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 		statusCode, hasStatus := doctorRegistryStatusCode(err)
 		switch {
 		case hasStatus && statusCode == http.StatusNotFound:
-			r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusWarn, "Persistent address was not found in awid.", "Register or repair the address under caller authority; do not replace identity automatically.", map[string]any{"reason": "address_not_found", "address": state.address}))
+			check := awidCheck(doctorCheckAWIDAddressResolve, doctorStatusWarn, "Persistent address was not found in awid.", "Register or repair the address under caller authority; do not replace identity automatically.", map[string]any{"reason": "address_not_found", "address": state.address})
+			check.Handoff = managedAddressRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+			r.add(check)
 		case hasStatus && statusCode == http.StatusForbidden:
 			r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusBlocked, "Caller lacks visibility to read this address.", "Retry with the identity that has visibility or escalate with the support bundle.", map[string]any{"reason": "caller_lacks_visibility", "status_code": statusCode}))
 			r.add(awidCheck(doctorCheckAWIDAddressStableID, doctorStatusBlocked, "Address stable-id comparison requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
@@ -475,12 +495,17 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 
 	r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusOK, "Persistent address resolves under caller authority.", "", map[string]any{"address": state.address}))
 	if strings.TrimSpace(address.DIDAW) != state.stableID {
-		r.add(awidCheck(doctorCheckAWIDAddressStableID, doctorStatusWarn, "Registered address points at a different did:aw.", "Repair address registration under namespace authority; do not replace identity automatically.", map[string]any{"local_did_aw": state.stableID, "address_did_aw": strings.TrimSpace(address.DIDAW)}))
+		check := awidCheck(doctorCheckAWIDAddressStableID, doctorStatusWarn, "Registered address points at a different did:aw.", "Repair address registration under namespace authority; do not replace identity automatically.", map[string]any{"local_did_aw": state.stableID, "address_did_aw": strings.TrimSpace(address.DIDAW)})
+		check.Handoff = managedAddressRepairReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		r.add(check)
 	} else {
 		r.add(awidCheck(doctorCheckAWIDAddressStableID, doctorStatusOK, "Registered address did:aw matches local stable_id.", "", map[string]any{"did_aw": state.stableID}))
 	}
 	if strings.TrimSpace(address.CurrentDIDKey) != "" && strings.TrimSpace(address.CurrentDIDKey) != state.did {
-		r.add(awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusFail, "Registered address current did:key does not match local identity did.", "Escalate key mismatch; repair registry state under authority only.", map[string]any{"local_did": state.did, "address_current_did_key": strings.TrimSpace(address.CurrentDIDKey)}))
+		check := awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusFail, "Registered address current did:key does not match local identity did.", "Escalate key mismatch; repair registry state under authority only.", map[string]any{"local_did": state.did, "address_current_did_key": strings.TrimSpace(address.CurrentDIDKey)})
+		authorityStatus, authorityEvidence := identityCallerAuthorityEvidence(state)
+		check.Handoff = suspectedKeyMismatchReviewHandoff(authorityStatus, authorityEvidence)
+		r.add(check)
 	} else {
 		r.add(awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusOK, "Registered address current did:key matches local identity did.", "", map[string]any{"did_key": state.did}))
 	}
@@ -513,7 +538,9 @@ func (r *doctorRunner) addAddressReverseListingCheck(ctx context.Context, state 
 		}
 	}
 	if len(matching) == 0 {
-		r.add(awidCheck(doctorCheckAWIDAddressReverseListing, doctorStatusWarn, "No registered address was visible for the local did:aw.", "Repair address registration under caller authority; do not replace identity automatically.", map[string]any{"reason": "no_registered_address_for_did"}))
+		check := awidCheck(doctorCheckAWIDAddressReverseListing, doctorStatusWarn, "No registered address was visible for the local did:aw.", "Repair address registration under caller authority; do not replace identity automatically.", map[string]any{"reason": "no_registered_address_for_did"})
+		check.Handoff = namespaceControllerRecoveryReviewHandoff()
+		r.add(check)
 		return
 	}
 	for _, address := range matching {
@@ -522,7 +549,19 @@ func (r *doctorRunner) addAddressReverseListingCheck(ctx context.Context, state 
 			return
 		}
 	}
-	r.add(awidCheck(doctorCheckAWIDAddressReverseListing, doctorStatusWarn, "Local did:aw is registered under a different visible address.", "Repair address registration under namespace authority; do not replace identity automatically.", map[string]any{"local_address": state.address, "registered_addresses": matching}))
+	check := awidCheck(doctorCheckAWIDAddressReverseListing, doctorStatusWarn, "Local did:aw is registered under a different visible address.", "Repair address registration under namespace authority; do not replace identity automatically.", map[string]any{"local_address": state.address, "registered_addresses": matching})
+	check.Handoff = namespaceControllerRecoveryReviewHandoff()
+	r.add(check)
+}
+
+func identityCallerAuthorityEvidence(state *doctorIdentityState) (doctorAuthorityStatus, []string) {
+	if state == nil || state.signingKey == nil {
+		return doctorAuthorityStatusNotDetected, nil
+	}
+	if strings.TrimSpace(state.signingKeyDID) == "" || strings.TrimSpace(state.did) == "" || state.signingKeyDID != strings.TrimSpace(state.did) {
+		return doctorAuthorityStatusNotDetected, nil
+	}
+	return doctorAuthorityStatusPresent, []string{"local signing key matches identity did"}
 }
 
 func (r *doctorRunner) addBlockedAddressChecks(message, prerequisite string) {

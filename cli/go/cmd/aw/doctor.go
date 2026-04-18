@@ -137,6 +137,7 @@ type doctorCheck struct {
 	Detail        map[string]any  `json:"detail,omitempty"`
 	NextStep      string          `json:"next_step,omitempty"`
 	Fix           *doctorFixInfo  `json:"fix,omitempty"`
+	Handoff       *doctorHandoff  `json:"handoff,omitempty"`
 }
 
 type doctorTarget struct {
@@ -151,6 +152,30 @@ type doctorFixInfo struct {
 	Command   string `json:"command,omitempty"`
 	DryRun    bool   `json:"dry_run,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+type doctorAuthorityStatus string
+
+const (
+	doctorAuthorityStatusPresent       doctorAuthorityStatus = "present"
+	doctorAuthorityStatusNotDetected   doctorAuthorityStatus = "not_detected"
+	doctorAuthorityStatusUnknown       doctorAuthorityStatus = "unknown"
+	doctorAuthorityStatusNotApplicable doctorAuthorityStatus = "not_applicable"
+)
+
+type doctorHandoff struct {
+	Action                  string                `json:"action"`
+	RequiredAuthority       doctorAuthority       `json:"required_authority"`
+	CallerAuthorityStatus   doctorAuthorityStatus `json:"caller_authority_status"`
+	CallerAuthorityEvidence []string              `json:"caller_authority_evidence,omitempty"`
+	ExpectedAction          string                `json:"expected_action,omitempty"`
+	ExplicitCommand         string                `json:"explicit_command,omitempty"`
+	DryRunCommand           string                `json:"dry_run_command,omitempty"`
+	DashboardAction         string                `json:"dashboard_action,omitempty"`
+	Consequences            []string              `json:"consequences,omitempty"`
+	DoctorRefusalReason     string                `json:"doctor_refusal_reason"`
+	ReplacementGuidance     string                `json:"replacement_guidance,omitempty"`
+	SupportRunbookRef       string                `json:"support_runbook_ref,omitempty"`
 }
 
 type doctorRedaction struct {
@@ -432,6 +457,27 @@ func formatDoctorOutput(v any) string {
 	sb.WriteString("Checks:\n")
 	for _, check := range out.Checks {
 		sb.WriteString(fmt.Sprintf("  [%s] %s — %s\n", check.Status, check.ID, check.Message))
+		if check.Handoff != nil {
+			sb.WriteString(fmt.Sprintf("        handoff: %s\n", conciseDoctorHandoffLine(check.Handoff)))
+			if doctorVerbose {
+				sb.WriteString(fmt.Sprintf("        authority: %s (%s)\n", check.Handoff.RequiredAuthority, check.Handoff.CallerAuthorityStatus))
+				if len(check.Handoff.CallerAuthorityEvidence) > 0 {
+					sb.WriteString(fmt.Sprintf("        evidence: %s\n", strings.Join(check.Handoff.CallerAuthorityEvidence, ", ")))
+				}
+				if check.Handoff.ExplicitCommand != "" {
+					sb.WriteString(fmt.Sprintf("        command: %s\n", check.Handoff.ExplicitCommand))
+				}
+				if check.Handoff.DryRunCommand != "" {
+					sb.WriteString(fmt.Sprintf("        dry-run: %s\n", check.Handoff.DryRunCommand))
+				}
+				if check.Handoff.DashboardAction != "" {
+					sb.WriteString(fmt.Sprintf("        dashboard: %s\n", check.Handoff.DashboardAction))
+				}
+				if len(check.Handoff.Consequences) > 0 {
+					sb.WriteString(fmt.Sprintf("        consequences: %s\n", strings.Join(check.Handoff.Consequences, "; ")))
+				}
+			}
+		}
 		if doctorVerbose && check.NextStep != "" {
 			sb.WriteString(fmt.Sprintf("        next: %s\n", check.NextStep))
 		}

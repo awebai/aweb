@@ -391,11 +391,16 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 
 func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 	if _, err := os.Stat(state.signingKeyPath); err != nil {
+		var check doctorCheck
 		if errors.Is(err, os.ErrNotExist) {
-			r.add(localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file is missing.", "Restore .aw/signing.key or reconnect this worktree.", map[string]any{"state": "missing"}))
+			check = localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file is missing.", "Restore .aw/signing.key or reconnect this worktree.", map[string]any{"state": "missing"})
 		} else {
-			r.add(localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file could not be inspected.", "Check file permissions for .aw/signing.key.", map[string]any{"error": err.Error()}))
+			check = localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file could not be inspected.", "Check file permissions for .aw/signing.key.", map[string]any{"error": err.Error()})
 		}
+		if state.cert != nil && strings.TrimSpace(state.cert.Lifetime) == awid.LifetimePersistent {
+			check.Handoff = persistentReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		}
+		r.add(check)
 		r.add(blockedLocalCheck(doctorCheckSigningKeyParse, "Signing key parsing requires the key file to be readable.", doctorCheckSigningKeyExists, localPathTarget(state.signingKeyPath)))
 		return
 	}
@@ -403,14 +408,18 @@ func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 
 	signingKey, err := awid.LoadSigningKey(state.signingKeyPath)
 	if err != nil {
-		r.add(localPathCheck(
+		check := localPathCheck(
 			doctorCheckSigningKeyParse,
 			doctorStatusFail,
 			state.signingKeyPath,
 			"Signing key could not be parsed.",
 			"Restore a valid Ed25519 signing key for this worktree.",
 			map[string]any{"error": err.Error()},
-		))
+		)
+		if state.cert != nil && strings.TrimSpace(state.cert.Lifetime) == awid.LifetimePersistent {
+			check.Handoff = suspectedKeyMismatchReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		}
+		r.add(check)
 		return
 	}
 	state.signingKey = signingKey
@@ -431,14 +440,16 @@ func (r *doctorRunner) runSigningKeyChecks(state *doctorLocalState) {
 
 	expectedDID := strings.TrimSpace(state.cert.MemberDIDKey)
 	if state.signingKeyDID != expectedDID {
-		r.add(localCheck(
+		check := localCheck(
 			doctorCheckSigningKeyMatchesCert,
 			doctorStatusFail,
 			&doctorTarget{Type: "did", ID: state.signingKeyDID},
 			"Signing key did:key does not match the team certificate member_did_key.",
 			"Restore the signing key that belongs to this certificate or reconnect the worktree.",
 			map[string]any{"signing_key_did": state.signingKeyDID, "certificate_member_did_key": expectedDID},
-		))
+		)
+		check.Handoff = suspectedKeyMismatchReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		r.add(check)
 		return
 	}
 	r.add(localCheck(doctorCheckSigningKeyMatchesCert, doctorStatusOK, &doctorTarget{Type: "did", ID: state.signingKeyDID}, "Signing key did:key matches the team certificate member_did_key.", "", map[string]any{"did_key": state.signingKeyDID}))
@@ -499,14 +510,16 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 		return
 	}
 	if lifetime == awid.LifetimePersistent && !identityExists {
-		r.add(localPathCheck(
+		check := localPathCheck(
 			doctorCheckIdentityPersistent,
 			doctorStatusFail,
 			state.identityPath,
 			"Persistent workspace requires identity.yaml, but it is missing.",
 			"Restore .aw/identity.yaml or reconnect this persistent identity.",
 			map[string]any{"state": "missing", "lifetime": lifetime},
-		))
+		)
+		check.Handoff = persistentLifecycleReviewHandoff()
+		r.add(check)
 		r.add(blockedLocalCheck(doctorCheckIdentityParse, "Identity parsing requires identity.yaml to exist.", doctorCheckIdentityPersistent, localPathTarget(state.identityPath)))
 		r.addIdentityDependentBlockedChecks(doctorCheckIdentityPersistent)
 		return
@@ -534,14 +547,18 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(state.identityPath)
 	if err != nil {
-		r.add(localPathCheck(
+		check := localPathCheck(
 			doctorCheckIdentityParse,
 			doctorStatusFail,
 			state.identityPath,
 			"Identity file could not be parsed.",
 			"Repair .aw/identity.yaml before relying on local identity state.",
 			map[string]any{"error": err.Error()},
-		))
+		)
+		if lifetime == awid.LifetimePersistent {
+			check.Handoff = persistentLifecycleReviewHandoff()
+		}
+		r.add(check)
 		r.addIdentityDependentBlockedChecks(doctorCheckIdentityParse)
 		return
 	}
@@ -574,14 +591,16 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 	identityDID := strings.TrimSpace(identity.DID)
 	certDID := strings.TrimSpace(cert.MemberDIDKey)
 	if identityDID != certDID {
-		r.add(localCheck(
+		check := localCheck(
 			doctorCheckIdentityDID,
 			doctorStatusFail,
 			&doctorTarget{Type: "did", ID: identityDID},
 			"Identity did does not match the team certificate member_did_key.",
 			"Repair identity.yaml or restore the matching team certificate.",
 			map[string]any{"identity_did": identityDID, "certificate_member_did_key": certDID},
-		))
+		)
+		check.Handoff = suspectedKeyMismatchReviewHandoff(doctorAuthorityStatusNotDetected, nil)
+		r.add(check)
 	} else {
 		r.add(localCheck(doctorCheckIdentityDID, doctorStatusOK, &doctorTarget{Type: "did", ID: identityDID}, "Identity did matches the team certificate member_did_key.", "", map[string]any{"did": identityDID}))
 	}
