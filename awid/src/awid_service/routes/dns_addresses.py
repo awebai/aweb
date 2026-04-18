@@ -145,6 +145,7 @@ async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> N
         SELECT current_did_key
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
+        FOR SHARE
         """,
         did_aw,
     )

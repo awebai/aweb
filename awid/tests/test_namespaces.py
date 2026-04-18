@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 import awid_service.routes.dns_namespace_reverify as dns_namespace_reverify_routes
 import awid_service.routes.dns_namespaces as dns_namespaces_routes
+import awid_service.routes.dns_addresses as dns_addresses_routes
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.log import identity_state_hash, log_entry_payload
@@ -16,6 +17,26 @@ from awid.signing import canonical_json_bytes, sign_message
 from conftest import build_signed_headers as _sign
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
+
+
+@pytest.mark.asyncio
+async def test_require_registered_did_locks_mapping_row_for_share():
+    class RecordingTx:
+        query = ""
+
+        async def fetch_one(self, query, *args):
+            self.query = query
+            return {"current_did_key": "did:key:z6MkCurrent"}
+
+    tx = RecordingTx()
+
+    await dns_addresses_routes._require_registered_did(
+        tx,
+        did_aw="did:aw:test",
+        current_did_key="did:key:z6MkCurrent",
+    )
+
+    assert "FOR SHARE" in tx.query
 
 
 async def _register_namespace(client, signing_key, controller_did, domain):

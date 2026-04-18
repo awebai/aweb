@@ -36,7 +36,7 @@ class DidRegisterRequest(BaseModel):
     did_aw: str = Field(..., max_length=256)
     new_did_key: str = Field(..., max_length=256)
     operation: Literal["register_did"]
-    previous_did_key: str | None
+    previous_did_key: str | None = Field(..., max_length=256)
     prev_entry_hash: str | None
     seq: Literal[1]
     state_hash: str = Field(..., max_length=128)
@@ -213,9 +213,6 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             )
         except Exception as exc:
             raise HTTPException(status_code=401, detail="invalid proof") from exc
-        if state_hash != req.state_hash:
-            raise HTTPException(status_code=400, detail="state_hash mismatch")
-
         await tx.execute(
             """
             INSERT INTO {{tables.did_aw_mappings}}

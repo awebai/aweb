@@ -141,12 +141,9 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	mapping, err := registry.RegisterDID(
+	mapping, err := registry.RegisterIdentity(
 		ctx,
 		registryURL,
-		"",
-		identity.Address,
-		identity.Handle,
 		identity.DID,
 		identity.StableID,
 		signingKey,
