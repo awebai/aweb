@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Literal
-
-logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -19,7 +16,6 @@ from awid.did import (
 from awid.log import (
     identity_state_hash as awid_identity_state_hash,
     log_entry_payload as awid_log_entry_payload,
-    require_canonical_server_origin,
     sha256_hex as awid_sha256_hex,
 )
 from awid.signing import verify_did_key_signature
@@ -98,9 +94,6 @@ class DidHeadResponse(BaseModel):
 class DidFullResponse(BaseModel):
     did_aw: str
     current_did_key: str
-    server: str
-    address: str
-    handle: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -138,20 +131,6 @@ def _db(request: Request):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _normalize_mapping_server(server: str | None) -> str:
-    if server is None:
-        return ""
-    if not server.strip():
-        return ""
-    return require_canonical_server_origin(server)
-
-
-def _normalize_mapping_address(address: str | None) -> str:
-    if address is None:
-        return ""
-    return address.strip()
 
 
 @router.post("", dependencies=[Depends(rate_limit_dep("did_register"))])
@@ -216,14 +195,11 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
         await tx.execute(
             """
             INSERT INTO {{tables.did_aw_mappings}}
-                (did_aw, current_did_key, server_url, address, handle, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                (did_aw, current_did_key, created_at, updated_at)
+            VALUES ($1, $2, $3, $4)
             """,
             req.did_aw,
             req.new_did_key,
-            "",
-            "",
-            None,
             created_at,
             updated_at,
         )
@@ -349,9 +325,10 @@ async def list_did_addresses(
         where_clauses.append(f"(ns.domain, pa.name) > (${len(params) - 1}, ${len(params)})")
     params.append(validated_limit + 1)
     query = (
-        "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, pa.current_did_key,"
+        "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
         " pa.reachability, pa.visible_to_team_id, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY ns.domain ASC, pa.name ASC LIMIT ${len(params)}"
@@ -451,7 +428,7 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     db = _db(request)
     row = await db.fetch_one(
         """
-        SELECT did_aw, current_did_key, server_url, address, handle, created_at, updated_at
+        SELECT did_aw, current_did_key, created_at, updated_at
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         """,
@@ -462,22 +439,9 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
     if did_key != row["current_did_key"]:
         raise HTTPException(status_code=403, detail="forbidden")
 
-    raw_server_url = (row["server_url"] or "").strip()
-    if raw_server_url:
-        try:
-            server_url = require_canonical_server_origin(raw_server_url)
-        except Exception:
-            logger.error("Stored server_url failed validation for %s", did_aw, exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
-    else:
-        server_url = ""
-
     return DidFullResponse(
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        server=server_url,
-        address=row["address"],
-        handle=row["handle"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -537,7 +501,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
     async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            SELECT did_aw, current_did_key, server_url, address, handle
+            SELECT did_aw, current_did_key
             FROM {{tables.did_aw_mappings}}
             WHERE did_aw = $1
             """,

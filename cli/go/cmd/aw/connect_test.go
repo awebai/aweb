@@ -199,6 +199,57 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 	}
 }
 
+func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	var (
+		registerCalls int
+		keyLookups    int
+	)
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			registerCalls++
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"detail":"did_aw already registered"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/key":
+			keyLookups++
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"did_aw":          stableID,
+				"current_did_key": didKey,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/full":
+			t.Fatal("same-key registration conflict should not fetch full mapping")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	registry := awid.NewAWIDRegistryClient(server.Client(), nil)
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := registerBootstrapDID(ctx, registry, didKey, stableID, priv); err != nil {
+		t.Fatalf("registerBootstrapDID returned error for same-key conflict: %v", err)
+	}
+	if registerCalls != 1 {
+		t.Fatalf("register_calls=%d want 1", registerCalls)
+	}
+	if keyLookups != 1 {
+		t.Fatalf("key_lookups=%d want 1", keyLookups)
+	}
+}
+
 func TestConnectBootstrapEphemeral(t *testing.T) {
 	t.Parallel()
 

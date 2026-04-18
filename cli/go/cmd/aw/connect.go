@@ -85,7 +85,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		registryURL string
 	)
 	if address != "" {
-		if _, err := parseConnectAddress(address); err != nil {
+		if err := validateConnectAddress(address); err != nil {
 			return connectOutput{}, err
 		}
 
@@ -130,22 +130,12 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 	return initCertificateConnectWithOptions(workingDir, serviceURLs.AwebURL, certificateConnectOptions{})
 }
 
-type addressParts struct {
-	Full   string
-	Domain string
-	Alias  string
-}
-
-func parseConnectAddress(address string) (addressParts, error) {
+func validateConnectAddress(address string) error {
 	domain, alias, ok := strings.Cut(strings.TrimSpace(address), "/")
 	if !ok || strings.TrimSpace(domain) == "" || strings.TrimSpace(alias) == "" {
-		return addressParts{}, usageError("invalid --address %q; expected <domain>/<alias>", address)
+		return usageError("invalid --address %q; expected <domain>/<alias>", address)
 	}
-	return addressParts{
-		Full:   strings.TrimSpace(address),
-		Domain: strings.TrimSpace(domain),
-		Alias:  strings.TrimSpace(alias),
-	}, nil
+	return nil
 }
 
 func ensureConnectTargetClean(workingDir string) error {

@@ -453,14 +453,13 @@ async def register_address(
             await tx.execute(
                 """
                 INSERT INTO {{tables.public_addresses}}
-                    (address_id, namespace_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    (address_id, namespace_id, name, did_aw, reachability, visible_to_team_id, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 addr_id,
                 ns_row["namespace_id"],
                 body.name,
                 body.did_aw,
-                body.current_did_key,
                 reachability,
                 visible_to_team_id,
                 now,
@@ -510,9 +509,10 @@ async def get_address(
     caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
 
     query = """
-        SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
                pa.visible_to_team_id, pa.created_at
         FROM {{tables.public_addresses}} pa
+        JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
         WHERE pa.namespace_id = $1
           AND pa.name = $2
@@ -576,9 +576,10 @@ async def list_addresses(
         where_clauses.append(f"pa.name > ${len(params)}")
     params.append(validated_limit + 1)
     query = (
-        "SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,"
+        "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
         " pa.visible_to_team_id, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY pa.name LIMIT ${len(params)}"
@@ -640,10 +641,12 @@ async def update_address(
 
         row = await tx.fetch_one(
             """
-            SELECT address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
-            FROM {{tables.public_addresses}}
-            WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-            FOR UPDATE
+            SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+                   pa.visible_to_team_id, pa.created_at
+            FROM {{tables.public_addresses}} pa
+            JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+            WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
+            FOR UPDATE OF pa
             """,
             ns_row["namespace_id"],
             name,
@@ -663,11 +666,14 @@ async def update_address(
         if next_reachability != row["reachability"] or next_visible_to_team_id != row.get("visible_to_team_id"):
             row = await tx.fetch_one(
                 """
-                UPDATE {{tables.public_addresses}}
+                UPDATE {{tables.public_addresses}} pa
                 SET reachability = $1,
                     visible_to_team_id = $2
-                WHERE address_id = $3
-                RETURNING address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
+                FROM {{tables.did_aw_mappings}} m
+                WHERE pa.address_id = $3
+                  AND m.did_aw = pa.did_aw
+                RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+                          pa.visible_to_team_id, pa.created_at
                 """,
                 next_reachability,
                 next_visible_to_team_id,
@@ -816,11 +822,10 @@ async def reassign_address(
             await tx.execute(
                 """
                 UPDATE {{tables.public_addresses}}
-                SET did_aw = $1, current_did_key = $2
-                WHERE address_id = $3
+                SET did_aw = $1
+                WHERE address_id = $2
                 """,
                 body.did_aw,
-                body.current_did_key,
                 row["address_id"],
             )
         except asyncpg.UniqueViolationError:
