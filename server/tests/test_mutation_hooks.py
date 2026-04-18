@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import ReservationAcquiredEvent, TaskCreatedEvent
 
@@ -68,9 +69,9 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
         cleared_workspaces.append(list(workspace_ids))
         return len(workspace_ids)
 
-    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_team_event)
-    monkeypatch.setattr(mutation_hooks, "clear_workspace_presence", _capture_clear_presence)
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_clear_presence)
 
     handler = mutation_hooks.create_mutation_handler(redis=object(), db_infra=_DbShim(aweb_cloud_db.aweb_db))
     await handler("agent.deleted", {"agent_id": str(agent_id)})

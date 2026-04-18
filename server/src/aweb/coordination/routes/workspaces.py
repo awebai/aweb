@@ -21,14 +21,17 @@ from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_va
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
-    clear_workspace_presence,
     list_agent_presences,
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from ...events import TaskUnclaimedEvent, TeamTaskUnclaimedEvent, publish_event, publish_team_event
+from ...lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
 from ..roles import (
     ROLE_MAX_LENGTH,
 )
@@ -484,79 +487,56 @@ async def delete_workspace(
         )
 
     deleted_at = datetime.now(timezone.utc)
-    async with aweb_db.transaction() as tx:
-        await tx.execute(
-            """
-            UPDATE {{tables.workspaces}}
-            SET deleted_at = $2
-            WHERE workspace_id = $1
-              AND deleted_at IS NULL
-            """,
-            UUID(validated_id),
-            deleted_at,
+    cascade_result = await apply_lifecycle_cascade(
+        aweb_db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="delete_ephemeral_workspace",
+            actor=LifecycleActor(
+                actor_id=getattr(identity, "agent_id", None),
+                actor_type="agent",
+                authority="team_identity",
+            ),
+            team_id=team_id,
+            target_agent_id=(
+                str(existing["agent_id"]) if existing.get("agent_id") is not None else None
+            ),
+            target_workspace_ids=(validated_id,),
+            workspace_scope="explicit",
+            require_lifetime="ephemeral",
+            stale_before=stale_cutoff,
+            deleted_at=deleted_at,
+            mark_ephemeral_agent_deleted=True,
+        ),
+    )
+    if cascade_result.errors:
+        error = cascade_result.errors[0]
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code=error.code,
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step=error.message,
+            ),
         )
-
-        claimed_rows = await tx.fetch_all(
-            """
-            DELETE FROM {{tables.task_claims}}
-            WHERE workspace_id = $1
-            RETURNING task_ref
-            """,
-            UUID(validated_id),
+    if cascade_result.post_commit_status == "failed":
+        logger.warning(
+            "Workspace delete SQL cleanup succeeded but post-commit cleanup failed",
+            extra={
+                "workspace_id": validated_id,
+                "team_id": team_id,
+                "failed_event_intents": len(cascade_result.failed_event_intents),
+                "presence_cleanup_status": cascade_result.presence_cleanup_status,
+            },
         )
-
-        deleted_agent = await tx.fetch_one(
-            """
-            UPDATE {{tables.agents}}
-            SET deleted_at = $2,
-                status = 'deleted'
-            WHERE agent_id = $1
-              AND team_id = $3
-              AND deleted_at IS NULL
-              AND lifetime = 'ephemeral'
-            RETURNING agent_id
-            """,
-            existing["agent_id"],
-            deleted_at,
-            team_id,
-        )
-
-    if redis is not None:
-        try:
-            for row in claimed_rows:
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=validated_id,
-                        task_ref=row["task_ref"],
-                        alias=existing["alias"],
-                    ),
-                )
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=team_id,
-                        task_ref=row["task_ref"],
-                        alias=existing["alias"],
-                        title="",
-                    ),
-                )
-            await clear_workspace_presence(redis, [validated_id])
-        except Exception as exc:
-            logger.warning(
-                "Workspace delete SQL cleanup succeeded but Redis cleanup failed",
-                extra={
-                    "workspace_id": validated_id,
-                    "team_id": team_id,
-                    "error": str(exc),
-                },
-            )
 
     return DeleteWorkspaceResponse(
         workspace_id=validated_id,
         alias=existing["alias"],
         deleted_at=deleted_at.isoformat(),
-        identity_deleted=deleted_agent is not None,
+        identity_deleted=cascade_result.identity_deleted,
     )
 
 
