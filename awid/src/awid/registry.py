@@ -150,6 +150,15 @@ class DIDCurrentKeyMismatchError(RegistryError):
         )
 
 
+class AddressAlreadyBoundError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "address already bound to a different did_aw",
+            status_code=409,
+            detail="address already bound to a different did_aw",
+        )
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     registry_url: str
@@ -223,6 +232,8 @@ class RegistryClient:
                     raise DIDRegistrationRequiredError()
                 if detail == "did_aw current key does not match":
                     raise DIDCurrentKeyMismatchError()
+                if detail == "address already bound to a different did_aw":
+                    raise AddressAlreadyBoundError()
             raise RegistryError(
                 detail or response.text,
                 status_code=response.status_code,

@@ -20,6 +20,8 @@ from awid_service.deps import get_db, get_domain_verifier
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
+_ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
+_DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
 
 
 def normalize_address_reachability(value: str | None, *, default: str = "nobody") -> str:
@@ -155,7 +157,36 @@ async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> N
             detail="did_aw must be registered before address assignment",
         )
     if row["current_did_key"] != current_did_key:
-        raise HTTPException(status_code=409, detail="did_aw current key does not match")
+        raise HTTPException(status_code=409, detail=_DID_CURRENT_KEY_MISMATCH_DETAIL)
+
+
+async def _lock_address_registration_key(tx, *, namespace_id, name: str) -> None:
+    await tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))",
+        f"public_addresses:{namespace_id}:{name}",
+    )
+
+
+async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str):
+    return await tx.fetch_one(
+        """
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+               pa.visible_to_team_id, pa.created_at
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+        WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
+        FOR SHARE OF pa, m
+        """,
+        namespace_id,
+        name,
+    )
+
+
+def _raise_address_registration_conflict(row, *, did_aw: str, current_did_key: str) -> None:
+    if row["did_aw"] != did_aw:
+        raise HTTPException(status_code=409, detail=_ADDRESS_ALREADY_BOUND_DETAIL)
+    if row["current_did_key"] != current_did_key:
+        raise HTTPException(status_code=409, detail=_DID_CURRENT_KEY_MISMATCH_DETAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -441,14 +472,32 @@ async def register_address(
             current_did_key=body.current_did_key,
         )
 
-        addr_id = uuid.uuid4()
-        now = datetime.now(timezone.utc)
+        await _lock_address_registration_key(
+            tx,
+            namespace_id=ns_row["namespace_id"],
+            name=body.name,
+        )
         reachability, visible_to_team_id = await _resolve_address_visibility(
             tx,
             reachability=body.reachability,
             visible_to_team_id=body.visible_to_team_id,
             visible_to_team_id_supplied=True,
         )
+        existing = await _fetch_active_address_for_registration(
+            tx,
+            namespace_id=ns_row["namespace_id"],
+            name=body.name,
+        )
+        if existing is not None:
+            _raise_address_registration_conflict(
+                existing,
+                did_aw=body.did_aw,
+                current_did_key=body.current_did_key,
+            )
+            return _address_response(existing, domain)
+
+        addr_id = uuid.uuid4()
+        now = datetime.now(timezone.utc)
         try:
             await tx.execute(
                 """
@@ -471,7 +520,7 @@ async def register_address(
                     status_code=409,
                     detail="Identity already has an active address",
                 )
-            raise HTTPException(status_code=409, detail="Address name already registered")
+            raise HTTPException(status_code=409, detail=_ADDRESS_ALREADY_BOUND_DETAIL)
 
     return AddressResponse(
         address_id=str(addr_id),
