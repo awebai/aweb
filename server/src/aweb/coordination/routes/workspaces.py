@@ -366,6 +366,23 @@ class DeleteWorkspaceResponse(BaseModel):
     identity_deleted: bool
 
 
+def _workspace_delete_conflict_detail(
+    *,
+    code: str,
+    workspace_id: str,
+    identity_id,
+    lifetime: str | None,
+    recommended_next_step: str,
+):
+    return {
+        "code": code,
+        "workspace_id": workspace_id,
+        "identity_id": str(identity_id) if identity_id is not None else None,
+        "lifetime": lifetime or "unknown",
+        "recommended_next_step": recommended_next_step,
+    }
+
+
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
 async def delete_workspace(
     workspace_id: str = Path(..., description="Workspace ID to delete"),
@@ -419,11 +436,37 @@ async def delete_workspace(
 
     agent_lifetime = str(existing.get("agent_lifetime") or "").strip()
     if not agent_lifetime:
-        raise HTTPException(status_code=409, detail="Workspace is missing its bound identity")
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code="unknown_lifetime_no_cleanup",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=None,
+                recommended_next_step="Inspect the workspace identity before attempting lifecycle cleanup.",
+            ),
+        )
+    if agent_lifetime == "persistent":
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code="persistent_identity_not_cleanup_eligible",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Persistent identities outlive workspace paths; use reconnect/rebind diagnostics or an explicit archive/replace flow.",
+            ),
+        )
     if agent_lifetime != "ephemeral":
         raise HTTPException(
             status_code=409,
-            detail="Workspace deletion is only available for ephemeral identities",
+            detail=_workspace_delete_conflict_detail(
+                code="unknown_lifetime_no_cleanup",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Inspect the workspace identity lifetime before attempting lifecycle cleanup.",
+            ),
         )
 
     last_seen_at = existing.get("last_seen_at")
@@ -431,7 +474,13 @@ async def delete_workspace(
     if last_seen_at is not None and last_seen_at > stale_cutoff:
         raise HTTPException(
             status_code=409,
-            detail="Workspace is still active; only stale ephemeral workspaces can be deleted",
+            detail=_workspace_delete_conflict_detail(
+                code="ephemeral_workspace_still_active",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Wait until presence is stale before deleting an ephemeral workspace.",
+            ),
         )
 
     deleted_at = datetime.now(timezone.utc)
@@ -536,6 +585,7 @@ class WorkspaceInfo(BaseModel):
 
     workspace_id: str
     alias: str
+    agent_lifetime: Optional[str] = None
     human_name: Optional[str] = None
     context_kind: Optional[str] = None
     team_id: Optional[str] = None
@@ -666,6 +716,7 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             END AS context_kind,
             w.team_id,
             w.role,
+            a.lifetime AS agent_lifetime,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,
@@ -678,6 +729,10 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             cs.last_claimed_at,
             w.updated_at
         FROM {{{{tables.workspaces}}}} w
+        LEFT JOIN {{{{tables.agents}}}} a
+          ON a.agent_id = w.agent_id
+         AND a.team_id = w.team_id
+         AND a.deleted_at IS NULL
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
         {_TEAM_FOCUS_JOIN}
@@ -753,6 +808,7 @@ def _row_to_workspace_info(
     return WorkspaceInfo(
         workspace_id=workspace_id,
         alias=row["alias"],
+        agent_lifetime=row.get("agent_lifetime"),
         human_name=row["human_name"],
         context_kind=row.get("context_kind"),
         team_id=row["team_id"],
@@ -864,6 +920,7 @@ async def list_workspaces(
             w.human_name,
             w.team_id,
             w.role,
+            a.lifetime AS agent_lifetime,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,
@@ -875,6 +932,10 @@ async def list_workspaces(
             focus_issue.issue_type AS focus_task_type,
             r.canonical_origin as repo
         FROM {{tables.workspaces}} w
+        LEFT JOIN {{tables.agents}} a
+          ON a.agent_id = w.agent_id
+         AND a.team_id = w.team_id
+         AND a.deleted_at IS NULL
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
         + _title_join(

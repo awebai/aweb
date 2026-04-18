@@ -602,6 +602,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "bob",
+						"agent_lifetime": "ephemeral",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
@@ -650,7 +651,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentity(t *testing.T) {
 	if !deletedWorkspace.Load() {
 		t.Fatal("expected gone workspace record deletion")
 	}
-	if !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "gone_ephemeral_cleanup_candidate") || !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
 }
@@ -700,6 +701,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 					{
 						"workspace_id":   goneID,
 						"alias":          "maintainer",
+						"agent_lifetime": "persistent",
 						"status":         "offline",
 						"workspace_path": missingPath,
 					},
@@ -708,12 +710,7 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "maintainer",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": false,
-			})
+			t.Fatalf("persistent gone-workspace path must not call DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -745,18 +742,18 @@ func TestAwWorkspaceStatusKeepsGonePersistentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion")
+	if deletedWorkspace.Load() {
+		t.Fatal("persistent gone-workspace path called DELETE")
 	}
-	if !strings.Contains(string(out), "removed workspace record") {
+	if !strings.Contains(string(out), "gone_persistent_path_only") || !strings.Contains(string(out), "no cleanup attempted") {
 		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
 	}
-	if strings.Contains(string(out), "deleted ephemeral identity") {
+	if strings.Contains(string(out), "deleted ephemeral identity") || strings.Contains(string(out), "removed workspace record") {
 		t.Fatalf("did not expect ephemeral identity cleanup output, got:\n%s", string(out))
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *testing.T) {
+func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownLifetime(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -809,12 +806,7 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *tes
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "bot",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": true,
-			})
+			t.Fatalf("unknown-lifetime gone-workspace path must not call DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -846,11 +838,28 @@ func TestAwWorkspaceStatusDeletesGoneEphemeralIdentityWithoutLegacyFields(t *tes
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion")
+	if deletedWorkspace.Load() {
+		t.Fatal("unknown-lifetime gone-workspace path called DELETE")
 	}
-	if !strings.Contains(string(out), "deleted ephemeral identity") || !strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	if !strings.Contains(string(out), "unknown_lifetime_no_cleanup") || !strings.Contains(string(out), "no cleanup attempted") {
+		t.Fatalf("expected unknown-lifetime cleanup output, got:\n%s", string(out))
+	}
+}
+
+func TestWorkspaceDeleteProtectiveReasonParsesStructuredConflict(t *testing.T) {
+	t.Parallel()
+
+	err := &awid.APIError{
+		StatusCode: http.StatusConflict,
+		Body:       `{"detail":{"code":"persistent_identity_not_cleanup_eligible","workspace_id":"ws-1","lifetime":"persistent","recommended_next_step":"Use reconnect diagnostics."}}`,
+	}
+
+	code, reason := workspaceDeleteProtectiveReason(err)
+	if code != "persistent_identity_not_cleanup_eligible" {
+		t.Fatalf("code=%q", code)
+	}
+	if !strings.Contains(reason, "persistent_identity_not_cleanup_eligible") || !strings.Contains(reason, "Use reconnect diagnostics.") {
+		t.Fatalf("unexpected reason: %q", reason)
 	}
 }
 

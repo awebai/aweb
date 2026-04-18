@@ -284,7 +284,105 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
     assert resp.status_code == 409
-    assert "ephemeral identities" in resp.text
+    body = resp.json()
+    assert body["detail"]["code"] == "persistent_identity_not_cleanup_eligible"
+    assert body["detail"]["workspace_id"] == str(workspace_id)
+    assert body["detail"]["identity_id"] == str(agent_id)
+    assert body["detail"]["lifetime"] == "persistent"
+
+    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.agents}}
+        WHERE agent_id = $1
+        """,
+        agent_id,
+    )
+    assert workspace_row["deleted_at"] is None
+    assert agent_row["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_unknown_lifetime_fails_closed(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+    workspace_id = uuid4()
+    missing_agent_id = uuid4()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id=team_id,
+        alias="orphan",
+        lifetime="ephemeral",
+    )
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_id, did_key, alias, lifetime, role)
+        VALUES ($1, $2, $3, 'ephemeral', 'developer')
+        """,
+        team_id,
+        agent_did_key,
+        "caller",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        workspace_id,
+        team_id,
+        missing_agent_id,
+        "orphan",
+        "/tmp/gone-worktree",
+        datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["detail"]["code"] == "unknown_lifetime_no_cleanup"
+    assert body["detail"]["workspace_id"] == str(workspace_id)
+    assert body["detail"]["identity_id"] == str(missing_agent_id)
+    assert body["detail"]["lifetime"] == "unknown"
+
+    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+    assert workspace_row["deleted_at"] is None
 
 
 @pytest.mark.asyncio
@@ -349,7 +447,7 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
     assert resp.status_code == 409
-    assert "still active" in resp.text
+    assert resp.json()["detail"]["code"] == "ephemeral_workspace_still_active"
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
