@@ -470,6 +470,68 @@ async def test_reverify_namespace_matching_dns_refreshes_without_rotation(
 
 
 @pytest.mark.asyncio
+async def test_reverify_child_namespace_inherits_parent_dns_authority(
+    client, awid_db_infra, fake_redis, controller_identity,
+):
+    parent_key, parent_controller_did = controller_identity
+    parent_domain = "parent-reverify.example"
+    child_domain = f"child.{parent_domain}"
+    await _register_namespace(client, parent_key, parent_controller_did, parent_domain)
+
+    child_key, child_pub = generate_keypair()
+    child_controller_did = did_from_public_key(child_pub)
+    child_headers = _sign(child_key, child_controller_did, domain=child_domain, operation="register")
+    parent_headers = _sign(
+        parent_key,
+        parent_controller_did,
+        domain=child_domain,
+        operation="authorize_subdomain_registration",
+        child_domain=child_domain,
+        controller_did=child_controller_did,
+    )
+    child_headers["X-AWEB-Parent-Authorization"] = parent_headers["Authorization"]
+    child_headers["X-AWEB-Parent-Timestamp"] = parent_headers["X-AWEB-Timestamp"]
+    child_resp = await client.post(
+        "/v1/namespaces",
+        json={"domain": child_domain},
+        headers=child_headers,
+    )
+    assert child_resp.status_code == 200, child_resp.text
+
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        """
+        UPDATE {{tables.dns_namespaces}}
+        SET last_verified_at = TIMESTAMPTZ '2026-04-01T00:00:00Z'
+        WHERE domain = $1
+        """,
+        child_domain,
+    )
+
+    async def _parent_domain_verifier(queried_domain: str) -> DomainAuthority:
+        assert queried_domain == child_domain
+        return DomainAuthority(
+            controller_did=parent_controller_did,
+            registry_url="https://api.awid.ai",
+            dns_name=f"_awid.{parent_domain}",
+            inherited=True,
+        )
+
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: _parent_domain_verifier
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+            resp = await recovery_client.post(f"/v1/namespaces/{child_domain}/reverify")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["controller_did"] == parent_controller_did
+            assert body["old_controller_did"] == child_controller_did
+            assert body["new_controller_did"] == parent_controller_did
+            assert body["verification_status"] == "verified"
+
+
+@pytest.mark.asyncio
 async def test_reverify_namespace_dns_failure_returns_422_without_revoking(
     client, awid_db_infra, fake_redis, controller_identity,
 ):
