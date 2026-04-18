@@ -1629,18 +1629,64 @@ async def test_register_address_accepts_registered_did_without_extra_identity_ro
     assert mapping_count["count"] == 1
     address = await db.fetch_one(
         """
-        SELECT did_aw, current_did_key
-        FROM {{tables.public_addresses}}
-        WHERE namespace_id = (
+        SELECT pa.did_aw, m.current_did_key
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+        WHERE pa.namespace_id = (
             SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1
         )
-        AND name = $2
+        AND pa.name = $2
         """,
         domain,
         "alice",
     )
     assert address["did_aw"] == owner_did_aw
     assert address["current_did_key"] == owner_did_key
+
+
+@pytest.mark.asyncio
+async def test_address_reads_reflect_rotated_did_key_without_address_update(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    _, new_pub = generate_keypair()
+    new_did_key = did_from_public_key(new_pub)
+    owner_did_aw = stable_id_from_did_key(owner_did_key)
+    domain = "rotated-address-read.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_signing_key=owner_key,
+        member_did_key=owner_did_key,
+        reachability="public",
+    )
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice-alt",
+        member_signing_key=owner_key,
+        member_did_key=owner_did_key,
+        reachability="public",
+    )
+
+    await _rotate_identity(client, owner_key, owner_did_aw, owner_did_key, new_did_key)
+
+    alice = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
+    assert alice.status_code == 200, alice.text
+    assert alice.json()["current_did_key"] == new_did_key
+
+    by_did = await client.get(f"/v1/did/{owner_did_aw}/addresses")
+    assert by_did.status_code == 200, by_did.text
+    assert [item["current_did_key"] for item in by_did.json()["addresses"]] == [
+        new_did_key,
+        new_did_key,
+    ]
 
 
 @pytest.mark.asyncio

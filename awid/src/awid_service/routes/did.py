@@ -325,9 +325,10 @@ async def list_did_addresses(
         where_clauses.append(f"(ns.domain, pa.name) > (${len(params) - 1}, ${len(params)})")
     params.append(validated_limit + 1)
     query = (
-        "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, pa.current_did_key,"
+        "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
         " pa.reachability, pa.visible_to_team_id, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY ns.domain ASC, pa.name ASC LIMIT ${len(params)}"
