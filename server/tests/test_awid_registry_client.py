@@ -945,6 +945,7 @@ async def test_update_server_uses_current_key_and_signed_audit_payload():
             assert payload["operation"] == "update_server"
             assert payload["new_did_key"] == did_key
             assert payload["server"] == "https://new.example"
+            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
             verify_did_key_signature(
                 did_key=did_key,
                 payload=log_entry_payload(

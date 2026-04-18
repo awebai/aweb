@@ -21,7 +21,6 @@ from awid.log import (
     canonical_server_origin,
     identity_state_hash,
     log_entry_payload,
-    state_hash,
 )
 from awid.signing import canonical_json_bytes, sign_message
 
@@ -403,13 +402,7 @@ class RegistryClient:
         timestamp = _utc_timestamp()
         seq = key_resolution.log_head.seq + 1
         prev_entry_hash = key_resolution.log_head.entry_hash
-        next_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=current_did_key,
-            server=canonical_server,
-            address=current_mapping.address,
-            handle=current_mapping.handle,
-        )
+        next_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=current_did_key)
         signature = sign_message(
             signing_key,
             log_entry_payload(
