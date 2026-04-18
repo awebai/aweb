@@ -128,6 +128,19 @@ consent is conveyed by the API-key exchange with the hosted operator
 membership, the identity holder may refuse inbound messaging at the
 transport layer if they disagree with the claim.
 
+**Idempotency.** `POST /v1/namespaces/{domain}/addresses` is
+idempotent on exact match. If a row with the same `(domain, name)`
+already exists AND its `did_aw` equals the request `did_aw` AND its
+(JOIN-resolved) `current_did_key` equals the request `current_did_key`,
+awid returns `200` with the existing record — the caller need not
+distinguish "created just now" from "re-registered by a retry." Any
+of those three values differing returns `409` (real conflict; the
+name is claimed by a different identity, or the key is stale). This
+mirrors `register_did`'s same-key idempotency and is the mechanism
+by which a caller can safely retry after a failure whose outcome is
+ambiguous (e.g., cloud transaction commit failure after awid already
+accepted the address).
+
 **Reachability enforcement:**
 - `public` — any caller, anonymous or authenticated
 - `nobody` — owner only; the caller's `did:aw` must match the address `did_aw`
