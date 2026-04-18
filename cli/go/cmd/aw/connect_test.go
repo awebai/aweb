@@ -52,12 +52,11 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				t.Fatal(err)
 			}
 			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["did_key"].(string)
-			if payload["address"] != "juanre.aweb.ai/laptop-agent" {
-				t.Fatalf("address=%v", payload["address"])
-			}
-			if payload["handle"] != "laptop-agent" {
-				t.Fatalf("handle=%v", payload["handle"])
+			persistentDidKey, _ = payload["new_did_key"].(string)
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
 			}
 			didRegistered = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
@@ -66,8 +65,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
 				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
+				"address":         "",
+				"handle":          nil,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -388,15 +387,15 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["did_key"].(string)
+			persistentDidKey, _ = payload["new_did_key"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case r.Method == http.MethodGet && persistentDidAW != "" && r.URL.Path == "/v1/did/"+persistentDidAW+"/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
 				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
+				"address":         "",
+				"handle":          nil,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})

@@ -265,22 +265,6 @@ func (c *RegistryClient) RegisterIdentity(
 	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
 }
 
-// RegisterDID is a compatibility wrapper for older callers. The DID
-// registration envelope is identity-only; serverURL, address, and handle are
-// intentionally ignored.
-func (c *RegistryClient) RegisterDID(
-	ctx context.Context,
-	registryURL string,
-	serverURL string,
-	address string,
-	handle string,
-	did string,
-	stableID string,
-	signingKey ed25519.PrivateKey,
-) (*DIDMapping, error) {
-	return c.RegisterIdentity(ctx, registryURL, did, stableID, signingKey)
-}
-
 func (c *RegistryClient) RotateDIDKey(
 	ctx context.Context,
 	registryURL string,
