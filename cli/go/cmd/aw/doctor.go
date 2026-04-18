@@ -292,7 +292,11 @@ func (r *doctorRunner) runCategory(category string) {
 	switch category {
 	case "local":
 		r.runLocalChecks()
-	case "identity", "workspace", "team", "registry", "messaging":
+	case "identity":
+		r.runIdentityDoctorChecks()
+	case "registry":
+		r.runRegistryDoctorChecks()
+	case "workspace", "team", "messaging":
 		r.add(categoryPlaceholderCheck(category))
 	}
 }

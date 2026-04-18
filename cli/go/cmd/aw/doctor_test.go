@@ -201,7 +201,7 @@ func TestAwDoctorRejectsMutuallyExclusiveModes(t *testing.T) {
 	}
 }
 
-func TestAwDoctorScopedCategoryPlaceholder(t *testing.T) {
+func TestAwDoctorScopedRegistryCategory(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
@@ -217,8 +217,8 @@ func TestAwDoctorScopedCategoryPlaceholder(t *testing.T) {
 		if got.Mode != doctorModeOffline {
 			t.Fatalf("%s mode=%q", strings.Join(args, " "), got.Mode)
 		}
-		if _, ok := doctorCheckByID(got, "registry.contract.v1"); !ok {
-			t.Fatalf("missing registry placeholder: %#v", got.Checks)
+		if _, ok := doctorCheckByID(got, doctorCheckAWIDDIDResolve); !ok {
+			t.Fatalf("missing registry awid check: %#v", got.Checks)
 		}
 		if _, ok := doctorCheckByID(got, doctorCheckWorkspaceExists); ok {
 			t.Fatalf("scoped registry output unexpectedly included local check: %#v", got.Checks)
