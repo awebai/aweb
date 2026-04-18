@@ -44,15 +44,15 @@ authority are the same regardless of custody.
 The authority over a DNS-verified domain.  Controls addresses, teams, and
 team key rotation within the namespace.
 
-| Aspect | Detail |
-|--------|--------|
-| **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai) |
-| **Public key location** | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`) |
-| **Authorizes** | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign |
-| **Created by** | BYOD: `aw id create` on first identity for a domain. Managed: the operator on behalf of the user |
-| **Rotation** | `aw id namespace rotate-controller` (requires DNS reverify) |
-| **Recovery if lost** | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
+| Aspect                   | Detail                                                                                                                                               |
+|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Algorithm**            | Ed25519                                                                                                                                              |
+| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                     |
+| **Public key location**  | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`)                                                                             |
+| **Authorizes**           | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign        |
+| **Created by**           | BYOD: `aw id create` on first identity for a domain. Managed: the operator on behalf of the user                                                     |
+| **Rotation**             | `aw id namespace rotate-controller` (requires DNS reverify)                                                                                          |
+| **Recovery if lost**     | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
 
 #### Parent delegation
 
@@ -75,15 +75,15 @@ controller key.
 
 The authority over team membership.  Issues and revokes team certificates.
 
-| Aspect | Detail |
-|--------|--------|
-| **Algorithm** | Ed25519 |
-| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted) |
-| **Public key location** | awid `teams.team_did_key` |
-| **Authorizes** | Certificate issuance, certificate revocation, team visibility toggle |
-| **Created by** | `aw id team create` generates the keypair and registers the public key at awid |
-| **Rotation** | Namespace controller rotates via awid (`POST /v1/namespaces/{domain}/teams/{name}/rotate`).  Invalidates all existing certificates; members need re-issuance |
-| **Recovery if lost** | Namespace controller re-issues: the namespace controller can rotate the team key to a new keypair, then re-issue certificates for all members |
+| Aspect                   | Detail                                                                                                                                                       |
+|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Algorithm**            | Ed25519                                                                                                                                                      |
+| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                |
+| **Public key location**  | awid `teams.team_did_key`                                                                                                                                    |
+| **Authorizes**           | Certificate issuance, certificate revocation, team visibility toggle                                                                                         |
+| **Created by**           | `aw id team create` generates the keypair and registers the public key at awid                                                                               |
+| **Rotation**             | Namespace controller rotates via awid (`POST /v1/namespaces/{domain}/teams/{name}/rotate`).  Invalidates all existing certificates; members need re-issuance |
+| **Recovery if lost**     | Namespace controller re-issues: the namespace controller can rotate the team key to a new keypair, then re-issue certificates for all members                |
 
 The team controller does NOT control addresses.  Address operations are
 namespace controller authority.
@@ -162,12 +162,12 @@ through the dashboard; the CLI interacts through API keys.
 
 Each key type is recoverable by the authority one level above it:
 
-| Key lost | Recovered by | Mechanism | Status |
-|----------|-------------|-----------|--------|
-| Namespace controller | DNS ownership | `aw id namespace rotate-controller` — DNS reverify | **Implemented** |
-| Team controller | Namespace controller | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
-| Identity (custodial) | Operator (namespace controller) | Replace — new keypair, re-register DID, reassign address | **Implemented** |
-| Identity (self-custodial) | ??? | No mechanism exists | **Gap** |
+| Key lost                  | Recovered by                    | Mechanism                                                  | Status          |
+|---------------------------|---------------------------------|------------------------------------------------------------|-----------------|
+| Namespace controller      | DNS ownership                   | `aw id namespace rotate-controller` — DNS reverify         | **Implemented** |
+| Team controller           | Namespace controller            | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
+| Identity (custodial)      | Operator (namespace controller) | Replace — new keypair, re-register DID, reassign address   | **Implemented** |
+| Identity (self-custodial) | ???                             | No mechanism exists                                        | **Gap**         |
 
 ---
 
