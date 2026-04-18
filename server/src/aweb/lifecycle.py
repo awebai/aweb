@@ -115,6 +115,7 @@ class LifecycleCascadeResult:
     reservation_release_count: int = 0
     chat_participant_cleanup_count: int = 0
     chat_waiting_cleanup_status: PresenceCleanupStatus = "not_run"
+    chat_waiting_session_clear_count: int = 0
     chat_waiting_cleared_count: int | None = None
     workspace_event_count: int = 0
     team_event_count: int = 0
@@ -1042,6 +1043,7 @@ async def apply_lifecycle_cascade(
         reservation_release_count=reservation_release_count,
         chat_participant_cleanup_count=chat_participant_cleanup_count,
         chat_waiting_cleanup_status=chat_waiting_status,
+        chat_waiting_session_clear_count=chat_waiting_session_clear_count,
         chat_waiting_cleared_count=chat_waiting_cleared_count,
         workspace_event_count=workspace_event_count,
         team_event_count=team_event_count,
