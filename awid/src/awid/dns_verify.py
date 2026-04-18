@@ -1,11 +1,11 @@
 """DNS TXT record verification for awid namespace authority.
 
-Exact namespace verification uses:
+Namespace verification uses:
     _awid.<domain> TXT "awid=v1; controller=<did:key>; [registry=<origin>;]"
 
-Client-side registry discovery can inherit the nearest ancestor awid record,
-which keeps parent-authorized subdomains resolvable without duplicating TXT
-records on every child name.
+TXT records inherit from the nearest ancestor awid record, which keeps
+parent-authorized subdomains resolvable without duplicating TXT records on
+every child name.
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ _AWID_PREFIX = "awid="
 
 
 async def verify_domain(domain: str) -> DomainAuthority:
-    """Verify a domain's exact awid TXT record and return its authority."""
-    authority = await _lookup_domain_authority(domain, allow_ancestors=False)
+    """Verify a domain's awid TXT record, walking up ancestor domains."""
+    authority = await _lookup_domain_authority(domain)
     if authority is None:
         qname = awid_txt_name(domain)
         raise DnsVerificationError(f"No TXT records found for {qname}")
@@ -60,7 +60,7 @@ async def discover_authoritative_registry(domain: str) -> str:
     Walks up the DNS hierarchy until it finds the nearest awid TXT record.
     If no awid TXT record exists, fall back to the default public registry.
     """
-    authority = await _lookup_domain_authority(domain, allow_ancestors=True)
+    authority = await _lookup_domain_authority(domain)
     if authority is None:
         return DEFAULT_AWID_REGISTRY_URL
     return authority.registry_url
@@ -68,7 +68,7 @@ async def discover_authoritative_registry(domain: str) -> str:
 
 async def discover_registry_override(domain: str) -> str | None:
     """Return an explicit per-domain registry override if one is declared."""
-    authority = await _lookup_domain_authority(domain, allow_ancestors=True)
+    authority = await _lookup_domain_authority(domain)
     if authority is None or not authority.registry_explicit:
         return None
     return authority.registry_url
@@ -85,17 +85,15 @@ def awid_txt_value(controller_did: str, registry_url: str | None = None) -> str:
     return "; ".join(parts) + ";"
 
 
-async def _lookup_domain_authority(domain: str, *, allow_ancestors: bool) -> DomainAuthority | None:
-    candidate_domains = _candidate_domains_for_lookup(domain, allow_ancestors=allow_ancestors)
+async def _lookup_domain_authority(domain: str) -> DomainAuthority | None:
+    candidate_domains = _candidate_domains_for_lookup(domain)
     for candidate_domain in candidate_domains:
         qname = awid_txt_name(candidate_domain)
 
         try:
             answers = await dns.asyncresolver.resolve(qname, "TXT")
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-            if allow_ancestors:
-                continue
-            return None
+            continue
         except (dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
             raise DnsVerificationError(f"DNS lookup failed for {qname}") from exc
 
@@ -106,9 +104,7 @@ async def _lookup_domain_authority(domain: str, *, allow_ancestors: bool) -> Dom
                 awid_records.append(text)
 
         if not awid_records:
-            if allow_ancestors:
-                continue
-            raise DnsVerificationError(f"No awid TXT record found at {qname}")
+            continue
 
         if len(awid_records) > 1:
             raise DnsVerificationError(
@@ -134,11 +130,8 @@ def _canonicalize_domain(domain: str) -> str:
     return domain.lower().rstrip(".")
 
 
-def _candidate_domains_for_lookup(domain: str, *, allow_ancestors: bool) -> list[str]:
+def _candidate_domains_for_lookup(domain: str) -> list[str]:
     canonical_domain = _canonicalize_domain(domain)
-    if not allow_ancestors:
-        return [canonical_domain]
-
     labels = canonical_domain.split(".")
     boundary_domain = _registered_domain_boundary(canonical_domain)
     boundary_labels = boundary_domain.split(".")
@@ -150,7 +143,7 @@ def _registered_domain_boundary(domain: str) -> str:
     try:
         from publicsuffix2 import get_sld
     except ImportError as exc:
-        raise RuntimeError("publicsuffix2 is required for awid registry discovery") from exc
+        raise RuntimeError("publicsuffix2 is required for awid DNS authority lookup") from exc
 
     boundary = get_sld(domain, strict=True)
     if not boundary:
