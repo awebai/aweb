@@ -136,6 +136,24 @@ class AlreadyRegisteredError(RegistryError):
         )
 
 
+class DIDRegistrationRequiredError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw must be registered before address assignment",
+            status_code=409,
+            detail="did_aw must be registered before address assignment",
+        )
+
+
+class DIDCurrentKeyMismatchError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw current key does not match",
+            status_code=409,
+            detail="did_aw current key does not match",
+        )
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     registry_url: str
@@ -204,6 +222,11 @@ class RegistryClient:
                 detail = response.json().get("detail")
             except Exception:
                 detail = None
+            if response.status_code == 409:
+                if detail == "did_aw must be registered before address assignment":
+                    raise DIDRegistrationRequiredError()
+                if detail == "did_aw current key does not match":
+                    raise DIDCurrentKeyMismatchError()
             raise RegistryError(
                 detail or response.text,
                 status_code=response.status_code,
@@ -330,13 +353,7 @@ class RegistryClient:
         timestamp = _utc_timestamp()
         seq = key_resolution.log_head.seq + 1
         prev_entry_hash = key_resolution.log_head.entry_hash
-        next_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=new_did_key,
-            server=current_mapping.server,
-            address=current_mapping.address,
-            handle=current_mapping.handle,
-        )
+        next_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=new_did_key)
         signature = sign_message(
             old_signing_key,
             log_entry_payload(

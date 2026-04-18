@@ -139,6 +139,24 @@ def _require_controller(caller_did: str, ns_row) -> None:
         )
 
 
+async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> None:
+    row = await tx.fetch_one(
+        """
+        SELECT current_did_key
+        FROM {{tables.did_aw_mappings}}
+        WHERE did_aw = $1
+        """,
+        did_aw,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail="did_aw must be registered before address assignment",
+        )
+    if row["current_did_key"] != current_did_key:
+        raise HTTPException(status_code=409, detail="did_aw current key does not match")
+
+
 # ---------------------------------------------------------------------------
 # Request/response models
 # ---------------------------------------------------------------------------
@@ -415,6 +433,12 @@ async def register_address(
         )
         if ns_locked is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
+
+        await _require_registered_did(
+            tx,
+            did_aw=body.did_aw,
+            current_did_key=body.current_did_key,
+        )
 
         addr_id = uuid.uuid4()
         now = datetime.now(timezone.utc)
@@ -780,6 +804,12 @@ async def reassign_address(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
+
+        await _require_registered_did(
+            tx,
+            did_aw=body.did_aw,
+            current_did_key=body.current_did_key,
+        )
 
         try:
             await tx.execute(

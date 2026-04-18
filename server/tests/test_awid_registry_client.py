@@ -11,6 +11,8 @@ import awid.dns_verify as dns_verify_module
 from awid.registry import (
     AlreadyRegisteredError,
     CachedRegistryClient,
+    DIDCurrentKeyMismatchError,
+    DIDRegistrationRequiredError,
     RegistryError,
     RegistryClient,
 )
@@ -233,7 +235,7 @@ async def test_register_did_raises_already_registered_error_with_existing_key():
 async def test_register_address_resolves_current_key_before_posting():
     controller_signing_key, controller_public_key = generate_keypair()
     controller_did = did_from_public_key(controller_public_key)
-    subject_signing_key, subject_public_key = generate_keypair()
+    _, subject_public_key = generate_keypair()
     subject_did_key = did_from_public_key(subject_public_key)
     subject_did_aw = stable_id_from_did_key(subject_did_key)
     requests: list[httpx.Request] = []
@@ -304,6 +306,47 @@ async def test_register_address_resolves_current_key_before_posting():
         f"/v1/did/{subject_did_aw}/key",
         "/v1/namespaces/acme.com/addresses",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("detail", "error_type"),
+    [
+        (
+            "did_aw must be registered before address assignment",
+            DIDRegistrationRequiredError,
+        ),
+        ("did_aw current key does not match", DIDCurrentKeyMismatchError),
+    ],
+)
+async def test_register_address_maps_did_precondition_conflicts(detail, error_type):
+    controller_signing_key, _ = generate_keypair()
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/namespaces/acme.com/addresses"
+        return httpx.Response(409, json={"detail": detail})
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        await client.register_address(
+            "acme.com",
+            "support",
+            subject_did_aw,
+            controller_signing_key,
+            "public",
+            current_did_key=subject_did_key,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == detail
 
 
 @pytest.mark.asyncio

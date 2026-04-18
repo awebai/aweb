@@ -21,7 +21,6 @@ from awid.log import (
     log_entry_payload as awid_log_entry_payload,
     require_canonical_server_origin,
     sha256_hex as awid_sha256_hex,
-    state_hash as awid_state_hash,
 )
 from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -576,25 +575,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
         if req.prev_entry_hash != prev_entry_hash:
             raise HTTPException(status_code=409, detail="prev_entry_hash mismatch")
 
-        try:
-            stored_server = row["server_url"]
-            server_url = (
-                require_canonical_server_origin(stored_server)
-                if stored_server and stored_server.strip()
-                else ""
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        address = row["address"]
-        handle = row["handle"]
-        state_hash = awid_state_hash(
-            did_aw=did_aw,
-            current_did_key=req.new_did_key,
-            server=server_url,
-            address=address,
-            handle=handle,
-        )
+        state_hash = awid_identity_state_hash(did_aw=did_aw, current_did_key=req.new_did_key)
         if state_hash != req.state_hash:
             raise HTTPException(status_code=400, detail="state_hash mismatch")
 
