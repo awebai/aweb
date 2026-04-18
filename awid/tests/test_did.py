@@ -80,7 +80,7 @@ async def test_register_did_accepts_identity_only_vector(
     db = awid_db_infra.get_manager("aweb")
     mapping = await db.fetch_one(
         """
-        SELECT did_aw, current_did_key, server_url, address, handle
+        SELECT did_aw, current_did_key
         FROM {{tables.did_aw_mappings}}
         WHERE did_aw = $1
         """,
@@ -88,9 +88,6 @@ async def test_register_did_accepts_identity_only_vector(
     )
     assert mapping["did_aw"] == body["did_aw"]
     assert mapping["current_did_key"] == body["new_did_key"]
-    assert mapping["server_url"] == ""
-    assert mapping["address"] == ""
-    assert mapping["handle"] is None
 
     expected_state_hash = identity_state_hash(did_aw=body["did_aw"], current_did_key=body["new_did_key"])
     assert expected_state_hash == register_vector["state_hash"]
@@ -137,9 +134,9 @@ async def test_register_did_accepts_identity_only_vector(
     full_payload = full_response.json()
     assert full_payload["did_aw"] == body["did_aw"]
     assert full_payload["current_did_key"] == body["new_did_key"]
-    assert full_payload["server"] == ""
-    assert full_payload["address"] == ""
-    assert full_payload["handle"] is None
+    assert "server" not in full_payload
+    assert "address" not in full_payload
+    assert "handle" not in full_payload
 
 
 @pytest.mark.asyncio

@@ -23,14 +23,11 @@ async def test_registry_routes_read_from_awid_schema(client, awid_db_infra):
     await db.execute(
         """
         INSERT INTO {{tables.did_aw_mappings}}
-            (did_aw, current_did_key, server_url, address, handle, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $6)
+            (did_aw, current_did_key, created_at, updated_at)
+        VALUES ($1, $2, $3, $3)
         """,
         did_aw,
         did_key,
-        "https://registry.example",
-        "registry.example/support",
-        "support",
         now,
     )
     await db.execute(
