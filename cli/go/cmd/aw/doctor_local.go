@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"errors"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +161,7 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		return
 	}
 
-	awebURL, err := sanitizeLocalURLForOutput(workspace.AwebURL)
+	awebURL, err := normalizeLocalURLForDoctor(workspace.AwebURL)
 	if err != nil {
 		r.add(localCheck(
 			doctorCheckWorkspaceAwebURL,
@@ -173,25 +172,35 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 			map[string]any{"error": err.Error()},
 		))
 	} else {
-		r.add(localCheck(
+		check := localCheck(
 			doctorCheckWorkspaceAwebURL,
 			doctorStatusOK,
 			&doctorTarget{Type: "workspace", ID: strings.TrimSpace(state.workspacePath), Display: abbreviateUserHome(state.workspacePath)},
 			"Workspace aweb_url is present and syntactically valid.",
 			"",
-			map[string]any{"aweb_url": awebURL},
-		))
+			doctorURLDetail("aweb_url", awebURL),
+		)
+		if awebURL.needsRewrite() {
+			check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceAwebURL)
+		}
+		r.add(check)
 	}
 
 	activeTeam := strings.TrimSpace(workspace.ActiveTeam)
 	if activeTeam == "" {
-		r.add(localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusFail, nil, "Workspace active_team is missing.", "Recreate or repair .aw/workspace.yaml.", nil))
+		check := localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusFail, nil, "Workspace active_team is missing.", "Recreate or repair .aw/workspace.yaml.", nil)
+		check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceActiveTeam)
+		r.add(check)
 	} else {
 		r.add(localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusOK, &doctorTarget{Type: "team", ID: activeTeam}, "Workspace active_team is present.", "", map[string]any{"team_id": activeTeam}))
 	}
 
 	if state.membership == nil {
-		r.add(localCheck(doctorCheckWorkspaceMembership, doctorStatusFail, &doctorTarget{Type: "team", ID: activeTeam}, "Workspace active_team is not present in memberships.", "Run `aw id team switch <team>` or reinitialize the workspace binding.", nil))
+		check := localCheck(doctorCheckWorkspaceMembership, doctorStatusFail, &doctorTarget{Type: "team", ID: activeTeam}, "Workspace active_team is not present in memberships.", "Run `aw id team switch <team>` or reinitialize the workspace binding.", nil)
+		if activeTeam != "" {
+			check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceMembership)
+		}
+		r.add(check)
 		r.add(blockedLocalCheck(doctorCheckWorkspaceWorkspaceID, "Active membership could not be selected.", doctorCheckWorkspaceMembership, nil))
 		r.add(blockedLocalCheck(doctorCheckWorkspaceCertPath, "Active membership could not be selected.", doctorCheckWorkspaceMembership, nil))
 		return
@@ -659,7 +668,7 @@ func (r *doctorRunner) runIdentityRegistryChecks(state *doctorLocalState) {
 		return
 	}
 
-	safeRegistryURL, err := sanitizeLocalURLForOutput(registryURL)
+	safeRegistryURL, err := normalizeLocalURLForDoctor(registryURL)
 	if err != nil {
 		r.add(localPathCheck(
 			doctorCheckIdentityRegistryURL,
@@ -672,14 +681,18 @@ func (r *doctorRunner) runIdentityRegistryChecks(state *doctorLocalState) {
 		r.add(blockedLocalCheck(doctorCheckRegistryCoherence, "Registry URL coherence requires a syntactically valid identity registry_url.", doctorCheckIdentityRegistryURL, nil))
 		return
 	}
-	r.add(localPathCheck(doctorCheckIdentityRegistryURL, doctorStatusOK, state.identityPath, "Identity registry_url is syntactically valid.", "", map[string]any{"registry_url": safeRegistryURL}))
+	registryCheck := localPathCheck(doctorCheckIdentityRegistryURL, doctorStatusOK, state.identityPath, "Identity registry_url is syntactically valid.", "", doctorURLDetail("registry_url", safeRegistryURL))
+	if safeRegistryURL.needsRewrite() {
+		registryCheck.Fix = safeDoctorFixInfo(doctorCheckIdentityRegistryURL)
+	}
+	r.add(registryCheck)
 
 	detail := map[string]any{
-		"registry_url": safeRegistryURL,
+		"registry_url": safeRegistryURL.URL,
 		"sources":      []string{awconfig.DefaultWorktreeIdentityRelativePath()},
 	}
 	if state.workspace != nil {
-		if safeAwebURL, err := sanitizeLocalURLForOutput(state.workspace.AwebURL); err == nil && safeAwebURL == safeRegistryURL {
+		if safeAwebURL, err := sanitizeLocalURLForOutput(state.workspace.AwebURL); err == nil && safeAwebURL == safeRegistryURL.URL {
 			detail["same_as_aweb_url"] = true
 		}
 	}
@@ -842,24 +855,11 @@ func resolveWorkspaceCertificatePath(workingDir, certPath string) string {
 }
 
 func sanitizeLocalURLForOutput(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", errors.New("empty URL")
-	}
-	parsed, err := url.Parse(raw)
+	normalization, err := normalizeLocalURLForDoctor(raw)
 	if err != nil {
-		return "", errors.New("invalid URL syntax")
+		return "", err
 	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", errors.New("URL must include scheme and host")
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", errors.New("URL must use http or https")
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+	return normalization.URL, nil
 }
 
 func validLocalWorkspaceID(workspaceID string) bool {

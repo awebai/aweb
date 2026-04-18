@@ -782,6 +782,9 @@ func TestAwDoctorFixHandlerRegistryCleanup(t *testing.T) {
 	if _, ok := doctorFixHandlers["fake.cleanup"]; ok {
 		t.Fatalf("fake handler leaked after cleanup")
 	}
+	if _, ok := doctorFixHandlers[doctorCheckWorkspaceAwebURL]; !ok {
+		t.Fatalf("production local fix handler was not restored after fake registry cleanup")
+	}
 }
 
 func TestAwDoctorLocalChecksValidEphemeralWorkspace(t *testing.T) {

@@ -119,6 +119,10 @@ func (r *doctorRunner) runFixForCheck(ctx doctorFixContext, check doctorCheck) {
 		return
 	}
 	plan = normalizeDoctorFixPlan(plan, check, ctx)
+	if plan.Status == doctorFixStatusRefused {
+		r.addFixPlan(plan)
+		return
+	}
 	if detail := validateDoctorFixPlan(check, plan); detail != "" {
 		r.addFixPlan(refusedDoctorFixPlan(check.ID, &check, "safety_refused", detail, "Common doctor fix safety gates refused this plan."))
 		return
