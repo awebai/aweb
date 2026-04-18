@@ -537,6 +537,9 @@ func (r *doctorRunner) addAwebHTTPErrorCheck(id string, err error, message, next
 		}
 		detail["reason"] = reason
 	}
+	if requestID, ok := doctorRequestIDFromError(err); ok {
+		detail["request_id"] = requestID
+	}
 	r.add(awebCheck(id, status, nil, message, nextStep, detail))
 }
 

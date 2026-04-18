@@ -105,13 +105,14 @@ type doctorRunOptions struct {
 }
 
 type doctorOutput struct {
-	Version     string            `json:"version"`
-	GeneratedAt string            `json:"generated_at"`
-	Status      doctorStatus      `json:"status"`
-	Mode        doctorMode        `json:"mode"`
-	Subject     doctorSubject     `json:"subject"`
-	Checks      []doctorCheck     `json:"checks"`
-	Redactions  []doctorRedaction `json:"redactions"`
+	Version       string                   `json:"version"`
+	GeneratedAt   string                   `json:"generated_at"`
+	Status        doctorStatus             `json:"status"`
+	Mode          doctorMode               `json:"mode"`
+	Subject       doctorSubject            `json:"subject"`
+	Checks        []doctorCheck            `json:"checks"`
+	Redactions    []doctorRedaction        `json:"redactions"`
+	SupportBundle *doctorSupportBundleInfo `json:"support_bundle,omitempty"`
 }
 
 type doctorSubject struct {
@@ -217,13 +218,12 @@ func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {
 	if err := validateDoctorModeFlags(); err != nil {
 		return err
 	}
-	out := buildDoctorOutput(opts)
-	data, err := json.MarshalIndent(out, "", "  ")
+	out, knownSecrets, err := buildDoctorSupportBundle(opts)
 	if err != nil {
 		return err
 	}
 	outputPath := filepath.Clean(strings.TrimSpace(doctorSupportBundleOutput))
-	if err := os.WriteFile(outputPath, append(data, '\n'), 0o600); err != nil {
+	if err := writeDoctorSupportBundleFile(outputPath, out, knownSecrets); err != nil {
 		return err
 	}
 	if jsonFlag {
@@ -232,6 +232,26 @@ func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Wrote doctor support bundle to %s\n", outputPath)
 	return nil
+}
+
+func writeDoctorSupportBundleFile(outputPath string, out doctorOutput, knownSecrets []doctorKnownSecret) error {
+	data, err := marshalDoctorSupportBundle(out, knownSecrets)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(outputPath, data, 0o600)
+}
+
+func marshalDoctorSupportBundle(out doctorOutput, knownSecrets []doctorKnownSecret) ([]byte, error) {
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	if err := scanDoctorSupportBundleBytes(data, knownSecrets); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func buildDoctorOutput(opts doctorRunOptions) doctorOutput {

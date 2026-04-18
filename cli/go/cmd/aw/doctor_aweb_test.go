@@ -29,6 +29,7 @@ type doctorAwebServer struct {
 	Unavailable    bool
 	VersionHeader  string
 	RolesTeamID    string
+	WorkspaceError string
 }
 
 func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer {
@@ -59,6 +60,11 @@ func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer 
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		case "/v1/workspaces/team":
 			if !cfg.requireTeamAuth(w, r) {
+				return
+			}
+			if strings.TrimSpace(cfg.WorkspaceError) != "" {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, cfg.WorkspaceError, http.StatusInternalServerError)
 				return
 			}
 			workspaces := []map[string]any{}
@@ -463,6 +469,27 @@ func TestAwDoctorAwebUnavailableUnknown(t *testing.T) {
 	}
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckServerReachable, doctorStatusUnknown)
+}
+
+func TestAwDoctorAwebHTTPErrorIncludesRequestIDOnly(t *testing.T) {
+	t.Parallel()
+
+	server := newDoctorAwebServer(t, &doctorAwebServer{WorkspaceError: `{"request_id":"req-123","detail":{"secret":"do-not-include"}}`})
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorEphemeralFixture(t, tmp, server.Server.URL)
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "workspace", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor workspace failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckWorkspaceTeamRead, doctorStatusUnknown)
+	if check.Detail["request_id"] != "req-123" {
+		t.Fatalf("request_id=%v", check.Detail["request_id"])
+	}
+	if strings.Contains(string(out), "do-not-include") {
+		t.Fatalf("doctor output leaked sibling secret:\n%s", string(out))
+	}
 }
 
 func TestAwDoctorMessagingLocalDryRunSignsWithoutNetwork(t *testing.T) {

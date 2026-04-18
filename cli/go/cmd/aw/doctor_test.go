@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -151,6 +153,12 @@ func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	if got.Status != doctorStatusInfo {
 		t.Fatalf("status=%q", got.Status)
 	}
+	if got.SupportBundle != nil {
+		t.Fatalf("plain doctor output unexpectedly included support_bundle")
+	}
+	if strings.Contains(string(out), "support_bundle") {
+		t.Fatalf("plain doctor JSON included support_bundle:\n%s", string(out))
+	}
 	if got.Mode != doctorModeAuto {
 		t.Fatalf("mode=%q", got.Mode)
 	}
@@ -251,6 +259,210 @@ func TestAwDoctorSupportBundleWritesDoctorJSON(t *testing.T) {
 	}
 	if len(got.Redactions) == 0 {
 		t.Fatalf("expected redaction metadata in support bundle")
+	}
+	if got.SupportBundle == nil {
+		t.Fatalf("expected support_bundle metadata")
+	}
+	if got.SupportBundle.Platform.OS == "" || got.SupportBundle.Platform.Arch == "" {
+		t.Fatalf("expected os/arch platform metadata: %#v", got.SupportBundle.Platform)
+	}
+}
+
+func TestAwDoctorSupportBundleJSONPrintsRedactedBundle(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(tmp)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	workspace.APIKey = "secret-api-token"
+	workspace.AwebURL = "https://user:pass@app.example.com/api?token=secret-query#secret-fragment"
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		t.Fatalf("load identity: %v", err)
+	}
+	identity.RegistryURL = "https://reguser:regpass@registry.example.com/path?registry_token=secret-registry#registry-fragment"
+	writeIdentityForTest(t, tmp, *identity)
+	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
+	rawCert, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	cert, err := awid.LoadTeamCertificate(certPath)
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+
+	outputPath := filepath.Join(tmp, "doctor.json")
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "support-bundle", "--offline", "--output", outputPath, "--json")
+	if err != nil {
+		t.Fatalf("doctor support-bundle --json failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	if got.SupportBundle == nil {
+		t.Fatalf("printed support bundle JSON omitted support_bundle")
+	}
+	text := string(out)
+	for _, secret := range []string{
+		"secret-api-token",
+		"BEGIN ED25519 PRIVATE KEY",
+		cert.Signature,
+		"user:pass",
+		"token=secret-query",
+		"secret-fragment",
+		"reguser:regpass",
+		"registry_token=secret-registry",
+		"registry-fragment",
+		strings.TrimSpace(string(rawCert)),
+	} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("support bundle output leaked secret %q:\n%s", secret, text)
+		}
+	}
+	if got.SupportBundle.LocalMetadata.Certificate == nil {
+		t.Fatalf("support bundle missing parsed certificate metadata")
+	}
+	if got.SupportBundle.LocalMetadata.Certificate.TeamID != "backend:example.com" {
+		t.Fatalf("certificate team_id=%q", got.SupportBundle.LocalMetadata.Certificate.TeamID)
+	}
+	if got.SupportBundle.LocalMetadata.Certificate.MemberDIDKey == "" {
+		t.Fatalf("certificate member did:key missing")
+	}
+	if !strings.Contains(text, `"support_bundle"`) || !strings.Contains(text, "https://app.example.com/api") || !strings.Contains(text, "https://registry.example.com/path") {
+		t.Fatalf("support bundle output missing expected sanitized metadata:\n%s", text)
+	}
+}
+
+func TestAwDoctorSupportBundleFinalScanFailsBeforeWrite(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "unsafe.json")
+	out := doctorOutput{
+		Version:     doctorVersion,
+		GeneratedAt: "2026-04-18T00:00:00Z",
+		Status:      doctorStatusInfo,
+		Mode:        doctorModeOffline,
+		Checks: []doctorCheck{{
+			ID:        "synthetic.check",
+			Status:    doctorStatusInfo,
+			Source:    doctorSourceLocal,
+			Authority: doctorAuthorityCaller,
+			Message:   "synthetic secret-survived",
+		}},
+		SupportBundle: &doctorSupportBundleInfo{Schema: doctorSupportBundleSchema},
+	}
+	err := writeDoctorSupportBundleFile(outputPath, out, []doctorKnownSecret{{Value: "secret-survived", Reason: "synthetic"}})
+	if err == nil {
+		t.Fatalf("expected final scan failure")
+	}
+	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe bundle file was written, statErr=%v", statErr)
+	}
+}
+
+func TestAwDoctorSupportBundleFinalScanRejectsRawTeamCertificate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
+	rawCert, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	rawCertText := strings.TrimSpace(string(rawCert))
+	secrets := collectDoctorKnownSecrets(tmp)
+	foundRawCert := false
+	for _, secret := range secrets {
+		if secret.Value == rawCertText && secret.Reason == "raw_team_certificate" {
+			foundRawCert = true
+			break
+		}
+	}
+	if !foundRawCert {
+		t.Fatalf("known secrets did not include raw team certificate")
+	}
+	outputPath := filepath.Join(tmp, "unsafe-cert.json")
+	out := doctorOutput{
+		Version:     doctorVersion,
+		GeneratedAt: "2026-04-18T00:00:00Z",
+		Status:      doctorStatusInfo,
+		Mode:        doctorModeOffline,
+		Checks: []doctorCheck{{
+			ID:        "synthetic.raw_cert",
+			Status:    doctorStatusInfo,
+			Source:    doctorSourceLocal,
+			Authority: doctorAuthorityCaller,
+			Message:   "synthetic",
+			Detail:    map[string]any{"unexpected_blob": rawCertText},
+		}},
+		SupportBundle: &doctorSupportBundleInfo{Schema: doctorSupportBundleSchema},
+	}
+	err = writeDoctorSupportBundleFile(outputPath, out, secrets)
+	if err == nil {
+		t.Fatalf("expected raw team certificate final scan failure")
+	}
+	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe raw cert bundle file was written, statErr=%v", statErr)
+	}
+}
+
+func TestAwDoctorSupportBundleRequestIDExtractionIgnoresSecretSiblings(t *testing.T) {
+	t.Parallel()
+
+	body := `{"detail":{"request_id":"req-123","secret":"do-not-include"}}`
+	got, ok := extractDoctorRequestID(body)
+	if !ok || got != "req-123" {
+		t.Fatalf("request id=%q ok=%v", got, ok)
+	}
+	if strings.Contains(got, "do-not-include") {
+		t.Fatalf("request id included sibling data: %q", got)
+	}
+	if got, ok := extractDoctorRequestID(`{"detail":{"request_id":{"nested":"bad"}},"correlation_id":42}`); !ok || got != "42" {
+		t.Fatalf("numeric correlation id=%q ok=%v", got, ok)
+	}
+	longID := strings.Repeat("é", 140)
+	got, ok = extractDoctorRequestID(`{"request_id":"` + longID + `"}`)
+	if !ok {
+		t.Fatalf("expected unicode request id")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("request id is not valid utf-8")
+	}
+	if got != strings.Repeat("é", 128) {
+		t.Fatalf("request id length/content mismatch: %q", got)
+	}
+}
+
+func TestAwDoctorSupportBundleOfflineDoesNotContactNetwork(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "doctor support-bundle should not call network", http.StatusTeapot)
+	}))
+	t.Cleanup(server.Close)
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorEphemeralFixture(t, tmp, server.URL)
+	outputPath := filepath.Join(tmp, "doctor.json")
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "support-bundle", "--offline", "--output", outputPath)
+	if err != nil {
+		t.Fatalf("doctor support-bundle offline failed: %v\n%s", err, string(out))
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("offline support-bundle contacted network %d times", hits.Load())
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("support bundle was not written: %v", err)
 	}
 }
 
