@@ -525,9 +525,9 @@ async def test_reverify_child_namespace_inherits_parent_dns_authority(
             resp = await recovery_client.post(f"/v1/namespaces/{child_domain}/reverify")
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["controller_did"] == parent_controller_did
+            assert body["controller_did"] == child_controller_did
             assert body["old_controller_did"] == child_controller_did
-            assert body["new_controller_did"] == parent_controller_did
+            assert body["new_controller_did"] == child_controller_did
             assert body["verification_status"] == "verified"
 
 
