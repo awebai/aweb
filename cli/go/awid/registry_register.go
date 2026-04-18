@@ -12,21 +12,42 @@ import (
 )
 
 type didRegisterRequest struct {
-	AuthorizedBy    string  `json:"authorized_by"`
-	DIDAW           string  `json:"did_aw"`
-	NewDIDKey       string  `json:"new_did_key"`
-	Operation       string  `json:"operation"`
-	PrevEntryHash   *string `json:"prev_entry_hash"`
-	PreviousDIDKey  *string `json:"previous_did_key"`
-	Seq             int     `json:"seq"`
-	StateHash       string  `json:"state_hash"`
-	Timestamp       string  `json:"timestamp"`
-	Proof           string  `json:"proof"`
+	AuthorizedBy   string  `json:"authorized_by"`
+	DIDAW          string  `json:"did_aw"`
+	NewDIDKey      string  `json:"new_did_key"`
+	Operation      string  `json:"operation"`
+	PrevEntryHash  *string `json:"prev_entry_hash"`
+	PreviousDIDKey *string `json:"previous_did_key"`
+	Seq            int     `json:"seq"`
+	StateHash      string  `json:"state_hash"`
+	Timestamp      string  `json:"timestamp"`
+	Proof          string  `json:"proof"`
 }
 
 type didKeyResponse struct {
 	DIDAW         string `json:"did_aw"`
 	CurrentDIDKey string `json:"current_did_key"`
+}
+
+func RegisterIdentity(
+	ctx context.Context,
+	registryBaseURL string,
+	did string,
+	stableID string,
+	signingKey ed25519.PrivateKey,
+) error {
+	registryBaseURL, err := canonicalServerOrigin(registryBaseURL)
+	if err != nil {
+		return fmt.Errorf("invalid registry URL: %w", err)
+	}
+	client := NewAWIDRegistryClient(nil, nil)
+	client.DefaultRegistryURL = registryBaseURL
+	_, err = client.RegisterIdentity(ctx, registryBaseURL, did, stableID, signingKey)
+	var already *AlreadyRegisteredError
+	if errors.As(err, &already) && strings.TrimSpace(already.ExistingDIDKey) == strings.TrimSpace(did) {
+		return nil
+	}
+	return err
 }
 
 func RegisterSelfCustodialDID(
@@ -39,18 +60,7 @@ func RegisterSelfCustodialDID(
 	stableID string,
 	signingKey ed25519.PrivateKey,
 ) error {
-	registryBaseURL, err := canonicalServerOrigin(registryBaseURL)
-	if err != nil {
-		return fmt.Errorf("invalid registry URL: %w", err)
-	}
-	client := NewAWIDRegistryClient(nil, nil)
-	client.DefaultRegistryURL = registryBaseURL
-	_, err = client.RegisterDID(ctx, registryBaseURL, serverURL, address, handle, did, stableID, signingKey)
-	var already *AlreadyRegisteredError
-	if errors.As(err, &already) && strings.TrimSpace(already.ExistingDIDKey) == strings.TrimSpace(did) {
-		return nil
-	}
-	return err
+	return RegisterIdentity(ctx, registryBaseURL, did, stableID, signingKey)
 }
 
 func canonicalRegistryServerOrigin(raw string) (string, error) {
