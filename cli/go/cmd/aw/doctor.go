@@ -296,7 +296,13 @@ func (r *doctorRunner) runCategory(category string) {
 		r.runIdentityDoctorChecks()
 	case "registry":
 		r.runRegistryDoctorChecks()
-	case "workspace", "team", "messaging":
+	case "workspace":
+		r.runWorkspaceDoctorChecks()
+	case "team":
+		r.runTeamDoctorChecks()
+	case "messaging":
+		r.runMessagingDoctorChecks()
+	default:
 		r.add(categoryPlaceholderCheck(category))
 	}
 }
