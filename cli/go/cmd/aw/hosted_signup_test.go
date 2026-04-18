@@ -27,12 +27,14 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	var (
-		didRegisterPath string
-		didFullPath     string
-		signupBodyBytes []byte
-		signupBody      map[string]any
-		signupAuth      string
-		signupTimestamp string
+		didRegisterPath  string
+		didFullPath      string
+		registeredDIDAW  string
+		registeredDIDKey string
+		signupBodyBytes  []byte
+		signupBody       map[string]any
+		signupAuth       string
+		signupTimestamp  string
 	)
 
 	var server *httptest.Server
@@ -59,24 +61,27 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload["address"] != "juanre.aweb.ai/laptop" {
-				t.Fatalf("address=%v", payload["address"])
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
 			}
-			if payload["handle"] != "laptop" {
-				t.Fatalf("handle=%v", payload["handle"])
-			}
+			registeredDIDAW, _ = payload["did_aw"].(string)
+			registeredDIDKey, _ = payload["new_did_key"].(string)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"status":"registered"}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
 			didFullPath = r.URL.Path
-			didKey, _ := signupBody["did_key"].(string)
 			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			if didAW != registeredDIDAW {
+				t.Fatalf("did full did_aw=%q want %q", didAW, registeredDIDAW)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          didAW,
-				"current_did_key": didKey,
+				"current_did_key": registeredDIDKey,
 				"server":          "",
-				"address":         "juanre.aweb.ai/laptop",
-				"handle":          "laptop",
+				"address":         "",
+				"handle":          nil,
 				"created_at":      "2026-04-08T00:00:00Z",
 				"updated_at":      "2026-04-08T00:00:00Z",
 			})
@@ -214,6 +219,148 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	}
 	if cert.MemberAddress != "juanre.aweb.ai/laptop" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+}
+
+func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var (
+		registerCalls    int
+		keyLookups       int
+		signupCalled     bool
+		registeredDIDAW  string
+		registeredDIDKey string
+		signupBody       map[string]any
+	)
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			registerCalls++
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			registeredDIDAW, _ = payload["did_aw"].(string)
+			registeredDIDKey, _ = payload["new_did_key"].(string)
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
+			}
+			http.Error(w, `{"detail":"did_aw already registered"}`, http.StatusConflict)
+		case r.Method == http.MethodGet && registeredDIDAW != "" && r.URL.Path == "/v1/did/"+registeredDIDAW+"/key":
+			keyLookups++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          registeredDIDAW,
+				"current_did_key": registeredDIDKey,
+				"log_head":        nil,
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			t.Fatalf("already-registered hosted init should not read full did state")
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			signupCalled = true
+			signupBody = map[string]any{}
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := signupBody["did_key"].(string)
+			didAW, _ := signupBody["did_aw"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:juanre.aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: "juanre.aweb.ai/laptop",
+				Alias:         "laptop",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         "juanre",
+				"org_id":           "org-1",
+				"namespace_domain": "juanre.aweb.ai",
+				"team_id":          "default:juanre.aweb.ai",
+				"certificate":      encoded,
+				"did_aw":           didAW,
+				"member_address":   "juanre.aweb.ai/laptop",
+				"alias":            "laptop",
+				"team_did_key":     teamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(
+		ctx,
+		bin,
+		"--json",
+		"init",
+		"--hosted",
+		"--persistent",
+		"--username", "juanre",
+		"--alias", "laptop",
+		"--url", server.URL,
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init --hosted retry failed: %v\n%s", err, string(out))
+	}
+
+	if registerCalls != 1 {
+		t.Fatalf("register calls=%d want 1", registerCalls)
+	}
+	if keyLookups != 1 {
+		t.Fatalf("key lookups=%d want 1", keyLookups)
+	}
+	if !signupCalled {
+		t.Fatal("cli-signup was not called after same-key registration conflict")
+	}
+	if signupBody["did_aw"] != registeredDIDAW {
+		t.Fatalf("signup did_aw=%v want %q", signupBody["did_aw"], registeredDIDAW)
+	}
+	if signupBody["did_key"] != registeredDIDKey {
+		t.Fatalf("signup did_key=%v want %q", signupBody["did_key"], registeredDIDKey)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if got["status"] != "signed_up" {
+		t.Fatalf("status=%v", got["status"])
 	}
 }
 

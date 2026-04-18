@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,10 +77,8 @@ func runHostedInit(cmd *cobra.Command) error {
 	}
 	didKey := awid.ComputeDIDKey(pub)
 	stableID := ""
-	memberAddress := ""
 	if initPersistent {
 		stableID = awid.ComputeStableID(pub)
-		memberAddress = fmt.Sprintf("%s.aweb.ai/%s", username, alias)
 	}
 
 	registry, err := newConfiguredRegistryClient(nil, serviceURLs.OnboardingURL)
@@ -93,17 +92,19 @@ func runHostedInit(cmd *cobra.Command) error {
 		}
 	}
 	if initPersistent {
-		if _, err := registry.RegisterDID(
+		// Hosted signup binds the managed address on the cloud side; the CLI only
+		// publishes the self-custodial identity before requesting cli-signup.
+		if _, err := registry.RegisterIdentity(
 			ctx,
 			registry.DefaultRegistryURL,
-			"",
-			memberAddress,
-			alias,
 			didKey,
 			stableID,
 			signingKey,
 		); err != nil {
-			return fmt.Errorf("failed to register hosted did:aw before cli-signup: %w", err)
+			var already *awid.AlreadyRegisteredError
+			if !errors.As(err, &already) || strings.TrimSpace(already.ExistingDIDKey) != didKey {
+				return fmt.Errorf("failed to register hosted did:aw before cli-signup: %w", err)
+			}
 		}
 	}
 

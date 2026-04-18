@@ -82,12 +82,10 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 
 	var (
 		stableID    string
-		addressInfo addressParts
 		registryURL string
 	)
 	if address != "" {
-		addressInfo, err = parseConnectAddress(address)
-		if err != nil {
+		if _, err := parseConnectAddress(address); err != nil {
 			return connectOutput{}, err
 		}
 
@@ -102,7 +100,9 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 			}
 		}
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-		if err := registerBootstrapDID(ctx, registry, didKey, stableID, addressInfo, signingKey); err != nil {
+		// The dashboard-minted bootstrap token already carries the member address;
+		// the CLI publishes only the did:aw identity before redeeming it.
+		if err := registerBootstrapDID(ctx, registry, didKey, stableID, signingKey); err != nil {
 			return connectOutput{}, err
 		}
 		redeemReq.DIDAW = stableID
@@ -169,7 +169,6 @@ func registerBootstrapDID(
 	ctx context.Context,
 	registry *awid.RegistryClient,
 	didKey, stableID string,
-	address addressParts,
 	signingKey ed25519.PrivateKey,
 ) error {
 	if registry == nil {
@@ -177,7 +176,7 @@ func registerBootstrapDID(
 	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		_, err := registry.RegisterDID(ctx, registry.DefaultRegistryURL, "", address.Full, address.Alias, didKey, stableID, signingKey)
+		_, err := registry.RegisterIdentity(ctx, registry.DefaultRegistryURL, didKey, stableID, signingKey)
 		if already := new(awid.AlreadyRegisteredError); errors.As(err, &already) {
 			if strings.TrimSpace(already.ExistingDIDKey) == didKey {
 				return nil

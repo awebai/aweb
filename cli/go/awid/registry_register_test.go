@@ -62,7 +62,7 @@ func identityVectorEntry(t *testing.T, vectors identityVectorFile, name string) 
 	return identityEntryVector{}
 }
 
-func TestRegisterIdentityMatchesRegisterDIDVector(t *testing.T) {
+func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 	vectors := loadIdentityVector(t)
 	entry := identityVectorEntry(t, vectors, "register_did")
 	seed, err := hex.DecodeString(vectors.KeySeeds["initial_seed_hex"])
@@ -144,7 +144,7 @@ func TestRegisterIdentityMatchesRegisterDIDVector(t *testing.T) {
 	}
 }
 
-func TestRegisterSelfCustodialDIDPostsCreateEntry(t *testing.T) {
+func TestRegisterIdentityPostsCreateEntry(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -178,12 +178,9 @@ func TestRegisterSelfCustodialDIDPostsCreateEntry(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if err := RegisterSelfCustodialDID(
+	if err := RegisterIdentity(
 		context.Background(),
 		server.URL,
-		"https://app.example.com",
-		"acme.com/alice",
-		"alice",
 		did,
 		stableID,
 		priv,
@@ -217,7 +214,7 @@ func TestRegisterSelfCustodialDIDPostsCreateEntry(t *testing.T) {
 	}
 }
 
-func TestRegisterSelfCustodialDIDTreatsSameKeyConflictAsSuccess(t *testing.T) {
+func TestRegisterIdentityTreatsSameKeyConflictAsSuccess(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -245,12 +242,9 @@ func TestRegisterSelfCustodialDIDTreatsSameKeyConflictAsSuccess(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if err := RegisterSelfCustodialDID(
+	if err := RegisterIdentity(
 		context.Background(),
 		server.URL,
-		"https://app.example.com",
-		"acme.com/alice",
-		"alice",
 		did,
 		stableID,
 		priv,
@@ -314,7 +308,7 @@ func TestRegisterIdentityReturnsAlreadyRegisteredForDifferentKeyConflict(t *test
 	}
 }
 
-func TestRegisterSelfCustodialDIDRejectsInvalidStableID(t *testing.T) {
+func TestRegisterIdentityRejectsInvalidStableID(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -323,12 +317,9 @@ func TestRegisterSelfCustodialDIDRejectsInvalidStableID(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	err = RegisterSelfCustodialDID(
+	err = RegisterIdentity(
 		context.Background(),
 		"https://registry.example.com",
-		"https://app.example.com",
-		"acme.com/alice",
-		"alice",
 		did,
 		"stable-project-key",
 		priv,

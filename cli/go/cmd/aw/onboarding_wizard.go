@@ -360,6 +360,8 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// The BYOD wizard shares the id-create registry path: namespace, identity,
+	// then controller-signed address binding.
 	if err := ensureStandaloneRegistryRegistration(ctx, registry, prepared.Plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
 		return nil, err
 	}
@@ -535,7 +537,9 @@ func provisionHostedIdentity(
 	defer cancel()
 
 	if persistent {
-		if err := registerHostedDID(ctx, registry, didKey, didAW, memberAddress, alias, signingKey); err != nil {
+		// Hosted onboarding receives the managed address from cli-signup; the CLI
+		// publishes only the did:aw identity before asking the cloud to bind it.
+		if err := registerHostedDID(ctx, registry, didKey, didAW, signingKey); err != nil {
 			return nil, nil, "", "", "", "", err
 		}
 	}
@@ -561,13 +565,13 @@ func provisionHostedIdentity(
 func registerHostedDID(
 	ctx context.Context,
 	registry *awid.RegistryClient,
-	didKey, didAW, memberAddress, alias string,
+	didKey, didAW string,
 	signingKey ed25519.PrivateKey,
 ) error {
 	if registry == nil {
 		return fmt.Errorf("nil registry client")
 	}
-	_, err := registry.RegisterDID(ctx, registry.DefaultRegistryURL, "", memberAddress, alias, didKey, didAW, signingKey)
+	_, err := registry.RegisterIdentity(ctx, registry.DefaultRegistryURL, didKey, didAW, signingKey)
 	if already := new(awid.AlreadyRegisteredError); errors.As(err, &already) {
 		if strings.TrimSpace(already.ExistingDIDKey) == strings.TrimSpace(didKey) {
 			return nil

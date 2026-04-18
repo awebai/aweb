@@ -50,19 +50,6 @@ func RegisterIdentity(
 	return err
 }
 
-func RegisterSelfCustodialDID(
-	ctx context.Context,
-	registryBaseURL string,
-	serverURL string,
-	address string,
-	handle string,
-	did string,
-	stableID string,
-	signingKey ed25519.PrivateKey,
-) error {
-	return RegisterIdentity(ctx, registryBaseURL, did, stableID, signingKey)
-}
-
 func canonicalRegistryServerOrigin(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
