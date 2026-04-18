@@ -82,15 +82,32 @@ loss.  See [trust-model.md](https://awid.ai/trust-model.md) for the full recover
 
 #### Persistent identities
 
-A persistent identity gives you a stable `did:aw`, a public address
-(like `acme.com/alice`), and a signed audit trail at awid.  You need a
-domain you control.
+A persistent identity gives you a stable `did:aw` and a signed audit
+trail at awid. An address (like `acme.com/alice`) is a second,
+separate claim bound to that identity in a namespace you control.
 
 ```bash
 aw id create --name alice --domain acme.com
 # Generates controller + identity keypairs, guides you through DNS TXT
-# verification, registers the identity at awid.
+# verification, registers the identity at awid (register_did), then
+# binds the address acme.com/alice to the identity.
 ```
+
+What that command does under the hood is two awid operations:
+
+1. **`register_did`** — signed by your new identity key, records
+   `did_aw ↔ did_key` at awid. The envelope carries no address.
+2. **`POST /v1/namespaces/acme.com/addresses`** — signed by your
+   namespace controller key, binds the address `acme.com/alice` to
+   the `did_aw` you just registered. awid rejects this call if step 1
+   hasn't happened.
+
+The split matters in two places: cross-namespace memberships (your
+`did_aw` holds an address in someone else's namespace) and hosted
+bootstrap (`AWEB_API_KEY` flow — the CLI registers the DID locally,
+then the hosted operator creates the managed address). See
+[`trust-model.md`](https://awid.ai/trust-model.md#identity-vs-address-authority)
+for the authority model.
 
 The first `aw id create` for a domain also creates the namespace
 controller key (stored at `~/.config/aw/team-keys/<domain>/`).  The

@@ -25,6 +25,12 @@ hosted deployment codebase, not in this SOT.
 4. **Revocation is a column update.** Revoking a certificate sets
    `revoked_at` on the certificate record. Services cache the revoked
    entries.
+5. **Identity and address are separate facts, separately authorized.**
+   `register_did` binds `did_aw ↔ did_key` and is authorized by the
+   identity holder alone. Binding that `did_aw` to a `(domain, name)`
+   address is a second operation authorized by the namespace controller.
+   A `did_aw` must already be registered before any address can be bound
+   to it. See [Identity operations](#identity-operations).
 
 ---
 
@@ -101,6 +107,27 @@ PUT    /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
+**Creation precondition.** `POST /v1/namespaces/{domain}/addresses`
+requires that the target `did_aw` is already registered at awid
+(see [Identity operations](#identity-operations)). If
+`did_aw_mappings` has no row for the given `did_aw`, awid returns
+`409 { "detail": "did_aw must be registered before address
+assignment" }`. The envelope carries `current_did_key` as an
+expectation check; awid rejects the request if this value does not
+match the current key on record. The key is NOT stored on the
+address row — it is resolved at read time via JOIN on
+`did_aw_mappings`, so rotation is a single update without a cascade.
+This is Principle 5 enforced at the write path.
+
+**Authorization.** The namespace controller is the sole authority
+for addresses in its namespace. The identity holder's consent to hold
+the address is out-of-band: for a BYOD self-namespace the controller
+and identity holder are the same party; for a managed namespace the
+consent is conveyed by the API-key exchange with the hosted operator
+(a separate contract, not an awid concern); for cross-namespace
+membership, the identity holder may refuse inbound messaging at the
+transport layer if they disagree with the claim.
+
 **Reachability enforcement:**
 - `public` — any caller, anonymous or authenticated
 - `nobody` — owner only; the caller's `did:aw` must match the address `did_aw`
@@ -112,18 +139,183 @@ Ephemeral team certificates (`lifetime='ephemeral'`) do not satisfy
 public addresses; non-public addresses return `404`, not `403`, to avoid
 leaking existence.
 
-## DID registry
+## Identity operations
 
-Stable identity mappings. `did:aw` → `did:key`.
+Identity at awid is a pure `did_aw ↔ did_key` binding. It carries no
+address, no server, no handle. An identity can exist without ever being
+bound to an address, and the same `did_aw` can subsequently hold zero,
+one, or many addresses across one or many namespaces.
 
 ```
-POST   /v1/did                         Register (identity auth)
+POST   /v1/did                         register_did (identity auth)
+POST   /v1/did/{did_aw}/rotate         rotate_key (identity auth)
 GET    /v1/did/{did_aw}/key            Resolve current key (public)
 GET    /v1/did/{did_aw}/full           Full info (identity auth)
 GET    /v1/did/{did_aw}/log            Audit log (public)
-POST   /v1/did/{did_aw}/rotate         Rotate key (identity auth)
 GET    /v1/did/{did_aw}/addresses      List addresses (public)
 ```
+
+Address binding is not an identity operation. It is an address
+operation, authorized by the namespace controller, and lives under
+`POST /v1/namespaces/{domain}/addresses` (see [Addresses](#addresses)).
+
+### Why identity and address are split
+
+Identity is "what key speaks for `did_aw`". Address is "which
+`(domain, name)` handle `did_aw` holds". These are semantically
+independent claims with different authority:
+
+- The identity holder alone authorizes changes to their own key
+  binding. No namespace controller can rotate someone else's identity
+  key.
+- The namespace controller alone authorizes who gets which address
+  under their namespace. A `did_aw` cannot insert itself into a
+  namespace it was not given.
+
+Bundling the two into a single signed operation (as earlier versions
+did) forced a cycle for managed addresses: the identity holder had to
+sign over an address they did not yet own, and the namespace controller
+had to accept an identity claim they had no authority over. The split
+makes each operation authorizable by the one party that legitimately
+holds authority, and makes the "identity must exist before address"
+invariant structural rather than a runtime check.
+
+### `register_did`
+
+Binds `did_aw ↔ did_key`. Idempotent for the same `(did_aw, did_key)`
+pair — repeating the call with the same pair returns success; calling
+with a different `did_key` for an existing `did_aw` is rejected
+(rotation uses the dedicated endpoint).
+
+The signed object is the **canonical entry payload**: a log entry
+whose shape is common to every identity operation. The request body
+wraps it with a transport field (`proof`) carrying the signature;
+the canonical entry payload itself is what gets hashed and signed
+and appended to `did_aw_log`.
+
+```
+POST /v1/did
+     Body: {
+       <canonical entry payload fields, see below>,
+       "proof": "<base64 Ed25519 signature of the canonical entry>"
+     }
+     Response: { "registered": true, "did_aw": "...",
+                 "current_did_key": "..." }
+```
+
+**Canonical entry payload** (sorted keys, no whitespace, UTF-8; this
+is the byte sequence that is hashed into `entry_hash` and signed
+into `proof`):
+
+```json
+{
+  "authorized_by":   "did:key:z6Mk...",
+  "did_aw":          "did:aw:...",
+  "did_key":         "did:key:z6Mk...",
+  "operation":       "register_did",
+  "prev_entry_hash": null,
+  "seq":             1,
+  "timestamp":       "ISO 8601 UTC"
+}
+```
+
+Where:
+
+- `authorized_by` is the `did:key` of the signer; for `register_did`
+  it equals `did_key` — the identity holder authorizes its own
+  registration.
+- `entry_hash = sha256(canonical_entry_payload_bytes)`. The server
+  stores this in `did_aw_log` so the chain can be audited.
+- `proof = Ed25519.sign(did_key_private, canonical_entry_payload_bytes)`.
+- `state_hash` and the derived **state payload** are NOT part of
+  the signed entry. See the state section below — they are a
+  convenience for verifiers, deterministically recomputable from
+  the signed fields.
+
+**State derivation** (not signed):
+
+```json
+state_payload = {"current_did_key": did_key, "did_aw": did_aw}
+state_hash    = sha256(canonical_json(state_payload))
+```
+
+No `server`, `address`, or `handle` appear anywhere in the entry or
+the state. Identity is a pure `did_aw ↔ did_key` binding; addresses
+are a separate concern maintained in `public_addresses`.
+
+Idempotency rule: if a row with `(did_aw, current_did_key) = (req.did_aw, req.did_key)`
+already exists, the call returns `200` with the existing record. If
+`did_aw` exists with a different `current_did_key`, the call returns
+`409` (clients must call `rotate_key`).
+
+### `rotate_key`
+
+Replaces the `did_key` for an existing `did_aw`. The canonical entry
+payload shape differs from `register_did` — it carries both the
+previous and new keys, and `prev_entry_hash` chains to the prior log
+entry:
+
+```json
+{
+  "authorized_by":    "did:key:z6Mk...",       // equals previous_did_key
+  "did_aw":           "did:aw:...",
+  "new_did_key":      "did:key:z6Mk...",
+  "operation":        "rotate_key",
+  "prev_entry_hash":  "<hex of previous entry>",
+  "previous_did_key": "did:key:z6Mk...",
+  "seq":              2,
+  "timestamp":        "ISO 8601 UTC"
+}
+```
+
+Where:
+
+- `authorized_by` equals `previous_did_key` — the retiring key signs
+  its own replacement.
+- `proof = Ed25519.sign(previous_did_key_private, canonical_entry_payload_bytes)`.
+- `seq` is the previous entry's `seq + 1`.
+
+**State derivation after rotation** (not signed):
+
+```json
+state_payload = {"current_did_key": new_did_key, "did_aw": did_aw}
+state_hash    = sha256(canonical_json(state_payload))
+```
+
+The old key is accepted as the signer for this one operation; after
+the rotation completes, the new key takes over as `current_did_key`.
+
+Rotation is a single-row update of `did_aw_mappings.current_did_key`
+plus one append to `did_aw_log`. There is no cascade to address rows:
+`public_addresses` does not store the current key — address reads
+resolve it via JOIN on `did_aw_mappings`. Any number of addresses
+can be bound to a `did_aw` without affecting rotation cost or
+introducing multi-row consistency concerns.
+
+### Address bindings
+
+Address bindings are listed at `GET /v1/did/{did_aw}/addresses`. They
+are not created by identity operations. To bind an address, the
+namespace controller calls `POST /v1/namespaces/{domain}/addresses`
+(see [Addresses](#addresses)).
+
+Invariant: awid returns `409 { "detail": "did_aw must be registered
+before address assignment" }` on address creation if the referenced
+`did_aw` has no row in `did_aw_mappings`. This is the mechanical
+enforcement of Principle 5.
+
+### Read endpoints
+
+- `GET /v1/did/{did_aw}/key` — current `did_key`. Public. Used by
+  aweb and other services for message-signature verification.
+- `GET /v1/did/{did_aw}/full` — full identity record including
+  metadata. Identity auth (the DID holder).
+- `GET /v1/did/{did_aw}/log` — append-only audit log of `register_did`
+  and `rotate_key` entries. Public. The log never contains address
+  entries; address history lives with each address record.
+- `GET /v1/did/{did_aw}/addresses` — list of addresses currently
+  bound to this `did_aw`. Public. Reflects the `public_addresses`
+  table, not `did_aw_mappings`.
 
 ---
 
@@ -384,12 +576,13 @@ CREATE TABLE did_aw_mappings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     did_aw          TEXT UNIQUE NOT NULL,
     current_did_key TEXT NOT NULL,
-    server          TEXT,
-    address         TEXT,
-    handle          TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Identity rows carry no address, server, or handle. Address records
+-- live in public_addresses; the (did_aw → addresses) projection is
+-- served by GET /v1/did/{did_aw}/addresses.
 
 CREATE TABLE did_aw_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -424,8 +617,7 @@ CREATE TABLE public_addresses (
     address_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     domain          TEXT NOT NULL,
     name            TEXT NOT NULL,
-    did_aw          TEXT NOT NULL,
-    current_did_key TEXT NOT NULL,
+    did_aw          TEXT NOT NULL REFERENCES did_aw_mappings(did_aw),
     reachability    TEXT NOT NULL DEFAULT 'nobody'
                     CHECK (reachability IN ('nobody', 'org_only', 'team_members_only', 'public')),
     visible_to_team_id TEXT
@@ -439,6 +631,11 @@ CREATE TABLE public_addresses (
 
     UNIQUE (domain, name)
 );
+
+-- public_addresses does not store current_did_key. Address lookups
+-- that need the key (e.g., GET /v1/namespaces/{domain}/addresses/{name})
+-- JOIN on did_aw_mappings by did_aw. The FK enforces the invariant
+-- that every address points to a registered DID (Principle 5).
 
 CREATE TABLE teams (
     team_uuid       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
