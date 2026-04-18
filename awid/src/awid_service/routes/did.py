@@ -19,7 +19,6 @@ from awid.did import (
 from awid.log import (
     identity_state_hash as awid_identity_state_hash,
     log_entry_payload as awid_log_entry_payload,
-    register_did_entry_payload as awid_register_did_entry_payload,
     require_canonical_server_origin,
     sha256_hex as awid_sha256_hex,
     state_hash as awid_state_hash,
@@ -36,10 +35,12 @@ class DidRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     did_aw: str = Field(..., max_length=256)
-    did_key: str = Field(..., max_length=256)
+    new_did_key: str = Field(..., max_length=256)
     operation: Literal["register_did"]
+    previous_did_key: str | None
     prev_entry_hash: str | None
-    seq: int = Field(..., ge=1)
+    seq: Literal[1]
+    state_hash: str = Field(..., max_length=128)
     authorized_by: str = Field(..., max_length=256)
     timestamp: str = Field(..., max_length=64)
     proof: str = Field(..., max_length=2048)
@@ -48,7 +49,7 @@ class DidRegisterRequest(BaseModel):
     @classmethod
     def reject_legacy_bundled_fields(cls, data):
         if isinstance(data, dict):
-            legacy_fields = {"address", "server", "handle", "state_hash"} & set(data)
+            legacy_fields = {"address", "server", "handle", "did_key"} & set(data)
             if legacy_fields:
                 fields = ", ".join(sorted(legacy_fields))
                 raise ValueError(
@@ -56,6 +57,14 @@ class DidRegisterRequest(BaseModel):
                     "see awid-sot.md#identity-operations"
                 )
         return data
+
+    @model_validator(mode="after")
+    def reject_register_previous_key(self):
+        if self.previous_did_key is not None:
+            raise ValueError(
+                "register_did previous_did_key must be null; see awid-sot.md#identity-operations"
+            )
+        return self
 
 
 class DidKeyEvidence(BaseModel):
@@ -151,24 +160,27 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
         enforce_timestamp_skew(req.timestamp)
-        if req.seq != 1 or req.prev_entry_hash is not None:
-            raise ValueError("seq must be 1 and prev_entry_hash must be null on register_did")
-        if req.authorized_by != req.did_key:
-            raise ValueError("authorized_by must equal did_key on register_did")
-        public_key = public_key_from_did(req.did_key)
+        if req.prev_entry_hash is not None:
+            raise ValueError("prev_entry_hash must be null on register_did")
+        if req.authorized_by != req.new_did_key:
+            raise ValueError("authorized_by must equal new_did_key on register_did")
+        public_key = public_key_from_did(req.new_did_key)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    entry_payload = awid_register_did_entry_payload(
+    entry_payload = awid_log_entry_payload(
         did_aw=req.did_aw,
-        did_key=req.did_key,
-        prev_entry_hash=req.prev_entry_hash,
         seq=req.seq,
+        operation=req.operation,
+        previous_did_key=req.previous_did_key,
+        new_did_key=req.new_did_key,
+        prev_entry_hash=req.prev_entry_hash,
+        state_hash=req.state_hash,
         authorized_by=req.authorized_by,
         timestamp=req.timestamp,
     )
     entry_hash = awid_sha256_hex(entry_payload)
-    state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.did_key)
+    state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.new_did_key)
 
     db = _db(request)
     created_at = _now()
@@ -184,7 +196,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             req.did_aw,
         )
         if existing is not None:
-            if existing["current_did_key"] == req.did_key:
+            if existing["current_did_key"] == req.new_did_key:
                 return {
                     "registered": True,
                     "did_aw": existing["did_aw"],
@@ -194,14 +206,16 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
 
         derived = stable_id_from_public_key(public_key)
         if derived != req.did_aw:
-            raise HTTPException(status_code=400, detail="did_aw does not match did_key derivation")
+            raise HTTPException(status_code=400, detail="did_aw does not match new_did_key derivation")
 
         try:
             verify_did_key_signature(
-                did_key=req.did_key, payload=entry_payload, signature_b64=req.proof
+                did_key=req.new_did_key, payload=entry_payload, signature_b64=req.proof
             )
         except Exception as exc:
             raise HTTPException(status_code=401, detail="invalid proof") from exc
+        if state_hash != req.state_hash:
+            raise HTTPException(status_code=400, detail="state_hash mismatch")
 
         await tx.execute(
             """
@@ -210,7 +224,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
             req.did_aw,
-            req.did_key,
+            req.new_did_key,
             "",
             "",
             None,
@@ -230,11 +244,11 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             1,
             "register_did",
             None,
-            req.did_key,
+            req.new_did_key,
             None,
             entry_hash,
             state_hash,
-            req.did_key,
+            req.new_did_key,
             req.proof,
             req.timestamp,
             created_at,
@@ -243,7 +257,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     return {
         "registered": True,
         "did_aw": req.did_aw,
-        "current_did_key": req.did_key,
+        "current_did_key": req.new_did_key,
     }
 
 

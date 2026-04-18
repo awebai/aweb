@@ -19,8 +19,8 @@ from redis.exceptions import RedisError
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.log import (
     canonical_server_origin,
+    identity_state_hash,
     log_entry_payload,
-    register_did_entry_payload,
     state_hash,
 )
 from awid.signing import canonical_json_bytes, sign_message
@@ -263,13 +263,17 @@ class RegistryClient:
 
         did_aw = stable_id_from_did_key(did_key)
         timestamp = _utc_timestamp()
+        mapping_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
         proof = sign_message(
             signing_key,
-            register_did_entry_payload(
+            log_entry_payload(
                 did_aw=did_aw,
-                did_key=did_key,
-                prev_entry_hash=None,
                 seq=1,
+                operation="register_did",
+                previous_did_key=None,
+                new_did_key=did_key,
+                prev_entry_hash=None,
+                state_hash=mapping_state_hash,
                 authorized_by=did_key,
                 timestamp=timestamp,
             ),
@@ -280,10 +284,12 @@ class RegistryClient:
                 "/v1/did",
                 json={
                     "did_aw": did_aw,
-                    "did_key": did_key,
                     "operation": "register_did",
+                    "previous_did_key": None,
+                    "new_did_key": did_key,
                     "seq": 1,
                     "prev_entry_hash": None,
+                    "state_hash": mapping_state_hash,
                     "authorized_by": did_key,
                     "timestamp": timestamp,
                     "proof": proof,

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	awid "github.com/awebai/aw/awid"
@@ -257,6 +258,15 @@ func TestIdentityLogVectors(t *testing.T) {
 			if !ed25519.Verify(publicKey, []byte(entryPayload), signatureBytes) {
 				t.Fatalf("signature did not verify against canonical entry payload")
 			}
+			tamperedPayloadMap := cloneMap(entry.EntryPayload)
+			tamperedPayloadMap["state_hash"] = strings.Repeat("0", 64)
+			tamperedPayload, err := awid.CanonicalJSONValue(tamperedPayloadMap)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ed25519.Verify(publicKey, []byte(tamperedPayload), signatureBytes) {
+				t.Fatalf("tampered state_hash unexpectedly verified")
+			}
 		})
 		previousEntryHash = entry.EntryHash
 	}
@@ -283,6 +293,14 @@ func requireNoAddressFields(t *testing.T, payload map[string]any) {
 			t.Fatalf("identity vector payload must not contain %q", field)
 		}
 	}
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func nullableString(value any) string {

@@ -60,22 +60,19 @@ func TestRegisterSelfCustodialDIDPostsCreateEntry(t *testing.T) {
 	if got.DIDAW != stableID {
 		t.Fatalf("did_aw=%q", got.DIDAW)
 	}
-	if got.DIDKey != did {
-		t.Fatalf("did_key=%q", got.DIDKey)
+	if got.Operation != "register_did" {
+		t.Fatalf("operation=%q", got.Operation)
 	}
-	if got.Server != "https://app.example.com" {
-		t.Fatalf("server=%q", got.Server)
+	if got.NewDIDKey != did {
+		t.Fatalf("new_did_key=%q", got.NewDIDKey)
 	}
-	if got.Address != "acme.com/alice" {
-		t.Fatalf("address=%q", got.Address)
-	}
-	if got.Handle == nil || *got.Handle != "alice" {
-		t.Fatalf("handle=%v", got.Handle)
+	if got.PreviousDIDKey != nil {
+		t.Fatalf("previous_did_key=%v", got.PreviousDIDKey)
 	}
 	if got.Seq != 1 || got.PrevEntryHash != nil {
 		t.Fatalf("seq=%d prev=%v", got.Seq, got.PrevEntryHash)
 	}
-	if got.StateHash != stableIdentityStateHash(stableID, did, "https://app.example.com", "acme.com/alice", "alice") {
+	if got.StateHash != stableIdentityStateHash(stableID, did) {
 		t.Fatalf("state_hash=%q", got.StateHash)
 	}
 	if got.AuthorizedBy != did {

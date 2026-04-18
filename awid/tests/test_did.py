@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from awid.log import identity_state_hash, register_did_entry_payload
+from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import sign_message
 from awid_service.routes import did as did_routes
 
@@ -55,11 +55,14 @@ async def test_register_did_accepts_identity_only_vector(
 ):
     body = _register_body(register_vector)
 
-    expected_entry_payload = register_did_entry_payload(
+    expected_entry_payload = log_entry_payload(
         did_aw=body["did_aw"],
-        did_key=body["did_key"],
-        prev_entry_hash=body["prev_entry_hash"],
         seq=body["seq"],
+        operation=body["operation"],
+        previous_did_key=body["previous_did_key"],
+        new_did_key=body["new_did_key"],
+        prev_entry_hash=body["prev_entry_hash"],
+        state_hash=body["state_hash"],
         authorized_by=body["authorized_by"],
         timestamp=body["timestamp"],
     )
@@ -71,7 +74,7 @@ async def test_register_did_accepts_identity_only_vector(
     assert response.json() == {
         "registered": True,
         "did_aw": body["did_aw"],
-        "current_did_key": body["did_key"],
+        "current_did_key": body["new_did_key"],
     }
 
     db = awid_db_infra.get_manager("aweb")
@@ -84,12 +87,12 @@ async def test_register_did_accepts_identity_only_vector(
         body["did_aw"],
     )
     assert mapping["did_aw"] == body["did_aw"]
-    assert mapping["current_did_key"] == body["did_key"]
+    assert mapping["current_did_key"] == body["new_did_key"]
     assert mapping["server_url"] == ""
     assert mapping["address"] == ""
     assert mapping["handle"] is None
 
-    expected_state_hash = identity_state_hash(did_aw=body["did_aw"], current_did_key=body["did_key"])
+    expected_state_hash = identity_state_hash(did_aw=body["did_aw"], current_did_key=body["new_did_key"])
     assert expected_state_hash == register_vector["state_hash"]
 
     log_entry = await db.fetch_one(
@@ -104,7 +107,7 @@ async def test_register_did_accepts_identity_only_vector(
     )
     assert log_entry["operation"] == "register_did"
     assert log_entry["previous_did_key"] is None
-    assert log_entry["new_did_key"] == body["did_key"]
+    assert log_entry["new_did_key"] == body["new_did_key"]
     assert log_entry["prev_entry_hash"] is None
     assert log_entry["entry_hash"] == register_vector["entry_hash"]
     assert log_entry["state_hash"] == expected_state_hash
@@ -115,7 +118,7 @@ async def test_register_did_accepts_identity_only_vector(
     key_response = await client.get(f"/v1/did/{body['did_aw']}/key")
     assert key_response.status_code == 200, key_response.text
     key_payload = key_response.json()
-    assert key_payload["current_did_key"] == body["did_key"]
+    assert key_payload["current_did_key"] == body["new_did_key"]
     assert key_payload["log_head"]["operation"] == "register_did"
     assert key_payload["log_head"]["state_hash"] == expected_state_hash
 
@@ -133,7 +136,7 @@ async def test_register_did_accepts_identity_only_vector(
     assert full_response.status_code == 200, full_response.text
     full_payload = full_response.json()
     assert full_payload["did_aw"] == body["did_aw"]
-    assert full_payload["current_did_key"] == body["did_key"]
+    assert full_payload["current_did_key"] == body["new_did_key"]
     assert full_payload["server"] == ""
     assert full_payload["address"] == ""
     assert full_payload["handle"] is None
@@ -169,8 +172,11 @@ async def test_register_did_conflicts_for_existing_did_aw_with_different_key(
     assert response.status_code == 200, response.text
 
     conflict_body = dict(body)
-    conflict_body["did_key"] = identity_vectors["mapping"]["rotated_did_key"]
+    conflict_body["new_did_key"] = identity_vectors["mapping"]["rotated_did_key"]
     conflict_body["authorized_by"] = identity_vectors["mapping"]["rotated_did_key"]
+    conflict_body["state_hash"] = next(
+        entry["state_hash"] for entry in identity_vectors["entries"] if entry["name"] == "rotate_key"
+    )
     conflict_body["proof"] = "not-checked-for-conflict"
 
     conflict = await client.post("/v1/did", json=conflict_body)
@@ -179,11 +185,33 @@ async def test_register_did_conflicts_for_existing_did_aw_with_different_key(
 
 
 @pytest.mark.asyncio
-async def test_register_did_rejects_legacy_bundled_address_payload(client, register_vector):
+async def test_register_did_rejects_legacy_did_key_payload(client, register_vector):
     body = _register_body(register_vector)
-    body["address"] = "example.com/alice"
+    body["did_key"] = body["new_did_key"]
 
     response = await client.post("/v1/did", json=body)
 
     assert response.status_code == 422, response.text
     assert "awid-sot.md" in response.text
+
+
+@pytest.mark.asyncio
+async def test_register_did_rejects_non_null_previous_did_key(client, register_vector):
+    body = _register_body(register_vector)
+    body["previous_did_key"] = body["new_did_key"]
+
+    response = await client.post("/v1/did", json=body)
+
+    assert response.status_code == 422, response.text
+    assert "awid-sot.md" in response.text
+
+
+@pytest.mark.asyncio
+async def test_register_did_state_hash_tamper_breaks_signature(client, register_vector):
+    body = _register_body(register_vector)
+    body["state_hash"] = "0" * 64
+
+    response = await client.post("/v1/did", json=body)
+
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"] == "invalid proof"
