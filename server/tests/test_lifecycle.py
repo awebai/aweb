@@ -278,6 +278,7 @@ async def test_lifecycle_archive_persistent_agent_cleans_coordination_state(
     assert result.reservation_release_count == 1
     assert result.chat_participant_cleanup_count == 1
     assert result.chat_waiting_cleanup_status == "cleared"
+    assert result.chat_waiting_session_clear_count == 1
     assert result.chat_waiting_cleared_count == 1
     assert len(result.workspace_changes) == 2
     assert "agent.archive_persistent" in result.completed_mutations
