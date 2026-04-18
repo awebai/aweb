@@ -17,7 +17,12 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.did import did_from_public_key, stable_id_from_did_key
-from awid.log import canonical_server_origin, log_entry_payload, state_hash
+from awid.log import (
+    canonical_server_origin,
+    identity_state_hash,
+    log_entry_payload,
+    state_hash,
+)
 from awid.signing import canonical_json_bytes, sign_message
 
 
@@ -131,6 +136,24 @@ class AlreadyRegisteredError(RegistryError):
         )
 
 
+class DIDRegistrationRequiredError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw must be registered before address assignment",
+            status_code=409,
+            detail="did_aw must be registered before address assignment",
+        )
+
+
+class DIDCurrentKeyMismatchError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw current key does not match",
+            status_code=409,
+            detail="did_aw current key does not match",
+        )
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     registry_url: str
@@ -199,6 +222,11 @@ class RegistryClient:
                 detail = response.json().get("detail")
             except Exception:
                 detail = None
+            if response.status_code == 409:
+                if detail == "did_aw must be registered before address assignment":
+                    raise DIDRegistrationRequiredError()
+                if detail == "did_aw current key does not match":
+                    raise DIDCurrentKeyMismatchError()
             raise RegistryError(
                 detail or response.text,
                 status_code=response.status_code,
@@ -257,21 +285,14 @@ class RegistryClient:
             raise ValueError("signing_key must match did_key for DID registration")
 
         did_aw = stable_id_from_did_key(did_key)
-        canonical_server = "" if server_url is None or not server_url.strip() else canonical_server_origin(server_url)
         timestamp = _utc_timestamp()
-        mapping_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=did_key,
-            server=canonical_server,
-            address="",
-            handle=None,
-        )
+        mapping_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
         proof = sign_message(
             signing_key,
             log_entry_payload(
                 did_aw=did_aw,
                 seq=1,
-                operation="create",
+                operation="register_did",
                 previous_did_key=None,
                 new_did_key=did_key,
                 prev_entry_hash=None,
@@ -286,10 +307,9 @@ class RegistryClient:
                 "/v1/did",
                 json={
                     "did_aw": did_aw,
-                    "did_key": did_key,
-                    "server": canonical_server,
-                    "address": "",
-                    "handle": None,
+                    "operation": "register_did",
+                    "previous_did_key": None,
+                    "new_did_key": did_key,
                     "seq": 1,
                     "prev_entry_hash": None,
                     "state_hash": mapping_state_hash,
@@ -333,13 +353,7 @@ class RegistryClient:
         timestamp = _utc_timestamp()
         seq = key_resolution.log_head.seq + 1
         prev_entry_hash = key_resolution.log_head.entry_hash
-        next_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=new_did_key,
-            server=current_mapping.server,
-            address=current_mapping.address,
-            handle=current_mapping.handle,
-        )
+        next_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=new_did_key)
         signature = sign_message(
             old_signing_key,
             log_entry_payload(

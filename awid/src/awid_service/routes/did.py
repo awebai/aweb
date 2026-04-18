@@ -7,23 +7,22 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from awid_service.deps import get_db as get_db_infra
 from awid.ratelimit import rate_limit_dep
 from awid.did import (
     public_key_from_did,
-    stable_id_from_did_key,
     stable_id_from_public_key,
     validate_stable_id,
 )
 from awid.log import (
+    identity_state_hash as awid_identity_state_hash,
     log_entry_payload as awid_log_entry_payload,
     require_canonical_server_origin,
     sha256_hex as awid_sha256_hex,
-    state_hash as awid_state_hash,
 )
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.routes.dns_addresses import AddressListResponse, AddressResponse
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
@@ -32,17 +31,39 @@ router = APIRouter(prefix="/v1/did", tags=["did"])
 
 
 class DidRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     did_aw: str = Field(..., max_length=256)
-    did_key: str = Field(..., max_length=256)
-    server: str | None = Field(default=None, max_length=512)
-    address: str = Field(..., max_length=256)
-    handle: str | None = Field(default=None, max_length=256)
-    seq: int = Field(default=1, ge=1)
-    prev_entry_hash: str | None = Field(default=None, max_length=128)
+    new_did_key: str = Field(..., max_length=256)
+    operation: Literal["register_did"]
+    previous_did_key: str | None
+    prev_entry_hash: str | None
+    seq: Literal[1]
     state_hash: str = Field(..., max_length=128)
     authorized_by: str = Field(..., max_length=256)
     timestamp: str = Field(..., max_length=64)
     proof: str = Field(..., max_length=2048)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_bundled_fields(cls, data):
+        if isinstance(data, dict):
+            legacy_fields = {"address", "server", "handle", "did_key"} & set(data)
+            if legacy_fields:
+                fields = ", ".join(sorted(legacy_fields))
+                raise ValueError(
+                    f"legacy bundled DID payload fields are not accepted ({fields}); "
+                    "see awid-sot.md#identity-operations"
+                )
+        return data
+
+    @model_validator(mode="after")
+    def reject_register_previous_key(self):
+        if self.previous_did_key is not None:
+            raise ValueError(
+                "register_did previous_did_key must be null; see awid-sot.md#identity-operations"
+            )
+        return self
 
 
 class DidKeyEvidence(BaseModel):
@@ -85,9 +106,10 @@ class DidFullResponse(BaseModel):
 
 
 class DidUpdateRequest(BaseModel):
-    operation: Literal["rotate_key", "update_server"] = "rotate_key"
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["rotate_key"] = "rotate_key"
     new_did_key: str = Field(..., max_length=256)
-    server: str | None = Field(default=None, max_length=512)
     seq: int = Field(..., ge=1)
     prev_entry_hash: str = Field(..., max_length=128)
     state_hash: str = Field(..., max_length=128)
@@ -137,18 +159,27 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
         enforce_timestamp_skew(req.timestamp)
-        canonical_server = _normalize_mapping_server(req.server)
-        address = _normalize_mapping_address(req.address)
-        if req.seq != 1 or req.prev_entry_hash is not None:
-            raise ValueError("seq must be 1 and prev_entry_hash must be null on create")
-        if req.authorized_by != req.did_key:
-            raise ValueError("authorized_by must equal did_key on create")
-        public_key = public_key_from_did(req.did_key)
-        derived = stable_id_from_public_key(public_key)
-        if derived != req.did_aw:
-            raise ValueError("did_aw does not match did_key derivation")
+        if req.prev_entry_hash is not None:
+            raise ValueError("prev_entry_hash must be null on register_did")
+        if req.authorized_by != req.new_did_key:
+            raise ValueError("authorized_by must equal new_did_key on register_did")
+        public_key = public_key_from_did(req.new_did_key)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    entry_payload = awid_log_entry_payload(
+        did_aw=req.did_aw,
+        seq=req.seq,
+        operation=req.operation,
+        previous_did_key=req.previous_did_key,
+        new_did_key=req.new_did_key,
+        prev_entry_hash=req.prev_entry_hash,
+        state_hash=req.state_hash,
+        authorized_by=req.authorized_by,
+        timestamp=req.timestamp,
+    )
+    entry_hash = awid_sha256_hex(entry_payload)
+    state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.new_did_key)
 
     db = _db(request)
     created_at = _now()
@@ -156,39 +187,34 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
 
     async with db.transaction() as tx:
         existing = await tx.fetch_one(
-            "SELECT did_aw FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+            """
+            SELECT did_aw, current_did_key
+            FROM {{tables.did_aw_mappings}}
+            WHERE did_aw = $1
+            """,
             req.did_aw,
         )
         if existing is not None:
+            if existing["current_did_key"] == req.new_did_key:
+                return {
+                    "registered": True,
+                    "did_aw": existing["did_aw"],
+                    "current_did_key": existing["current_did_key"],
+                }
             raise HTTPException(status_code=409, detail="did_aw already registered")
 
-        state_hash = awid_state_hash(
-            did_aw=req.did_aw,
-            current_did_key=req.did_key,
-            server=canonical_server,
-            address=address,
-            handle=req.handle,
-        )
-        if state_hash != req.state_hash:
-            raise HTTPException(status_code=400, detail="state_hash mismatch")
+        derived = stable_id_from_public_key(public_key)
+        if derived != req.did_aw:
+            raise HTTPException(status_code=400, detail="did_aw does not match new_did_key derivation")
 
-        entry_payload = awid_log_entry_payload(
-            did_aw=req.did_aw,
-            seq=1,
-            operation="create",
-            previous_did_key=None,
-            new_did_key=req.did_key,
-            prev_entry_hash=None,
-            state_hash=state_hash,
-            authorized_by=req.did_key,
-            timestamp=req.timestamp,
-        )
         try:
             verify_did_key_signature(
-                did_key=req.did_key, payload=entry_payload, signature_b64=req.proof
+                did_key=req.new_did_key, payload=entry_payload, signature_b64=req.proof
             )
         except Exception as exc:
             raise HTTPException(status_code=401, detail="invalid proof") from exc
+        if state_hash != req.state_hash:
+            raise HTTPException(status_code=400, detail="state_hash mismatch")
 
         await tx.execute(
             """
@@ -197,15 +223,13 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
             req.did_aw,
-            req.did_key,
-            canonical_server,
-            address,
-            req.handle,
+            req.new_did_key,
+            "",
+            "",
+            None,
             created_at,
             updated_at,
         )
-
-        entry_hash = awid_sha256_hex(entry_payload)
 
         await tx.execute(
             """
@@ -217,19 +241,23 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             """,
             req.did_aw,
             1,
-            "create",
+            "register_did",
             None,
-            req.did_key,
+            req.new_did_key,
             None,
             entry_hash,
             state_hash,
-            req.did_key,
+            req.new_did_key,
             req.proof,
             req.timestamp,
             created_at,
         )
 
-    return {"registered": True}
+    return {
+        "registered": True,
+        "did_aw": req.did_aw,
+        "current_did_key": req.new_did_key,
+    }
 
 
 @router.get(
@@ -505,12 +533,6 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
         did_aw = validate_stable_id(did_aw)
         enforce_timestamp_skew(req.timestamp)
         public_key_from_did(req.new_did_key)
-        if req.operation == "update_server":
-            if req.server is None:
-                raise ValueError("update_server requires a server URL")
-            require_canonical_server_origin(req.server)
-        elif req.server is not None:
-            raise ValueError("rotate_key must not include server")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -528,10 +550,8 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
             raise HTTPException(status_code=404, detail="not found")
 
         previous_did_key = row["current_did_key"]
-        if req.operation == "rotate_key" and req.new_did_key == previous_did_key:
+        if req.new_did_key == previous_did_key:
             raise HTTPException(status_code=400, detail="rotate_key requires a different did:key")
-        if req.operation == "update_server" and req.new_did_key != previous_did_key:
-            raise HTTPException(status_code=400, detail="update_server must not change did:key")
         if req.authorized_by != previous_did_key:
             raise HTTPException(status_code=401, detail="authorized_by must be current did:key")
 
@@ -555,32 +575,7 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
         if req.prev_entry_hash != prev_entry_hash:
             raise HTTPException(status_code=409, detail="prev_entry_hash mismatch")
 
-        try:
-            if req.operation == "update_server":
-                if req.server is None or not req.server.strip():
-                    raise HTTPException(status_code=400, detail="server is required for update_server")
-                server_url = require_canonical_server_origin(req.server)
-            else:
-                stored_server = row["server_url"]
-                server_url = (
-                    require_canonical_server_origin(stored_server)
-                    if stored_server and stored_server.strip()
-                    else ""
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        address = row["address"]
-        handle = row["handle"]
-        state_hash = awid_state_hash(
-            did_aw=did_aw,
-            current_did_key=req.new_did_key,
-            server=server_url,
-            address=address,
-            handle=handle,
-        )
+        state_hash = awid_identity_state_hash(did_aw=did_aw, current_did_key=req.new_did_key)
         if state_hash != req.state_hash:
             raise HTTPException(status_code=400, detail="state_hash mismatch")
 
@@ -610,17 +605,11 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
             """
             UPDATE {{tables.did_aw_mappings}}
             SET current_did_key = $2,
-                server_url = $3,
-                address = $4,
-                handle = $5,
                 updated_at = NOW()
             WHERE did_aw = $1
             """,
             did_aw,
             req.new_did_key,
-            server_url,
-            address,
-            handle,
         )
 
         await tx.execute(

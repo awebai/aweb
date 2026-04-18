@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ import awid_service.routes.dns_namespace_reverify as dns_namespace_reverify_rout
 import awid_service.routes.dns_namespaces as dns_namespaces_routes
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
+from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
@@ -19,6 +21,82 @@ from awid_service.main import create_app
 async def _register_namespace(client, signing_key, controller_did, domain):
     headers = _sign(signing_key, controller_did, domain=domain, operation="register")
     resp = await client.post("/v1/namespaces", json={"domain": domain}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _register_identity(client, signing_key, did_key):
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="register_did",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+    resp = await client.post(
+        "/v1/did",
+        json={
+            "did_aw": did_aw,
+            "new_did_key": did_key,
+            "operation": "register_did",
+            "previous_did_key": None,
+            "prev_entry_hash": None,
+            "seq": 1,
+            "state_hash": state_hash,
+            "authorized_by": did_key,
+            "timestamp": timestamp,
+            "proof": proof,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _rotate_identity(client, old_signing_key, did_aw, old_did_key, new_did_key):
+    key_resp = await client.get(f"/v1/did/{did_aw}/key")
+    assert key_resp.status_code == 200, key_resp.text
+    head = key_resp.json()["log_head"]
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=new_did_key)
+    seq = head["seq"] + 1
+    signature = sign_message(
+        old_signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=seq,
+            operation="rotate_key",
+            previous_did_key=old_did_key,
+            new_did_key=new_did_key,
+            prev_entry_hash=head["entry_hash"],
+            state_hash=state_hash,
+            authorized_by=old_did_key,
+            timestamp=timestamp,
+        ),
+    )
+    resp = await client.put(
+        f"/v1/did/{did_aw}",
+        json={
+            "operation": "rotate_key",
+            "new_did_key": new_did_key,
+            "seq": seq,
+            "prev_entry_hash": head["entry_hash"],
+            "state_hash": state_hash,
+            "authorized_by": old_did_key,
+            "timestamp": timestamp,
+            "signature": signature,
+        },
+    )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -39,8 +117,9 @@ async def _create_team(client, signing_key, controller_did, domain, team_name):
 
 
 async def _register_address(client, signing_key, controller_did, domain, name):
-    _, member_pub = generate_keypair()
+    member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
+    await _register_identity(client, member_key, member_did_key)
     headers = _sign(
         signing_key, controller_did, domain=domain, operation="register_address", name=name,
     )
@@ -65,10 +144,17 @@ async def _register_address_for_identity(
     domain,
     name,
     *,
-    member_did_key: str,
+    member_signing_key: bytes | None = None,
+    member_did_key: str | None = None,
     reachability: str,
     visible_to_team_id: str | None = None,
 ):
+    if member_did_key is None:
+        member_signing_key, member_pub = generate_keypair()
+        member_did_key = did_from_public_key(member_pub)
+    if member_signing_key is None:
+        raise AssertionError("member_signing_key is required when member_did_key is supplied")
+    await _register_identity(client, member_signing_key, member_did_key)
     headers = _sign(
         signing_key, controller_did, domain=domain, operation="register_address", name=name,
     )
@@ -1004,6 +1090,7 @@ async def test_nobody_address_get_requires_owner_signature(client, controller_id
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="nobody",
     )
@@ -1038,6 +1125,7 @@ async def test_address_get_nonexistent_matches_nobody_404_shape(client, controll
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="nobody",
     )
@@ -1066,7 +1154,6 @@ async def test_list_addresses_filters_nobody_to_owner(client, controller_identit
         ns_did,
         domain,
         "public-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="public",
     )
     await _register_address_for_identity(
@@ -1075,6 +1162,7 @@ async def test_list_addresses_filters_nobody_to_owner(client, controller_identit
         ns_did,
         domain,
         "nobody-alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="nobody",
     )
@@ -1102,7 +1190,6 @@ async def test_list_addresses_namespace_controller_bypasses_visibility_filters(c
         ns_did,
         domain,
         "nobody-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="nobody",
     )
     await _register_address_for_identity(
@@ -1111,7 +1198,6 @@ async def test_list_addresses_namespace_controller_bypasses_visibility_filters(c
         ns_did,
         domain,
         "public-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="public",
     )
 
@@ -1150,6 +1236,7 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="org_only",
     )
@@ -1213,6 +1300,7 @@ async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(cl
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="org_only",
     )
@@ -1250,7 +1338,6 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
         ns_did,
         domain,
         "org-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="org_only",
     )
     await _register_address_for_identity(
@@ -1259,7 +1346,6 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
         ns_did,
         domain,
         "public-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="public",
     )
     await _register_certificate(
@@ -1310,6 +1396,7 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="team_members_only",
         visible_to_team_id=f"backend:{domain}",
@@ -1387,7 +1474,6 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
         ns_did,
         domain,
         "backend-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="team_members_only",
         visible_to_team_id=f"backend:{domain}",
     )
@@ -1397,7 +1483,6 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
         ns_did,
         domain,
         "public-alice",
-        member_did_key=did_from_public_key(generate_keypair()[1]),
         reachability="public",
     )
     await _register_certificate(
@@ -1463,12 +1548,117 @@ async def test_register_address_rejects_legacy_reachability_values(client, contr
 
 
 @pytest.mark.asyncio
+async def test_register_address_requires_registered_did(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    _, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    domain = "unregistered-address-did.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": stable_id_from_did_key(owner_did_key),
+            "current_did_key": owner_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "did_aw must be registered before address assignment"
+
+
+@pytest.mark.asyncio
+async def test_register_address_accepts_registered_did_without_extra_identity_rows(
+    client,
+    controller_identity,
+    awid_db_infra,
+):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    owner_did_aw = stable_id_from_did_key(owner_did_key)
+    domain = "registered-address-did.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": owner_did_aw,
+            "current_did_key": owner_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["did_aw"] == owner_did_aw
+
+    db = awid_db_infra.get_manager("aweb")
+    mapping_count = await db.fetch_one(
+        "SELECT COUNT(*) AS count FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        owner_did_aw,
+    )
+    assert mapping_count["count"] == 1
+    address = await db.fetch_one(
+        """
+        SELECT did_aw, current_did_key
+        FROM {{tables.public_addresses}}
+        WHERE namespace_id = (
+            SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1
+        )
+        AND name = $2
+        """,
+        domain,
+        "alice",
+    )
+    assert address["did_aw"] == owner_did_aw
+    assert address["current_did_key"] == owner_did_key
+
+
+@pytest.mark.asyncio
+async def test_register_address_rejects_stale_did_key_after_rotation(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    old_key, old_pub = generate_keypair()
+    old_did_key = did_from_public_key(old_pub)
+    _, new_pub = generate_keypair()
+    new_did_key = did_from_public_key(new_pub)
+    owner_did_aw = stable_id_from_did_key(old_did_key)
+    domain = "rotated-address-did.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, old_key, old_did_key)
+    await _rotate_identity(client, old_key, owner_did_aw, old_did_key, new_did_key)
+
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": "alice",
+            "did_aw": owner_did_aw,
+            "current_did_key": old_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "did_aw current key does not match"
+
+
+@pytest.mark.asyncio
 async def test_register_team_members_only_requires_visible_to_team_id(client, controller_identity):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
     domain = "missing-team-scope.example"
     await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
     headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
@@ -1491,6 +1681,7 @@ async def test_register_non_team_members_only_rejects_visible_to_team_id(client,
     owner_did_key = did_from_public_key(owner_pub)
     domain = "unexpected-team-scope.example"
     await _register_namespace(client, ns_key, ns_did, domain)
+    await _register_identity(client, owner_key, owner_did_key)
     await _create_team(client, ns_key, ns_did, domain, "backend")
     headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
     resp = await client.post(
@@ -1522,6 +1713,7 @@ async def test_update_address_clears_visible_to_team_id_when_leaving_team_member
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="team_members_only",
         visible_to_team_id=f"backend:{domain}",
@@ -1552,6 +1744,7 @@ async def test_update_address_rejects_visible_to_team_id_with_org_only(client, c
         ns_did,
         domain,
         "alice",
+        member_signing_key=owner_key,
         member_did_key=owner_did_key,
         reachability="nobody",
     )
