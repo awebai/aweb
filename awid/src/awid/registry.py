@@ -17,7 +17,11 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.did import did_from_public_key, stable_id_from_did_key
-from awid.log import canonical_server_origin, log_entry_payload, state_hash
+from awid.log import (
+    canonical_server_origin,
+    identity_state_hash,
+    log_entry_payload,
+)
 from awid.signing import canonical_json_bytes, sign_message
 
 
@@ -54,9 +58,6 @@ class DIDKeyEvidence:
 class DIDMapping:
     did_aw: str
     current_did_key: str
-    server: str
-    address: str
-    handle: str | None
     created_at: str
     updated_at: str
 
@@ -131,6 +132,33 @@ class AlreadyRegisteredError(RegistryError):
         )
 
 
+class DIDRegistrationRequiredError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw must be registered before address assignment",
+            status_code=409,
+            detail="did_aw must be registered before address assignment",
+        )
+
+
+class DIDCurrentKeyMismatchError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "did_aw current key does not match",
+            status_code=409,
+            detail="did_aw current key does not match",
+        )
+
+
+class AddressAlreadyBoundError(RegistryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "address already bound to a different did_aw",
+            status_code=409,
+            detail="address already bound to a different did_aw",
+        )
+
+
 @dataclass(frozen=True)
 class RegistryClient:
     registry_url: str
@@ -199,6 +227,13 @@ class RegistryClient:
                 detail = response.json().get("detail")
             except Exception:
                 detail = None
+            if response.status_code == 409:
+                if detail == "did_aw must be registered before address assignment":
+                    raise DIDRegistrationRequiredError()
+                if detail == "did_aw current key does not match":
+                    raise DIDCurrentKeyMismatchError()
+                if detail == "address already bound to a different did_aw":
+                    raise AddressAlreadyBoundError()
             raise RegistryError(
                 detail or response.text,
                 status_code=response.status_code,
@@ -250,28 +285,20 @@ class RegistryClient:
         self,
         did_key: str,
         signing_key: bytes,
-        server_url: str | None = None,
     ) -> DIDMapping:
         signer_did = _did_key_from_signing_key(signing_key)
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
         did_aw = stable_id_from_did_key(did_key)
-        canonical_server = "" if server_url is None or not server_url.strip() else canonical_server_origin(server_url)
         timestamp = _utc_timestamp()
-        mapping_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=did_key,
-            server=canonical_server,
-            address="",
-            handle=None,
-        )
+        mapping_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
         proof = sign_message(
             signing_key,
             log_entry_payload(
                 did_aw=did_aw,
                 seq=1,
-                operation="create",
+                operation="register_did",
                 previous_did_key=None,
                 new_did_key=did_key,
                 prev_entry_hash=None,
@@ -286,10 +313,9 @@ class RegistryClient:
                 "/v1/did",
                 json={
                     "did_aw": did_aw,
-                    "did_key": did_key,
-                    "server": canonical_server,
-                    "address": "",
-                    "handle": None,
+                    "operation": "register_did",
+                    "previous_did_key": None,
+                    "new_did_key": did_key,
                     "seq": 1,
                     "prev_entry_hash": None,
                     "state_hash": mapping_state_hash,
@@ -333,13 +359,7 @@ class RegistryClient:
         timestamp = _utc_timestamp()
         seq = key_resolution.log_head.seq + 1
         prev_entry_hash = key_resolution.log_head.entry_hash
-        next_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=new_did_key,
-            server=current_mapping.server,
-            address=current_mapping.address,
-            handle=current_mapping.handle,
-        )
+        next_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=new_did_key)
         signature = sign_message(
             old_signing_key,
             log_entry_payload(
@@ -369,63 +389,6 @@ class RegistryClient:
             },
         )
         return await self.get_mapping(did_aw, new_signing_key)
-
-    async def update_server(
-        self,
-        did_aw: str,
-        server_url: str,
-        signing_key: bytes,
-    ) -> DIDMapping:
-        current_did_key = _did_key_from_signing_key(signing_key)
-        current_mapping = await self.get_mapping(did_aw, signing_key)
-        if current_mapping.current_did_key != current_did_key:
-            raise ValueError("signing_key does not match the current did:key")
-
-        key_resolution = await self.resolve_key(did_aw)
-        if key_resolution.log_head is None:
-            raise ValueError("DID registry response is missing log_head")
-
-        canonical_server = canonical_server_origin(server_url)
-        timestamp = _utc_timestamp()
-        seq = key_resolution.log_head.seq + 1
-        prev_entry_hash = key_resolution.log_head.entry_hash
-        next_state_hash = state_hash(
-            did_aw=did_aw,
-            current_did_key=current_did_key,
-            server=canonical_server,
-            address=current_mapping.address,
-            handle=current_mapping.handle,
-        )
-        signature = sign_message(
-            signing_key,
-            log_entry_payload(
-                did_aw=did_aw,
-                seq=seq,
-                operation="update_server",
-                previous_did_key=current_did_key,
-                new_did_key=current_did_key,
-                prev_entry_hash=prev_entry_hash,
-                state_hash=next_state_hash,
-                authorized_by=current_did_key,
-                timestamp=timestamp,
-            ),
-        )
-        await self._request_json(
-            "PUT",
-            f"/v1/did/{did_aw}",
-            json={
-                "operation": "update_server",
-                "new_did_key": current_did_key,
-                "server": canonical_server,
-                "seq": seq,
-                "prev_entry_hash": prev_entry_hash,
-                "state_hash": next_state_hash,
-                "authorized_by": current_did_key,
-                "timestamp": timestamp,
-                "signature": signature,
-            },
-        )
-        return await self.get_mapping(did_aw, signing_key)
 
     async def register_namespace(
         self,
@@ -1046,11 +1009,10 @@ class CachedRegistryClient(RegistryClient):
         self,
         did_key: str,
         signing_key: bytes,
-        server_url: str | None = None,
     ) -> DIDMapping:
         did_aw = stable_id_from_did_key(did_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
-        mapping = await super().register_did(did_key, signing_key, server_url)
+        mapping = await super().register_did(did_key, signing_key)
         await self._invalidate_keys(self._did_key_cache_key(mapping.did_aw))
         return mapping
 
@@ -1063,17 +1025,6 @@ class CachedRegistryClient(RegistryClient):
     ) -> DIDMapping:
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         mapping = await super().rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
-        await self._invalidate_keys(self._did_key_cache_key(did_aw))
-        return mapping
-
-    async def update_server(
-        self,
-        did_aw: str,
-        server_url: str,
-        signing_key: bytes,
-    ) -> DIDMapping:
-        await self._invalidate_keys(self._did_key_cache_key(did_aw))
-        mapping = await super().update_server(did_aw, server_url, signing_key)
         await self._invalidate_keys(self._did_key_cache_key(did_aw))
         return mapping
 
@@ -1481,9 +1432,6 @@ def _did_mapping_from_json(data: dict[str, Any]) -> DIDMapping:
     return DIDMapping(
         did_aw=data["did_aw"],
         current_did_key=data["current_did_key"],
-        server=data["server"],
-        address=data["address"],
-        handle=data.get("handle"),
         created_at=data["created_at"],
         updated_at=data["updated_at"],
     )

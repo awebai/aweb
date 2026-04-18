@@ -21,7 +21,8 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Includes variants with and without stable ID fields
 
 - `identity-log-v1.json`
-  - Canonical stable-identity audit-log entry payload
+  - Canonical identity-only `register_did` and `rotate_key` envelope payloads
+  - Expected identity-only `state_hash` inputs and hashes
   - Expected `entry_hash` (sha256 hex)
   - Expected Ed25519 signature (base64, **no padding**)
 

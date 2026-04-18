@@ -98,7 +98,7 @@ DID operations.
 | **Algorithm** | Ed25519 |
 | **Private key location** | Self-custodial: `.aw/signing.key` in the workspace directory.  Custodial: operator's encrypted storage |
 | **Public key location** | awid `did_aw_mappings.current_did_key` (for persistent identities).  Also embedded in the team certificate as `member_did_key` |
-| **Authorizes** | Message signing, DID registration, DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
+| **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
 | **Created by** | Self-custodial: `aw init` (ephemeral) or `aw init --persistent --name <name>` (persistent).  Custodial: the operator's dashboard |
 | **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side |
 | **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
@@ -118,6 +118,22 @@ The identity signing key has two custody modes:
 The key type is the same — Ed25519, same operations, same authority.
 Custody determines who stores the private key and who can perform
 recovery.
+
+#### Identity vs address authority
+
+The identity signing key authorizes the identity-side operations
+(`register_did`, `rotate_key`) and nothing else. It does not authorize
+address creation. An address under `domain/name` is created by the
+namespace controller of `domain` — either the BYOD controller of
+`domain`, or the hosted operator for managed namespaces.
+
+This split is load-bearing. It means a `did_aw` can exist without
+any address (ephemeral-turned-durable upgrades, cross-namespace
+memberships), and a managed address can be assigned to a
+self-custodial `did_aw` without the hosted operator ever touching
+the identity key. The awid-side invariant — `did_aw` must be
+registered before any address can be bound to it — enforces the
+ordering; see [`awid-sot.md`](awid-sot.md#identity-operations).
 
 ---
 

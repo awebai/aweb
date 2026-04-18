@@ -86,6 +86,28 @@ type preparedIDCreate struct {
 	ControllerKey ed25519.PrivateKey
 }
 
+type idCreatePartialRegistryError struct {
+	err error
+	msg string
+}
+
+func (e *idCreatePartialRegistryError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.err == nil {
+		return e.msg
+	}
+	return e.msg + ": " + e.err.Error()
+}
+
+func (e *idCreatePartialRegistryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
 func runIDCreate(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(idCreateName) == "" {
 		return usageError("--name is required")
@@ -144,16 +166,21 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	registryStatus := "registered"
 	registryErr := ""
 	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
-		if !isRegistryUnavailableError(err) {
+		var partial *idCreatePartialRegistryError
+		if errors.As(err, &partial) {
+			registryStatus = "pending"
+			registryErr = err.Error()
+		} else if !isRegistryUnavailableError(err) {
 			return idCreateOutput{}, err
+		} else {
+			registryStatus = "pending"
+			registryErr = err.Error()
 		}
-		registryStatus = "pending"
-		registryErr = err.Error()
 		warnWriter := opts.PromptOut
 		if warnWriter == nil {
 			warnWriter = os.Stderr
 		}
-		fmt.Fprintf(warnWriter, "Warning: could not finish identity registration at %s: %v\n", plan.RegistryURL, err)
+		fmt.Fprintf(warnWriter, "Warning: could not finish registry setup at %s: %v\n", plan.RegistryURL, err)
 	}
 
 	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -367,10 +394,22 @@ func ensureStandaloneRegistryRegistration(
 	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
 		return err
 	}
-	if err := ensureStandaloneAddress(ctx, registry, plan, controllerKey); err != nil {
+	if err := ensureStandaloneDID(ctx, registry, plan, identityKey); err != nil {
 		return err
 	}
-	return ensureStandaloneDID(ctx, registry, plan, identityKey)
+	if err := ensureStandaloneAddress(ctx, registry, plan, controllerKey); err != nil {
+		return &idCreatePartialRegistryError{
+			err: err,
+			msg: fmt.Sprintf(
+				"did:aw %s is registered, but address %s was not claimed; rerun `aw id create --name %s --domain %s` to retry the address claim",
+				plan.DIDAW,
+				plan.Address,
+				plan.Name,
+				plan.Domain,
+			),
+		}
+	}
+	return nil
 }
 
 func ensureStandaloneNamespace(
@@ -526,30 +565,13 @@ func ensureStandaloneDID(
 	plan *idCreatePlan,
 	signingKey ed25519.PrivateKey,
 ) error {
-	mapping, err := registry.RegisterDID(ctx, plan.RegistryURL, "", plan.Address, plan.Name, plan.DIDKey, plan.DIDAW, signingKey)
+	_, err := registry.RegisterIdentity(ctx, plan.RegistryURL, plan.DIDKey, plan.DIDAW, signingKey)
 	if already := new(awid.AlreadyRegisteredError); errors.As(err, &already) {
 		if strings.TrimSpace(already.ExistingDIDKey) != plan.DIDKey {
 			return fmt.Errorf("did:aw %s is already registered to %s", already.DIDAW, already.ExistingDIDKey)
 		}
-		mapping, err = registry.GetDIDFull(ctx, plan.RegistryURL, plan.DIDAW, signingKey)
-		if err != nil {
-			return err
-		}
 	} else if err != nil {
 		return err
-	}
-	if strings.TrimSpace(mapping.Server) != "" {
-		return fmt.Errorf("did:aw %s is already bound to server %s", plan.DIDAW, mapping.Server)
-	}
-	if strings.TrimSpace(mapping.Address) != plan.Address {
-		return fmt.Errorf("did:aw %s is already bound to address %s", plan.DIDAW, mapping.Address)
-	}
-	handle := ""
-	if mapping.Handle != nil {
-		handle = strings.TrimSpace(*mapping.Handle)
-	}
-	if handle != plan.Name {
-		return fmt.Errorf("did:aw %s is already bound to handle %s", plan.DIDAW, handle)
 	}
 	return nil
 }

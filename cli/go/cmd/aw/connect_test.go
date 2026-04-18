@@ -52,12 +52,11 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				t.Fatal(err)
 			}
 			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["did_key"].(string)
-			if payload["address"] != "juanre.aweb.ai/laptop-agent" {
-				t.Fatalf("address=%v", payload["address"])
-			}
-			if payload["handle"] != "laptop-agent" {
-				t.Fatalf("handle=%v", payload["handle"])
+			persistentDidKey, _ = payload["new_did_key"].(string)
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
 			}
 			didRegistered = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
@@ -66,8 +65,8 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
 				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
+				"address":         "",
+				"handle":          nil,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -197,6 +196,57 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 
 	if !strings.Contains(string(out), "Status:      connected") {
 		t.Fatalf("output=%q", string(out))
+	}
+}
+
+func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	var (
+		registerCalls int
+		keyLookups    int
+	)
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			registerCalls++
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"detail":"did_aw already registered"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/key":
+			keyLookups++
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"did_aw":          stableID,
+				"current_did_key": didKey,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stableID+"/full":
+			t.Fatal("same-key registration conflict should not fetch full mapping")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	registry := awid.NewAWIDRegistryClient(server.Client(), nil)
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := registerBootstrapDID(ctx, registry, didKey, stableID, priv); err != nil {
+		t.Fatalf("registerBootstrapDID returned error for same-key conflict: %v", err)
+	}
+	if registerCalls != 1 {
+		t.Fatalf("register_calls=%d want 1", registerCalls)
+	}
+	if keyLookups != 1 {
+		t.Fatalf("key_lookups=%d want 1", keyLookups)
 	}
 }
 
@@ -388,15 +438,15 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			persistentDidAW, _ = payload["did_aw"].(string)
-			persistentDidKey, _ = payload["did_key"].(string)
+			persistentDidKey, _ = payload["new_did_key"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case r.Method == http.MethodGet && persistentDidAW != "" && r.URL.Path == "/v1/did/"+persistentDidAW+"/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
 				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
+				"address":         "",
+				"handle":          nil,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})

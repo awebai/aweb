@@ -11,6 +11,8 @@ import awid.dns_verify as dns_verify_module
 from awid.registry import (
     AlreadyRegisteredError,
     CachedRegistryClient,
+    DIDCurrentKeyMismatchError,
+    DIDRegistrationRequiredError,
     RegistryError,
     RegistryClient,
 )
@@ -21,7 +23,7 @@ from awid.did import (
 )
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 import awid.registry as registry_module
-from awid.log import log_entry_payload
+from awid.log import identity_state_hash, log_entry_payload
 
 
 def _authorization_parts(header: str) -> tuple[str, str]:
@@ -77,17 +79,23 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
         if request.method == "POST" and request.url.path == "/v1/did":
             payload = json.loads(request.content.decode("utf-8"))
             assert payload["did_aw"] == did_aw
-            assert payload["did_key"] == did_key
+            assert payload["new_did_key"] == did_key
+            assert payload["previous_did_key"] is None
+            assert payload["operation"] == "register_did"
             assert payload["authorized_by"] == did_key
-            assert payload["server"] == "https://registry.example"
+            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+            assert "did_key" not in payload
+            assert "server" not in payload
+            assert "address" not in payload
+            assert "handle" not in payload
             verify_did_key_signature(
-                did_key=payload["did_key"],
+                did_key=payload["new_did_key"],
                 payload=log_entry_payload(
                     did_aw=payload["did_aw"],
                     seq=payload["seq"],
-                    operation="create",
-                    previous_did_key=None,
-                    new_did_key=payload["did_key"],
+                    operation=payload["operation"],
+                    previous_did_key=payload["previous_did_key"],
+                    new_did_key=payload["new_did_key"],
                     prev_entry_hash=payload["prev_entry_hash"],
                     state_hash=payload["state_hash"],
                     authorized_by=payload["authorized_by"],
@@ -110,7 +118,7 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
                 json={
                     "did_aw": did_aw,
                     "current_did_key": did_key,
-                    "server": "https://registry.example",
+                    "server": "",
                     "address": "",
                     "handle": None,
                     "created_at": "2026-04-03T00:00:00Z",
@@ -128,6 +136,7 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
 
     assert mapping.did_aw == did_aw
     assert mapping.current_did_key == did_key
+    assert mapping.server == ""
     assert [request.url.path for request in requests] == ["/v1/did", f"/v1/did/{did_aw}/full"]
 
 
@@ -140,16 +149,21 @@ async def test_register_did_allows_standalone_creation_without_server():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/v1/did":
             payload = json.loads(request.content.decode("utf-8"))
-            assert payload["server"] == ""
-            assert payload["address"] == ""
+            assert payload["new_did_key"] == did_key
+            assert payload["previous_did_key"] is None
+            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+            assert "did_key" not in payload
+            assert "server" not in payload
+            assert "address" not in payload
+            assert "handle" not in payload
             verify_did_key_signature(
-                did_key=payload["did_key"],
+                did_key=payload["new_did_key"],
                 payload=log_entry_payload(
                     did_aw=payload["did_aw"],
                     seq=payload["seq"],
-                    operation="create",
-                    previous_did_key=None,
-                    new_did_key=payload["did_key"],
+                    operation=payload["operation"],
+                    previous_did_key=payload["previous_did_key"],
+                    new_did_key=payload["new_did_key"],
                     prev_entry_hash=payload["prev_entry_hash"],
                     state_hash=payload["state_hash"],
                     authorized_by=payload["authorized_by"],
@@ -221,7 +235,7 @@ async def test_register_did_raises_already_registered_error_with_existing_key():
 async def test_register_address_resolves_current_key_before_posting():
     controller_signing_key, controller_public_key = generate_keypair()
     controller_did = did_from_public_key(controller_public_key)
-    subject_signing_key, subject_public_key = generate_keypair()
+    _, subject_public_key = generate_keypair()
     subject_did_key = did_from_public_key(subject_public_key)
     subject_did_aw = stable_id_from_did_key(subject_did_key)
     requests: list[httpx.Request] = []
@@ -292,6 +306,47 @@ async def test_register_address_resolves_current_key_before_posting():
         f"/v1/did/{subject_did_aw}/key",
         "/v1/namespaces/acme.com/addresses",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("detail", "error_type"),
+    [
+        (
+            "did_aw must be registered before address assignment",
+            DIDRegistrationRequiredError,
+        ),
+        ("did_aw current key does not match", DIDCurrentKeyMismatchError),
+    ],
+)
+async def test_register_address_maps_did_precondition_conflicts(detail, error_type):
+    controller_signing_key, _ = generate_keypair()
+    subject_signing_key, subject_public_key = generate_keypair()
+    subject_did_key = did_from_public_key(subject_public_key)
+    subject_did_aw = stable_id_from_did_key(subject_did_key)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/namespaces/acme.com/addresses"
+        return httpx.Response(409, json={"detail": detail})
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        await client.register_address(
+            "acme.com",
+            "support",
+            subject_did_aw,
+            controller_signing_key,
+            "public",
+            current_did_key=subject_did_key,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == detail
 
 
 @pytest.mark.asyncio
@@ -890,6 +945,7 @@ async def test_update_server_uses_current_key_and_signed_audit_payload():
             assert payload["operation"] == "update_server"
             assert payload["new_did_key"] == did_key
             assert payload["server"] == "https://new.example"
+            assert payload["state_hash"] == identity_state_hash(did_aw=did_aw, current_did_key=did_key)
             verify_did_key_signature(
                 did_key=did_key,
                 payload=log_entry_payload(

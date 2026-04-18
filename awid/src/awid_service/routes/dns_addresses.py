@@ -20,6 +20,8 @@ from awid_service.deps import get_db, get_domain_verifier
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
+_ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
+_DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
 
 
 def normalize_address_reachability(value: str | None, *, default: str = "nobody") -> str:
@@ -137,6 +139,54 @@ def _require_controller(caller_did: str, ns_row) -> None:
             status_code=403,
             detail="Only the namespace controller can manage addresses",
         )
+
+
+async def _require_registered_did(tx, *, did_aw: str, current_did_key: str) -> None:
+    row = await tx.fetch_one(
+        """
+        SELECT current_did_key
+        FROM {{tables.did_aw_mappings}}
+        WHERE did_aw = $1
+        FOR SHARE
+        """,
+        did_aw,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=409,
+            detail="did_aw must be registered before address assignment",
+        )
+    if row["current_did_key"] != current_did_key:
+        raise HTTPException(status_code=409, detail=_DID_CURRENT_KEY_MISMATCH_DETAIL)
+
+
+async def _lock_address_registration_key(tx, *, namespace_id, name: str) -> None:
+    await tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))",
+        f"public_addresses:{namespace_id}:{name}",
+    )
+
+
+async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str):
+    return await tx.fetch_one(
+        """
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+               pa.visible_to_team_id, pa.created_at
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+        WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
+        FOR SHARE OF pa, m
+        """,
+        namespace_id,
+        name,
+    )
+
+
+def _raise_address_registration_conflict(row, *, did_aw: str, current_did_key: str) -> None:
+    if row["did_aw"] != did_aw:
+        raise HTTPException(status_code=409, detail=_ADDRESS_ALREADY_BOUND_DETAIL)
+    if row["current_did_key"] != current_did_key:
+        raise HTTPException(status_code=409, detail=_DID_CURRENT_KEY_MISMATCH_DETAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -416,26 +466,49 @@ async def register_address(
         if ns_locked is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
 
-        addr_id = uuid.uuid4()
-        now = datetime.now(timezone.utc)
+        await _require_registered_did(
+            tx,
+            did_aw=body.did_aw,
+            current_did_key=body.current_did_key,
+        )
+
+        await _lock_address_registration_key(
+            tx,
+            namespace_id=ns_row["namespace_id"],
+            name=body.name,
+        )
         reachability, visible_to_team_id = await _resolve_address_visibility(
             tx,
             reachability=body.reachability,
             visible_to_team_id=body.visible_to_team_id,
             visible_to_team_id_supplied=True,
         )
+        existing = await _fetch_active_address_for_registration(
+            tx,
+            namespace_id=ns_row["namespace_id"],
+            name=body.name,
+        )
+        if existing is not None:
+            _raise_address_registration_conflict(
+                existing,
+                did_aw=body.did_aw,
+                current_did_key=body.current_did_key,
+            )
+            return _address_response(existing, domain)
+
+        addr_id = uuid.uuid4()
+        now = datetime.now(timezone.utc)
         try:
             await tx.execute(
                 """
                 INSERT INTO {{tables.public_addresses}}
-                    (address_id, namespace_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    (address_id, namespace_id, name, did_aw, reachability, visible_to_team_id, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 addr_id,
                 ns_row["namespace_id"],
                 body.name,
                 body.did_aw,
-                body.current_did_key,
                 reachability,
                 visible_to_team_id,
                 now,
@@ -447,7 +520,7 @@ async def register_address(
                     status_code=409,
                     detail="Identity already has an active address",
                 )
-            raise HTTPException(status_code=409, detail="Address name already registered")
+            raise HTTPException(status_code=409, detail=_ADDRESS_ALREADY_BOUND_DETAIL)
 
     return AddressResponse(
         address_id=str(addr_id),
@@ -485,9 +558,10 @@ async def get_address(
     caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
 
     query = """
-        SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,
+        SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
                pa.visible_to_team_id, pa.created_at
         FROM {{tables.public_addresses}} pa
+        JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
         JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
         WHERE pa.namespace_id = $1
           AND pa.name = $2
@@ -551,9 +625,10 @@ async def list_addresses(
         where_clauses.append(f"pa.name > ${len(params)}")
     params.append(validated_limit + 1)
     query = (
-        "SELECT pa.address_id, pa.name, pa.did_aw, pa.current_did_key, pa.reachability,"
+        "SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,"
         " pa.visible_to_team_id, pa.created_at"
         " FROM {{tables.public_addresses}} pa"
+        " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY pa.name LIMIT ${len(params)}"
@@ -615,10 +690,12 @@ async def update_address(
 
         row = await tx.fetch_one(
             """
-            SELECT address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
-            FROM {{tables.public_addresses}}
-            WHERE namespace_id = $1 AND name = $2 AND deleted_at IS NULL
-            FOR UPDATE
+            SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+                   pa.visible_to_team_id, pa.created_at
+            FROM {{tables.public_addresses}} pa
+            JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw
+            WHERE pa.namespace_id = $1 AND pa.name = $2 AND pa.deleted_at IS NULL
+            FOR UPDATE OF pa
             """,
             ns_row["namespace_id"],
             name,
@@ -638,11 +715,14 @@ async def update_address(
         if next_reachability != row["reachability"] or next_visible_to_team_id != row.get("visible_to_team_id"):
             row = await tx.fetch_one(
                 """
-                UPDATE {{tables.public_addresses}}
+                UPDATE {{tables.public_addresses}} pa
                 SET reachability = $1,
                     visible_to_team_id = $2
-                WHERE address_id = $3
-                RETURNING address_id, name, did_aw, current_did_key, reachability, visible_to_team_id, created_at
+                FROM {{tables.did_aw_mappings}} m
+                WHERE pa.address_id = $3
+                  AND m.did_aw = pa.did_aw
+                RETURNING pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
+                          pa.visible_to_team_id, pa.created_at
                 """,
                 next_reachability,
                 next_visible_to_team_id,
@@ -781,15 +861,20 @@ async def reassign_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
+        await _require_registered_did(
+            tx,
+            did_aw=body.did_aw,
+            current_did_key=body.current_did_key,
+        )
+
         try:
             await tx.execute(
                 """
                 UPDATE {{tables.public_addresses}}
-                SET did_aw = $1, current_did_key = $2
-                WHERE address_id = $3
+                SET did_aw = $1
+                WHERE address_id = $2
                 """,
                 body.did_aw,
-                body.current_did_key,
                 row["address_id"],
             )
         except asyncpg.UniqueViolationError:
