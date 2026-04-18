@@ -21,17 +21,15 @@
       "entry_payload": {
         "authorized_by": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
         "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
-        "new_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
         "operation": "register_did",
         "prev_entry_hash": null,
-        "previous_did_key": null,
         "seq": 1,
-        "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac",
         "timestamp": "2026-04-18T12:00:00Z"
       },
-      "canonical_entry_payload": "{\"authorized_by\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"did_aw\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"new_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"operation\":\"register_did\",\"prev_entry_hash\":null,\"previous_did_key\":null,\"seq\":1,\"state_hash\":\"a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac\",\"timestamp\":\"2026-04-18T12:00:00Z\"}",
-      "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45",
-      "signature_b64": "0YI14/N2Hjt+lgvKPAhIFsjgLxUEY5DuZWXycnTmyB5bWafvOFgXZe6XRzOzdLfPE+XUgX5Izo1IzwfsU9gpAQ"
+      "canonical_entry_payload": "{\"authorized_by\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"did_aw\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"operation\":\"register_did\",\"prev_entry_hash\":null,\"seq\":1,\"timestamp\":\"2026-04-18T12:00:00Z\"}",
+      "entry_hash": "fc0b7717b1b8afde46ffbf4ba5bfbdd3cb9952095be9bb8cd7c2e1d48202890f",
+      "signature_b64": "dDjOi52UcYi2bw8Sp4BWHNmwALxu2ubTLjnBolSDdBi9LcB9XQ7k5FZTTsYhKI/bMEKzCzkqPuTxODhTfRewBg"
     },
     {
       "name": "rotate_key",
@@ -47,15 +45,14 @@
         "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
         "new_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG",
         "operation": "rotate_key",
-        "prev_entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45",
+        "prev_entry_hash": "fc0b7717b1b8afde46ffbf4ba5bfbdd3cb9952095be9bb8cd7c2e1d48202890f",
         "previous_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
         "seq": 2,
-        "state_hash": "f757dacbf0e5c5a90f1f555067aad6d7bf9760c2daefcffd90452bf28c289f8b",
         "timestamp": "2026-04-18T12:05:00Z"
       },
-      "canonical_entry_payload": "{\"authorized_by\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"did_aw\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"new_did_key\":\"did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG\",\"operation\":\"rotate_key\",\"prev_entry_hash\":\"85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45\",\"previous_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"seq\":2,\"state_hash\":\"f757dacbf0e5c5a90f1f555067aad6d7bf9760c2daefcffd90452bf28c289f8b\",\"timestamp\":\"2026-04-18T12:05:00Z\"}",
-      "entry_hash": "2461cc5185dfb0d3836241574aca5927db2925069bd4a10216613a87b54351c0",
-      "signature_b64": "MuHRT5pwB16CKebQ7oAPcnfqQx9dkACnMYuXJPpmyIbE/z05Am3ehveKBVg0X1WSKlISGTi5SMG+HhrxhB9RBQ"
+      "canonical_entry_payload": "{\"authorized_by\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"did_aw\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"new_did_key\":\"did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG\",\"operation\":\"rotate_key\",\"prev_entry_hash\":\"fc0b7717b1b8afde46ffbf4ba5bfbdd3cb9952095be9bb8cd7c2e1d48202890f\",\"previous_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"seq\":2,\"timestamp\":\"2026-04-18T12:05:00Z\"}",
+      "entry_hash": "3f46d267af8b943c4afe17a18a93046f66ac5773e1237d1a01acd66a674fbfa1",
+      "signature_b64": "VqFA3UTxY+kIFqYV5hAM/weFl0xAVTHAALp8aNbxcCAjwd+/iYrwEO+9y54v0LkTTIRSiU9EjP5aMLymNNogCQ"
     }
   ]
 }

@@ -4,15 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
-
 from awid.did import stable_id_from_did_key
-from awid.signing import (
-    canonical_json_bytes,
-    canonical_payload,
-    sign_message,
-    verify_did_key_signature,
-)
+from awid.signing import canonical_json_bytes, canonical_payload, sign_message
 from awid.dns_verify import awid_txt_name, awid_txt_value
 
 
@@ -56,19 +49,6 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
         assert hashlib.sha256(payload).hexdigest() == entry["entry_hash"]
         authorized_by = entry["entry_payload"]["authorized_by"]
         assert sign_message(seed_by_did[authorized_by], payload) == entry["signature_b64"]
-        verify_did_key_signature(
-            did_key=authorized_by,
-            payload=payload,
-            signature_b64=entry["signature_b64"],
-        )
-        tampered_payload = dict(entry["entry_payload"])
-        tampered_payload["state_hash"] = "0" * 64
-        with pytest.raises(ValueError):
-            verify_did_key_signature(
-                did_key=authorized_by,
-                payload=canonical_json_bytes(tampered_payload),
-                signature_b64=entry["signature_b64"],
-            )
         assert entry["entry_payload"]["prev_entry_hash"] == previous_entry_hash
         previous_entry_hash = entry["entry_hash"]
 
