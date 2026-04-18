@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import ReservationAcquiredEvent, TaskCreatedEvent
 
@@ -14,6 +15,99 @@ class _DbShim:
 
     def get_manager(self, name: str = "aweb"):
         return self._db
+
+
+@pytest.mark.asyncio
+async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cloud_db, monkeypatch):
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    published_workspace: list[object] = []
+    published_team: list[object] = []
+    cleared_workspaces: list[list[str]] = []
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mkteam')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, lifetime, role)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6Mkdeleted', 'alice', 'ephemeral', 'developer')
+        """,
+        agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
+        )
+        VALUES ($1, 'backend:acme.com', $2, 'alice', 'Alice', 'developer', 'manual')
+        """,
+        workspace_id,
+        agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}}
+            (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+        VALUES ('backend:acme.com', $1, 'alice', 'Alice', 'backend-777', NOW())
+        """,
+        workspace_id,
+    )
+
+    async def _capture_workspace_event(_redis, event):
+        published_workspace.append(event)
+        return 1
+
+    async def _capture_team_event(_redis, event):
+        published_team.append(event)
+        return 1
+
+    async def _capture_clear_presence(_redis, workspace_ids):
+        cleared_workspaces.append(list(workspace_ids))
+        return len(workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_clear_presence)
+
+    handler = mutation_hooks.create_mutation_handler(redis=object(), db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    await handler("agent.deleted", {"agent_id": str(agent_id)})
+
+    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+    claim_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*) FROM {{tables.task_claims}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+
+    assert workspace_row["deleted_at"] is not None
+    assert claim_count == 0
+    assert any(
+        event.type == "task.unclaimed"
+        and event.workspace_id == str(workspace_id)
+        and event.task_ref == "backend-777"
+        and event.alias == "alice"
+        for event in published_workspace
+    )
+    assert any(
+        event.type == "task.unclaimed"
+        and event.team_id == "backend:acme.com"
+        and event.task_ref == "backend-777"
+        and event.alias == "alice"
+        for event in published_team
+    )
+    assert [str(workspace_id)] in cleared_workspaces
 
 
 @pytest.mark.asyncio
