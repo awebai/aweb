@@ -180,110 +180,89 @@ makes each operation authorizable by the one party that legitimately
 holds authority, and makes the "identity must exist before address"
 invariant structural rather than a runtime check.
 
-### `register_did`
+### Canonical entry payload (shared by all identity ops)
 
-Binds `did_aw ↔ did_key`. Idempotent for the same `(did_aw, did_key)`
-pair — repeating the call with the same pair returns success; calling
-with a different `did_key` for an existing `did_aw` is rejected
-(rotation uses the dedicated endpoint).
-
-The signed object is the **canonical entry payload**: a log entry
-whose shape is common to every identity operation. The request body
-wraps it with a transport field (`proof`) carrying the signature;
-the canonical entry payload itself is what gets hashed and signed
-and appended to `did_aw_log`.
-
-```
-POST /v1/did
-     Body: {
-       <canonical entry payload fields, see below>,
-       "proof": "<base64 Ed25519 signature of the canonical entry>"
-     }
-     Response: { "registered": true, "did_aw": "...",
-                 "current_did_key": "..." }
-```
-
-**Canonical entry payload** (sorted keys, no whitespace, UTF-8; this
-is the byte sequence that is hashed into `entry_hash` and signed
-into `proof`):
+Every identity operation — `register_did`, `rotate_key`, and any
+future op — writes one log entry whose shape is identical. The
+signed object is the **canonical entry payload** below; its bytes
+are hashed into `entry_hash` and signed into `proof`.
 
 ```json
 {
-  "authorized_by":   "did:key:z6Mk...",
-  "did_aw":          "did:aw:...",
-  "did_key":         "did:key:z6Mk...",
-  "operation":       "register_did",
-  "prev_entry_hash": null,
-  "seq":             1,
-  "timestamp":       "ISO 8601 UTC"
-}
-```
-
-Where:
-
-- `authorized_by` is the `did:key` of the signer; for `register_did`
-  it equals `did_key` — the identity holder authorizes its own
-  registration.
-- `entry_hash = sha256(canonical_entry_payload_bytes)`. The server
-  stores this in `did_aw_log` so the chain can be audited.
-- `proof = Ed25519.sign(did_key_private, canonical_entry_payload_bytes)`.
-- `state_hash` and the derived **state payload** are NOT part of
-  the signed entry. See the state section below — they are a
-  convenience for verifiers, deterministically recomputable from
-  the signed fields.
-
-**State derivation** (not signed):
-
-```json
-state_payload = {"current_did_key": did_key, "did_aw": did_aw}
-state_hash    = sha256(canonical_json(state_payload))
-```
-
-No `server`, `address`, or `handle` appear anywhere in the entry or
-the state. Identity is a pure `did_aw ↔ did_key` binding; addresses
-are a separate concern maintained in `public_addresses`.
-
-Idempotency rule: if a row with `(did_aw, current_did_key) = (req.did_aw, req.did_key)`
-already exists, the call returns `200` with the existing record. If
-`did_aw` exists with a different `current_did_key`, the call returns
-`409` (clients must call `rotate_key`).
-
-### `rotate_key`
-
-Replaces the `did_key` for an existing `did_aw`. The canonical entry
-payload shape differs from `register_did` — it carries both the
-previous and new keys, and `prev_entry_hash` chains to the prior log
-entry:
-
-```json
-{
-  "authorized_by":    "did:key:z6Mk...",       // equals previous_did_key
+  "authorized_by":    "did:key:z6Mk...",
   "did_aw":           "did:aw:...",
   "new_did_key":      "did:key:z6Mk...",
-  "operation":        "rotate_key",
-  "prev_entry_hash":  "<hex of previous entry>",
-  "previous_did_key": "did:key:z6Mk...",
-  "seq":              2,
+  "operation":        "<register_did | rotate_key | ...>",
+  "prev_entry_hash":  "<hex | null>",
+  "previous_did_key": "<did:key | null>",
+  "seq":              1,
+  "state_hash":       "<hex>",
   "timestamp":        "ISO 8601 UTC"
 }
 ```
 
-Where:
+Rules:
 
-- `authorized_by` equals `previous_did_key` — the retiring key signs
-  its own replacement.
-- `proof = Ed25519.sign(previous_did_key_private, canonical_entry_payload_bytes)`.
-- `seq` is the previous entry's `seq + 1`.
+- Keys are sorted alphabetically. No whitespace. UTF-8.
+- `entry_hash = sha256(canonical_entry_payload_bytes)`. Stored in
+  `did_aw_log`; used as `prev_entry_hash` in the next entry.
+- `proof = Ed25519.sign(authorized_by_private, canonical_entry_payload_bytes)`.
+- `state_hash = sha256(canonical_json({"current_did_key": new_did_key, "did_aw": did_aw}))`.
+  Identity-only; no address, server, or handle input.
+- `state_hash` is **inside** the signed payload. This pins the
+  canonicalization (every implementation must agree on the signer's
+  bytes) and makes each entry a standalone self-proving artifact.
+- The uniform shape is deliberate: a log entry is a state transition,
+  and every transition has both a "from" (`previous_did_key`) and a
+  "to" (`new_did_key`). `register_did` is the case where "from" is
+  null; future ops (custody transfer, revoke, reinstate) slot into
+  the same shape without adding parsers.
 
-**State derivation after rotation** (not signed):
+### `register_did`
 
-```json
-state_payload = {"current_did_key": new_did_key, "did_aw": did_aw}
-state_hash    = sha256(canonical_json(state_payload))
+Binds `did_aw ↔ did_key`. Idempotent for the same `(did_aw, new_did_key)`
+pair; a different `new_did_key` for an existing `did_aw` is rejected
+(clients must call `rotate_key`).
+
+Entry-field values specific to this op:
+
+- `operation`: `"register_did"`
+- `new_did_key`: the key being bound
+- `previous_did_key`: `null`
+- `prev_entry_hash`: `null`
+- `seq`: `1`
+- `authorized_by`: equals `new_did_key` — the identity holder
+  authorizes its own registration
+- `proof` is signed by the private half of `new_did_key`
+
+```
+POST /v1/did
+     Body: { <canonical entry payload fields>, "proof": "<base64>" }
+     Response: { "registered": true, "did_aw": "...",
+                 "current_did_key": "..." }
 ```
 
-The old key is accepted as the signer for this one operation; after
-the rotation completes, the new key takes over as `current_did_key`.
+The state derivable from this entry is
+`{"current_did_key": new_did_key, "did_aw": did_aw}`. No `server`,
+`address`, or `handle` appears anywhere in the entry or its state;
+addresses are a separate concern maintained in `public_addresses`.
+
+### `rotate_key`
+
+Replaces the `did_key` for an existing `did_aw`. Same canonical
+entry payload as above, with the rotate-specific field values:
+
+- `operation`: `"rotate_key"`
+- `new_did_key`: the replacement key
+- `previous_did_key`: the retiring key
+- `prev_entry_hash`: `entry_hash` of the previous log entry
+- `seq`: previous entry's `seq + 1`
+- `authorized_by`: equals `previous_did_key` — the retiring key
+  signs its own replacement
+- `proof` is signed by the private half of `previous_did_key`
+
+After the rotation is appended to the log, `new_did_key` becomes the
+`current_did_key` in `did_aw_mappings`.
 
 Rotation is a single-row update of `did_aw_mappings.current_did_key`
 plus one append to `did_aw_log`. There is no cascade to address rows:
