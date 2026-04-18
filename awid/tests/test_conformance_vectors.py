@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 from awid.did import stable_id_from_did_key
-from awid.log import log_entry_payload
 from awid.signing import canonical_json_bytes, canonical_payload, sign_message
 from awid.dns_verify import awid_txt_name, awid_txt_value
 
@@ -36,21 +35,21 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
         mapping["initial_did_key"]: bytes.fromhex(seeds["initial_seed_hex"]),
         mapping["rotated_did_key"]: bytes.fromhex(seeds["rotated_seed_hex"]),
     }
+    previous_entry_hash = None
+    forbidden_identity_fields = {"address", "handle", "server"}
     for entry in identity_vectors["entries"]:
-        payload = log_entry_payload(
-            did_aw=entry["entry_payload"]["did_aw"],
-            seq=entry["entry_payload"]["seq"],
-            operation=entry["entry_payload"]["operation"],
-            previous_did_key=entry["entry_payload"]["previous_did_key"],
-            new_did_key=entry["entry_payload"]["new_did_key"],
-            prev_entry_hash=entry["entry_payload"]["prev_entry_hash"],
-            state_hash=entry["entry_payload"]["state_hash"],
-            authorized_by=entry["entry_payload"]["authorized_by"],
-            timestamp=entry["entry_payload"]["timestamp"],
-        )
+        state_payload = canonical_json_bytes(entry["state_payload"])
+        assert state_payload.decode("utf-8") == entry["canonical_state_payload"]
+        assert hashlib.sha256(state_payload).hexdigest() == entry["state_hash"]
+        assert forbidden_identity_fields.isdisjoint(entry["state_payload"])
+
+        payload = canonical_json_bytes(entry["entry_payload"])
+        assert forbidden_identity_fields.isdisjoint(entry["entry_payload"])
         assert payload.decode("utf-8") == entry["canonical_entry_payload"]
         assert hashlib.sha256(payload).hexdigest() == entry["entry_hash"]
         assert sign_message(seed_by_did[entry["entry_payload"]["authorized_by"]], payload) == entry["signature_b64"]
+        assert entry["entry_payload"]["prev_entry_hash"] == previous_entry_hash
+        previous_entry_hash = entry["entry_hash"]
 
     rotation_vectors = _load_json("rotation-announcements-v1.json")
     for case in rotation_vectors:

@@ -2,9 +2,14 @@ package conformance_test
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	awid "github.com/awebai/aw/awid"
@@ -143,6 +148,143 @@ func TestStableIDVectors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- identity-log-v1 ---
+
+type identityLogVectors struct {
+	KeySeeds map[string]string `json:"key_seeds"`
+	Mapping  struct {
+		DIDAW         string `json:"did_aw"`
+		InitialDIDKey string `json:"initial_did_key"`
+		RotatedDIDKey string `json:"rotated_did_key"`
+	} `json:"mapping"`
+	Entries []identityLogEntryVector `json:"entries"`
+}
+
+type identityLogEntryVector struct {
+	Name                  string         `json:"name"`
+	Comment               string         `json:"comment"`
+	StatePayload          map[string]any `json:"state_payload"`
+	CanonicalStatePayload string         `json:"canonical_state_payload"`
+	StateHash             string         `json:"state_hash"`
+	EntryPayload          map[string]any `json:"entry_payload"`
+	CanonicalEntryPayload string         `json:"canonical_entry_payload"`
+	EntryHash             string         `json:"entry_hash"`
+	SignatureB64          string         `json:"signature_b64"`
+}
+
+func TestIdentityLogVectors(t *testing.T) {
+	data := readRootVector(t, "identity-log-v1.json")
+	var vectors identityLogVectors
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+
+	initialSeed, err := hex.DecodeString(vectors.KeySeeds["initial_seed_hex"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedSeed, err := hex.DecodeString(vectors.KeySeeds["rotated_seed_hex"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialKey := ed25519.NewKeyFromSeed(initialSeed)
+	rotatedKey := ed25519.NewKeyFromSeed(rotatedSeed)
+	if got := awid.ComputeDIDKey(initialKey.Public().(ed25519.PublicKey)); got != vectors.Mapping.InitialDIDKey {
+		t.Fatalf("initial did:key: got %s, want %s", got, vectors.Mapping.InitialDIDKey)
+	}
+	if got := awid.ComputeDIDKey(rotatedKey.Public().(ed25519.PublicKey)); got != vectors.Mapping.RotatedDIDKey {
+		t.Fatalf("rotated did:key: got %s, want %s", got, vectors.Mapping.RotatedDIDKey)
+	}
+	if got := awid.ComputeStableID(initialKey.Public().(ed25519.PublicKey)); got != vectors.Mapping.DIDAW {
+		t.Fatalf("did:aw: got %s, want %s", got, vectors.Mapping.DIDAW)
+	}
+
+	seedByDID := map[string][]byte{
+		vectors.Mapping.InitialDIDKey: initialSeed,
+		vectors.Mapping.RotatedDIDKey: rotatedSeed,
+	}
+	var previousEntryHash string
+	for _, entry := range vectors.Entries {
+		t.Run(entry.Name, func(t *testing.T) {
+			statePayload, err := awid.CanonicalJSONValue(entry.StatePayload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if statePayload != entry.CanonicalStatePayload {
+				t.Fatalf("state canonical:\n got:  %s\n want: %s", statePayload, entry.CanonicalStatePayload)
+			}
+			stateHash := sha256.Sum256([]byte(statePayload))
+			if got := hex.EncodeToString(stateHash[:]); got != entry.StateHash {
+				t.Fatalf("state_hash: got %s, want %s", got, entry.StateHash)
+			}
+			requireNoAddressFields(t, entry.StatePayload)
+
+			entryPayload, err := awid.CanonicalJSONValue(entry.EntryPayload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireNoAddressFields(t, entry.EntryPayload)
+			if entryPayload != entry.CanonicalEntryPayload {
+				t.Fatalf("entry canonical:\n got:  %s\n want: %s", entryPayload, entry.CanonicalEntryPayload)
+			}
+			entryHash := sha256.Sum256([]byte(entryPayload))
+			if got := hex.EncodeToString(entryHash[:]); got != entry.EntryHash {
+				t.Fatalf("entry_hash: got %s, want %s", got, entry.EntryHash)
+			}
+			if got := nullableString(entry.EntryPayload["prev_entry_hash"]); got != previousEntryHash {
+				t.Fatalf("prev_entry_hash: got %q, want %q", got, previousEntryHash)
+			}
+			authorizedBy, ok := entry.EntryPayload["authorized_by"].(string)
+			if !ok || authorizedBy == "" {
+				t.Fatalf("missing authorized_by")
+			}
+			seed, ok := seedByDID[authorizedBy]
+			if !ok {
+				t.Fatalf("unknown authorized_by %s", authorizedBy)
+			}
+			key := ed25519.NewKeyFromSeed(seed)
+			signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(entryPayload)))
+			if signature != entry.SignatureB64 {
+				t.Fatalf("signature:\n got:  %s\n want: %s", signature, entry.SignatureB64)
+			}
+		})
+		previousEntryHash = entry.EntryHash
+	}
+}
+
+func readRootVector(t *testing.T, name string) []byte {
+	t.Helper()
+	_, sourcePath, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), "..", "..", "..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "docs", "vectors", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func requireNoAddressFields(t *testing.T, payload map[string]any) {
+	t.Helper()
+	for _, field := range []string{"address", "handle", "server"} {
+		if _, ok := payload[field]; ok {
+			t.Fatalf("identity vector payload must not contain %q", field)
+		}
+	}
+}
+
+func nullableString(value any) string {
+	if value == nil {
+		return ""
+	}
+	if out, ok := value.(string); ok {
+		return out
+	}
+	return ""
 }
 
 // --- rotation-announcements-v1 ---
