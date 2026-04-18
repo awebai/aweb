@@ -2,13 +2,20 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func buildDoctorBinary(t *testing.T) (string, string) {
@@ -51,6 +58,83 @@ func doctorCheckByID(out doctorOutput, id string) (doctorCheck, bool) {
 	return doctorCheck{}, false
 }
 
+func requireDoctorCheckStatus(t *testing.T, out doctorOutput, id string, status doctorStatus) doctorCheck {
+	t.Helper()
+	check, ok := doctorCheckByID(out, id)
+	if !ok {
+		t.Fatalf("missing check %s: %#v", id, out.Checks)
+	}
+	if check.Status != status {
+		t.Fatalf("%s status=%q, want %q: %#v", id, check.Status, status, check)
+	}
+	return check
+}
+
+func writeDoctorEphemeralFixture(t *testing.T, workingDir, awebURL string) {
+	t.Helper()
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	writeSelectionFixtureForTest(t, workingDir, testSelectionFixture{
+		AwebURL:     awebURL,
+		TeamID:      "backend:example.com",
+		Alias:       "mia",
+		WorkspaceID: "ws-ephemeral",
+		DID:         awid.ComputeDIDKey(pub),
+		Address:     "example.com/mia",
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  priv,
+		CreatedAt:   "2026-04-04T00:00:00Z",
+	})
+	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove ephemeral identity: %v", err)
+	}
+}
+
+func writeDoctorPersistentFixture(t *testing.T, workingDir, awebURL string) ed25519.PrivateKey {
+	t.Helper()
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	writeSelectionFixtureForTest(t, workingDir, testSelectionFixture{
+		AwebURL:     awebURL,
+		TeamID:      "backend:example.com",
+		Alias:       "mia",
+		WorkspaceID: "ws-persistent",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "example.com/mia",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+		CreatedAt:   "2026-04-04T00:00:00Z",
+	})
+	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
+		DID:         did,
+		StableID:    stableID,
+		Address:     "example.com/mia",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: "https://registry.example.com",
+		CreatedAt:   "2026-04-04T00:00:00Z",
+	})
+	return priv
+}
+
+func writeDoctorWorkspaceYAML(t *testing.T, workingDir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(workingDir, ".aw"), 0o700); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath()), []byte(body), 0o600); err != nil {
+		t.Fatalf("write workspace.yaml: %v", err)
+	}
+}
+
 func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	t.Parallel()
 
@@ -77,13 +161,7 @@ func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	if got.Subject.WorkingDir != wantWorkingDir {
 		t.Fatalf("working_dir=%q, want %q", got.Subject.WorkingDir, wantWorkingDir)
 	}
-	check, ok := doctorCheckByID(got, "local.workspace_binding.contract")
-	if !ok {
-		t.Fatalf("missing local workspace placeholder check: %#v", got.Checks)
-	}
-	if check.Status != doctorStatusInfo {
-		t.Fatalf("local status=%q", check.Status)
-	}
+	check := requireDoctorCheckStatus(t, got, doctorCheckWorkspaceExists, doctorStatusInfo)
 	if check.Detail["state"] != "missing" {
 		t.Fatalf("local detail state=%v", check.Detail["state"])
 	}
@@ -102,7 +180,7 @@ func TestAwDoctorHumanOutput(t *testing.T) {
 		"Doctor: info",
 		"Mode:   auto",
 		"doctor.contract.v1",
-		"local.workspace_binding.contract",
+		doctorCheckWorkspaceExists,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q:\n%s", want, text)
@@ -142,7 +220,7 @@ func TestAwDoctorScopedCategoryPlaceholder(t *testing.T) {
 		if _, ok := doctorCheckByID(got, "registry.contract.v1"); !ok {
 			t.Fatalf("missing registry placeholder: %#v", got.Checks)
 		}
-		if _, ok := doctorCheckByID(got, "local.workspace_binding.contract"); ok {
+		if _, ok := doctorCheckByID(got, doctorCheckWorkspaceExists); ok {
 			t.Fatalf("scoped registry output unexpectedly included local check: %#v", got.Checks)
 		}
 	}
@@ -200,5 +278,319 @@ func TestAwDoctorFixReportsBlockedWithoutMutation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("doctor --fix skeleton mutated workspace; .aw stat err=%v", err)
+	}
+}
+
+func TestAwDoctorLocalChecksValidEphemeralWorkspace(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorEphemeralFixture(t, tmp, "https://app.example.com/api")
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceExists, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckCertificateSignature, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckSigningKeyMatchesCert, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusOK)
+	if _, ok := doctorCheckByID(got, doctorCheckIdentityPersistent); ok {
+		t.Fatalf("ephemeral workspace unexpectedly required persistent identity: %#v", got.Checks)
+	}
+}
+
+func TestAwDoctorLocalChecksValidPersistentWorkspace(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceAwebURL, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceWorkspaceID, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckCertificateSignature, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityDID, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityAddress, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityStableID, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityCustody, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityRegistryURL, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckRegistryCoherence, doctorStatusOK)
+}
+
+func TestAwDoctorLocalChecksCorruptWorkspaceYAML(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorWorkspaceYAML(t, tmp, "aweb_url: [\n")
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report corrupt workspace as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	if got.Status != doctorStatusFail {
+		t.Fatalf("status=%q", got.Status)
+	}
+	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceParse, doctorStatusFail)
+	requireDoctorCheckStatus(t, got, doctorCheckCertificateParse, doctorStatusBlocked)
+}
+
+func TestAwDoctorLocalChecksWorkspaceSemanticFailures(t *testing.T) {
+	t.Parallel()
+
+	bin, buildTmp := buildDoctorBinary(t)
+	tests := []struct {
+		name   string
+		body   string
+		checks map[string]doctorStatus
+	}{
+		{
+			name: "missing active team",
+			body: `aweb_url: https://app.example.com/api
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    workspace_id: ws-1
+    cert_path: team-certs/backend__example.com.pem
+`,
+			checks: map[string]doctorStatus{
+				doctorCheckWorkspaceParse:       doctorStatusOK,
+				doctorCheckWorkspaceActiveTeam:  doctorStatusFail,
+				doctorCheckWorkspaceMembership:  doctorStatusFail,
+				doctorCheckWorkspaceWorkspaceID: doctorStatusBlocked,
+				doctorCheckWorkspaceCertPath:    doctorStatusBlocked,
+			},
+		},
+		{
+			name: "active team not in memberships",
+			body: `aweb_url: https://app.example.com/api
+active_team: backend:missing.example.com
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    workspace_id: ws-1
+    cert_path: team-certs/backend__example.com.pem
+`,
+			checks: map[string]doctorStatus{
+				doctorCheckWorkspaceParse:      doctorStatusOK,
+				doctorCheckWorkspaceActiveTeam: doctorStatusOK,
+				doctorCheckWorkspaceMembership: doctorStatusFail,
+				doctorCheckWorkspaceCertPath:   doctorStatusBlocked,
+			},
+		},
+		{
+			name: "missing cert path and workspace id",
+			body: `aweb_url: https://app.example.com/api
+active_team: backend:example.com
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+`,
+			checks: map[string]doctorStatus{
+				doctorCheckWorkspaceParse:       doctorStatusOK,
+				doctorCheckWorkspaceMembership:  doctorStatusOK,
+				doctorCheckWorkspaceWorkspaceID: doctorStatusFail,
+				doctorCheckWorkspaceCertPath:    doctorStatusFail,
+				doctorCheckCertificateExists:    doctorStatusBlocked,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := filepath.Join(buildTmp, strings.ReplaceAll(tc.name, " ", "-"))
+			if err := os.MkdirAll(tmp, 0o700); err != nil {
+				t.Fatalf("mkdir case dir: %v", err)
+			}
+			writeDoctorWorkspaceYAML(t, tmp, tc.body)
+			out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+			if err != nil {
+				t.Fatalf("doctor should report workspace semantic issue as checks: %v\n%s", err, string(out))
+			}
+			got := decodeDoctorOutput(t, out)
+			for id, status := range tc.checks {
+				requireDoctorCheckStatus(t, got, id, status)
+			}
+		})
+	}
+}
+
+func TestAwDoctorLocalChecksCorruptSigningKey(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	if err := os.WriteFile(awconfig.WorktreeSigningKeyPath(tmp), []byte("not a pem key\n"), 0o600); err != nil {
+		t.Fatalf("write corrupt signing key: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report corrupt signing key as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckSigningKeyParse, doctorStatusFail)
+	requireDoctorCheckStatus(t, got, doctorCheckSigningKeyMatchesCert, doctorStatusBlocked)
+}
+
+func TestAwDoctorLocalChecksMissingCertificate(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
+	if err := os.Remove(certPath); err != nil {
+		t.Fatalf("remove certificate: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report missing cert as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckCertificateExists, doctorStatusFail)
+	requireDoctorCheckStatus(t, got, doctorCheckCertificateParse, doctorStatusBlocked)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusBlocked)
+}
+
+func TestAwDoctorLocalChecksSigningKeyCertificateDIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	wrongPub, wrongPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("generate wrong key: %v", err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), wrongPriv); err != nil {
+		t.Fatalf("overwrite signing key: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report did mismatch as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckSigningKeyMatchesCert, doctorStatusFail)
+	if check.Detail["signing_key_did"] != awid.ComputeDIDKey(wrongPub) {
+		t.Fatalf("mismatch detail did=%v", check.Detail["signing_key_did"])
+	}
+}
+
+func TestAwDoctorLocalChecksPersistentMissingIdentity(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+	if err := os.Remove(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil {
+		t.Fatalf("remove identity: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report missing persistent identity as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityPersistent, doctorStatusFail)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityParse, doctorStatusBlocked)
+}
+
+func TestAwDoctorLocalChecksCorruptEphemeralIdentityFails(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorEphemeralFixture(t, tmp, "https://app.example.com/api")
+	if err := os.WriteFile(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath()), []byte("did: [\n"), 0o600); err != nil {
+		t.Fatalf("write corrupt identity: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor should report corrupt ephemeral identity as checks: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityEphemeral, doctorStatusInfo)
+	requireDoctorCheckStatus(t, got, doctorCheckIdentityParse, doctorStatusFail)
+}
+
+func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, "doctor should not call network", http.StatusTeapot)
+	}))
+	t.Cleanup(server.Close)
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, server.URL)
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("offline local doctor contacted network %d times", requests.Load())
+	}
+}
+
+func TestAwDoctorLocalOutputDoesNotLeakSecrets(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorPersistentFixture(t, tmp, "https://app.example.com/api")
+
+	workspace, workspacePath, err := awconfig.LoadWorktreeWorkspaceFromDir(tmp)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	workspace.APIKey = "secret-api-token"
+	workspace.AwebURL = "https://user:pass@app.example.com/api?token=secret-query#secret-fragment"
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		t.Fatalf("load identity: %v", err)
+	}
+	identity.RegistryURL = "https://reguser:regpass@registry.example.com/path?registry_token=secret-registry#registry-fragment"
+	writeIdentityForTest(t, tmp, *identity)
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com")))
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+	if err != nil {
+		t.Fatalf("doctor local failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	for _, secret := range []string{
+		"secret-api-token",
+		"BEGIN ED25519 PRIVATE KEY",
+		cert.Signature,
+		"user:pass",
+		"token=secret-query",
+		"secret-fragment",
+		"reguser:regpass",
+		"registry_token=secret-registry",
+		"registry-fragment",
+	} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("doctor output leaked secret %q:\n%s", secret, text)
+		}
+	}
+	if !strings.Contains(text, "https://app.example.com/api") || !strings.Contains(text, "https://registry.example.com/path") {
+		t.Fatalf("doctor output did not include sanitized URL forms:\n%s", text)
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -292,39 +291,10 @@ func (r *doctorRunner) addContractCheck() {
 func (r *doctorRunner) runCategory(category string) {
 	switch category {
 	case "local":
-		r.runLocalPlaceholder()
+		r.runLocalChecks()
 	case "identity", "workspace", "team", "registry", "messaging":
 		r.add(categoryPlaceholderCheck(category))
 	}
-}
-
-func (r *doctorRunner) runLocalPlaceholder() {
-	workspacePath := filepath.Join(r.workingDir, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	check := doctorCheck{
-		ID:            "local.workspace_binding.contract",
-		Status:        doctorStatusInfo,
-		Source:        doctorSourceLocal,
-		Authority:     doctorAuthorityCaller,
-		Target:        &doctorTarget{Type: "local_path", ID: workspacePath, Display: abbreviateUserHome(workspacePath)},
-		Authoritative: false,
-		Message:       "Local workspace binding diagnostics are not implemented in this release.",
-		NextStep:      "Run a later doctor release for detailed local state checks.",
-	}
-	if _, _, err := awconfig.LoadWorktreeWorkspaceFromDir(r.workingDir); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			check.Detail = map[string]any{"state": "missing"}
-			check.Message = "No local workspace binding was found."
-			check.NextStep = "Run `aw init` or `aw run <provider>` when you are ready to connect this directory."
-		} else {
-			check.Status = doctorStatusUnknown
-			check.Detail = map[string]any{"state": "unreadable", "error": err.Error()}
-			check.Message = "Local workspace binding could not be read."
-			check.NextStep = "Detailed local config diagnosis is reserved for AWEB-06."
-		}
-	} else {
-		check.Detail = map[string]any{"state": "present"}
-	}
-	r.add(check)
 }
 
 func categoryPlaceholderCheck(category string) doctorCheck {
@@ -382,7 +352,9 @@ func collectDoctorSubject(workingDir string) doctorSubject {
 		WorkingDir:        subject.WorkingDir,
 		AllowEnvOverrides: true,
 	}); err == nil && sel != nil {
-		subject.AwebURL = strings.TrimSpace(sel.BaseURL)
+		if awebURL, urlErr := sanitizeLocalURLForOutput(sel.BaseURL); urlErr == nil {
+			subject.AwebURL = awebURL
+		}
 		subject.TeamID = strings.TrimSpace(sel.TeamID)
 		subject.WorkspaceID = strings.TrimSpace(sel.WorkspaceID)
 		subject.Alias = strings.TrimSpace(sel.Alias)
