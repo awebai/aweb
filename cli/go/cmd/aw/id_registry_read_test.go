@@ -96,10 +96,7 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s failed: %v\n%s", strings.Join(args, " "), err, string(out))
 		}
-		var got registryReadEnvelope
-		if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-			t.Fatalf("invalid json for %s: %v\n%s", strings.Join(args, " "), err, string(out))
-		}
+		got := decodeRegistryReadEnvelope(t, out, strings.Join(args, " "))
 		assertRegistryReadEnvelope(t, got, server.URL)
 		if strings.Contains(string(out), "DIDKey ") || strings.Contains(string(out), "secret-signature-value") || strings.Contains(string(out), "PRIVATE KEY") {
 			t.Fatalf("output leaked auth/private material:\n%s", string(out))
@@ -210,11 +207,7 @@ func TestAwIDRegistryReadStructuredFailures(t *testing.T) {
 		if strings.Contains(string(out), "secret body") {
 			t.Fatalf("output leaked registry body:\n%s", string(out))
 		}
-		var got registryReadEnvelope
-		if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-			t.Fatalf("invalid json: %v\n%s", err, string(out))
-		}
-		return got
+		return decodeRegistryReadEnvelope(t, out, strings.Join(args, " "))
 	}
 
 	notFound := run("id", "resolve", stableID, "--json")
@@ -334,8 +327,8 @@ func assertRegistryReadEnvelope(t *testing.T, got registryReadEnvelope, registry
 	if got.Payload.RegistryURL != registryURL {
 		t.Fatalf("registry_url=%s want %s", got.Payload.RegistryURL, registryURL)
 	}
-	if got.Payload.Status != registryReadStatusOK || got.Status != registryReadStatusOK {
-		t.Fatalf("status top=%s payload=%s", got.Status, got.Payload.Status)
+	if got.Payload.Status != registryReadStatusOK {
+		t.Fatalf("payload status=%s", got.Payload.Status)
 	}
 	if !got.Authoritative {
 		t.Fatal("successful registry read should be authoritative")
@@ -353,8 +346,8 @@ func assertRegistryReadEnvelope(t *testing.T, got registryReadEnvelope, registry
 
 func assertRegistryReadError(t *testing.T, got registryReadEnvelope, status string, authoritative bool, code string) {
 	t.Helper()
-	if got.Status != status || got.Payload.Status != status {
-		t.Fatalf("status top=%s payload=%s want %s", got.Status, got.Payload.Status, status)
+	if got.Payload.Status != status {
+		t.Fatalf("payload status=%s want %s", got.Payload.Status, status)
 	}
 	if got.Authoritative != authoritative {
 		t.Fatalf("authoritative=%v want %v", got.Authoritative, authoritative)
@@ -365,6 +358,23 @@ func assertRegistryReadError(t *testing.T, got registryReadEnvelope, status stri
 	if got.Payload.Error.Code != code {
 		t.Fatalf("error code=%s want %s", got.Payload.Error.Code, code)
 	}
+}
+
+func decodeRegistryReadEnvelope(t *testing.T, out []byte, label string) registryReadEnvelope {
+	t.Helper()
+	raw := extractJSON(t, out)
+	var top map[string]any
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("invalid json for %s: %v\n%s", label, err, string(out))
+	}
+	if _, ok := top["status"]; ok {
+		t.Fatalf("%s emitted envelope-level status; status must live under payload only:\n%s", label, string(raw))
+	}
+	var got registryReadEnvelope
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("invalid registry read envelope for %s: %v\n%s", label, err, string(out))
+	}
+	return got
 }
 
 func registryReadHasRedaction(got registryReadEnvelope, field string) bool {

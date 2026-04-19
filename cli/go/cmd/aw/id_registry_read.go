@@ -41,7 +41,6 @@ type supportContractTarget struct {
 type registryReadEnvelope struct {
 	Version          string                `json:"version"`
 	Source           string                `json:"source"`
-	Status           string                `json:"status"`
 	AuthorityMode    string                `json:"authority_mode"`
 	AuthoritySubject string                `json:"authority_subject,omitempty"`
 	Authoritative    bool                  `json:"authoritative"`
@@ -275,7 +274,6 @@ func newRegistryReadEnvelope(requestID string, authority registryReadAuthority, 
 	env := registryReadEnvelope{
 		Version:          supportContractVersion,
 		Source:           registryReadSourceAwid,
-		Status:           registryReadStatusOK,
 		AuthorityMode:    authority.Mode,
 		AuthoritySubject: strings.TrimSpace(authority.SubjectDID),
 		Authoritative:    true,
@@ -301,21 +299,17 @@ func (env registryReadEnvelope) withError(err error) registryReadEnvelope {
 		env.Payload.Error = registryHTTPReadError(regErr)
 		switch regErr.StatusCode {
 		case http.StatusNotFound:
-			env.Status = registryReadStatusFail
 			env.Payload.Status = registryReadStatusFail
 			env.Authoritative = true
 		case http.StatusUnauthorized, http.StatusForbidden:
-			env.Status = registryReadStatusBlocked
 			env.Payload.Status = registryReadStatusBlocked
 			env.Authoritative = true
 		default:
-			env.Status = registryReadStatusUnknown
 			env.Payload.Status = registryReadStatusUnknown
 			env.Authoritative = false
 		}
 		return env
 	}
-	env.Status = registryReadStatusUnknown
 	env.Payload.Status = registryReadStatusUnknown
 	env.Authoritative = false
 	env.Payload.Error = &registryReadError{
