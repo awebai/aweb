@@ -21,14 +21,17 @@ from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_va
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
-    clear_workspace_presence,
     list_agent_presences,
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
 from ...redis_client import get_redis
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from ...events import TaskUnclaimedEvent, TeamTaskUnclaimedEvent, publish_event, publish_team_event
+from ...lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
 from ..roles import (
     ROLE_MAX_LENGTH,
 )
@@ -366,6 +369,23 @@ class DeleteWorkspaceResponse(BaseModel):
     identity_deleted: bool
 
 
+def _workspace_delete_conflict_detail(
+    *,
+    code: str,
+    workspace_id: str,
+    identity_id,
+    lifetime: str | None,
+    recommended_next_step: str,
+):
+    return {
+        "code": code,
+        "workspace_id": workspace_id,
+        "identity_id": str(identity_id) if identity_id is not None else None,
+        "lifetime": lifetime or "unknown",
+        "recommended_next_step": recommended_next_step,
+    }
+
+
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
 async def delete_workspace(
     workspace_id: str = Path(..., description="Workspace ID to delete"),
@@ -419,11 +439,37 @@ async def delete_workspace(
 
     agent_lifetime = str(existing.get("agent_lifetime") or "").strip()
     if not agent_lifetime:
-        raise HTTPException(status_code=409, detail="Workspace is missing its bound identity")
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code="unknown_lifetime_no_cleanup",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=None,
+                recommended_next_step="Inspect the workspace identity before attempting lifecycle cleanup.",
+            ),
+        )
+    if agent_lifetime == "persistent":
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code="persistent_identity_not_cleanup_eligible",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Persistent identities outlive workspace paths; use reconnect/rebind diagnostics or an explicit archive/replace flow.",
+            ),
+        )
     if agent_lifetime != "ephemeral":
         raise HTTPException(
             status_code=409,
-            detail="Workspace deletion is only available for ephemeral identities",
+            detail=_workspace_delete_conflict_detail(
+                code="unknown_lifetime_no_cleanup",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Inspect the workspace identity lifetime before attempting lifecycle cleanup.",
+            ),
         )
 
     last_seen_at = existing.get("last_seen_at")
@@ -431,83 +477,66 @@ async def delete_workspace(
     if last_seen_at is not None and last_seen_at > stale_cutoff:
         raise HTTPException(
             status_code=409,
-            detail="Workspace is still active; only stale ephemeral workspaces can be deleted",
+            detail=_workspace_delete_conflict_detail(
+                code="ephemeral_workspace_still_active",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step="Wait until presence is stale before deleting an ephemeral workspace.",
+            ),
         )
 
     deleted_at = datetime.now(timezone.utc)
-    async with aweb_db.transaction() as tx:
-        await tx.execute(
-            """
-            UPDATE {{tables.workspaces}}
-            SET deleted_at = $2
-            WHERE workspace_id = $1
-              AND deleted_at IS NULL
-            """,
-            UUID(validated_id),
-            deleted_at,
+    cascade_result = await apply_lifecycle_cascade(
+        aweb_db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="delete_ephemeral_workspace",
+            actor=LifecycleActor(
+                actor_id=getattr(identity, "agent_id", None),
+                actor_type="agent",
+                authority="team_identity",
+            ),
+            team_id=team_id,
+            target_agent_id=(
+                str(existing["agent_id"]) if existing.get("agent_id") is not None else None
+            ),
+            target_workspace_ids=(validated_id,),
+            workspace_scope="explicit",
+            require_lifetime="ephemeral",
+            stale_before=stale_cutoff,
+            deleted_at=deleted_at,
+            mark_ephemeral_agent_deleted=True,
+        ),
+    )
+    if cascade_result.errors:
+        error = cascade_result.errors[0]
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_conflict_detail(
+                code=error.code,
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                lifetime=agent_lifetime,
+                recommended_next_step=error.message,
+            ),
         )
-
-        claimed_rows = await tx.fetch_all(
-            """
-            DELETE FROM {{tables.task_claims}}
-            WHERE workspace_id = $1
-            RETURNING task_ref
-            """,
-            UUID(validated_id),
+    if cascade_result.post_commit_status == "failed":
+        logger.warning(
+            "Workspace delete SQL cleanup succeeded but post-commit cleanup failed",
+            extra={
+                "workspace_id": validated_id,
+                "team_id": team_id,
+                "failed_event_intents": len(cascade_result.failed_event_intents),
+                "presence_cleanup_status": cascade_result.presence_cleanup_status,
+            },
         )
-
-        deleted_agent = await tx.fetch_one(
-            """
-            UPDATE {{tables.agents}}
-            SET deleted_at = $2,
-                status = 'deleted'
-            WHERE agent_id = $1
-              AND team_id = $3
-              AND deleted_at IS NULL
-              AND lifetime = 'ephemeral'
-            RETURNING agent_id
-            """,
-            existing["agent_id"],
-            deleted_at,
-            team_id,
-        )
-
-    if redis is not None:
-        try:
-            for row in claimed_rows:
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=validated_id,
-                        task_ref=row["task_ref"],
-                        alias=existing["alias"],
-                    ),
-                )
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=team_id,
-                        task_ref=row["task_ref"],
-                        alias=existing["alias"],
-                        title="",
-                    ),
-                )
-            await clear_workspace_presence(redis, [validated_id])
-        except Exception as exc:
-            logger.warning(
-                "Workspace delete SQL cleanup succeeded but Redis cleanup failed",
-                extra={
-                    "workspace_id": validated_id,
-                    "team_id": team_id,
-                    "error": str(exc),
-                },
-            )
 
     return DeleteWorkspaceResponse(
         workspace_id=validated_id,
         alias=existing["alias"],
         deleted_at=deleted_at.isoformat(),
-        identity_deleted=deleted_agent is not None,
+        identity_deleted=cascade_result.identity_deleted,
     )
 
 
@@ -536,6 +565,7 @@ class WorkspaceInfo(BaseModel):
 
     workspace_id: str
     alias: str
+    agent_lifetime: Optional[str] = None
     human_name: Optional[str] = None
     context_kind: Optional[str] = None
     team_id: Optional[str] = None
@@ -666,6 +696,7 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             END AS context_kind,
             w.team_id,
             w.role,
+            a.lifetime AS agent_lifetime,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,
@@ -678,6 +709,10 @@ _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
             cs.last_claimed_at,
             w.updated_at
         FROM {{{{tables.workspaces}}}} w
+        LEFT JOIN {{{{tables.agents}}}} a
+          ON a.agent_id = w.agent_id
+         AND a.team_id = w.team_id
+         AND a.deleted_at IS NULL
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         LEFT JOIN claim_stats cs ON cs.workspace_id = w.workspace_id
         {_TEAM_FOCUS_JOIN}
@@ -753,6 +788,7 @@ def _row_to_workspace_info(
     return WorkspaceInfo(
         workspace_id=workspace_id,
         alias=row["alias"],
+        agent_lifetime=row.get("agent_lifetime"),
         human_name=row["human_name"],
         context_kind=row.get("context_kind"),
         team_id=row["team_id"],
@@ -864,6 +900,7 @@ async def list_workspaces(
             w.human_name,
             w.team_id,
             w.role,
+            a.lifetime AS agent_lifetime,
             w.hostname,
             w.workspace_path,
             w.last_seen_at,
@@ -875,6 +912,10 @@ async def list_workspaces(
             focus_issue.issue_type AS focus_task_type,
             r.canonical_origin as repo
         FROM {{tables.workspaces}} w
+        LEFT JOIN {{tables.agents}} a
+          ON a.agent_id = w.agent_id
+         AND a.team_id = w.team_id
+         AND a.deleted_at IS NULL
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
         + _title_join(

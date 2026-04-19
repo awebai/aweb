@@ -12,17 +12,16 @@ import (
 )
 
 type didRegisterRequest struct {
-	DIDAW         string  `json:"did_aw"`
-	DIDKey        string  `json:"did_key"`
-	Server        string  `json:"server"`
-	Address       string  `json:"address"`
-	Handle        *string `json:"handle"`
-	Seq           int     `json:"seq"`
-	PrevEntryHash *string `json:"prev_entry_hash"`
-	StateHash     string  `json:"state_hash"`
-	AuthorizedBy  string  `json:"authorized_by"`
-	Timestamp     string  `json:"timestamp"`
-	Proof         string  `json:"proof"`
+	AuthorizedBy   string  `json:"authorized_by"`
+	DIDAW          string  `json:"did_aw"`
+	NewDIDKey      string  `json:"new_did_key"`
+	Operation      string  `json:"operation"`
+	PrevEntryHash  *string `json:"prev_entry_hash"`
+	PreviousDIDKey *string `json:"previous_did_key"`
+	Seq            int     `json:"seq"`
+	StateHash      string  `json:"state_hash"`
+	Timestamp      string  `json:"timestamp"`
+	Proof          string  `json:"proof"`
 }
 
 type didKeyResponse struct {
@@ -30,12 +29,9 @@ type didKeyResponse struct {
 	CurrentDIDKey string `json:"current_did_key"`
 }
 
-func RegisterSelfCustodialDID(
+func RegisterIdentity(
 	ctx context.Context,
 	registryBaseURL string,
-	serverURL string,
-	address string,
-	handle string,
 	did string,
 	stableID string,
 	signingKey ed25519.PrivateKey,
@@ -46,7 +42,7 @@ func RegisterSelfCustodialDID(
 	}
 	client := NewAWIDRegistryClient(nil, nil)
 	client.DefaultRegistryURL = registryBaseURL
-	_, err = client.RegisterDID(ctx, registryBaseURL, serverURL, address, handle, did, stableID, signingKey)
+	_, err = client.RegisterIdentity(ctx, registryBaseURL, did, stableID, signingKey)
 	var already *AlreadyRegisteredError
 	if errors.As(err, &already) && strings.TrimSpace(already.ExistingDIDKey) == strings.TrimSpace(did) {
 		return nil
@@ -66,40 +62,18 @@ func canonicalRegistryServerOrigin(raw string) (string, error) {
 	return canonicalServerOrigin(parsed.String())
 }
 
-func stableIdentityStateHash(
-	stableID string,
-	did string,
-	serverURL string,
-	address string,
-	handle string,
-) string {
-	payload := canonicalStateJSON(stableID, did, serverURL, address, handle)
+func stableIdentityStateHash(stableID string, did string) string {
+	payload := canonicalStateJSON(stableID, did)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
 
-func canonicalStateJSON(
-	stableID string,
-	did string,
-	serverURL string,
-	address string,
-	handle string,
-) string {
+func canonicalStateJSON(stableID string, did string) string {
 	var b strings.Builder
 	b.WriteByte('{')
-	writeJSONField(&b, "address", strings.TrimSpace(address))
-	b.WriteByte(',')
 	writeJSONField(&b, "current_did_key", did)
 	b.WriteByte(',')
 	writeJSONField(&b, "did_aw", stableID)
-	b.WriteByte(',')
-	if strings.TrimSpace(handle) == "" {
-		b.WriteString(`"handle":null`)
-	} else {
-		writeJSONField(&b, "handle", strings.TrimSpace(handle))
-	}
-	b.WriteByte(',')
-	writeJSONField(&b, "server", serverURL)
 	b.WriteByte('}')
 	return b.String()
 }

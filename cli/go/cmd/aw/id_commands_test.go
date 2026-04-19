@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -121,13 +122,19 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	if got := runJSON("id", "show", "--json"); got["registry_status"] != "registered" {
 		t.Fatalf("show registry_status=%v", got["registry_status"])
 	}
-	if got := runJSON("id", "resolve", stableID, "--json"); got["current_did_key"] != did {
-		t.Fatalf("resolve current_did_key=%v", got["current_did_key"])
+	if got := runJSON("id", "resolve", stableID, "--json"); got["version"] != supportContractVersion {
+		t.Fatalf("resolve version=%v", got["version"])
+	} else if payload, _ := got["payload"].(map[string]any); payload["registry_url"] == "" {
+		t.Fatalf("resolve registry_url missing: %+v", got)
+	} else if didKey, _ := payload["did_key"].(map[string]any); didKey["current_did_key"] != did {
+		t.Fatalf("resolve current_did_key=%v", didKey["current_did_key"])
 	}
 	if got := runJSON("id", "verify", stableID, "--json"); got["status"] != "OK" {
 		t.Fatalf("verify status=%v", got["status"])
 	}
-	if got := runJSON("id", "namespace", "myteam.aweb.ai", "--json"); got["registry_url"] == "" {
+	if got := runJSON("id", "namespace", "myteam.aweb.ai", "--json"); got["version"] != supportContractVersion {
+		t.Fatalf("namespace version=%v", got["version"])
+	} else if payload, _ := got["payload"].(map[string]any); payload["registry_url"] == "" {
 		t.Fatalf("namespace registry_url missing: %+v", got)
 	}
 }
@@ -246,17 +253,14 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 				t.Fatal(err)
 			}
 			createdDIDAW, _ = payload["did_aw"].(string)
-			if payload["did_key"] != createdDIDKey {
-				t.Fatalf("did_key=%v want %v", payload["did_key"], createdDIDKey)
+			createdDIDKey, _ = payload["new_did_key"].(string)
+			if payload["operation"] != "register_did" {
+				t.Fatalf("operation=%v", payload["operation"])
 			}
-			if payload["server"] != "" {
-				t.Fatalf("server=%v want empty string", payload["server"])
-			}
-			if payload["address"] != "acme.com/alice" {
-				t.Fatalf("address=%v want acme.com/alice", payload["address"])
-			}
-			if payload["handle"] != "alice" {
-				t.Fatalf("handle=%v want alice", payload["handle"])
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case "/v1/did/" + createdDIDAW + "/full":
@@ -533,7 +537,7 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("id create failed unexpectedly: %v\n%s", err, string(out))
 	}
-	if !strings.Contains(string(out), "Warning: could not finish identity registration at") {
+	if !strings.Contains(string(out), "Warning: could not finish registry setup at") {
 		t.Fatalf("expected warning in output:\n%s", string(out))
 	}
 
@@ -565,6 +569,111 @@ func TestAwIDCreateWarnsAndContinuesWhenRegistryUnavailable(t *testing.T) {
 	}
 	if identity.Address != "acme.com/alice" {
 		t.Fatalf("identity address=%q", identity.Address)
+	}
+}
+
+func TestAwIDCreateKeepsRegisteredIdentityWhenAddressClaimFails(t *testing.T) {
+	t.Parallel()
+
+	var controllerDID string
+	var didAW string
+	var didKey string
+	didRegistered := false
+	addressPosts := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/namespaces/acme.com" && r.Method == http.MethodGet:
+			if controllerDID == "" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-05T00:00:00Z",
+				"created_at":          "2026-04-05T00:00:00Z",
+			})
+		case r.URL.Path == "/v1/namespaces" && r.Method == http.MethodPost:
+			controllerDID = didFromRegistryAuthHeader(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"last_verified_at":    "2026-04-05T00:00:00Z",
+				"created_at":          "2026-04-05T00:00:00Z",
+			})
+		case r.URL.Path == "/v1/did" && r.Method == http.MethodPost:
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			didAW, _ = payload["did_aw"].(string)
+			didKey, _ = payload["new_did_key"].(string)
+			didRegistered = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
+		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          didAW,
+				"current_did_key": didKey,
+				"created_at":      "2026-04-05T00:00:00Z",
+				"updated_at":      "2026-04-05T00:00:00Z",
+			})
+		case r.URL.Path == "/v1/namespaces/acme.com/addresses/alice" && r.Method == http.MethodGet:
+			http.NotFound(w, r)
+		case r.URL.Path == "/v1/namespaces/acme.com/addresses" && r.Method == http.MethodPost:
+			addressPosts++
+			http.Error(w, `{"detail":"address backend unavailable"}`, http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "id", "create", "--name", "Alice", "--domain", "acme.com", "--registry", server.URL, "--skip-dns-verify", "--json")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id create failed unexpectedly: %v\n%s", err, string(out))
+	}
+	if !didRegistered {
+		t.Fatal("expected DID identity registration before address failure")
+	}
+	if addressPosts != 1 {
+		t.Fatalf("address posts=%d", addressPosts)
+	}
+	if !strings.Contains(string(out), "registered, but address acme.com/alice was not claimed") {
+		t.Fatalf("expected recovery warning in output:\n%s", string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["registry_status"] != "pending" {
+		t.Fatalf("registry_status=%v", got["registry_status"])
+	}
+	if !strings.Contains(fmt.Sprint(got["registry_error"]), "retry the address claim") {
+		t.Fatalf("registry_error=%v", got["registry_error"])
+	}
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.RegistryStatus != "pending" {
+		t.Fatalf("identity registry_status=%q", identity.RegistryStatus)
+	}
+	if identity.StableID != didAW {
+		t.Fatalf("identity stable_id=%q want %q", identity.StableID, didAW)
 	}
 }
 
@@ -661,9 +770,15 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 				t.Fatal(err)
 			}
 			stableID, _ := payload["did_aw"].(string)
-			didKey, _ := payload["did_key"].(string)
-			handle, _ := payload["handle"].(string)
-			didMappings[stableID] = didMapping{didKey: didKey, handle: handle}
+			didKey, _ := payload["new_did_key"].(string)
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
+			}
+			mapping := didMappings[stableID]
+			mapping.didKey = didKey
+			didMappings[stableID] = mapping
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full") && r.Method == http.MethodGet:
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
@@ -1094,15 +1209,15 @@ func TestAwIDResolveUsesAWIDRegistryURLEnvWithoutWorkspace(t *testing.T) {
 		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
 	}
 
-	var got map[string]any
+	var got registryReadEnvelope
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["registry_url"] != registryServer.URL {
-		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	if got.Payload.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got.Payload.RegistryURL, registryServer.URL)
 	}
-	if got["current_did_key"] != did {
-		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	if got.Payload.DIDKey == nil || got.Payload.DIDKey.CurrentDIDKey != did {
+		t.Fatalf("current_did_key=%+v want %v", got.Payload.DIDKey, did)
 	}
 	if registryHits.Load() != 1 {
 		t.Fatalf("registry hits=%d want 1", registryHits.Load())
@@ -1263,15 +1378,15 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
 	}
 
-	var got map[string]any
+	var got registryReadEnvelope
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["current_did_key"] != did {
-		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	if got.Payload.DIDKey == nil || got.Payload.DIDKey.CurrentDIDKey != did {
+		t.Fatalf("current_did_key=%+v want %v", got.Payload.DIDKey, did)
 	}
-	if got["registry_url"] != registryServer.URL {
-		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	if got.Payload.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got.Payload.RegistryURL, registryServer.URL)
 	}
 }
 
@@ -1735,17 +1850,13 @@ func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
 			if payload["did_aw"] != stableID {
 				t.Fatalf("did_aw=%v want %v", payload["did_aw"], stableID)
 			}
-			if payload["did_key"] != did {
-				t.Fatalf("did_key=%v want %v", payload["did_key"], did)
+			if payload["new_did_key"] != did {
+				t.Fatalf("new_did_key=%v want %v", payload["new_did_key"], did)
 			}
-			if payload["server"] != "" {
-				t.Fatalf("server=%v want empty string", payload["server"])
-			}
-			if payload["address"] != address {
-				t.Fatalf("address=%v want %v", payload["address"], address)
-			}
-			if payload["handle"] != "alice" {
-				t.Fatalf("handle=%v want alice", payload["handle"])
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := payload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case "/v1/did/" + stableID + "/full":

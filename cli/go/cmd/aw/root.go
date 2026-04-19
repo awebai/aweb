@@ -87,6 +87,7 @@ func init() {
 
 	versionCmd.GroupID = groupUtility
 	upgradeCmd.GroupID = groupUtility
+	doctorCmd.GroupID = groupUtility
 	rootCmd.SetHelpCommandGroupID(groupUtility)
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
@@ -111,6 +112,7 @@ func init() {
 	bindTeamSelector(contactsCmd)
 	bindTeamSelector(directoryCmd)
 	bindTeamSelector(introspectCmd)
+	bindTeamSelector(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(upgradeCmd)
 }

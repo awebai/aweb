@@ -75,6 +75,16 @@ def log_entry_payload(
     )
 
 
+def identity_state_hash(*, did_aw: str, current_did_key: str) -> str:
+    payload = canonical_json_bytes(
+        {
+            "current_did_key": current_did_key,
+            "did_aw": did_aw,
+        }
+    )
+    return sha256_hex(payload)
+
+
 def state_hash(
     *,
     did_aw: str,

@@ -434,7 +434,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
-				"current_did_key": current["did_key"],
+				"current_did_key": current["new_did_key"],
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -680,7 +680,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
-				"current_did_key": current["did_key"],
+				"current_did_key": current["new_did_key"],
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -855,12 +855,17 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
 				t.Fatal(err)
 			}
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := gotDIDPayload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
+			}
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
-				"current_did_key": gotDIDPayload["did_key"],
+				"current_did_key": gotDIDPayload["new_did_key"],
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -941,8 +946,16 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if gotAddressPayload["name"] != "alice" {
 		t.Fatalf("address name=%v", gotAddressPayload["name"])
 	}
-	if gotDIDPayload["address"] != "acme.com/alice" {
-		t.Fatalf("did address=%v", gotDIDPayload["address"])
+	for _, field := range []string{"did_key", "server", "address", "handle"} {
+		if _, ok := gotDIDPayload[field]; ok {
+			t.Fatalf("did registration unexpectedly carried %q", field)
+		}
+	}
+	if gotAddressPayload["did_aw"] != gotDIDPayload["did_aw"] {
+		t.Fatalf("address did_aw=%v want %v", gotAddressPayload["did_aw"], gotDIDPayload["did_aw"])
+	}
+	if gotAddressPayload["current_did_key"] != gotDIDPayload["new_did_key"] {
+		t.Fatalf("address current_did_key=%v want %v", gotAddressPayload["current_did_key"], gotDIDPayload["new_did_key"])
 	}
 	if gotTeamPayload["name"] != "default" {
 		t.Fatalf("team name=%v", gotTeamPayload["name"])
@@ -1053,12 +1066,17 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&gotDIDPayload); err != nil {
 				t.Fatal(err)
 			}
+			for _, field := range []string{"did_key", "server", "address", "handle"} {
+				if _, ok := gotDIDPayload[field]; ok {
+					t.Fatalf("register_did payload unexpectedly carried %q", field)
+				}
+			}
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
-				"current_did_key": gotDIDPayload["did_key"],
+				"current_did_key": gotDIDPayload["new_did_key"],
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -1154,8 +1172,16 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	if gotNamespacePayload["domain"] != "acme.com" {
 		t.Fatalf("namespace domain=%v", gotNamespacePayload["domain"])
 	}
-	if gotDIDPayload["address"] != "acme.com/alice" {
-		t.Fatalf("did address=%v", gotDIDPayload["address"])
+	for _, field := range []string{"did_key", "server", "address", "handle"} {
+		if _, ok := gotDIDPayload[field]; ok {
+			t.Fatalf("did registration unexpectedly carried %q", field)
+		}
+	}
+	if gotAddressPayload["did_aw"] != gotDIDPayload["did_aw"] {
+		t.Fatalf("address did_aw=%v want %v", gotAddressPayload["did_aw"], gotDIDPayload["did_aw"])
+	}
+	if gotAddressPayload["current_did_key"] != gotDIDPayload["new_did_key"] {
+		t.Fatalf("address current_did_key=%v want %v", gotAddressPayload["current_did_key"], gotDIDPayload["new_did_key"])
 	}
 	if gotCertPayload["member_address"] != "acme.com/alice" {
 		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])

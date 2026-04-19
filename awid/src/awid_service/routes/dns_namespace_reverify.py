@@ -56,7 +56,13 @@ async def reverify_namespace_row(
         ) from exc
 
     old_controller_did = ns_row["controller_did"]
-    new_controller_did = dns_authority.controller_did
+    # When the DNS record comes from a parent domain, the controller_did
+    # belongs to the parent — not this namespace.  Refresh the timestamp
+    # (the domain tree is still alive) but do not rotate the controller.
+    if dns_authority.inherited:
+        new_controller_did = old_controller_did
+    else:
+        new_controller_did = dns_authority.controller_did
     now = datetime.now(timezone.utc)
 
     if new_controller_did == old_controller_did:
