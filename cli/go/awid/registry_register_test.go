@@ -98,9 +98,6 @@ func TestRegisterIdentityMatchesRegisterVector(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          vectors.Mapping.DIDAW,
 				"current_did_key": vectors.Mapping.InitialDIDKey,
-				"server":          "",
-				"address":         "",
-				"handle":          nil,
 				"created_at":      "2026-04-18T12:00:00Z",
 				"updated_at":      "2026-04-18T12:00:00Z",
 			})

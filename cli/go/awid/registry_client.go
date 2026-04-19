@@ -435,10 +435,3 @@ func parseRegistryError(resp *http.Response) error {
 		Detail:     body,
 	}
 }
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}

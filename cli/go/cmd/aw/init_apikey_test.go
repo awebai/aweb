@@ -203,9 +203,6 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": registeredDIDKey,
-				"server":          "",
-				"address":         "",
-				"handle":          nil,
 				"created_at":      "2026-04-18T00:00:00Z",
 				"updated_at":      "2026-04-18T00:00:00Z",
 			})
@@ -361,9 +358,6 @@ func TestRunAPIKeyBootstrapInitPersistentResumesPartialAfterWorkspaceInitFailure
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": registeredDIDKeys[0],
-				"server":          "",
-				"address":         "",
-				"handle":          nil,
 				"created_at":      "2026-04-18T00:00:00Z",
 				"updated_at":      "2026-04-18T00:00:00Z",
 			})
