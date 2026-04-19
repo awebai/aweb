@@ -92,6 +92,14 @@ These are distinct lifecycle stories:
 Do not collapse these into one generic "identity reset" idea; the trust story
 depends on the distinction.
 
+Persistent identity lifetime is also distinct from workspace path lifetime. A
+missing or deleted local workspace path is not evidence that a persistent
+identity should be deleted, archived, replaced, unclaimed, or reassigned. OSS
+aweb only treats confirmed gone **ephemeral** workspaces as cleanup candidates;
+persistent lifecycle actions require explicit authority and reviewed lifecycle
+flows. See [OSS Support Tools](support-tools.md) for doctor, support bundle,
+registry read, and high-impact handoff behavior.
+
 ## Related Files
 
 Common identity-related files in `.aw/`:

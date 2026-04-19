@@ -57,7 +57,7 @@ identifier, never changes):
 
 ```
 did:key:z6Mk...   ← current public key (rotatable)
-did:aw:abc123...   ← stable identity (permanent)
+did:aw:abc123...   ← stable identity (persistent)
 ```
 
 Persistent identities can own one or more **public addresses** (like

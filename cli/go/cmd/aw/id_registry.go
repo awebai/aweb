@@ -68,7 +68,7 @@ type idRotateOutput struct {
 
 var idRegisterCmd = &cobra.Command{
 	Use:   "register",
-	Short: "Register the current persistent identity at awid.ai",
+	Short: "Register the current persistent identity at the configured registry",
 	RunE:  runIDRegister,
 }
 
