@@ -164,7 +164,7 @@ class MCPAuthMiddleware:
 
     async def _resolve_proxy_auth(self, internal: dict[str, str]) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
-        resolved_team_id = await _resolve_proxy_team_id(aweb_db, internal["team_id"])
+        team_id = internal["team_id"]
         row = await aweb_db.fetch_one(
             """
             SELECT agent_id, alias, did_key, did_aw, address
@@ -172,7 +172,7 @@ class MCPAuthMiddleware:
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
             UUID(internal["actor_id"]),
-            resolved_team_id,
+            team_id,
         )
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
@@ -186,11 +186,11 @@ class MCPAuthMiddleware:
             LIMIT 1
             """,
             row["agent_id"],
-            resolved_team_id,
+            team_id,
         )
 
         return AuthContext(
-            team_id=resolved_team_id,
+            team_id=team_id,
             agent_id=str(row["agent_id"]),
             workspace_id=(str(workspace["workspace_id"]) if workspace else None),
             alias=row["alias"],
@@ -199,23 +199,3 @@ class MCPAuthMiddleware:
             address=(str(row.get("address") or "").strip() or None),
             trusted_proxy=True,
         )
-
-
-async def _resolve_proxy_team_id(aweb_db, internal_team_id: str) -> str:
-    try:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT aweb_team_id
-            FROM server.teams
-            WHERE id = $1 AND deleted_at IS NULL
-            """,
-            UUID(internal_team_id),
-        )
-    except Exception:
-        logger.warning(
-            "Falling back to proxy team id without server.teams mapping",
-            extra={"internal_team_id": internal_team_id},
-            exc_info=True,
-        )
-        return internal_team_id
-    return str(row["aweb_team_id"]) if row and row.get("aweb_team_id") else internal_team_id

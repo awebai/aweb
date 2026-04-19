@@ -7,6 +7,7 @@ import os
 import uuid
 from typing import Optional, TypedDict
 
+from awid.team_ids import parse_team_id
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -76,11 +77,11 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
         )
         return None
 
-    team_id = request.headers.get(INTERNAL_TEAM_HEADER)
+    team_id = (request.headers.get(INTERNAL_TEAM_HEADER) or "").strip()
     if not team_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
-        team_id = str(uuid.UUID(team_id))
+        parse_team_id(team_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Authentication required") from exc
 

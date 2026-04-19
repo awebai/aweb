@@ -199,7 +199,6 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
-    internal_team_id = str(uuid4())
     agent_id = uuid4()
     workspace_id = uuid4()
     secret = "proxy-secret"
@@ -231,24 +230,22 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
         agent_id,
     )
 
-    async def _fake_resolve_proxy_team_id(_aweb_db, _internal_team_id: str) -> str:
-        return team_id
-
-    monkeypatch.setattr(mcp_auth, "_resolve_proxy_team_id", _fake_resolve_proxy_team_id)
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
 
+    user_id = str(uuid4())
     middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
     ctx = await middleware._resolve_auth(
         _request_with_headers(
             {
-                "X-Team-ID": internal_team_id,
+                "X-Team-ID": team_id,
+                "X-User-ID": user_id,
                 "X-AWEB-Actor-ID": str(agent_id),
                 "X-AWEB-Auth": build_internal_auth_header_value(
                     secret=secret,
-                    team_id=internal_team_id,
-                    principal_type="m",
-                    principal_id=str(uuid4()),
+                    team_id=team_id,
+                    principal_type="u",
+                    principal_id=user_id,
                     actor_id=str(agent_id),
                 ),
             }
