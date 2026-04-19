@@ -231,6 +231,8 @@ func runIDResolve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	requestID := newRegistryReadRequestID()
+	registry.RequestID = requestID
 	didAW := strings.TrimSpace(args[0])
 	if !strings.HasPrefix(didAW, "did:aw:") {
 		return usageError("did_aw must start with did:aw:")
@@ -239,9 +241,19 @@ func runIDResolve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if jsonFlag {
+		out, err := registryReadResolveKeyEnvelope(ctx, registry, registryURL, didAW)
+		if err != nil {
+			return err
+		}
+		printJSON(out)
+		return nil
+	}
 	resolution, err := registry.ResolveKeyAt(ctx, registryURL, didAW)
 	if err != nil {
-		return err
+		out := newRegistryReadEnvelope(requestID, registryReadAuthority{Mode: registryReadAuthorityAnonymous}, registryURL, "resolve-key", registryReadDIDTarget(didAW, "")).withError(err)
+		printRegistryRead(out, formatRegistryRead)
+		return nil
 	}
 	printOutput(idResolveOutput{
 		DIDAW:         didAW,
@@ -317,9 +329,19 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	requestID := newRegistryReadRequestID()
+	registry.RequestID = requestID
 	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, domain)
 	if err != nil {
-		return err
+		out := newRegistryReadEnvelope(requestID, registryReadAuthority{Mode: registryReadAuthorityAnonymous}, registryURL, "namespace-state", registryReadNamespaceTarget(domain)).withError(err)
+		printRegistryRead(out, formatRegistryRead)
+		return nil
+	}
+	if jsonFlag {
+		out := newRegistryReadEnvelope(requestID, registryReadAuthority{Mode: registryReadAuthorityAnonymous}, registryURL, "namespace-state", registryReadNamespaceTarget(domain))
+		out.Payload.Namespace = namespace
+		printJSON(out)
+		return nil
 	}
 	lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
 	if err != nil {
@@ -332,7 +354,9 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 		addresses, _, err = registry.ListNamespaceAddressesAt(ctx, registryURL, domain)
 	}
 	if err != nil {
-		return err
+		out := newRegistryReadEnvelope(requestID, registryReadAuthority{Mode: registryReadAuthorityAnonymous}, registryURL, "list-addresses", registryReadNamespaceTarget(domain)).withError(err)
+		printRegistryRead(out, formatRegistryRead)
+		return nil
 	}
 	printOutput(idNamespaceOutput{
 		RegistryURL: registryURL,
@@ -458,11 +482,7 @@ func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *a
 	if err != nil {
 		return nil, nil, err
 	}
-	baseURL := ""
-	if identity != nil {
-		baseURL = strings.TrimSpace(identity.RegistryURL)
-	}
-	registry, err := newRegistryClientWithPreferredBaseURL(baseURL)
+	registry, err := newRegistryClientWithPreferredBaseURL("")
 	if err != nil {
 		return nil, nil, err
 	}

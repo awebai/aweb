@@ -110,6 +110,51 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 	}
 }
 
+func TestListDIDAddressesAtReadsReverseAddressList(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method=%s", r.Method)
+		}
+		if r.URL.Path != "/v1/did/"+stableID+"/addresses" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"addresses": []map[string]any{{
+			"address_id":      "addr-1",
+			"domain":          "acme.com",
+			"name":            "alice",
+			"did_aw":          stableID,
+			"current_did_key": did,
+			"reachability":    "public",
+			"created_at":      "2026-04-04T00:00:00Z",
+		}}})
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	addresses, err := client.ListDIDAddressesAt(context.Background(), server.URL, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 {
+		t.Fatalf("addresses=%d want 1", len(addresses))
+	}
+	if addresses[0].DIDAW != stableID {
+		t.Fatalf("did_aw=%s want %s", addresses[0].DIDAW, stableID)
+	}
+	if addresses[0].CurrentDIDKey != did {
+		t.Fatalf("current_did_key=%s want %s", addresses[0].CurrentDIDKey, did)
+	}
+}
+
 func TestRegisterAddressAtRequiresControllerSigningKey(t *testing.T) {
 	t.Parallel()
 

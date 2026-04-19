@@ -73,6 +73,7 @@ type RegistryClient struct {
 	DefaultRegistryURL string
 	Resolver           *RegistryResolver
 	HTTPClient         *http.Client
+	RequestID          string
 }
 
 var registryNow = func() time.Time { return time.Now().UTC() }
@@ -122,7 +123,30 @@ func (c *RegistryClient) ResolveKey(ctx context.Context, didAW string) (*DidKeyR
 }
 
 func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW string) (*DidKeyResolution, error) {
-	return c.Resolver.resolveKey(ctx, registryURL, strings.TrimSpace(didAW))
+	didAW = strings.TrimSpace(didAW)
+	var wire didKeyResolutionWire
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, "/v1/did/"+urlPathEscape(didAW)+"/key", nil, nil, &wire); err != nil {
+		return nil, err
+	}
+	res := &DidKeyResolution{
+		DIDAW:         wire.DIDAW,
+		CurrentDIDKey: wire.CurrentDIDKey,
+	}
+	if wire.LogHead != nil {
+		res.LogHead = &DidKeyEvidence{
+			Seq:            wire.LogHead.Seq,
+			Operation:      wire.LogHead.Operation,
+			PreviousDIDKey: wire.LogHead.PreviousDIDKey,
+			NewDIDKey:      wire.LogHead.NewDIDKey,
+			PrevEntryHash:  wire.LogHead.PrevEntryHash,
+			EntryHash:      wire.LogHead.EntryHash,
+			StateHash:      wire.LogHead.StateHash,
+			AuthorizedBy:   wire.LogHead.AuthorizedBy,
+			Signature:      wire.LogHead.Signature,
+			Timestamp:      wire.LogHead.Timestamp,
+		}
+	}
+	return res, nil
 }
 
 func (c *RegistryClient) GetDIDFull(ctx context.Context, registryURL, didAW string, signingKey ed25519.PrivateKey) (*DIDMapping, error) {
@@ -141,6 +165,15 @@ func (c *RegistryClient) GetDIDLog(ctx context.Context, registryURL, didAW strin
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *RegistryClient) ListDIDAddressesAt(ctx context.Context, registryURL, didAW string) ([]RegistryAddress, error) {
+	path := "/v1/did/" + urlPathEscape(strings.TrimSpace(didAW)) + "/addresses"
+	var out RegistryAddressList
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Addresses, nil
 }
 
 func (c *RegistryClient) GetNamespace(ctx context.Context, domain string) (*RegistryNamespace, string, error) {
@@ -422,6 +455,9 @@ func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, pa
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	if requestID := strings.TrimSpace(c.RequestID); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
+	}
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
