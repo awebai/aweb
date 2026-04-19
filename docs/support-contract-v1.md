@@ -1,9 +1,16 @@
 # Support Contract v1
 
-Shared JSON vocabulary for `aw doctor` output, awid read commands,
-and cloud support endpoints. This is the machine-readable contract
-that lets humans and agents parse output from any of these tools
-without learning per-tool field names.
+Shared JSON vocabulary for `aw doctor` output, `aw id` registry
+read commands, and cloud support endpoints. This is the
+machine-readable contract that lets humans and agents parse output
+from any of these tools without learning per-tool field names.
+
+**Registry agnosticism.** The awid protocol is one thing; awid.ai
+is one implementation. Registries are discovered via DNS TXT at
+`_awid.<domain>` or via `identity.yaml`. Nothing in this contract
+assumes awid.ai specifically. Payloads that cite a registry MUST
+include the `registry_url` that served the call so callers can see
+which registry instance answered.
 
 The mental-model companion is
 [`ac/docs/support-tools.md`](https://app.aweb.ai/docs/support-tools)
@@ -14,7 +21,9 @@ This doc is the byte-level contract those docs assume.
 ## Scope
 
 - **OSS `aw doctor`** output (JSON + human).
-- **`aw awid …` read command** output.
+- **`aw id` registry read commands** (resolve, addresses, namespace
+  state/addresses/resolve — any awid-protocol registry, not only
+  awid.ai).
 - **Cloud support read endpoints** under `/api/v1/admin/support/…`.
 - **Cloud lifecycle dry-run output** (`repair-managed-address`,
   `replace-agent`, `archive-agent` dry-runs).
@@ -52,10 +61,13 @@ Field contracts:
   bumps are not breaking for the envelope; payload shape changes
   go under per-tool schemas.
 - **`source`**: the authoritative system for the *payload*. A cloud
-  endpoint returning awid data uses `source: "awid"`. A cloud
-  endpoint returning its own operational state uses `source:
-  "aweb-cloud"`. Doctor checks that observe local files use
-  `source: "local"`.
+  endpoint returning awid registry data uses `source: "awid"` (the
+  protocol name, not an implementation URL); a cloud endpoint
+  returning its own operational state uses `source:
+  "aweb-cloud"`; doctor checks that observe local files use
+  `source: "local"`. When `source: "awid"`, the payload MUST
+  include `registry_url` naming the registry instance that served
+  the call.
 - **`authority_mode`**: how the caller was authenticated. `anonymous`
   means no caller credential. `did-key` is a DIDKey signature.
   `namespace-controller` and `team-controller` are controller-key
@@ -96,6 +108,31 @@ blocked  — the check could not run because the caller lacks authority.
 Order from best to worst (for rollup badges): `ok < info < warn <
 fail < unknown < blocked` — i.e. `blocked` outranks `fail` because
 an unknown-authority state is more ambiguous than a known failure.
+
+## Payload schemas
+
+Per-tool payload shapes are named schemas nested under the
+envelope `payload` field. Known schemas in v1:
+
+- **`registry_read.v1`** — response shape for `aw id` registry
+  read commands (resolve-key, list-did-addresses, namespace
+  addresses, resolve-address, namespace-state). MUST include:
+  - `registry_url` — the registry instance that served the call.
+  - `operation` — the read op (matches command name).
+  - `target` — the requested identifier (did_aw, domain,
+    domain/name).
+  - `ownership_proof: false` for anonymous/public views — prevents
+    public listing being misread as ownership evidence.
+  - One typed raw registry field: `did_key`, `addresses`,
+    `address`, or `namespace`.
+- **`doctor.v1`** — per-check entries (see Per-check structure
+  below).
+- **`audit.v1`** — support audit records (defined by AC-04,
+  referenced here for completeness).
+
+New payload schemas may be added without bumping the envelope
+version; consumers MUST handle unknown `payload.schema` values
+gracefully.
 
 ## Per-check structure (doctor output)
 
