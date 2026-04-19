@@ -7,11 +7,33 @@ import os
 import uuid
 from typing import Optional, TypedDict
 
-from awid.team_ids import parse_team_id
+import re
+
 from fastapi import HTTPException
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+_TEAM_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+_DOMAIN_INVALID_RE = re.compile(r"[:/\s]")
+
+
+def _is_valid_proxy_team_id(team_id: str) -> bool:
+    """Validate that team_id is a canonical colon-form like ops:acme.com."""
+    if team_id.count(":") != 1:
+        return False
+    name, domain = team_id.split(":", 1)
+    if not name or not domain:
+        return False
+    if not _TEAM_NAME_RE.match(name):
+        return False
+    if _DOMAIN_INVALID_RE.search(domain):
+        return False
+    if domain != domain.lower().rstrip("."):
+        return False
+    if ".." in domain:
+        return False
+    return True
 
 
 def _trust_aweb_proxy_headers() -> bool:
@@ -80,12 +102,7 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
     team_id = (request.headers.get(INTERNAL_TEAM_HEADER) or "").strip()
     if not team_id:
         raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        domain, name = parse_team_id(team_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Authentication required") from exc
-    canonical = f"{name}:{domain}"
-    if team_id != canonical:
+    if not _is_valid_proxy_team_id(team_id):
         raise HTTPException(status_code=401, detail="Authentication required")
 
     user_id = request.headers.get(INTERNAL_USER_HEADER)

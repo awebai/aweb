@@ -294,6 +294,47 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bad_team_id", [
+    "ops:acme.com:evil",
+    "bad team:acme.com",
+    "ops:http://evil",
+    "OPS:ACME.COM",
+    "ops:acme..com",
+    "ops:acme.com.",
+    str(uuid4()),
+    "",
+    "nocolon",
+])
+async def test_mcp_auth_rejects_invalid_proxy_team_id(aweb_cloud_db, monkeypatch, bad_team_id):
+    secret = "proxy-secret"
+    actor_id = str(uuid4())
+    user_id = str(uuid4())
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    with pytest.raises(HTTPException) as exc_info:
+        await middleware._resolve_auth(
+            _request_with_headers(
+                {
+                    "X-Team-ID": bad_team_id,
+                    "X-User-ID": user_id,
+                    "X-AWEB-Actor-ID": actor_id,
+                    "X-AWEB-Auth": build_internal_auth_header_value(
+                        secret=secret,
+                        team_id=bad_team_id,
+                        principal_type="u",
+                        principal_id=user_id,
+                        actor_id=actor_id,
+                    ),
+                }
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_mcp_auth_ignores_trusted_proxy_headers_when_not_enabled(aweb_cloud_db, monkeypatch):
     secret = "proxy-secret"
     monkeypatch.delenv("AWEB_TRUST_PROXY_HEADERS", raising=False)
