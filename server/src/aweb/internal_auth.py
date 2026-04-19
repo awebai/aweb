@@ -81,9 +81,12 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
     if not team_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
-        parse_team_id(team_id)
+        domain, name = parse_team_id(team_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Authentication required") from exc
+    canonical = f"{name}:{domain}"
+    if team_id != canonical:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     user_id = request.headers.get(INTERNAL_USER_HEADER)
     api_key_id = request.headers.get(INTERNAL_API_KEY_ID_HEADER)
@@ -102,12 +105,7 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
         principal_type = "k"
         principal_id = api_key_id
     else:
-        parts = internal_auth.split(":")
-        if len(parts) >= 5 and parts[0] == "v2" and parts[2] not in ("u", "k"):
-            principal_type = parts[2]
-            principal_id = parts[3]
-        else:
-            raise HTTPException(status_code=401, detail="Authentication required")
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     actor_id = request.headers.get(INTERNAL_ACTOR_ID_HEADER)
     if not actor_id:

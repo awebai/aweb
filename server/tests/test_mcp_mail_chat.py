@@ -265,8 +265,8 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
 @pytest.mark.asyncio
 async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monkeypatch):
     secret = "proxy-secret"
-    team_id = str(uuid4())
-    principal_id = str(uuid4())
+    team_id = "ops:acme.com"
+    user_id = str(uuid4())
     actor_id = str(uuid4())
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
@@ -277,8 +277,15 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
             _request_with_headers(
                 {
                     "X-Team-ID": team_id,
+                    "X-User-ID": user_id,
                     "X-AWEB-Actor-ID": actor_id,
-                    "X-AWEB-Auth": f"v2:{team_id}:m:{principal_id}:{actor_id}:wronghex",
+                    "X-AWEB-Auth": build_internal_auth_header_value(
+                        secret="wrong-secret",
+                        team_id=team_id,
+                        principal_type="u",
+                        principal_id=user_id,
+                        actor_id=actor_id,
+                    ),
                 }
             )
         )
