@@ -34,7 +34,20 @@ in **AC-04**, not here.
 ## Envelope
 
 Every response (single-shot tool output or endpoint body) wraps
-its payload in an envelope:
+its payload in an envelope. The envelope carries **transport and
+identity metadata only** — the minimal set of fields every
+response needs regardless of payload shape. Payload-specific
+semantics (including status) live inside `payload` under the
+appropriate schema. This boundary is strict:
+
+- The envelope MUST carry exactly the fields listed below. No more.
+- `status` is NOT an envelope field. It is a payload-schema concern
+  and different payload schemas may define it differently (see
+  `registry_read.v1` single-fact status vs `doctor.v1` per-check
+  status). Consumers read status from the payload.
+- New payload schemas MUST NOT promote their status into the
+  envelope. If a schema wants a rollup for convenience, that
+  rollup belongs in the payload, not above it.
 
 ```json
 {
@@ -91,19 +104,29 @@ Field contracts:
   (`"payload.agent.signing_key_enc"`). If nothing is redacted,
   empty array — NOT null, NOT omitted.
 
-## Status vocabulary (doctor checks)
+## Status vocabulary (payload-level)
+
+Status is a payload concern, not an envelope concern. Each payload
+schema decides where in its payload the status lives and which of
+the six values it uses. The values themselves are shared across
+all schemas that report status:
 
 ```
-ok       — the check ran and the state is correct.
-info     — the check ran; state is acceptable but worth noting.
-warn     — the check ran; state is degraded or unusual; not broken.
-fail     — the check ran; state is wrong; action required.
-unknown  — the check could not run (offline, dependency unreachable,
+ok       — the operation ran and the state is correct.
+info     — the operation ran; state is acceptable but worth noting.
+warn     — the operation ran; state is degraded or unusual; not broken.
+fail     — the operation ran; state is wrong; action required.
+unknown  — the operation could not run (offline, dependency unreachable,
            insufficient input). Never a claim about state.
-blocked  — the check could not run because the caller lacks authority.
+blocked  — the operation could not run because the caller lacks authority.
            Distinct from `unknown` so the next-step guidance is
            correct.
 ```
+
+Not every schema uses every value. `registry_read.v1` uses only
+`ok | fail | unknown | blocked` because reads are single facts
+where `info` and `warn` do not apply. `doctor.v1` uses all six
+because per-check semantics cover the full range.
 
 Order from best to worst (for rollup badges): `ok < info < warn <
 fail < unknown < blocked` — i.e. `blocked` outranks `fail` because
@@ -117,6 +140,9 @@ envelope `payload` field. Known schemas in v1:
 - **`registry_read.v1`** — response shape for `aw id` registry
   read commands (resolve-key, list-did-addresses, namespace
   addresses, resolve-address, namespace-state). MUST include:
+  - `status` — one of `ok | fail | unknown | blocked`. This is
+    the single-fact status of the read; consumers read it from
+    `payload.status`, never from the envelope.
   - `registry_url` — the registry instance that served the call.
   - `operation` — the read op (matches command name).
   - `target` — the requested identifier (did_aw, domain,
@@ -124,7 +150,9 @@ envelope `payload` field. Known schemas in v1:
   - `ownership_proof: false` for anonymous/public views — prevents
     public listing being misread as ownership evidence.
   - One typed raw registry field: `did_key`, `addresses`,
-    `address`, or `namespace`.
+    `address`, or `namespace` — populated when `status == "ok"`.
+  - `error` — populated when `status` is not `ok`, with a stable
+    dotted code from the error-codes list.
 - **`doctor.v1`** — per-check entries (see Per-check structure
   below).
 - **`audit.v1`** — support audit records (defined by AC-04,
