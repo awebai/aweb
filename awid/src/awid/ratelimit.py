@@ -40,6 +40,20 @@ class RateLimiter:
         raise NotImplementedError
 
 
+class NoOpRateLimiter(RateLimiter):
+    """Always allows — for local development and e2e tests."""
+
+    async def hit(
+        self, *, bucket: str, key: str, limit: int, window_seconds: int
+    ) -> RateLimitDecision:
+        return RateLimitDecision(
+            allowed=True,
+            limit=limit,
+            remaining=limit,
+            reset_epoch_seconds=int(time.time()) + window_seconds,
+        )
+
+
 class MemoryFixedWindowRateLimiter(RateLimiter):
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -168,6 +182,8 @@ def _extract_client_ip(request: Request) -> str:
 
 
 def build_rate_limiter(*, redis=None) -> RateLimiter:
+    if os.getenv("AWID_RATE_LIMIT_DISABLED", "").strip().lower() in ("1", "true", "yes"):
+        return NoOpRateLimiter()
     backend = os.getenv("AWEB_RATE_LIMIT_BACKEND", "memory")
     if backend == "redis":
         if redis is None:
