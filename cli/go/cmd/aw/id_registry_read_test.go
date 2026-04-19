@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,130 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestAwIDRegistryReadOutputMatchesSupportContractConsumerShape(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	pub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/did/"+stableID+"/key" {
+			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"did_aw":          stableID,
+			"current_did_key": did,
+			"log_head": map[string]any{
+				"seq":           1,
+				"operation":     "create",
+				"new_did_key":   did,
+				"entry_hash":    strings.Repeat("a", 64),
+				"state_hash":    strings.Repeat("b", 64),
+				"authorized_by": did,
+				"signature":     "redacted-by-cli",
+				"timestamp":     "2026-04-04T00:00:00Z",
+			},
+		})
+	}))
+
+	cmd := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
+	cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	cmd.Dir = tmp
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
+	}
+
+	raw := extractJSON(t, out)
+	assertSupportContractEnvelopeKeys(t, raw, "resolve-key")
+
+	type consumerTarget struct {
+		Type       string `json:"type"`
+		Identifier string `json:"identifier"`
+		Label      string `json:"label,omitempty"`
+	}
+	var consumer struct {
+		Version          string         `json:"version"`
+		Source           string         `json:"source"`
+		AuthorityMode    string         `json:"authority_mode"`
+		AuthoritySubject string         `json:"authority_subject,omitempty"`
+		Authoritative    bool           `json:"authoritative"`
+		GeneratedAt      string         `json:"generated_at"`
+		RequestID        string         `json:"request_id"`
+		Target           consumerTarget `json:"target"`
+		Redactions       []string       `json:"redactions"`
+		Payload          struct {
+			Schema         string         `json:"schema"`
+			Status         string         `json:"status"`
+			RegistryURL    string         `json:"registry_url"`
+			Operation      string         `json:"operation"`
+			Target         consumerTarget `json:"target"`
+			OwnershipProof bool           `json:"ownership_proof"`
+			DIDKey         struct {
+				DIDAW         string `json:"did_aw"`
+				CurrentDIDKey string `json:"current_did_key"`
+				LogHead       struct {
+					Seq          int    `json:"seq"`
+					Operation    string `json:"operation"`
+					NewDIDKey    string `json:"new_did_key"`
+					EntryHash    string `json:"entry_hash"`
+					StateHash    string `json:"state_hash"`
+					AuthorizedBy string `json:"authorized_by"`
+					Timestamp    string `json:"timestamp"`
+				} `json:"log_head"`
+			} `json:"did_key"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &consumer); err != nil {
+		t.Fatalf("AC-shaped consumer could not parse registry read envelope: %v\n%s", err, string(raw))
+	}
+	if consumer.Version != supportContractVersion || consumer.Source != registryReadSourceAwid {
+		t.Fatalf("contract/source=%s/%s", consumer.Version, consumer.Source)
+	}
+	if consumer.AuthorityMode != registryReadAuthorityAnonymous || consumer.AuthoritySubject != "" {
+		t.Fatalf("authority=%s subject=%s", consumer.AuthorityMode, consumer.AuthoritySubject)
+	}
+	if !consumer.Authoritative || consumer.RequestID == "" {
+		t.Fatalf("authoritative/request_id=%v/%q", consumer.Authoritative, consumer.RequestID)
+	}
+	if _, err := time.Parse("2006-01-02T15:04:05.000Z", consumer.GeneratedAt); err != nil {
+		t.Fatalf("generated_at is not support-contract timestamp: %q", consumer.GeneratedAt)
+	}
+	if consumer.Target.Type != "did" || consumer.Target.Identifier != stableID {
+		t.Fatalf("target=%+v want did %s", consumer.Target, stableID)
+	}
+	if consumer.Payload.Schema != registryReadSchema || consumer.Payload.Status != registryReadStatusOK {
+		t.Fatalf("payload schema/status=%s/%s", consumer.Payload.Schema, consumer.Payload.Status)
+	}
+	if consumer.Payload.RegistryURL != server.URL || consumer.Payload.Operation != "resolve-key" {
+		t.Fatalf("registry/op=%s/%s", consumer.Payload.RegistryURL, consumer.Payload.Operation)
+	}
+	if consumer.Payload.OwnershipProof {
+		t.Fatal("resolve-key must not be reported as ownership proof")
+	}
+	if consumer.Payload.DIDKey.DIDAW != stableID || consumer.Payload.DIDKey.CurrentDIDKey != did {
+		t.Fatalf("did_key=%+v", consumer.Payload.DIDKey)
+	}
+	if consumer.Payload.DIDKey.LogHead.AuthorizedBy != did || consumer.Payload.DIDKey.LogHead.Operation != "create" {
+		t.Fatalf("log_head=%+v", consumer.Payload.DIDKey.LogHead)
+	}
+	if !registryReadHasRedaction(registryReadEnvelope{Redactions: consumer.Redactions}, "payload.did_key.log_head.signature") {
+		t.Fatalf("redactions=%v", consumer.Redactions)
+	}
+	if strings.Contains(string(raw), "redacted-by-cli") {
+		t.Fatalf("registry signature leaked in consumer JSON:\n%s", string(raw))
+	}
+}
 
 func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -384,4 +509,71 @@ func registryReadHasRedaction(got registryReadEnvelope, field string) bool {
 		}
 	}
 	return false
+}
+
+func assertSupportContractEnvelopeKeys(t *testing.T, raw []byte, operation string) {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("invalid support-contract JSON: %v\n%s", err, string(raw))
+	}
+	assertJSONKeys(t, "envelope", top, []string{
+		"authoritative",
+		"authority_mode",
+		"generated_at",
+		"payload",
+		"redactions",
+		"request_id",
+		"source",
+		"target",
+		"version",
+	})
+	if _, ok := top["status"]; ok {
+		t.Fatal("status must not be an envelope field")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(top["payload"], &payload); err != nil {
+		t.Fatalf("invalid payload JSON: %v", err)
+	}
+	assertJSONKeys(t, "registry_read payload", payload, []string{
+		"did_key",
+		"operation",
+		"ownership_proof",
+		"registry_url",
+		"schema",
+		"status",
+		"target",
+	})
+	var gotOperation string
+	if err := json.Unmarshal(payload["operation"], &gotOperation); err != nil {
+		t.Fatalf("payload.operation invalid: %v", err)
+	}
+	if gotOperation != operation {
+		t.Fatalf("payload.operation=%s want %s", gotOperation, operation)
+	}
+}
+
+func assertJSONKeys(t *testing.T, label string, got map[string]json.RawMessage, want []string) {
+	t.Helper()
+	wantSet := make(map[string]bool, len(want))
+	for _, key := range want {
+		wantSet[key] = true
+		if _, ok := got[key]; !ok {
+			t.Fatalf("%s missing key %q in %v", label, key, sortedJSONKeys(got))
+		}
+	}
+	for key := range got {
+		if !wantSet[key] {
+			t.Fatalf("%s had unexpected key %q in %v", label, key, sortedJSONKeys(got))
+		}
+	}
+}
+
+func sortedJSONKeys(values map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
