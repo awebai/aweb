@@ -127,13 +127,19 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	if got := runJSON("id", "show", "--json"); got["registry_status"] != "registered" {
 		t.Fatalf("show registry_status=%v", got["registry_status"])
 	}
-	if got := runJSON("id", "resolve", stableID, "--json"); got["current_did_key"] != did {
-		t.Fatalf("resolve current_did_key=%v", got["current_did_key"])
+	if got := runJSON("id", "resolve", stableID, "--json"); got["version"] != supportContractVersion {
+		t.Fatalf("resolve version=%v", got["version"])
+	} else if payload, _ := got["payload"].(map[string]any); payload["registry_url"] == "" {
+		t.Fatalf("resolve registry_url missing: %+v", got)
+	} else if didKey, _ := payload["did_key"].(map[string]any); didKey["current_did_key"] != did {
+		t.Fatalf("resolve current_did_key=%v", didKey["current_did_key"])
 	}
 	if got := runJSON("id", "verify", stableID, "--json"); got["status"] != "OK" {
 		t.Fatalf("verify status=%v", got["status"])
 	}
-	if got := runJSON("id", "namespace", "myteam.aweb.ai", "--json"); got["registry_url"] == "" {
+	if got := runJSON("id", "namespace", "myteam.aweb.ai", "--json"); got["version"] != supportContractVersion {
+		t.Fatalf("namespace version=%v", got["version"])
+	} else if payload, _ := got["payload"].(map[string]any); payload["registry_url"] == "" {
 		t.Fatalf("namespace registry_url missing: %+v", got)
 	}
 }
@@ -1219,15 +1225,15 @@ func TestAwIDResolveUsesAWIDRegistryURLEnvWithoutWorkspace(t *testing.T) {
 		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
 	}
 
-	var got map[string]any
+	var got registryReadEnvelope
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["registry_url"] != registryServer.URL {
-		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	if got.Payload.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got.Payload.RegistryURL, registryServer.URL)
 	}
-	if got["current_did_key"] != did {
-		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	if got.Payload.DIDKey == nil || got.Payload.DIDKey.CurrentDIDKey != did {
+		t.Fatalf("current_did_key=%+v want %v", got.Payload.DIDKey, did)
 	}
 	if registryHits.Load() != 1 {
 		t.Fatalf("registry hits=%d want 1", registryHits.Load())
@@ -1388,15 +1394,15 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 		t.Fatalf("id resolve failed: %v\n%s", err, string(out))
 	}
 
-	var got map[string]any
+	var got registryReadEnvelope
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["current_did_key"] != did {
-		t.Fatalf("current_did_key=%v want %v", got["current_did_key"], did)
+	if got.Payload.DIDKey == nil || got.Payload.DIDKey.CurrentDIDKey != did {
+		t.Fatalf("current_did_key=%+v want %v", got.Payload.DIDKey, did)
 	}
-	if got["registry_url"] != registryServer.URL {
-		t.Fatalf("registry_url=%v want %v", got["registry_url"], registryServer.URL)
+	if got.Payload.RegistryURL != registryServer.URL {
+		t.Fatalf("registry_url=%v want %v", got.Payload.RegistryURL, registryServer.URL)
 	}
 }
 
