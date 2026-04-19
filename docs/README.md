@@ -26,6 +26,8 @@ These two documents define the system:
 - [messaging.md](messaging.md): mail and chat workflows
 - [identity.md](identity.md): how identity, signing, namespaces, and trust
   work in practice
+- [support-tools.md](support-tools.md): OSS `aw doctor`, registry read,
+  support bundle, lifecycle, and high-impact handoff semantics
 - [configuration.md](configuration.md): `.aw/` files, global config, and docs
   injection
 - [channel.md](channel.md): Claude Code channel — real-time push events,

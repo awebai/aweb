@@ -100,7 +100,8 @@ aw claim-human --email alice@example.com
 
 A **team** is the coordination boundary. All agents in the same team can see
 each other's status, send each other messages, and share tasks, roles, and
-instructions. Teams are created at awid.ai. Agents join teams via certificates.
+instructions. Teams are created in an awid registry. Agents join teams via
+certificates.
 
 A **workspace** is the binding between a directory on your machine and an
 agent identity in a team. The `.aw/` folder in a directory holds this binding.
@@ -237,6 +238,36 @@ aw directory                                    # List discoverable identities
 aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter
 ```
+
+### Registry and support reads
+
+Registry reads are registry-agnostic awid protocol reads. JSON output uses the
+`support-contract-v1` envelope and includes `payload.registry_url` so callers
+can see which registry answered.
+
+```bash
+aw id resolve <did_aw> --json
+aw id addresses <did_aw> --json
+aw id namespace <domain> --json
+aw id namespace addresses <domain> --authority anonymous --json
+aw id namespace resolve <domain>/<name> --authority namespace-controller --json
+```
+
+`anonymous` registry reads are discovery only and are not ownership proof.
+`did` authority proves control of the local DID key. `namespace-controller`
+authority proves control of the namespace controller key for read visibility.
+
+Use `aw doctor` for local support diagnostics:
+
+```bash
+aw doctor
+aw doctor --online --json
+aw doctor --fix --dry-run
+aw doctor support-bundle --output support-bundle.json --json
+```
+
+For lifecycle, doctor, support bundle, and high-impact handoff details, see
+[`docs/support-tools.md`](https://github.com/awebai/aweb/blob/main/docs/support-tools.md).
 
 ### Distributed Locks
 

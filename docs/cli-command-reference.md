@@ -9,11 +9,11 @@ to refresh it.
 
 | Family | Commands |
 | --- | --- |
-| Workspace Setup | `connect`, `init`, `reset`, `workspace` |
-| Identity | `claim-human`, `id`, `mcp-config`, `whoami` |
+| Workspace Setup | `claim-human`, `init`, `reset`, `workspace` |
+| Identity | `id`, `mcp-config`, `whoami` |
 | Messaging & Network | `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `log`, `mail` |
 | Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
-| Utility | `completion`, `help`, `upgrade`, `version` |
+| Utility | `completion`, `doctor`, `help`, `upgrade`, `version` |
 
 ## Global Flags
 
@@ -22,17 +22,17 @@ to refresh it.
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 
-## `connect`
+## `claim-human`
 
-### `connect`
+### `claim-human`
 
-Connect this directory to a team using a bootstrap token
+Attach an email address to your CLI-created account
 
 Flags:
-- `--address string Persistent public address from the dashboard copy command`
-- `--bootstrap-token string One-time bootstrap token from the dashboard`
-- `-h, --help help for connect`
-- `--mock-url string Override the bootstrap/aweb base URL for local development`
+- `--email string Email address to attach to the current CLI-created account`
+- `-h, --help help for claim-human`
+- `--mock-url string Override the bootstrap base URL for local development`
+- `--username string Override the default dashboard username derived from the registered domain`
 
 ## `init`
 
@@ -48,6 +48,8 @@ team-architecture flows:
 Flags:
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--alias string Ephemeral identity routing alias (optional; default: server-suggested)`
+- `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
+- `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `-h, --help help for init`
 - `--hosted Create a hosted aweb.ai identity in this directory`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
@@ -118,17 +120,6 @@ Flags:
 - `-h, --help help for status`
 - `--limit int Maximum team workspaces to show (default 15)`
 
-## `claim-human`
-
-### `claim-human`
-
-Attach an email address to your CLI-created account
-
-Flags:
-- `--email string Email address to attach to the current CLI-created account`
-- `-h, --help help for claim-human`
-- `--mock-url string Override the bootstrap base URL for local development`
-
 ## `id`
 
 ### `id`
@@ -136,11 +127,12 @@ Flags:
 Identity lifecycle, registry, settings, and key management
 
 Subcommands:
+- `addresses` List registry addresses for a did:aw
 - `cert` Team certificate operations
 - `create` Create a standalone persistent identity with a DNS-backed address in .aw/
 - `log` Show an identity log
-- `namespace` Inspect a namespace and its registered addresses
-- `register` Register the current persistent identity at awid.ai
+- `namespace` Inspect or recover namespace controller state
+- `register` Register the current persistent identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current persistent identity signing key at the registry
@@ -151,6 +143,15 @@ Subcommands:
 
 Flags:
 - `-h, --help help for id`
+
+## `id addresses`
+
+### `id addresses`
+
+List registry addresses for a did:aw
+
+Flags:
+- `-h, --help help for addresses`
 
 ## `id cert`
 
@@ -199,16 +200,51 @@ Flags:
 
 ### `id namespace`
 
-Inspect a namespace and its registered addresses
+Inspect or recover namespace controller state
+
+Subcommands:
+- `addresses` List registry namespace addresses
+- `resolve` Resolve a registry namespace address
+- `rotate-controller` Recover namespace control by rotating to a new controller key
 
 Flags:
 - `-h, --help help for namespace`
+
+## `id namespace addresses`
+
+### `id namespace addresses`
+
+List registry namespace addresses
+
+Flags:
+- `--authority string Authority mode: anonymous, did, or namespace-controller (default "anonymous")`
+- `-h, --help help for addresses`
+
+## `id namespace resolve`
+
+### `id namespace resolve`
+
+Resolve a registry namespace address
+
+Flags:
+- `--authority string Authority mode: anonymous, did, or namespace-controller (default "anonymous")`
+- `-h, --help help for resolve`
+
+## `id namespace rotate-controller`
+
+### `id namespace rotate-controller`
+
+Recover namespace control by rotating to a new controller key
+
+Flags:
+- `--domain string Namespace domain to rotate`
+- `-h, --help help for rotate-controller`
 
 ## `id register`
 
 ### `id register`
 
-Register the current persistent identity at awid.ai
+Register the current persistent identity at the configured registry
 
 Flags:
 - `-h, --help help for register`
@@ -274,14 +310,15 @@ Team management (create, invite, membership)
 
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
-- `add` Join another team in this workspace with the current identity
+- `add` Join another team with the current identity
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
 - `invite` Generate an invite token for a team
-- `leave` Remove a team membership from this workspace
-- `list` List team memberships for this workspace
+- `leave` Remove a team membership from this identity
+- `list` List team memberships for this identity
 - `remove-member` Remove a member from a team (revoke certificate)
-- `switch` Switch the active team for this workspace
+- `request` Print the add-member command the team owner should run
+- `switch` Switch the active team for this identity
 
 Flags:
 - `-h, --help help for team`
@@ -300,7 +337,7 @@ Flags:
 
 ### `id team add`
 
-Join another team in this workspace with the current identity
+Join another team with the current identity
 
 Flags:
 - `--alias string Alias for the added team membership (defaults to the current identity name)`
@@ -313,7 +350,12 @@ Flags:
 Add a member directly to a team (controller signs certificate)
 
 Flags:
+- `--address string Optional member address when using --did`
+- `--alias string Alias to use with --did`
+- `--did string Member did:key for direct certificate issuance`
+- `--did-aw string Optional stable did:aw when using --did`
 - `-h, --help help for add-member`
+- `--lifetime string Certificate lifetime for --did (ephemeral or persistent) (default "ephemeral")`
 - `--member string Member address (e.g. acme.com/alice)`
 - `--namespace string Namespace domain`
 - `--team string Team name`
@@ -347,7 +389,7 @@ Flags:
 
 ### `id team leave`
 
-Remove a team membership from this workspace
+Remove a team membership from this identity
 
 Flags:
 - `-h, --help help for leave`
@@ -356,7 +398,7 @@ Flags:
 
 ### `id team list`
 
-List team memberships for this workspace
+List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
@@ -374,11 +416,22 @@ Flags:
 - `--registry string Registry origin override`
 - `--team string Team name`
 
+## `id team request`
+
+### `id team request`
+
+Print the add-member command the team owner should run
+
+Flags:
+- `--alias string Suggested alias for the new team membership`
+- `-h, --help help for request`
+- `--team string Canonical team ID (<name>:<domain>)`
+
 ## `id team switch`
 
 ### `id team switch`
 
-Switch the active team for this workspace
+Switch the active team for this identity
 
 Flags:
 - `-h, --help help for switch`
@@ -1343,6 +1396,94 @@ You will need to start a new shell for this setup to take effect.
 Flags:
 - `-h, --help help for zsh`
 - `--no-descriptions disable completion descriptions`
+
+## `doctor`
+
+### `doctor`
+
+Diagnose local identity, workspace, and coordination state
+
+Subcommands:
+- `identity` Run identity doctor checks
+- `local` Run local doctor checks
+- `messaging` Run messaging doctor checks
+- `registry` Run registry doctor checks
+- `support-bundle` Write a redacted doctor support bundle
+- `team` Run team doctor checks
+- `workspace` Run workspace doctor checks
+
+Flags:
+- `--dry-run Plan fixes without applying them`
+- `--fix Apply safe doctor fixes`
+- `-h, --help help for doctor`
+- `--offline Run without network checks`
+- `--online Allow online checks`
+- `--team string Override the selected team_id for this command`
+- `--verbose Include verbose diagnostic details`
+
+## `doctor identity`
+
+### `doctor identity`
+
+Run identity doctor checks
+
+Flags:
+- `-h, --help help for identity`
+
+## `doctor local`
+
+### `doctor local`
+
+Run local doctor checks
+
+Flags:
+- `-h, --help help for local`
+
+## `doctor messaging`
+
+### `doctor messaging`
+
+Run messaging doctor checks
+
+Flags:
+- `-h, --help help for messaging`
+
+## `doctor registry`
+
+### `doctor registry`
+
+Run registry doctor checks
+
+Flags:
+- `-h, --help help for registry`
+
+## `doctor support-bundle`
+
+### `doctor support-bundle`
+
+Write a redacted doctor support bundle
+
+Flags:
+- `-h, --help help for support-bundle`
+- `--output string Output JSON file`
+
+## `doctor team`
+
+### `doctor team`
+
+Run team doctor checks
+
+Flags:
+- `-h, --help help for team`
+
+## `doctor workspace`
+
+### `doctor workspace`
+
+Run workspace doctor checks
+
+Flags:
+- `-h, --help help for workspace`
 
 ## `help`
 
