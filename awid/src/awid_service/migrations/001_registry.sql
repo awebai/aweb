@@ -7,9 +7,6 @@
 CREATE TABLE IF NOT EXISTS {{tables.did_aw_mappings}} (
     did_aw          TEXT PRIMARY KEY,
     current_did_key TEXT NOT NULL,
-    server_url      TEXT NOT NULL,
-    address         TEXT NOT NULL,
-    handle          TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -64,8 +61,7 @@ CREATE TABLE IF NOT EXISTS {{tables.public_addresses}} (
     address_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace_id    UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
     name            TEXT NOT NULL,
-    did_aw          TEXT NOT NULL,
-    current_did_key TEXT NOT NULL,
+    did_aw          TEXT NOT NULL REFERENCES {{tables.did_aw_mappings}}(did_aw),
     reachability    TEXT NOT NULL DEFAULT 'nobody',
     visible_to_team_id TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -91,6 +87,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_public_addresses_namespace_name_active
 -- Replacement announcements
 CREATE TABLE IF NOT EXISTS {{tables.replacement_announcements}} (
     announcement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     namespace_id    UUID NOT NULL REFERENCES {{tables.dns_namespaces}}(namespace_id),
     address_name    TEXT NOT NULL,
     old_did         TEXT NOT NULL,
@@ -98,8 +95,7 @@ CREATE TABLE IF NOT EXISTS {{tables.replacement_announcements}} (
     controller_did  TEXT NOT NULL,
     replacement_timestamp TEXT NOT NULL,
     controller_signature TEXT NOT NULL,
-    authorized_by   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    authorized_by   TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_replacement_announcements_address_new_did
