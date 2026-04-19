@@ -65,9 +65,6 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
-				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -394,9 +391,6 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          persistentDidAW,
 				"current_did_key": persistentDidKey,
-				"server":          "",
-				"address":         "juanre.aweb.ai/laptop-agent",
-				"handle":          "laptop-agent",
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})

@@ -40,7 +40,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	logEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1, strings.Repeat("a", 64))
 
 	var registerCalls atomic.Int32
-	var serverURL string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/did":
@@ -50,9 +49,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": did,
-				"server":          serverURL,
-				"address":         address,
-				"handle":          "alice",
 				"created_at":      "2026-04-04T00:00:00Z",
 				"updated_at":      "2026-04-04T00:00:00Z",
 			})
@@ -91,7 +87,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	serverURL = server.URL
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -268,9 +263,6 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          createdDIDAW,
 				"current_did_key": createdDIDKey,
-				"server":          "",
-				"address":         "acme.com/alice",
-				"handle":          "alice",
 				"created_at":      "2026-04-04T00:00:00Z",
 				"updated_at":      "2026-04-04T00:00:00Z",
 			})
@@ -580,9 +572,8 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 	t.Parallel()
 
 	type didMapping struct {
-		didKey  string
-		address string
-		handle  string
+		didKey string
+		handle string
 	}
 
 	var namespaceControllerDID string
@@ -654,7 +645,7 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 			stableID, _ := payload["did_aw"].(string)
 			didKey, _ := payload["current_did_key"].(string)
 			name, _ := payload["name"].(string)
-			didMappings[stableID] = didMapping{didKey: didKey, address: "acme.com/" + name, handle: name}
+			didMappings[stableID] = didMapping{didKey: didKey, handle: name}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-" + name,
 				"domain":          "acme.com",
@@ -671,9 +662,8 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 			}
 			stableID, _ := payload["did_aw"].(string)
 			didKey, _ := payload["did_key"].(string)
-			address, _ := payload["address"].(string)
 			handle, _ := payload["handle"].(string)
-			didMappings[stableID] = didMapping{didKey: didKey, address: address, handle: handle}
+			didMappings[stableID] = didMapping{didKey: didKey, handle: handle}
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
 		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full") && r.Method == http.MethodGet:
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
@@ -685,9 +675,6 @@ func TestAwIDCreateAllowsMultipleIdentitiesOnSameDomain(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": mapping.didKey,
-				"server":          "",
-				"address":         mapping.address,
-				"handle":          mapping.handle,
 				"created_at":      "2026-04-05T00:00:00Z",
 				"updated_at":      "2026-04-05T00:00:00Z",
 			})
@@ -819,9 +806,6 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": currentDID,
-				"server":          "",
-				"address":         address,
-				"handle":          "alice",
 				"created_at":      "2026-04-05T00:00:00Z",
 				"updated_at":      "2026-04-05T00:00:00Z",
 			})
@@ -1768,9 +1752,6 @@ func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": did,
-				"server":          "",
-				"address":         address,
-				"handle":          "alice",
 				"created_at":      "2026-04-05T00:00:00Z",
 				"updated_at":      "2026-04-05T00:00:00Z",
 			})

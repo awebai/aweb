@@ -538,18 +538,11 @@ func ensureStandaloneDID(
 	} else if err != nil {
 		return err
 	}
-	if strings.TrimSpace(mapping.Server) != "" {
-		return fmt.Errorf("did:aw %s is already bound to server %s", plan.DIDAW, mapping.Server)
+	if strings.TrimSpace(mapping.DIDAW) != plan.DIDAW {
+		return fmt.Errorf("registered unexpected did:aw %s", mapping.DIDAW)
 	}
-	if strings.TrimSpace(mapping.Address) != plan.Address {
-		return fmt.Errorf("did:aw %s is already bound to address %s", plan.DIDAW, mapping.Address)
-	}
-	handle := ""
-	if mapping.Handle != nil {
-		handle = strings.TrimSpace(*mapping.Handle)
-	}
-	if handle != plan.Name {
-		return fmt.Errorf("did:aw %s is already bound to handle %s", plan.DIDAW, handle)
+	if strings.TrimSpace(mapping.CurrentDIDKey) != plan.DIDKey {
+		return fmt.Errorf("did:aw %s is already registered to %s", plan.DIDAW, mapping.CurrentDIDKey)
 	}
 	return nil
 }

@@ -432,13 +432,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			if current == nil {
 				t.Fatalf("missing did registration for %s", stableID)
 			}
-			handle := strings.TrimSpace(current["handle"].(string))
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": current["did_key"],
-				"server":          "",
-				"address":         current["address"],
-				"handle":          &handle,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -682,13 +678,9 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			if current == nil {
 				t.Fatalf("missing did registration for %s", stableID)
 			}
-			handle := strings.TrimSpace(current["handle"].(string))
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": current["did_key"],
-				"server":          "",
-				"address":         current["address"],
-				"handle":          &handle,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -866,13 +858,9 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
-			handle := "alice"
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": gotDIDPayload["did_key"],
-				"server":          "",
-				"address":         "acme.com/alice",
-				"handle":          &handle,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})
@@ -1068,13 +1056,9 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
 			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
-			handle := "alice"
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          stableID,
 				"current_did_key": gotDIDPayload["did_key"],
-				"server":          "",
-				"address":         "acme.com/alice",
-				"handle":          &handle,
 				"created_at":      "2026-04-07T00:00:00Z",
 				"updated_at":      "2026-04-07T00:00:00Z",
 			})

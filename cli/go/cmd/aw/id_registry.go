@@ -160,8 +160,6 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 		mapping = &awid.DIDMapping{
 			DIDAW:         identity.StableID,
 			CurrentDIDKey: identity.DID,
-			Server:        "",
-			Address:       identity.Address,
 		}
 	} else if err != nil {
 		return err

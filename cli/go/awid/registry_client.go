@@ -38,9 +38,6 @@ func (e *AlreadyRegisteredError) Error() string {
 type DIDMapping struct {
 	DIDAW         string    `json:"did_aw"`
 	CurrentDIDKey string    `json:"current_did_key"`
-	Server        string    `json:"server"`
-	Address       string    `json:"address"`
-	Handle        *string   `json:"handle"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -76,15 +73,14 @@ type RegistryClient struct {
 }
 
 type didUpdateRequest struct {
-	Operation     string  `json:"operation"`
-	NewDIDKey     string  `json:"new_did_key"`
-	Server        *string `json:"server,omitempty"`
-	Seq           int     `json:"seq"`
-	PrevEntryHash string  `json:"prev_entry_hash"`
-	StateHash     string  `json:"state_hash"`
-	AuthorizedBy  string  `json:"authorized_by"`
-	Timestamp     string  `json:"timestamp"`
-	Signature     string  `json:"signature"`
+	Operation     string `json:"operation"`
+	NewDIDKey     string `json:"new_did_key"`
+	Seq           int    `json:"seq"`
+	PrevEntryHash string `json:"prev_entry_hash"`
+	StateHash     string `json:"state_hash"`
+	AuthorizedBy  string `json:"authorized_by"`
+	Timestamp     string `json:"timestamp"`
+	Signature     string `json:"signature"`
 }
 
 func NewAWIDRegistryClient(httpClient *http.Client, dnsResolver TXTResolver) *RegistryClient {
@@ -308,9 +304,9 @@ func (c *RegistryClient) RotateDIDKey(
 	stateHash := stableIdentityStateHash(
 		didAW,
 		newDID,
-		strings.TrimSpace(current.Server),
-		strings.TrimSpace(current.Address),
-		strings.TrimSpace(derefString(current.Handle)),
+		"",
+		"",
+		"",
 	)
 	signaturePayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{
 		Seq:            resolution.LogHead.Seq + 1,
@@ -337,72 +333,6 @@ func (c *RegistryClient) RotateDIDKey(
 		return nil, err
 	}
 	return c.GetDIDFull(ctx, registryURL, didAW, newSigningKey)
-}
-
-func (c *RegistryClient) UpdateDIDServer(
-	ctx context.Context,
-	registryURL string,
-	didAW string,
-	serverURL string,
-	signingKey ed25519.PrivateKey,
-) (*DIDMapping, error) {
-	if signingKey == nil {
-		return nil, fmt.Errorf("signing key is required")
-	}
-	currentDID := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	current, err := c.GetDIDFull(ctx, registryURL, didAW, signingKey)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(current.CurrentDIDKey) != currentDID {
-		return nil, fmt.Errorf("signing key does not match the current did:key")
-	}
-	resolution, err := c.ResolveKeyAt(ctx, registryURL, didAW)
-	if err != nil {
-		return nil, err
-	}
-	if resolution.LogHead == nil {
-		return nil, fmt.Errorf("DID registry response is missing log_head")
-	}
-	canonicalServer, err := canonicalRegistryServerOrigin(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
-	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	prevEntryHash := strings.TrimSpace(resolution.LogHead.EntryHash)
-	stateHash := stableIdentityStateHash(
-		didAW,
-		currentDID,
-		canonicalServer,
-		strings.TrimSpace(current.Address),
-		strings.TrimSpace(derefString(current.Handle)),
-	)
-	signaturePayload := CanonicalDidLogPayload(didAW, &DidKeyEvidence{
-		Seq:            resolution.LogHead.Seq + 1,
-		Operation:      "update_server",
-		PreviousDIDKey: &currentDID,
-		NewDIDKey:      currentDID,
-		PrevEntryHash:  &prevEntryHash,
-		StateHash:      stateHash,
-		AuthorizedBy:   currentDID,
-		Timestamp:      timestamp,
-	})
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(signaturePayload)))
-	req := didUpdateRequest{
-		Operation:     "update_server",
-		NewDIDKey:     currentDID,
-		Server:        &canonicalServer,
-		Seq:           resolution.LogHead.Seq + 1,
-		PrevEntryHash: prevEntryHash,
-		StateHash:     stateHash,
-		AuthorizedBy:  currentDID,
-		Timestamp:     timestamp,
-		Signature:     signature,
-	}
-	if err := c.requestJSON(ctx, http.MethodPut, registryURL, "/v1/did/"+urlPathEscape(strings.TrimSpace(didAW)), nil, req, nil); err != nil {
-		return nil, err
-	}
-	return c.GetDIDFull(ctx, registryURL, didAW, signingKey)
 }
 
 func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, path string, headers map[string]string, body any, out any) error {
