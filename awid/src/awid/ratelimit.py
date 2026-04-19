@@ -181,13 +181,14 @@ def _extract_client_ip(request: Request) -> str:
     return "unknown"
 
 
-def build_rate_limiter(*, redis=None) -> RateLimiter:
+def build_rate_limiter(*, redis=None, backend: str | None = None) -> RateLimiter:
     if os.getenv("AWID_RATE_LIMIT_DISABLED", "").strip().lower() in ("1", "true", "yes"):
         return NoOpRateLimiter()
-    backend = os.getenv("AWEB_RATE_LIMIT_BACKEND", "memory")
+    if backend is None:
+        backend = os.getenv("AWEB_RATE_LIMIT_BACKEND", "memory")
     if backend == "redis":
         if redis is None:
-            raise ValueError("AWEB_RATE_LIMIT_BACKEND=redis requires a Redis client")
+            raise ValueError("rate_limit backend=redis requires a Redis client")
         return RedisFixedWindowRateLimiter(redis=redis)
     return MemoryFixedWindowRateLimiter()
 
