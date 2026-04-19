@@ -77,6 +77,7 @@ awid-logs:
 	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
 
 release-server-check:
+	rm -rf /tmp/uv-cache /tmp/pycache
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
 	rm -rf server/dist/
 	cd server && uv build
