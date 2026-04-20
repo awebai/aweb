@@ -21,11 +21,17 @@ from .events import (
     MessageDeliveredEvent,
     ReservationAcquiredEvent,
     ReservationReleasedEvent,
+    ReservationRenewedEvent,
     TaskClaimedEvent,
     TaskCreatedEvent,
     TaskStatusChangedEvent,
     TaskUnclaimedEvent,
+    TeamChatMessageSentEvent,
     TeamMessageSentEvent,
+    TeamMessageAcknowledgedEvent,
+    TeamReservationAcquiredEvent,
+    TeamReservationReleasedEvent,
+    TeamReservationRenewedEvent,
     TeamTaskClaimedEvent,
     TeamTaskCreatedEvent,
     TeamTaskStatusChangedEvent,
@@ -465,7 +471,7 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
         else:
             event.alias = await _alias_for(redis, event.workspace_id)
 
-    elif isinstance(event, (ReservationAcquiredEvent, ReservationReleasedEvent)):
+    elif isinstance(event, (ReservationAcquiredEvent, ReservationReleasedEvent, ReservationRenewedEvent)):
         event.alias = await _alias_for(redis, event.workspace_id)
 
 
@@ -514,12 +520,31 @@ def _translate(event_type: str, ctx: dict):
             paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
         )
 
+    if event_type == "reservation.renewed":
+        return ReservationRenewedEvent(
+            workspace_id=ctx.get("holder_workspace_id", ""),
+            paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
+            ttl_seconds=ctx.get("ttl_seconds", 0),
+        )
+
     return None
+
+
+def _team_id_from_context(ctx: dict) -> str:
+    return str(ctx.get("team_id", "")).strip()
+
+
+def _paths_from_context(ctx: dict) -> list[str]:
+    paths = ctx.get("paths")
+    if isinstance(paths, list):
+        return [str(path).strip() for path in paths if str(path).strip()]
+    resource_key = str(ctx.get("resource_key", "")).strip()
+    return [resource_key] if resource_key else []
 
 
 def _translate_team_event(event_type: str, ctx: dict):
     if event_type == "message.sent":
-        team_id = str(ctx.get("team_id", "")).strip()
+        team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
         return TeamMessageSentEvent(
@@ -531,8 +556,33 @@ def _translate_team_event(event_type: str, ctx: dict):
             priority=str(ctx.get("priority", "normal") or "normal"),
         )
 
+    if event_type == "message.acknowledged":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamMessageAcknowledgedEvent(
+            team_id=team_id,
+            alias=str(ctx.get("alias", "")).strip(),
+            from_alias=str(ctx.get("from_alias", "")).strip(),
+            subject=str(ctx.get("subject", "") or ""),
+        )
+
+    if event_type == "chat.message_sent":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        to_aliases = ctx.get("to_aliases", [])
+        if not isinstance(to_aliases, list):
+            to_aliases = []
+        return TeamChatMessageSentEvent(
+            team_id=team_id,
+            from_alias=str(ctx.get("from_alias", "")).strip(),
+            to_aliases=[str(alias).strip() for alias in to_aliases if str(alias).strip()],
+            preview=str(ctx.get("preview", "") or ""),
+        )
+
     if event_type == "task.created":
-        team_id = str(ctx.get("team_id", "")).strip()
+        team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
         return TeamTaskCreatedEvent(
@@ -543,7 +593,7 @@ def _translate_team_event(event_type: str, ctx: dict):
         )
 
     if event_type == "task.status_changed":
-        team_id = str(ctx.get("team_id", "")).strip()
+        team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
         return TeamTaskStatusChangedEvent(
@@ -555,7 +605,7 @@ def _translate_team_event(event_type: str, ctx: dict):
         )
 
     if event_type == "task.claimed":
-        team_id = str(ctx.get("team_id", "")).strip()
+        team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
         return TeamTaskClaimedEvent(
@@ -566,7 +616,7 @@ def _translate_team_event(event_type: str, ctx: dict):
         )
 
     if event_type == "task.unclaimed":
-        team_id = str(ctx.get("team_id", "")).strip()
+        team_id = _team_id_from_context(ctx)
         if not team_id:
             return None
         return TeamTaskUnclaimedEvent(
@@ -574,6 +624,36 @@ def _translate_team_event(event_type: str, ctx: dict):
             task_ref=str(ctx.get("task_ref", "")).strip(),
             alias=str(ctx.get("alias", "")).strip(),
             title=str(ctx.get("title", "") or ""),
+        )
+
+    if event_type == "reservation.acquired":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamReservationAcquiredEvent(
+            team_id=team_id,
+            alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+            paths=_paths_from_context(ctx),
+        )
+
+    if event_type == "reservation.released":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamReservationReleasedEvent(
+            team_id=team_id,
+            alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+            paths=_paths_from_context(ctx),
+        )
+
+    if event_type == "reservation.renewed":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamReservationRenewedEvent(
+            team_id=team_id,
+            alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+            paths=_paths_from_context(ctx),
         )
 
     return None

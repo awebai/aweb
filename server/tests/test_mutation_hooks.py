@@ -9,6 +9,11 @@ import aweb.mutation_hooks as mutation_hooks
 from aweb.events import (
     ReservationAcquiredEvent,
     TaskCreatedEvent,
+    TeamChatMessageSentEvent,
+    TeamMessageAcknowledgedEvent,
+    TeamReservationAcquiredEvent,
+    TeamReservationReleasedEvent,
+    TeamReservationRenewedEvent,
     TeamTaskClaimedEvent,
     TeamTaskStatusChangedEvent,
     TeamTaskUnclaimedEvent,
@@ -228,7 +233,7 @@ def test_translate_uses_workspace_ids_for_workspace_oriented_events():
 
 
 @pytest.mark.asyncio
-async def test_mutation_handler_publishes_team_task_events(aweb_cloud_db, monkeypatch):
+async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, monkeypatch):
     published: list[object] = []
 
     async def _capture_publish_team(_redis, event):
@@ -239,6 +244,24 @@ async def test_mutation_handler_publishes_team_task_events(aweb_cloud_db, monkey
 
     handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
 
+    await handler(
+        "message.acknowledged",
+        {
+            "team_id": "backend:acme.com",
+            "alias": "bob",
+            "from_alias": "alice",
+            "subject": "Ship dashboard events",
+        },
+    )
+    await handler(
+        "chat.message_sent",
+        {
+            "team_id": "backend:acme.com",
+            "from_alias": "alice",
+            "to_aliases": ["bob", "carol"],
+            "preview": "short preview",
+        },
+    )
     await handler(
         "task.status_changed",
         {
@@ -267,26 +290,71 @@ async def test_mutation_handler_publishes_team_task_events(aweb_cloud_db, monkey
             "title": "Ship dashboard events",
         },
     )
+    await handler(
+        "reservation.acquired",
+        {
+            "team_id": "backend:acme.com",
+            "alias": "alice",
+            "resource_key": "repo:backend",
+        },
+    )
+    await handler(
+        "reservation.released",
+        {
+            "team_id": "backend:acme.com",
+            "alias": "alice",
+            "resource_key": "repo:backend",
+        },
+    )
+    await handler(
+        "reservation.renewed",
+        {
+            "team_id": "backend:acme.com",
+            "alias": "alice",
+            "resource_key": "repo:backend",
+        },
+    )
 
-    assert len(published) == 3
-    assert isinstance(published[0], TeamTaskStatusChangedEvent)
-    assert published[0].team_id == "backend:acme.com"
-    assert published[0].task_ref == "backend-1234"
-    assert published[0].title == "Ship dashboard events"
-    assert published[0].old_status == "open"
-    assert published[0].new_status == "closed"
+    assert len(published) == 8
+    assert all(event.team_id == "backend:acme.com" for event in published)
 
-    assert isinstance(published[1], TeamTaskClaimedEvent)
-    assert published[1].team_id == "backend:acme.com"
-    assert published[1].task_ref == "backend-1234"
-    assert published[1].alias == "alice"
-    assert published[1].title == "Ship dashboard events"
+    assert isinstance(published[0], TeamMessageAcknowledgedEvent)
+    assert published[0].alias == "bob"
+    assert published[0].from_alias == "alice"
+    assert published[0].subject == "Ship dashboard events"
 
-    assert isinstance(published[2], TeamTaskUnclaimedEvent)
-    assert published[2].team_id == "backend:acme.com"
+    assert isinstance(published[1], TeamChatMessageSentEvent)
+    assert published[1].from_alias == "alice"
+    assert published[1].to_aliases == ["bob", "carol"]
+    assert published[1].preview == "short preview"
+
+    assert isinstance(published[2], TeamTaskStatusChangedEvent)
     assert published[2].task_ref == "backend-1234"
-    assert published[2].alias == "alice"
     assert published[2].title == "Ship dashboard events"
+    assert published[2].old_status == "open"
+    assert published[2].new_status == "closed"
+
+    assert isinstance(published[3], TeamTaskClaimedEvent)
+    assert published[3].task_ref == "backend-1234"
+    assert published[3].alias == "alice"
+    assert published[3].title == "Ship dashboard events"
+
+    assert isinstance(published[4], TeamTaskUnclaimedEvent)
+    assert published[4].task_ref == "backend-1234"
+    assert published[4].alias == "alice"
+    assert published[4].title == "Ship dashboard events"
+
+    assert isinstance(published[5], TeamReservationAcquiredEvent)
+    assert published[5].alias == "alice"
+    assert published[5].paths == ["repo:backend"]
+
+    assert isinstance(published[6], TeamReservationReleasedEvent)
+    assert published[6].alias == "alice"
+    assert published[6].paths == ["repo:backend"]
+
+    assert isinstance(published[7], TeamReservationRenewedEvent)
+    assert published[7].alias == "alice"
+    assert published[7].paths == ["repo:backend"]
 
 
 @pytest.mark.asyncio

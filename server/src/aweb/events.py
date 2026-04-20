@@ -216,6 +216,43 @@ class TeamMessageSentEvent(TeamEvent):
 
 
 @dataclass
+class TeamMessageAcknowledgedEvent(TeamEvent):
+    type: str = field(default="message.acknowledged", init=False)
+    alias: str = ""
+    from_alias: str = ""
+    subject: str = ""
+
+
+@dataclass
+class TeamChatMessageSentEvent(TeamEvent):
+    type: str = field(default="chat.message_sent", init=False)
+    from_alias: str = ""
+    to_aliases: list[str] = field(default_factory=list)
+    preview: str = ""
+
+
+@dataclass
+class TeamReservationAcquiredEvent(TeamEvent):
+    type: str = field(default="reservation.acquired", init=False)
+    alias: str = ""
+    paths: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TeamReservationReleasedEvent(TeamEvent):
+    type: str = field(default="reservation.released", init=False)
+    alias: str = ""
+    paths: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TeamReservationRenewedEvent(TeamEvent):
+    type: str = field(default="reservation.renewed", init=False)
+    alias: str = ""
+    paths: list[str] = field(default_factory=list)
+
+
+@dataclass
 class TeamAgentOnlineEvent(TeamEvent):
     type: str = field(default="agent.online", init=False)
     alias: str = ""
