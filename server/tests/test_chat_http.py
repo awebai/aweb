@@ -15,6 +15,7 @@ from awid.did import did_from_public_key
 from awid.registry import Address, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
+from aweb.identity_metadata import routable_chat_address
 from aweb.routes import chat as chat_routes
 from aweb.routes.chat import router as chat_router
 
@@ -85,6 +86,33 @@ def _build_test_app(aweb_db, registry):
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
     return app
+
+
+def test_routable_chat_address_policy():
+    assert (
+        routable_chat_address(
+            {"team_id": "ops:acme.com", "alias": "gsk"},
+            "support:acme.com",
+            "gsk",
+        )
+        == "ops~gsk"
+    )
+    assert (
+        routable_chat_address(
+            {"team_id": "ops:otherco.com", "alias": "gsk"},
+            "support:acme.com",
+            "gsk",
+        )
+        == "gsk"
+    )
+    assert (
+        routable_chat_address(
+            {"team_id": "ops:otherco.com", "alias": "gsk", "address": "otherco.com/gsk"},
+            "support:acme.com",
+            "gsk",
+        )
+        == "otherco.com/gsk"
+    )
 
 
 @pytest.mark.asyncio
@@ -1385,6 +1413,82 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
     assert body["pending"][0]["last_message"] == "ping"
     assert body["pending"][0]["last_from_address"] == "acme.com/bob"
     assert body["pending"][0]["participant_addresses"] == ["acme.com/bob"]
+
+
+@pytest.mark.asyncio
+async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_public_address(aweb_cloud_db):
+    session_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
+            ('support:acme.com', 'acme.com', 'support', 'did:key:team-support')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES
+            ($1, 'ops:acme.com', 'did:aw:gsk', 'did:key:gsk', 'gsk', NULL),
+            ($2, 'support:acme.com', 'did:aw:amy', 'did:key:amy', 'amy', NULL)
+        """,
+        uuid4(),
+        uuid4(),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at)
+        VALUES ($1, 'ops:acme.com', 'gsk', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:aw:gsk', 'gsk'),
+            ($1, 'did:aw:amy', 'amy')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, 'did:aw:gsk', 'gsk', 'ping', $2)
+        """,
+        session_id,
+        created_at + timedelta(minutes=1),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:amy",
+            did_aw="did:aw:amy",
+            address="",
+            team_id="support:acme.com",
+            alias="amy",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
+        pending = await client.get("/v1/chat/pending")
+        sessions = await client.get("/v1/chat/sessions")
+
+    assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["from_address"] == "ops~gsk"
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["pending"][0]["last_from_address"] == "ops~gsk"
+    assert pending.json()["pending"][0]["participant_addresses"] == ["ops~gsk"]
+    assert sessions.status_code == 200, sessions.text
+    assert sessions.json()["sessions"][0]["participant_addresses"] == ["ops~gsk"]
 
 
 @pytest.mark.asyncio

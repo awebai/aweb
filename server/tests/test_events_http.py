@@ -279,7 +279,9 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:team'),
+            ('frontend:acme.com', 'acme.com', 'frontend', 'did:key:team-frontend')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -423,7 +425,9 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:team'),
+            ('frontend:acme.com', 'acme.com', 'frontend', 'did:key:team-frontend')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -458,7 +462,7 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
         VALUES
             ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice'),
             ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob'),
-            ($3, 'backend:acme.com', 'did:aw:carol', 'did:key:z6MkCarol', 'carol', 'otherco/carol')
+            ($3, 'frontend:acme.com', 'did:aw:carol', 'did:key:z6MkCarol', 'carol', NULL)
         """,
         uuid4(),
         uuid4(),
@@ -477,6 +481,7 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
         _DbShim(aweb_cloud_db.aweb_db),
         None,
         participant_dids=["did:aw:bob", "did:key:bob"],
+        viewer_team_id="backend:acme.com",
         participant_agent_id=None,
     )
 
@@ -491,6 +496,10 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
     assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
     assert by_session["11111111-1111-4111-8111-111111111111"]["participant_addresses"] == [
         "acme.com/alice"
+    ]
+    assert by_session["22222222-2222-4222-8222-222222222222"]["from_address"] == "frontend~carol"
+    assert by_session["22222222-2222-4222-8222-222222222222"]["participant_addresses"] == [
+        "frontend~carol"
     ]
 
 
@@ -547,6 +556,7 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
         _DbShim(aweb_cloud_db.aweb_db),
         None,
         participant_dids=["did:aw:bob", "did:key:z6MkBobCurrent"],
+        viewer_team_id="backend:acme.com",
         participant_agent_id=None,
     )
 

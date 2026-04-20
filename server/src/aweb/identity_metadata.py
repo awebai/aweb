@@ -1,8 +1,34 @@
 from __future__ import annotations
 
+from awid.team_ids import parse_team_id
+
 
 def _aweb_db(db_or_manager):
     return db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
+
+
+def routable_chat_address(meta: dict[str, str] | None, viewer_team_id: str | None, fallback_alias: str) -> str:
+    meta = meta or {}
+    address = (meta.get("address") or "").strip()
+    if address:
+        return address
+
+    alias = (meta.get("alias") or "").strip() or (fallback_alias or "").strip()
+    if not alias:
+        return ""
+
+    sender_team_id = (meta.get("team_id") or "").strip()
+    viewer_team_id = (viewer_team_id or "").strip()
+    if sender_team_id and viewer_team_id:
+        try:
+            sender_domain, sender_team_name = parse_team_id(sender_team_id)
+            viewer_domain, viewer_team_name = parse_team_id(viewer_team_id)
+        except ValueError:
+            return alias
+        if sender_domain == viewer_domain and sender_team_name != viewer_team_name:
+            return f"{sender_team_name}~{alias}"
+
+    return alias
 
 
 async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dict[str, dict[str, str]]:
@@ -13,7 +39,7 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT did_aw, did_key, address
+        SELECT did_aw, did_key, address, team_id, alias
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
@@ -28,6 +54,8 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
         stable_id = (row.get("did_aw") or "").strip()
         current_did = (row.get("did_key") or "").strip()
         address = (row.get("address") or "").strip()
+        team_id = (row.get("team_id") or "").strip()
+        alias = (row.get("alias") or "").strip()
         for did in (stable_id, current_did):
             if not did:
                 continue
@@ -36,6 +64,10 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
                 meta["stable_id"] = stable_id
             if address:
                 meta["address"] = address
+            if team_id:
+                meta["team_id"] = team_id
+            if alias:
+                meta["alias"] = alias
     return result
 
 

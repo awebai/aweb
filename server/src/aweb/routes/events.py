@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from aweb.deps import get_db, get_redis
-from aweb.identity_metadata import lookup_identity_metadata_by_did
+from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
@@ -117,6 +117,7 @@ async def _current_actionable_chat(
     redis,
     *,
     participant_dids: list[str],
+    viewer_team_id: str | None,
     participant_agent_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the current actionable unread chat state for an identity."""
@@ -153,7 +154,11 @@ async def _current_actionable_chat(
                 "session_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
                 "participant_addresses": [
-                    participant_identity_map.get((did or "").strip(), {}).get("address", alias or "")
+                    routable_chat_address(
+                        participant_identity_map.get((did or "").strip(), {}),
+                        viewer_team_id,
+                        alias or "",
+                    )
                     for did, alias in zip(
                         list(item.get("participant_dids") or []),
                         list(item.get("participants") or []),
@@ -166,17 +171,15 @@ async def _current_actionable_chat(
                 "from_stable_id": participant_identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
-                "from_address": participant_identity_map.get(
-                    (item.get("last_from_did") or "").strip(), {}
-                ).get(
-                    "address",
+                "from_address": routable_chat_address(
+                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                    viewer_team_id,
                     item.get("last_from") or "",
                 ),
                 "last_from": item.get("last_from") or "",
-                "last_from_address": participant_identity_map.get(
-                    (item.get("last_from_did") or "").strip(), {}
-                ).get(
-                    "address",
+                "last_from_address": routable_chat_address(
+                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                    viewer_team_id,
                     item.get("last_from") or "",
                 ),
                 "last_message": item.get("last_message") or "",
@@ -279,6 +282,7 @@ async def _sse_agent_events(
         db,
         redis,
         participant_dids=viewer_dids,
+        viewer_team_id=team_id,
         participant_agent_id=agent_id,
     )
     control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
@@ -308,6 +312,7 @@ async def _sse_agent_events(
                 db,
                 redis,
                 participant_dids=viewer_dids,
+                viewer_team_id=team_id,
                 participant_agent_id=agent_id,
             )
             control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)

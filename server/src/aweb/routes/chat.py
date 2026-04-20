@@ -21,7 +21,7 @@ from redis.exceptions import RedisError
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
-from aweb.identity_metadata import lookup_identity_metadata_by_did
+from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.alias_targets import resolve_alias_target, team_exists, validate_alias_selector
 from aweb.messaging.chat import (
@@ -759,7 +759,11 @@ async def pending(
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
         participant_addresses = [
-            identity_map.get((row.get("did") or "").strip(), {}).get("address", row["alias"])
+            routable_chat_address(
+                identity_map.get((row.get("did") or "").strip(), {}),
+                auth.team_id,
+                row["alias"],
+            )
             for row in session_participants
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
@@ -791,10 +795,9 @@ async def pending(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": identity_map.get(
-                    (item.get("last_from_did") or "").strip(), {}
-                ).get(
-                    "address",
+                "last_from_address": routable_chat_address(
+                    identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                    auth.team_id,
                     item["last_from"],
                 ),
                 "unread_count": item["unread_count"],
@@ -868,7 +871,7 @@ async def history(
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
-        from_address = identity_map.get(from_did, {}).get("address") or msg["from_alias"]
+        from_address = routable_chat_address(identity_map.get(from_did, {}), auth.team_id, msg["from_alias"])
         history_items.append(
             {
                 "message_id": msg["message_id"],
@@ -965,6 +968,7 @@ async def _sse_events(
     redis,
     session_id: UUID,
     viewer_did: str,
+    viewer_team_id: str | None,
     contact_owner_dids: list[str],
     deadline: datetime,
     after: datetime | None = None,
@@ -1039,7 +1043,7 @@ async def _sse_events(
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
-                from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
+                from_address = routable_chat_address(identity_map.get(from_did, {}), viewer_team_id, row["from_alias"])
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
@@ -1129,7 +1133,7 @@ async def _sse_events(
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
                     from_did = (row.get("from_did") or "").strip()
-                    from_address = identity_map.get(from_did, {}).get("address") or row["from_alias"]
+                    from_address = routable_chat_address(identity_map.get(from_did, {}), viewer_team_id, row["from_alias"])
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
@@ -1245,6 +1249,7 @@ async def stream(
             redis=redis,
             session_id=session_uuid,
             viewer_did=actor_did,
+            viewer_team_id=auth.team_id,
             contact_owner_dids=owner_dids,
             deadline=deadline_dt,
             after=after_dt,
@@ -1445,7 +1450,7 @@ async def list_sessions(
             session_ids,
         )
     participants_by_session = _group_participants_by_session(participant_rows)
-    address_map = await _lookup_addresses_by_did(
+    identity_map = await lookup_identity_metadata_by_did(
         db,
         [(row.get("did") or "").strip() for row in participant_rows if (row.get("did") or "").strip()],
     )
@@ -1475,7 +1480,11 @@ async def list_sessions(
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
                 participant_addresses=[
-                    address_map.get((participant.get("did") or "").strip(), participant["alias"])
+                    routable_chat_address(
+                        identity_map.get((participant.get("did") or "").strip(), {}),
+                        auth.team_id,
+                        participant["alias"],
+                    )
                     for participant in session_participants
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
