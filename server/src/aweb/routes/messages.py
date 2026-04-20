@@ -445,7 +445,7 @@ async def get_inbox(
 
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT m.message_id, m.from_agent_id, m.from_alias, m.to_alias,
+        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload
         FROM {{{{tables.messages}}}} m
@@ -485,7 +485,7 @@ async def get_inbox(
             to_did=to_did or None,
             from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
             to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
-            from_address=(identity_map.get(from_did, {}).get("address") or None),
+            from_address=(r.get("from_address") or identity_map.get(from_did, {}).get("address") or None),
             to_address=(identity_map.get(to_did, {}).get("address") or None),
             signature=r.get("signature"),
             signed_payload=r.get("signed_payload"),

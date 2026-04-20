@@ -170,7 +170,7 @@ async def check_inbox(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT message_id, from_agent_id, from_alias, to_alias,
+        SELECT message_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload
         FROM {{tables.messages}}
@@ -205,6 +205,7 @@ async def check_inbox(
             "message_id": str(r["message_id"]),
             "from_agent_id": (str(r["from_agent_id"]) if r.get("from_agent_id") else None),
             "from_alias": r["from_alias"],
+            "from_address": r["from_address"] or "",
             "to_alias": r["to_alias"],
             "subject": r["subject"],
             "priority": r["priority"],

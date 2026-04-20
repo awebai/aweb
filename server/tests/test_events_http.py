@@ -317,6 +317,34 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
 
 
 @pytest.mark.asyncio
+async def test_current_actionable_mail_prefers_stored_sender_address_without_local_metadata(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (message_id, from_did, to_did, from_alias, from_address, subject, body, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+        """,
+        uuid4(),
+        "did:aw:gsk",
+        "did:aw:bob",
+        "gsk",
+        "otherco.com/gsk",
+        "external",
+        "body",
+    )
+
+    actionable = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob"],
+    )
+
+    assert len(actionable) == 1
+    assert actionable[0]["from_did"] == "did:aw:gsk"
+    assert actionable[0]["from_alias"] == "gsk"
+    assert actionable[0]["from_address"] == "otherco.com/gsk"
+
+
+@pytest.mark.asyncio
 async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()

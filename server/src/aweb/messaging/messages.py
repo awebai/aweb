@@ -219,21 +219,23 @@ async def deliver_message(
     )
     to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id") if to_agent_id else UUID(str(recipient["agent_id"]))
     from_alias_value = (from_alias or sender_address or (sender.get("alias") if sender else "") or sender_did).strip()
+    from_address_value = (sender_address or "").strip() or None
     to_alias_value = (to_alias or recipient.get("alias") or recipient.get("address") or recipient_did).strip()
 
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}
-            (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority,
-             team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            (message_id, from_did, to_did, from_alias, from_address, to_alias, subject, body,
+             priority, team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING message_id, created_at
         """,
         message_id,
         sender_did,
         recipient_did,
         from_alias_value,
+        from_address_value,
         to_alias_value,
         subject,
         body,

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS {{tables.messages}} (
     from_did        TEXT NOT NULL,
     to_did          TEXT NOT NULL,
     from_alias      TEXT NOT NULL DEFAULT '',
+    from_address    TEXT,
     to_alias        TEXT NOT NULL DEFAULT '',
     subject         TEXT NOT NULL DEFAULT '',
     body            TEXT NOT NULL,

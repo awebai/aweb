@@ -247,6 +247,51 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
 
 
 @pytest.mark.asyncio
+async def test_messages_inbox_prefers_stored_sender_address_without_local_metadata(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:acme.com', $1, 'did:aw:bob', 'acme.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            from_did, to_did, from_alias, from_address, to_alias, subject, body, priority
+        )
+        VALUES ('did:aw:gsk', 'did:aw:bob', 'gsk', 'otherco.com/gsk', 'bob', 'external', 'hello', 'normal')
+        """
+    )
+
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/messages/inbox", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["messages"][0]["from_alias"] == "gsk"
+    assert body["messages"][0]["from_address"] == "otherco.com/gsk"
+
+
+@pytest.mark.asyncio
 async def test_messages_inbox_filters_by_message_id(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     registry = AsyncMock()
@@ -431,9 +476,10 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
 
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT from_did, to_did FROM {{tables.messages}} WHERE subject = 'hello'"
+        "SELECT from_did, from_address, to_did FROM {{tables.messages}} WHERE subject = 'hello'"
     )
     assert row["from_did"] == "did:aw:alice"
+    assert row["from_address"] == "acme.com/alice"
     assert row["to_did"] == "did:aw:bob"
 
 
