@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_participants}} (
     did             TEXT NOT NULL,
     agent_id        UUID REFERENCES {{tables.agents}}(agent_id),
     alias           TEXT NOT NULL,
+    address         TEXT,
     joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (session_id, did)
 );
