@@ -12,7 +12,15 @@ from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
-from aweb.messaging.alias_targets import namespace_exists, resolve_alias_target, team_exists, validate_alias_selector
+from aweb.messaging.alias_targets import (
+    AmbiguousLocalAddressError,
+    derive_team_address,
+    get_agent_by_namespace_alias,
+    namespace_exists,
+    resolve_alias_target,
+    team_exists,
+    validate_alias_selector,
+)
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -233,12 +241,24 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
     }
 
 
+def _sender_address(auth: MessagingAuth) -> str | None:
+    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
+
+
+async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict | None:
+    try:
+        return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
+    except AmbiguousLocalAddressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
     registry_client = getattr(request.app.state, "awid_registry_client", None)
+    sender_address = _sender_address(auth)
 
     recipient = None
     recipient_did: str | None = None
@@ -305,21 +325,29 @@ async def send_message(
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
     elif payload.to_address is not None:
-        if registry_client is None:
-            raise HTTPException(status_code=503, detail="AWID registry unavailable")
         address = payload.to_address.strip()
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
-        resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is None or not resolved.did_aw:
-            raise HTTPException(status_code=404, detail="Recipient address not found")
-        recipient_did = resolved.did_aw
-        recipient = await resolve_agent_by_did(db, recipient_did)
-        if recipient is None:
-            if await namespace_exists(db, domain):
+        resolved = None
+        if registry_client is not None:
+            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        if resolved is not None and resolved.did_aw:
+            recipient_did = resolved.did_aw
+            recipient = await resolve_agent_by_did(db, recipient_did)
+            if recipient is None:
+                recipient = _external_recipient_from_address(address, resolved)
+        else:
+            recipient = await _local_recipient_from_address(db, domain=domain, name=name)
+            if recipient is None:
+                if await namespace_exists(db, domain):
+                    raise HTTPException(status_code=404, detail="Recipient agent not found")
+                if registry_client is None:
+                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
+                raise HTTPException(status_code=404, detail="Recipient address not found")
+            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+            if not recipient_did:
                 raise HTTPException(status_code=404, detail="Recipient agent not found")
-            recipient = _external_recipient_from_address(address, resolved)
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):
                 if payload.to_alias.strip() != recipient["alias"]:
@@ -379,7 +407,7 @@ async def send_message(
             to_alias=to_alias,
             requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
-            from_address=auth.address,
+            from_address=sender_address,
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
@@ -402,7 +430,7 @@ async def send_message(
             to_alias=to_alias,
             from_did=sender_did,
             to_did=recipient_did or "",
-            sender_address=auth.address,
+            sender_address=sender_address,
             subject=payload.subject,
             body=payload.body,
             priority=payload.priority,

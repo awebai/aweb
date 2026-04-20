@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from awid.team_ids import build_team_id, parse_team_id
 from fastapi import HTTPException
@@ -13,6 +14,10 @@ MAX_ALIAS_PART_LENGTH = 64
 class AliasTarget:
     team_id: str
     alias: str
+
+
+class AmbiguousLocalAddressError(Exception):
+    pass
 
 
 def resolve_alias_target(auth_team_id: str | None, raw_alias: str, *, field: str) -> AliasTarget:
@@ -83,3 +88,38 @@ async def namespace_exists(db, namespace: str) -> bool:
         namespace,
     )
     return row is not None
+
+
+def derive_team_address(team_id: str | None, alias: str | None) -> str:
+    alias = str(alias or "").strip()
+    if not alias:
+        return ""
+    try:
+        namespace, _team_name = parse_team_id(str(team_id or "").strip())
+    except Exception:
+        return ""
+    namespace = str(namespace or "").strip()
+    if not namespace:
+        return ""
+    return f"{namespace}/{alias}"
+
+
+async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> dict[str, Any] | None:
+    aweb_db = db.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT a.agent_id, a.team_id, a.alias, a.did_key, a.did_aw, a.address,
+               a.messaging_policy, a.status, a.deleted_at
+        FROM {{tables.agents}} a
+        JOIN {{tables.teams}} t ON t.team_id = a.team_id
+        WHERE t.namespace = $1
+          AND a.alias = $2
+          AND a.deleted_at IS NULL
+        ORDER BY a.created_at DESC
+        """,
+        str(namespace or "").strip(),
+        str(alias or "").strip(),
+    )
+    if len(rows) > 1:
+        raise AmbiguousLocalAddressError(f"Address {namespace}/{alias} matches multiple local agents")
+    return None if not rows else dict(rows[0])

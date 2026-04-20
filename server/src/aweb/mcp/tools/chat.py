@@ -19,7 +19,12 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     send_in_session,
 )
-from aweb.messaging.alias_targets import namespace_exists
+from aweb.messaging.alias_targets import (
+    AmbiguousLocalAddressError,
+    derive_team_address,
+    get_agent_by_namespace_alias,
+    namespace_exists,
+)
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -68,6 +73,17 @@ def _signed_from(auth, actor_alias: str) -> str:
         or (auth.did_aw or "").strip()
         or (auth.did_key or "").strip()
     )
+
+
+def _sender_address(auth) -> str | None:
+    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
+
+
+async def _local_agent_by_address(db_infra, *, domain: str, name: str) -> dict | None:
+    try:
+        return await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
+    except AmbiguousLocalAddressError as exc:
+        raise ServiceError(str(exc)) from exc
 
 
 def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
@@ -265,6 +281,7 @@ async def chat_send(
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(actor_agent)
+    sender_address = _sender_address(auth)
     aweb_db = db_infra.get_manager("aweb")
 
     recipient_modes = int(bool(to_alias.strip())) + int(bool(to_did.strip())) + int(bool(to_address.strip()))
@@ -288,28 +305,38 @@ async def chat_send(
             if not target:
                 return json.dumps({"error": f"Recipient '{to_did}' not found"})
         else:
-            if registry_client is None:
-                return json.dumps({"error": "AWID registry unavailable"})
             if "/" not in to_address:
                 return json.dumps({"error": "to_address must be domain/name"})
             domain, name = to_address.split("/", 1)
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            if resolved is None or not resolved.did_aw:
-                return json.dumps({"error": f"Recipient address '{to_address}' not found"})
-            target = await resolve_agent_by_did(db_infra, resolved.did_aw)
-            if not target:
-                if await namespace_exists(db_infra, domain):
+            resolved = None
+            if registry_client is not None:
+                resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            if resolved is not None and resolved.did_aw:
+                target = await resolve_agent_by_did(db_infra, resolved.did_aw)
+                if not target:
+                    target = {
+                        "agent_id": None,
+                        "team_id": None,
+                        "alias": name,
+                        "address": to_address.strip(),
+                        "did_aw": resolved.did_aw.strip(),
+                        "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
+                        "messaging_policy": None,
+                        "external": True,
+                    }
+            else:
+                try:
+                    target = await _local_agent_by_address(db_infra, domain=domain, name=name)
+                except ServiceError as exc:
+                    return json.dumps({"error": exc.detail})
+                if not target:
+                    if await namespace_exists(db_infra, domain):
+                        return json.dumps({"error": f"Recipient '{to_address}' not connected"})
+                    if registry_client is None:
+                        return json.dumps({"error": "AWID registry unavailable"})
+                    return json.dumps({"error": f"Recipient address '{to_address}' not found"})
+                if not _target_did(target):
                     return json.dumps({"error": f"Recipient '{to_address}' not connected"})
-                target = {
-                    "agent_id": None,
-                    "team_id": None,
-                    "alias": name,
-                    "address": to_address.strip(),
-                    "did_aw": resolved.did_aw.strip(),
-                    "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
-                    "messaging_policy": None,
-                    "external": True,
-                }
 
         target_did = _target_did(target)
         if _target_did_refs(target) & set(actor_dids):
@@ -321,7 +348,7 @@ async def chat_send(
                     registry_client=registry_client,
                     recipient_agent=target,
                     sender_did=actor_did,
-                    sender_address=auth.address,
+                    sender_address=sender_address,
                 )
             except ServiceError as exc:
                 return json.dumps({"error": exc.detail})
@@ -387,7 +414,7 @@ async def chat_send(
             session_id=sid,
             sender_did=signed.from_did if signed else actor_did,
             sender_agent_id=actor_agent_id,
-            sender_address=auth.address,
+            sender_address=sender_address,
             body=message,
             leaving=leaving,
             hang_on=hang_on,
@@ -456,7 +483,7 @@ async def chat_send(
             session_id=sid,
             sender_did=signed.from_did if signed else session_actor_did,
             sender_agent_id=actor_agent_id,
-            sender_address=auth.address,
+            sender_address=sender_address,
             body=message,
             leaving=leaving,
             hang_on=hang_on,

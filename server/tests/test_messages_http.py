@@ -1607,7 +1607,7 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
 
     messages = await aweb_cloud_db.aweb_db.fetch_all(
         """
-        SELECT from_did, to_did, subject
+        SELECT from_did, from_address, to_did, subject
         FROM {{tables.messages}}
         WHERE subject IN ('local to bob', 'local to alice')
         ORDER BY subject
@@ -1615,8 +1615,10 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
     )
     assert [row["subject"] for row in messages] == ["local to alice", "local to bob"]
     assert messages[0]["from_did"] == bob_did_key
+    assert messages[0]["from_address"] == "local/bob"
     assert messages[0]["to_did"] == alice_did_key
     assert messages[1]["from_did"] == alice_did_key
+    assert messages[1]["from_address"] == "local/alice"
     assert messages[1]["to_did"] == bob_did_key
 
     alice_body_json = alice_inbox.json()
@@ -2395,7 +2397,7 @@ async def test_send_message_to_address_enforces_local_recipient_policy(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_local_domain_registry_mismatch(aweb_cloud_db):
+async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -2409,25 +2411,15 @@ async def test_send_message_rejects_local_domain_registry_mismatch(aweb_cloud_db
             team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
         )
         VALUES (
-            'ops:otherco.com', 'did:key:bob-old', 'did:aw:bob-old', 'otherco.com/bob', 'bob',
-            'persistent', 'developer', 'nobody'
+            'ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob',
+            'ephemeral', 'developer', 'nobody'
         )
         """
     )
 
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-2",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob-new",
-            current_did_key="did:key:bob-new",
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
+    registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
@@ -2441,5 +2433,5 @@ async def test_send_message_rejects_local_domain_registry_mismatch(aweb_cloud_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 404, resp.text
-    assert "Recipient agent not found" in resp.text
+    assert resp.status_code == 403, resp.text
+    assert "Recipient does not accept messages" in resp.text

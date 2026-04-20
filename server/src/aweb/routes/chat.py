@@ -23,7 +23,15 @@ from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
-from aweb.messaging.alias_targets import namespace_exists, resolve_alias_target, team_exists, validate_alias_selector
+from aweb.messaging.alias_targets import (
+    AmbiguousLocalAddressError,
+    derive_team_address,
+    get_agent_by_namespace_alias,
+    namespace_exists,
+    resolve_alias_target,
+    team_exists,
+    validate_alias_selector,
+)
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -212,6 +220,17 @@ def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str
     )
 
 
+def _sender_address(auth: MessagingAuth) -> str | None:
+    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
+
+
+async def _local_agent_by_address(db, *, domain: str, name: str) -> dict[str, Any] | None:
+    try:
+        return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
+    except AmbiguousLocalAddressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
     for did in actor_dids:
         if not did:
@@ -333,7 +352,7 @@ async def _resolve_chat_targets(
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     actor_did_set = set(actor_dids)
-    sender_address = (auth.address or "").strip() or None
+    sender_address = _sender_address(auth)
     resolved: dict[str, dict[str, Any]] = {}
 
     if to_aliases:
@@ -371,29 +390,39 @@ async def _resolve_chat_targets(
         resolved[did] = row
 
     for address in to_addresses:
-        if registry_client is None:
-            raise HTTPException(status_code=503, detail="AWID registry unavailable")
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
         domain, name = address.split("/", 1)
-        resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolution is None or not resolution.did_aw:
-            raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
-        row = await resolve_agent_by_did(db, resolution.did_aw)
+        resolution = None
+        if registry_client is not None:
+            resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        if resolution is not None and resolution.did_aw:
+            row = await resolve_agent_by_did(db, resolution.did_aw)
+            if row is None:
+                row = {
+                    "agent_id": None,
+                    "team_id": None,
+                    "alias": name,
+                    "address": address,
+                    "did_aw": resolution.did_aw.strip(),
+                    "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+                    "messaging_policy": None,
+                    "external": True,
+                }
+            resolved[resolution.did_aw] = row
+            continue
+
+        row = await _local_agent_by_address(db, domain=domain, name=name)
         if row is None:
             if await namespace_exists(db, domain):
                 raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
-            row = {
-                "agent_id": None,
-                "team_id": None,
-                "alias": name,
-                "address": address,
-                "did_aw": resolution.did_aw.strip(),
-                "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-                "messaging_policy": None,
-                "external": True,
-            }
-        resolved[resolution.did_aw] = row
+            if registry_client is None:
+                raise HTTPException(status_code=503, detail="AWID registry unavailable")
+            raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
+        target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
+        if not target_did:
+            raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
+        resolved[target_did] = row
 
     if not resolved:
         raise HTTPException(status_code=422, detail="Must provide to_aliases, to_dids, or to_addresses")
@@ -541,6 +570,7 @@ async def create_or_send(
     actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
+    sender_address = _sender_address(auth)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
 
     target_rows = await _resolve_chat_targets(
@@ -599,7 +629,7 @@ async def create_or_send(
             recipient_rows=target_rows,
             requested_to_aliases=payload.to_aliases,
             from_alias=auth.alias,
-            from_address=auth.address,
+            from_address=sender_address,
             from_stable_id=auth.did_aw,
             body=payload.message,
             from_did=from_did,
@@ -630,7 +660,7 @@ async def create_or_send(
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
-            sender_address=auth.address,
+            sender_address=sender_address,
             body=payload.message,
             reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
             leaving=payload.leaving,
@@ -1361,6 +1391,7 @@ async def send_message(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
+    sender_address = _sender_address(auth)
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -1394,7 +1425,7 @@ async def send_message(
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,
             from_alias=auth.alias,
-            from_address=auth.address,
+            from_address=sender_address,
             from_stable_id=auth.did_aw,
             body=payload.body,
             from_did=from_did,
@@ -1412,7 +1443,7 @@ async def send_message(
             session_id=session_uuid,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
-            sender_address=auth.address,
+            sender_address=sender_address,
             body=payload.body,
             reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
             hang_on=payload.hang_on,

@@ -13,7 +13,12 @@ from aweb.mcp.signing import (
     HostedMessageSigningError,
     sign_hosted_message,
 )
-from aweb.messaging.alias_targets import namespace_exists
+from aweb.messaging.alias_targets import (
+    AmbiguousLocalAddressError,
+    derive_team_address,
+    get_agent_by_namespace_alias,
+    namespace_exists,
+)
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -39,6 +44,17 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
     }
 
 
+def _sender_address(auth) -> str | None:
+    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
+
+
+async def _local_recipient_from_address(db_infra, *, domain: str, name: str) -> dict | None:
+    try:
+        return await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
+    except AmbiguousLocalAddressError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 async def send_mail(
     db_infra,
     *,
@@ -51,6 +67,7 @@ async def send_mail(
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
+    sender_address = _sender_address(auth)
     if priority not in VALID_PRIORITIES:
         return json.dumps(
             {"error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"}
@@ -67,18 +84,29 @@ async def send_mail(
         recipient_did = recipient_ref
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
     elif "/" in recipient_ref:
-        if registry_client is None:
-            return json.dumps({"error": "AWID registry unavailable"})
         domain, name = recipient_ref.split("/", 1)
-        resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is None or not resolved.did_aw:
-            return json.dumps({"error": f"Address '{recipient_ref}' not found"})
-        recipient_did = resolved.did_aw
-        recipient = await resolve_agent_by_did(db_infra, recipient_did)
-        if recipient is None:
-            if await namespace_exists(db_infra, domain):
+        resolved = None
+        if registry_client is not None:
+            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        if resolved is not None and resolved.did_aw:
+            recipient_did = resolved.did_aw
+            recipient = await resolve_agent_by_did(db_infra, recipient_did)
+            if recipient is None:
+                recipient = _external_recipient_from_address(recipient_ref, resolved)
+        else:
+            try:
+                recipient = await _local_recipient_from_address(db_infra, domain=domain, name=name)
+            except RuntimeError as exc:
+                return json.dumps({"error": str(exc)})
+            if recipient is None:
+                if await namespace_exists(db_infra, domain):
+                    return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
+                if registry_client is None:
+                    return json.dumps({"error": "AWID registry unavailable"})
+                return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+            if not recipient_did:
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
-            recipient = _external_recipient_from_address(recipient_ref, resolved)
     else:
         if not auth.team_id:
             return json.dumps({"error": "Alias delivery requires team context"})
@@ -144,7 +172,7 @@ async def send_mail(
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
-            sender_address=auth.address,
+            sender_address=sender_address,
             to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
             to_alias=recipient_alias,
             subject=subject,

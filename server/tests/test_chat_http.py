@@ -732,7 +732,7 @@ async def test_create_chat_session_to_address_enforces_local_recipient_policy(aw
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_rejects_local_domain_registry_mismatch(aweb_cloud_db):
+async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agent(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -745,23 +745,13 @@ async def test_create_chat_session_rejects_local_domain_registry_mismatch(aweb_c
         INSERT INTO {{tables.agents}} (
             team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
         )
-        VALUES ('ops:otherco.com', 'did:key:bob-old', 'did:aw:bob-old', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'nobody')
+        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'nobody')
         """
     )
 
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-2",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob-new",
-            current_did_key="did:key:bob-new",
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
+    registry.resolve_address = AsyncMock(return_value=None)
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
@@ -775,8 +765,8 @@ async def test_create_chat_session_rejects_local_domain_registry_mismatch(aweb_c
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 404, resp.text
-    assert "Recipient agent not found: otherco.com/bob" in resp.text
+    assert resp.status_code == 403, resp.text
+    assert "Recipient does not accept messages" in resp.text
 
 
 @pytest.mark.asyncio
@@ -1889,6 +1879,48 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
     assert pending.json()["pending"][0]["last_from_address"] == "otherco.com/gsk"
     assert stream.status_code == 200, stream.text
     assert '"from_address": "otherco.com/gsk"' in stream.text
+
+
+@pytest.mark.asyncio
+async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:acme.com', 'did:key:alice', NULL, NULL, 'alice', 'ephemeral', 'developer', 'everyone'),
+            ('ops:acme.com', 'did:key:bob', NULL, NULL, 'bob', 'ephemeral', 'developer', 'everyone')
+        """
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key="did:key:alice",
+            did_aw="",
+            address="",
+            team_id="ops:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post("/v1/chat/sessions", json={"to_aliases": ["bob"], "message": "hello"})
+
+    assert created.status_code == 200, created.text
+    stored = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT from_address FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(created.json()["message_id"]),
+    )
+    assert stored == "acme.com/alice"
 
 
 @pytest.mark.asyncio
