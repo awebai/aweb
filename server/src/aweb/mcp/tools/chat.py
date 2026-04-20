@@ -372,7 +372,7 @@ async def chat_send(
                         "did_key": auth.did_key,
                         "agent_id": actor_agent_id,
                         "alias": actor_alias,
-                        "address": (auth.address or "").strip() or None,
+                        "address": sender_address,
                     },
                     {
                         "did": target_did,

@@ -26,6 +26,7 @@ from aweb.messaging.messages import (
     resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
+from aweb.service_errors import ServiceError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
@@ -52,7 +53,7 @@ async def _local_recipient_from_address(db_infra, *, domain: str, name: str) -> 
     try:
         return await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
-        raise RuntimeError(str(exc)) from exc
+        raise ServiceError(str(exc)) from exc
 
 
 def _with_requested_address(row: dict, address: str) -> dict:
@@ -101,8 +102,8 @@ async def send_mail(
         if recipient is None:
             try:
                 recipient = await _local_recipient_from_address(db_infra, domain=domain, name=name)
-            except RuntimeError as exc:
-                return json.dumps({"error": str(exc)})
+            except ServiceError as exc:
+                return json.dumps({"error": exc.detail})
             if recipient is None:
                 if await namespace_exists(db_infra, domain):
                     return json.dumps({"error": f"Agent '{recipient_ref}' not found"})

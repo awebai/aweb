@@ -1921,6 +1921,15 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
         UUID(created.json()["message_id"]),
     )
     assert stored == "acme.com/alice"
+    participant_address = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT address
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = 'did:key:alice'
+        """,
+        UUID(created.json()["session_id"]),
+    )
+    assert participant_address == "acme.com/alice"
 
 
 @pytest.mark.asyncio
