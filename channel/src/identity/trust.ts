@@ -202,6 +202,8 @@ export class SenderTrustManager {
           if (pin?.did_key && pin.did_key !== fromDID) {
             // A verified registry chain is authoritative for persistent
             // identities; stale local TOFU must not block archive/recreate.
+            // Security assumption: awid enforces a did:aw belongs to one
+            // current address; the client does not independently prove that.
             if (registryConfirmedCurrentKey) {
               store.storePin(pinKey, trustAddress, "", "");
               const updated = store.pins.get(pinKey)!;
@@ -229,6 +231,8 @@ export class SenderTrustManager {
         const pinnedKey = store.addresses.get(trustAddress) || "";
         // A verified registry chain proves the address now belongs to this
         // stable identity and did:key, so replace the stale address pin.
+        // Security assumption: awid enforces a did:aw belongs to one current
+        // address; the client does not independently prove that.
         if (registryConfirmedCurrentKey && fromStableID) {
           store.removeAddress(trustAddress);
           store.storePin(pinKey, trustAddress, "", "");

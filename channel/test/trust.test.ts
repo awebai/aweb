@@ -249,6 +249,7 @@ describe("SenderTrustManager", () => {
     const result = await trust.normalizeTrust(store, "verified", "acme.com/amy", newIdentity.did, stableID, undefined);
 
     expect(result.status).toBe("verified");
+    expect(result.stored).toBe(true);
     expect(store.addresses.get("acme.com/amy")).toBe(stableID);
     expect(store.pins.get(stableID)?.did_key).toBe(newIdentity.did);
   });

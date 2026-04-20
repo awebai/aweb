@@ -497,6 +497,8 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
 				// A verified registry chain is authoritative for persistent
 				// identities; stale local TOFU must not block archive/recreate.
+				// Security assumption: awid enforces a did:aw belongs to one
+				// current address; the client does not independently prove that.
 				if registryConfirmedCurrentKey {
 					c.pinStore.StorePin(pinKey, trustAddress, "", "")
 					c.pinStore.Pins[pinKey].StableID = fromStableID
@@ -520,6 +522,8 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		pinnedKey := c.pinStore.Addresses[trustAddress]
 		// A verified registry chain proves the address now belongs to this
 		// stable identity and did:key, so replace the stale address pin.
+		// Security assumption: awid enforces a did:aw belongs to one current
+		// address; the client does not independently prove that.
 		if registryConfirmedCurrentKey && fromStableID != "" {
 			c.pinStore.RemoveAddress(trustAddress)
 			c.pinStore.StorePin(pinKey, trustAddress, "", "")
