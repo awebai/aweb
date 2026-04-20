@@ -19,6 +19,7 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     send_in_session,
 )
+from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -297,6 +298,8 @@ async def chat_send(
                 return json.dumps({"error": f"Recipient address '{to_address}' not found"})
             target = await resolve_agent_by_did(db_infra, resolved.did_aw)
             if not target:
+                if await namespace_exists(db_infra, domain):
+                    return json.dumps({"error": f"Recipient '{to_address}' not connected"})
                 target = {
                     "agent_id": None,
                     "team_id": None,

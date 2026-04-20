@@ -12,7 +12,7 @@ from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
-from aweb.messaging.alias_targets import resolve_alias_target, team_exists, validate_alias_selector
+from aweb.messaging.alias_targets import namespace_exists, resolve_alias_target, team_exists, validate_alias_selector
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -317,6 +317,8 @@ async def send_message(
         recipient_did = resolved.did_aw
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
+            if await namespace_exists(db, domain):
+                raise HTTPException(status_code=404, detail="Recipient agent not found")
             recipient = _external_recipient_from_address(address, resolved)
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):

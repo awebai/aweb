@@ -69,3 +69,17 @@ async def team_exists(db, team_id: str) -> bool:
         team_id,
     )
     return row is not None
+
+
+async def namespace_exists(db, namespace: str) -> bool:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT 1
+        FROM {{tables.teams}}
+        WHERE namespace = $1
+        LIMIT 1
+        """,
+        namespace,
+    )
+    return row is not None

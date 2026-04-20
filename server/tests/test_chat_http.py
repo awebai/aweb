@@ -685,6 +685,101 @@ async def test_create_chat_session_returns_403_for_policy_violation(aweb_cloud_d
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_to_address_enforces_local_recipient_policy(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'nobody')
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-2",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_addresses": ["otherco.com/bob"], "message": "blocked"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_rejects_local_domain_registry_mismatch(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:otherco.com', 'did:key:bob-old', 'did:aw:bob-old', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'nobody')
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-2",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob-new",
+            current_did_key="did:key:bob-new",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_addresses": ["otherco.com/bob"], "message": "blocked"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 404, resp.text
+    assert "Recipient agent not found: otherco.com/bob" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

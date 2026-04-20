@@ -23,7 +23,7 @@ from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
-from aweb.messaging.alias_targets import resolve_alias_target, team_exists, validate_alias_selector
+from aweb.messaging.alias_targets import namespace_exists, resolve_alias_target, team_exists, validate_alias_selector
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -381,6 +381,8 @@ async def _resolve_chat_targets(
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
         row = await resolve_agent_by_did(db, resolution.did_aw)
         if row is None:
+            if await namespace_exists(db, domain):
+                raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
             row = {
                 "agent_id": None,
                 "team_id": None,

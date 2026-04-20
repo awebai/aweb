@@ -13,6 +13,7 @@ from aweb.mcp.signing import (
     HostedMessageSigningError,
     sign_hosted_message,
 )
+from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -75,6 +76,8 @@ async def send_mail(
         recipient_did = resolved.did_aw
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
         if recipient is None:
+            if await namespace_exists(db_infra, domain):
+                return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
             recipient = _external_recipient_from_address(recipient_ref, resolved)
     else:
         if not auth.team_id:
