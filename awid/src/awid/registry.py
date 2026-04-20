@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import ipaddress
 import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 from nacl.signing import SigningKey
@@ -38,6 +40,17 @@ _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
+
+
+def _is_local_registry_origin(registry_url: str) -> bool:
+    host = (urlparse(canonical_server_origin(registry_url)).hostname or "").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_unspecified
 
 
 @dataclass(frozen=True)
@@ -190,7 +203,16 @@ class RegistryClient:
         if self.transport is not None:
             return canonical_server_origin(self.registry_url)
         default_registry_url = canonical_server_origin(self.registry_url)
-        from awid.dns_verify import DnsVerificationError, discover_registry_override
+        if _is_local_registry_origin(default_registry_url):
+            return default_registry_url
+        from awid.dns_verify import (
+            DEFAULT_AWID_REGISTRY_URL,
+            DnsVerificationError,
+            discover_registry_override,
+        )
+
+        if default_registry_url != canonical_server_origin(DEFAULT_AWID_REGISTRY_URL):
+            return default_registry_url
 
         try:
             registry_override = await discover_registry_override(domain)

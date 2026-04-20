@@ -55,6 +55,12 @@ async def _local_recipient_from_address(db_infra, *, domain: str, name: str) -> 
         raise RuntimeError(str(exc)) from exc
 
 
+def _with_requested_address(row: dict, address: str) -> dict:
+    copied = dict(row)
+    copied["address"] = (copied.get("address") or "").strip() or address
+    return copied
+
+
 async def send_mail(
     db_infra,
     *,
@@ -85,15 +91,14 @@ async def send_mail(
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
     elif "/" in recipient_ref:
         domain, name = recipient_ref.split("/", 1)
-        resolved = None
         if registry_client is not None:
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is not None and resolved.did_aw:
-            recipient_did = resolved.did_aw
-            recipient = await resolve_agent_by_did(db_infra, recipient_did)
-            if recipient is None:
-                recipient = _external_recipient_from_address(recipient_ref, resolved)
-        else:
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await resolve_agent_by_did(db_infra, recipient_did)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(recipient_ref, resolved)
+        if recipient is None:
             try:
                 recipient = await _local_recipient_from_address(db_infra, domain=domain, name=name)
             except RuntimeError as exc:
@@ -104,6 +109,7 @@ async def send_mail(
                 if registry_client is None:
                     return json.dumps({"error": "AWID registry unavailable"})
                 return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+            recipient = _with_requested_address(recipient, recipient_ref)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})

@@ -86,6 +86,12 @@ async def _local_agent_by_address(db_infra, *, domain: str, name: str) -> dict |
         raise ServiceError(str(exc)) from exc
 
 
+def _with_requested_address(row: dict, address: str) -> dict:
+    copied = dict(row)
+    copied["address"] = (copied.get("address") or "").strip() or address
+    return copied
+
+
 def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
     to_values: list[str] = []
     to_dids: list[str] = []
@@ -335,10 +341,13 @@ async def chat_send(
                     if registry_client is None:
                         return json.dumps({"error": "AWID registry unavailable"})
                     return json.dumps({"error": f"Recipient address '{to_address}' not found"})
+                target = _with_requested_address(target, to_address.strip())
                 if not _target_did(target):
                     return json.dumps({"error": f"Recipient '{to_address}' not connected"})
 
         target_did = _target_did(target)
+        if not target_did:
+            return json.dumps({"error": f"Recipient '{to_address or to_did or to_alias}' not connected"})
         if _target_did_refs(target) & set(actor_dids):
             return json.dumps({"error": "Cannot chat with yourself"})
         if not target.get("external"):

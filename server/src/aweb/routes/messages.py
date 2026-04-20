@@ -252,6 +252,12 @@ async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict |
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _with_requested_address(row: dict, address: str) -> dict:
+    copied = dict(row)
+    copied["address"] = (copied.get("address") or "").strip() or address
+    return copied
+
+
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -329,15 +335,15 @@ async def send_message(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
-        resolved = None
         if registry_client is not None:
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is not None and resolved.did_aw:
-            recipient_did = resolved.did_aw
-            recipient = await resolve_agent_by_did(db, recipient_did)
-            if recipient is None:
-                recipient = _external_recipient_from_address(address, resolved)
-        else:
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await resolve_agent_by_did(db, recipient_did)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(address, resolved)
+
+        if recipient is None:
             recipient = await _local_recipient_from_address(db, domain=domain, name=name)
             if recipient is None:
                 if await namespace_exists(db, domain):
@@ -345,6 +351,7 @@ async def send_message(
                 if registry_client is None:
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
+            recipient = _with_requested_address(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:
                 raise HTTPException(status_code=404, detail="Recipient agent not found")

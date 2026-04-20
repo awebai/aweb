@@ -231,6 +231,12 @@ async def _local_agent_by_address(db, *, domain: str, name: str) -> dict[str, An
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _with_requested_address(row: dict[str, Any], address: str) -> dict[str, Any]:
+    copied = dict(row)
+    copied["address"] = (copied.get("address") or "").strip() or address
+    return copied
+
+
 async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
     for did in actor_dids:
         if not did:
@@ -419,6 +425,7 @@ async def _resolve_chat_targets(
             if registry_client is None:
                 raise HTTPException(status_code=503, detail="AWID registry unavailable")
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
+        row = _with_requested_address(row, address)
         target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
         if not target_did:
             raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")

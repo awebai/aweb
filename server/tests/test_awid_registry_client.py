@@ -334,12 +334,37 @@ async def test_get_namespace_uses_discovered_registry_for_domain():
 
 
 @pytest.mark.asyncio
-async def test_registry_url_for_domain_uses_explicit_registry_url_by_default(monkeypatch):
+async def test_registry_url_for_domain_uses_public_default_without_dns_override(monkeypatch):
     async def _no_override_lookup(domain: str):
         assert domain == "example.com"
         return None
 
     monkeypatch.setattr(dns_verify_module, "discover_registry_override", _no_override_lookup)
+
+    client = RegistryClient(registry_url="https://api.awid.ai")
+
+    assert await client._registry_url_for_domain("example.com") == "https://api.awid.ai"
+
+
+@pytest.mark.asyncio
+async def test_registry_url_for_domain_allows_dns_override_of_public_default(monkeypatch):
+    async def _override_lookup(domain: str):
+        assert domain == "example.com"
+        return "https://override.example"
+
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _override_lookup)
+
+    client = RegistryClient(registry_url="https://api.awid.ai")
+
+    assert await client._registry_url_for_domain("example.com") == "https://override.example"
+
+
+@pytest.mark.asyncio
+async def test_registry_url_for_domain_skips_dns_override_for_non_default_registry(monkeypatch):
+    async def _unexpected_override_lookup(_domain: str):
+        raise AssertionError("operator-configured registry should not perform DNS override discovery")
+
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _unexpected_override_lookup)
 
     client = RegistryClient(registry_url="https://registry.example")
 
@@ -347,16 +372,15 @@ async def test_registry_url_for_domain_uses_explicit_registry_url_by_default(mon
 
 
 @pytest.mark.asyncio
-async def test_registry_url_for_domain_allows_dns_override_of_explicit_default(monkeypatch):
-    async def _override_lookup(domain: str):
-        assert domain == "example.com"
-        return "https://override.example"
+async def test_registry_url_for_domain_skips_dns_override_for_local_registry(monkeypatch):
+    async def _unexpected_override_lookup(_domain: str):
+        raise AssertionError("local registry should not perform DNS override discovery")
 
-    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _override_lookup)
+    monkeypatch.setattr(dns_verify_module, "discover_registry_override", _unexpected_override_lookup)
 
-    client = RegistryClient(registry_url="https://registry.example")
+    client = RegistryClient(registry_url="http://localhost:8110")
 
-    assert await client._registry_url_for_domain("example.com") == "https://override.example"
+    assert await client._registry_url_for_domain("test.local") == "http://localhost:8110"
 
 
 @pytest.mark.asyncio

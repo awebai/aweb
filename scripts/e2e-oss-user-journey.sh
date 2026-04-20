@@ -56,13 +56,15 @@ ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
 CAROL_DIR="$E2E_CWD/carol"
 DAVE_DIR="$E2E_CWD/dave"
+GSK_DIR="$E2E_CWD/gsk"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
 DAVE_DIR="$(canonicalize_dir "$DAVE_DIR")"
+GSK_DIR="$(canonicalize_dir "$GSK_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
@@ -739,6 +741,93 @@ assert_contains "dave sees cross-team chat from alice" "$dave_pending" "alice"
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 12c: Ephemeral server-local addresses
+# ---------------------------------------------------------------------------
+echo "=== Phase 12c: Ephemeral server-local addresses ==="
+
+gsk_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+  --team devteam \
+  --namespace test.local \
+  --ephemeral \
+  --json 2>/dev/null)"
+GSK_INVITE_TOKEN="$(echo "$gsk_invite_out" | jq_field token)"
+assert_not_empty "gsk ephemeral invite token" "$GSK_INVITE_TOKEN"
+
+gsk_accept="$(run_aw_in "$GSK_DIR" id team accept-invite "$GSK_INVITE_TOKEN" \
+  --alias gsk \
+  --json 2>/dev/null)"
+GSK_ACCEPT_STATUS="$(echo "$gsk_accept" | jq_field status)"
+assert_eq "gsk accepted ephemeral invite" "accepted" "$GSK_ACCEPT_STATUS"
+
+run_aw_in "$GSK_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+gsk_init_exit=$?
+assert_eq "gsk init exit" "0" "$gsk_init_exit"
+if [[ ! -f "$GSK_DIR/.aw/identity.yaml" ]]; then
+  echo "  PASS: gsk has no identity.yaml"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: gsk ephemeral agent should not have identity.yaml"
+  fail=$((fail + 1))
+fi
+
+run_aw_in "$GSK_DIR" mail send \
+  --to alice \
+  --subject "Ephemeral sender address" \
+  --body "Ephemeral hello from gsk" >/dev/null 2>&1
+gsk_mail_exit=$?
+assert_eq "gsk→alice mail exit" "0" "$gsk_mail_exit"
+
+alice_ephemeral_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_gsk_from_address="$(echo "$alice_ephemeral_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral sender address'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
+
+if alice_gsk_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address test.local/gsk \
+  --subject "Reply to ephemeral address" \
+  --body "Reply to gsk by local address" 2>&1)"; then
+  alice_gsk_reply_exit=0
+else
+  alice_gsk_reply_exit=$?
+fi
+assert_eq "alice→test.local/gsk mail exit" "0" "$alice_gsk_reply_exit"
+if [[ "$alice_gsk_reply_exit" != "0" ]]; then
+  echo "  alice→gsk mail output: ${alice_gsk_reply_out:0:240}"
+fi
+
+gsk_inbox="$(run_aw_in "$GSK_DIR" mail inbox --json --show-all 2>/dev/null)"
+gsk_reply_body="$(echo "$gsk_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply to ephemeral address'), ''))" 2>/dev/null || echo "")"
+assert_eq "gsk receives address-routed mail reply" "Reply to gsk by local address" "$gsk_reply_body"
+
+if gsk_chat_out="$(run_aw_in "$GSK_DIR" chat send-and-leave alice \
+  "Ephemeral chat from gsk" 2>&1)"; then
+  gsk_chat_exit=0
+else
+  gsk_chat_exit=$?
+fi
+assert_eq "gsk→alice chat exit" "0" "$gsk_chat_exit"
+if [[ "$gsk_chat_exit" != "0" ]]; then
+  echo "  gsk chat output: ${gsk_chat_out:0:240}"
+fi
+
+alice_gsk_pending="$(run_aw_in "$ALICE_DIR" chat pending 2>/dev/null)"
+assert_contains "alice sees gsk server-local chat address" "$alice_gsk_pending" "test.local/gsk"
+
+if alice_gsk_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/gsk \
+  "Reply to ephemeral chat address" 2>&1)"; then
+  alice_gsk_chat_reply_exit=0
+else
+  alice_gsk_chat_reply_exit=$?
+fi
+assert_eq "alice→test.local/gsk chat exit" "0" "$alice_gsk_chat_reply_exit"
+if [[ "$alice_gsk_chat_reply_exit" != "0" ]]; then
+  echo "  alice→gsk chat output: ${alice_gsk_chat_reply_out:0:240}"
+fi
+
+gsk_chat_history="$(run_aw_in "$GSK_DIR" chat history alice 2>/dev/null)"
+assert_contains "gsk receives address-routed chat reply" "$gsk_chat_history" "Reply to ephemeral chat address"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 13: Tasks
 # ---------------------------------------------------------------------------
 echo "=== Phase 13: Tasks ==="
@@ -790,7 +879,7 @@ assert_eq "awid team name" "devteam" "$team_get_name"
 
 certs_list="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 cert_count="$(echo "$certs_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "2 active certificates" "2" "$cert_count"
+assert_eq "3 active certificates" "3" "$cert_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -819,7 +908,7 @@ assert_eq "1 revocation" "1" "$revocation_count"
 
 active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "1 active certificate (alice only)" "1" "$active_count"
+assert_eq "2 active certificates (alice and gsk)" "2" "$active_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -897,73 +986,72 @@ phase_aw_init_reconnect() {
   echo ""
 }
 
-phase_aw_init_byod_wizard() {
-  echo "=== Phase 22: aw init BYOD wizard (Case B Path 1) ==="
+phase_aw_init_local_quickstart() {
+  echo "=== Phase 22: aw init implicit local quickstart ==="
 
   rm -rf "$WIZARD_BYOD_DIR"
   mkdir -p "$WIZARD_BYOD_DIR"
   WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
-  local wizard_domain="wizard-byod.test.local"
-  local wizard_name="wizard-alice"
-  local wizard_team="default:$wizard_domain"
-  local wizard_input
-  wizard_input=$'2\n'"$wizard_name"$'\n'"$wizard_domain"$'\nn\nn\nn\n'
+  local local_alias="local-alice"
+  local local_team="default:local"
 
-  wizard_out="$(run_aw_tty_in "$WIZARD_BYOD_DIR" "$wizard_input" init --url "$AWEB_URL" 2>&1)"
-  wizard_exit=$?
+  if wizard_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
+    --awid-registry "$AWID_URL" \
+    --aweb-url "$AWEB_URL" \
+    --alias "$local_alias" 2>&1)"; then
+    wizard_exit=0
+  else
+    wizard_exit=$?
+  fi
   assert_eq "wizard init exit" "0" "$wizard_exit"
-  assert_file_exists "wizard identity.yaml written" "$WIZARD_BYOD_DIR/.aw/identity.yaml"
+  if [[ "$wizard_exit" != "0" ]]; then
+    echo "  wizard output: ${wizard_out:0:480}"
+  fi
+  if [[ ! -f "$WIZARD_BYOD_DIR/.aw/identity.yaml" ]]; then
+    echo "  PASS: local quickstart has no identity.yaml"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: local quickstart should not write identity.yaml"
+    fail=$((fail + 1))
+  fi
   assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
   assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
-  wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$wizard_team")"
+  wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$local_team")"
   assert_file_exists "wizard team certificate written" "$wizard_cert_path"
 
-  wizard_did_key="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" did)"
-  wizard_did_aw="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" stable_id)"
-  wizard_address="$(yaml_field "$WIZARD_BYOD_DIR/.aw/identity.yaml" address)"
   wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" active_team)"
   wizard_workspace_alias="$(workspace_membership_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" "$wizard_workspace_team" alias)"
-  assert_not_empty "wizard identity did" "$wizard_did_key"
-  assert_not_empty "wizard identity stable_id" "$wizard_did_aw"
-  assert_eq "wizard identity address" "$wizard_domain/$wizard_name" "$wizard_address"
-  assert_eq "wizard workspace team" "$wizard_team" "$wizard_workspace_team"
-  assert_eq "wizard workspace alias" "$wizard_name" "$wizard_workspace_alias"
+  assert_eq "wizard workspace team" "$local_team" "$wizard_workspace_team"
+  assert_eq "wizard workspace alias" "$local_alias" "$wizard_workspace_alias"
 
   wizard_cert_out="$(run_aw_in "$WIZARD_BYOD_DIR" id cert show --json 2>/dev/null)"
   wizard_cert_team="$(echo "$wizard_cert_out" | jq_field team_id)"
   wizard_cert_alias="$(echo "$wizard_cert_out" | jq_field alias)"
-  assert_eq "wizard cert team" "$wizard_team" "$wizard_cert_team"
-  assert_eq "wizard cert alias" "$wizard_name" "$wizard_cert_alias"
+  assert_eq "wizard cert team" "$local_team" "$wizard_cert_team"
+  assert_eq "wizard cert alias" "$local_alias" "$wizard_cert_alias"
 
-  wizard_namespace="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain" 2>/dev/null || echo '{}')"
+  wizard_namespace="$(curl -sf "$AWID_URL/v1/namespaces/local" 2>/dev/null || echo '{}')"
   wizard_namespace_domain="$(echo "$wizard_namespace" | jq_field domain)"
-  assert_eq "wizard namespace registered" "$wizard_domain" "$wizard_namespace_domain"
+  assert_eq "local namespace registered" "local" "$wizard_namespace_domain"
 
-  wizard_team_get="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain/teams/default" 2>/dev/null || echo '{}')"
+  wizard_team_get="$(curl -sf "$AWID_URL/v1/namespaces/local/teams/default" 2>/dev/null || echo '{}')"
   wizard_team_name="$(echo "$wizard_team_get" | jq_field name)"
-  assert_eq "wizard team registered" "default" "$wizard_team_name"
+  assert_eq "local team registered" "default" "$wizard_team_name"
 
-  wizard_did_key_get="$(curl -sf "$AWID_URL/v1/did/$wizard_did_aw/key" 2>/dev/null || echo '{}')"
-  wizard_did_current="$(echo "$wizard_did_key_get" | jq_field current_did_key)"
-  wizard_did_addresses="$(curl -sf "$AWID_URL/v1/did/$wizard_did_aw/addresses" 2>/dev/null || echo '{"addresses":[]}')"
-  wizard_did_address="$(echo "$wizard_did_addresses" | python3 -c "import sys,json; addrs=json.load(sys.stdin).get('addresses',[]); print((addrs[0].get('domain','') + '/' + addrs[0].get('name','')) if addrs else '')" 2>/dev/null || echo '')"
-  assert_eq "wizard did current key" "$wizard_did_key" "$wizard_did_current"
-  assert_eq "wizard did address" "$wizard_domain/$wizard_name" "$wizard_did_address"
-
-  wizard_certs="$(curl -sf "$AWID_URL/v1/namespaces/$wizard_domain/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+  wizard_certs="$(curl -sf "$AWID_URL/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
 
-  wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$wizard_name" --subject "Wizard e2e" --body "Wizard path works" 2>&1)"
+  wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"
   wizard_mail_exit=$?
   assert_eq "wizard mail send exit" "0" "$wizard_mail_exit"
-  assert_contains "wizard prompt showed BYOD copy" "$wizard_out" "I have a domain I control (BYOD)"
+  assert_contains "wizard output shows local team" "$wizard_out" "default:local"
   echo ""
 }
 
 phase_aw_init_reconnect
-phase_aw_init_byod_wizard
+phase_aw_init_local_quickstart
 
 echo "=== Done ==="
