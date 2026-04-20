@@ -653,6 +653,7 @@ async def create_or_send(
                 for row in participants_rows
                 if (row.get("did") or "").strip() != actor_did
             ],
+            "preview": payload.message[:80],
         },
     )
 
@@ -1371,6 +1372,7 @@ async def send_message(
             "from_did": actor_did,
             "from_did_aw": (auth.did_aw or "").strip() or None,
             "to_aliases": [row["alias"] for row in recipient_rows],
+            "preview": payload.body[:80],
         },
     )
 

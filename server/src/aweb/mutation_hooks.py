@@ -578,6 +578,7 @@ def _translate_team_event(event_type: str, ctx: dict):
             team_id=team_id,
             from_alias=str(ctx.get("from_alias", "")).strip(),
             to_aliases=[str(alias).strip() for alias in to_aliases if str(alias).strip()],
+            preview=str(ctx.get("preview", "") or ""),
         )
 
     if event_type == "task.created":
@@ -601,28 +602,6 @@ def _translate_team_event(event_type: str, ctx: dict):
             title=str(ctx.get("title", "") or ""),
             old_status=str(ctx.get("old_status", "") or ""),
             new_status=str(ctx.get("new_status", "") or ""),
-        )
-
-    if event_type == "task.claimed":
-        team_id = _team_id_from_context(ctx)
-        if not team_id:
-            return None
-        return TeamTaskClaimedEvent(
-            team_id=team_id,
-            task_ref=str(ctx.get("task_ref", "")).strip(),
-            alias=str(ctx.get("alias", "")).strip(),
-            title=str(ctx.get("title", "") or ""),
-        )
-
-    if event_type == "task.unclaimed":
-        team_id = _team_id_from_context(ctx)
-        if not team_id:
-            return None
-        return TeamTaskUnclaimedEvent(
-            team_id=team_id,
-            task_ref=str(ctx.get("task_ref", "")).strip(),
-            alias=str(ctx.get("alias", "")).strip(),
-            title=str(ctx.get("title", "") or ""),
         )
 
     if event_type == "reservation.acquired":

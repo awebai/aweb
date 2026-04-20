@@ -228,6 +228,7 @@ class TeamChatMessageSentEvent(TeamEvent):
     type: str = field(default="chat.message_sent", init=False)
     from_alias: str = ""
     to_aliases: list[str] = field(default_factory=list)
+    preview: str = ""
 
 
 @dataclass
