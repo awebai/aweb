@@ -245,6 +245,7 @@ async def send_in_session(
     sender_did: str,
     body: str,
     sender_agent_id: str | UUID | None = None,
+    sender_address: str | None = None,
     reply_to: UUID | None = None,
     leaving: bool = False,
     hang_on: bool = False,
@@ -273,9 +274,9 @@ async def send_in_session(
     msg_row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_did, from_alias, body,
-             sender_leaving, hang_on, reply_to, signature, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
+             body, sender_leaving, hang_on, reply_to, signature, signed_payload, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -283,6 +284,7 @@ async def send_in_session(
         sender_agent_uuid,
         participant["did"],
         participant["alias"],
+        (sender_address or "").strip() or None,
         body,
         bool(leaving),
         bool(hang_on),
@@ -330,6 +332,7 @@ async def get_pending_conversations(
             array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
             lm.body AS last_message,
             lm.from_alias AS last_from,
+            lm.from_address AS last_from_address,
             lm.from_did AS last_from_did,
             lm.from_agent_id AS last_from_agent_id,
             lm.hang_on AS last_message_hang_on,
@@ -345,7 +348,7 @@ async def get_pending_conversations(
         JOIN {{tables.chat_participants}} p2
           ON p2.session_id = s.session_id
         LEFT JOIN LATERAL (
-            SELECT body, from_alias, from_did, from_agent_id, hang_on, created_at
+            SELECT body, from_alias, from_address, from_did, from_agent_id, hang_on, created_at
             FROM {{tables.chat_messages}}
             WHERE session_id = s.session_id
             ORDER BY created_at DESC
@@ -373,6 +376,7 @@ async def get_pending_conversations(
             s.session_id,
             lm.body,
             lm.from_alias,
+            lm.from_address,
             lm.from_did,
             lm.from_agent_id,
             lm.hang_on,
@@ -414,6 +418,7 @@ async def get_pending_conversations(
             "participant_dids": list(row["participant_dids"] or []),
             "last_message": row["last_message"] or "",
             "last_from": row["last_from"] or "",
+            "last_from_address": row["last_from_address"] or "",
             "last_from_did": row.get("last_from_did"),
             "last_from_agent_id": (
                 str(row["last_from_agent_id"]) if row.get("last_from_agent_id") else None
@@ -472,7 +477,7 @@ async def get_message_history(
     if message_uuid is not None:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, body, created_at, sender_leaving,
+            SELECT message_id, from_alias, from_address, body, created_at, sender_leaving,
                    from_agent_id, reply_to, from_did, signature, signed_payload
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
@@ -486,7 +491,7 @@ async def get_message_history(
     else:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, body, created_at, sender_leaving,
+            SELECT message_id, from_alias, from_address, body, created_at, sender_leaving,
                    from_agent_id, reply_to, from_did, signature, signed_payload
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
@@ -516,6 +521,7 @@ async def get_message_history(
             ),
             "from_did": row.get("from_did"),
             "from_alias": row["from_alias"],
+            "from_address": row["from_address"] or "",
             "body": row["body"],
             "created_at": row["created_at"],
             "sender_leaving": bool(row["sender_leaving"]),

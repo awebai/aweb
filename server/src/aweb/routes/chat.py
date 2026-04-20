@@ -584,6 +584,7 @@ async def create_or_send(
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
+            sender_address=auth.address,
             body=payload.message,
             reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
             leaving=payload.leaving,
@@ -795,7 +796,7 @@ async def pending(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": routable_chat_address(
+                "last_from_address": item.get("last_from_address") or routable_chat_address(
                     identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     auth.team_id,
                     item["last_from"],
@@ -871,7 +872,11 @@ async def history(
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
-        from_address = routable_chat_address(identity_map.get(from_did, {}), auth.team_id, msg["from_alias"])
+        from_address = msg.get("from_address") or routable_chat_address(
+            identity_map.get(from_did, {}),
+            auth.team_id,
+            msg["from_alias"],
+        )
         history_items.append(
             {
                 "message_id": msg["message_id"],
@@ -1026,7 +1031,7 @@ async def _sse_events(
         if after is not None:
             recent = await aweb_db.fetch_all(
                 """
-                SELECT message_id, from_agent_id, from_alias, body, created_at,
+                SELECT message_id, from_agent_id, from_alias, from_address, body, created_at,
                        sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
@@ -1043,7 +1048,11 @@ async def _sse_events(
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
-                from_address = routable_chat_address(identity_map.get(from_did, {}), viewer_team_id, row["from_alias"])
+                from_address = row.get("from_address") or routable_chat_address(
+                    identity_map.get(from_did, {}),
+                    viewer_team_id,
+                    row["from_alias"],
+                )
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
@@ -1116,7 +1125,7 @@ async def _sse_events(
             if should_poll:
                 new_msgs = await aweb_db.fetch_all(
                     """
-                    SELECT message_id, from_agent_id, from_alias, body, created_at,
+                    SELECT message_id, from_agent_id, from_alias, from_address, body, created_at,
                            sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
@@ -1133,7 +1142,11 @@ async def _sse_events(
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
                     from_did = (row.get("from_did") or "").strip()
-                    from_address = routable_chat_address(identity_map.get(from_did, {}), viewer_team_id, row["from_alias"])
+                    from_address = row.get("from_address") or routable_chat_address(
+                        identity_map.get(from_did, {}),
+                        viewer_team_id,
+                        row["from_alias"],
+                    )
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
@@ -1350,6 +1363,7 @@ async def send_message(
             session_id=session_uuid,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
+            sender_address=auth.address,
             body=payload.body,
             reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
             hang_on=payload.hang_on,
