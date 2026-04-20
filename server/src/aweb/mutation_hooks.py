@@ -578,7 +578,6 @@ def _translate_team_event(event_type: str, ctx: dict):
             team_id=team_id,
             from_alias=str(ctx.get("from_alias", "")).strip(),
             to_aliases=[str(alias).strip() for alias in to_aliases if str(alias).strip()],
-            preview=str(ctx.get("preview", "") or ""),
         )
 
     if event_type == "task.created":

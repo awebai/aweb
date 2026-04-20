@@ -259,7 +259,6 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
             "team_id": "backend:acme.com",
             "from_alias": "alice",
             "to_aliases": ["bob", "carol"],
-            "preview": "short preview",
         },
     )
     await handler(
@@ -326,7 +325,7 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
     assert isinstance(published[1], TeamChatMessageSentEvent)
     assert published[1].from_alias == "alice"
     assert published[1].to_aliases == ["bob", "carol"]
-    assert published[1].preview == "short preview"
+    assert "preview" not in published[1].to_dict()
 
     assert isinstance(published[2], TeamTaskStatusChangedEvent)
     assert published[2].task_ref == "backend-1234"
