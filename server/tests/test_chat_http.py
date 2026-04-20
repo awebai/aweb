@@ -92,6 +92,14 @@ def test_routable_chat_address_policy():
     assert (
         routable_chat_address(
             {"team_id": "ops:acme.com", "alias": "gsk"},
+            "ops:acme.com",
+            "gsk",
+        )
+        == "gsk"
+    )
+    assert (
+        routable_chat_address(
+            {"team_id": "ops:acme.com", "alias": "gsk"},
             "support:acme.com",
             "gsk",
         )
