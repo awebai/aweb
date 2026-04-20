@@ -176,6 +176,7 @@ class TeamEvent:
 class TeamTaskCreatedEvent(TeamEvent):
     type: str = field(default="task.created", init=False)
     task_ref: str = ""
+    alias: str = ""
     title: str = ""
     status: str = "open"
 
@@ -184,6 +185,7 @@ class TeamTaskCreatedEvent(TeamEvent):
 class TeamTaskStatusChangedEvent(TeamEvent):
     type: str = field(default="task.status_changed", init=False)
     task_ref: str = ""
+    alias: str = ""
     title: str = ""
     old_status: str = ""
     new_status: str = ""
@@ -207,7 +209,7 @@ class TeamTaskUnclaimedEvent(TeamEvent):
 
 @dataclass
 class TeamMessageSentEvent(TeamEvent):
-    type: str = field(default="message.sent", init=False)
+    type: str = field(default="message.delivered", init=False)
     message_id: str = ""
     from_alias: str = ""
     to_alias: str = ""

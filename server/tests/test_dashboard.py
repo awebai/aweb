@@ -789,6 +789,7 @@ async def test_events_stream_emits_snapshot_and_team_events(aweb_cloud_db):
         "type": "task.created",
         "team_id": "backend:acme.com",
         "task_ref": "backend-aaab",
+        "alias": "",
         "title": "Build dashboard stream",
         "status": "open",
         "timestamp": payload["timestamp"],
