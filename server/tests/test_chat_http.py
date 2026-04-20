@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -1497,6 +1497,169 @@ async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_publ
     assert pending.json()["pending"][0]["participant_addresses"] == ["ops~gsk"]
     assert sessions.status_code == 200, sessions.text
     assert sessions.json()["sessions"][0]["participant_addresses"] == ["ops~gsk"]
+
+
+@pytest.mark.asyncio
+async def test_cross_org_chat_create_persists_sender_address_without_local_metadata(aweb_cloud_db, monkeypatch):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-ops'),
+            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:team-support')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'support:juan.aweb.ai', 'did:key:amy', 'did:aw:amy',
+            'juan.aweb.ai/amy', 'amy', 'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _sender_auth():
+        return MessagingAuth(
+            did_key="did:key:gsk",
+            did_aw="did:aw:gsk",
+            address="otherco.com/gsk",
+            team_id="ops:otherco.com",
+            alias="gsk",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _sender_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post("/v1/chat/sessions", json={"to_dids": ["did:aw:amy"], "message": "hello"})
+
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session_id"]
+    stored = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT from_address FROM {{tables.chat_messages}} WHERE session_id = $1",
+        UUID(session_id),
+    )
+    assert stored == "otherco.com/gsk"
+
+    async def _amy_auth():
+        return MessagingAuth(
+            did_key="did:key:amy",
+            did_aw="did:aw:amy",
+            address="juan.aweb.ai/amy",
+            team_id="support:juan.aweb.ai",
+            alias="amy",
+        )
+
+    class _FakePubSub:
+        async def subscribe(self, *_args, **_kwargs):
+            return None
+
+        async def get_message(self, *_args, **_kwargs):
+            return None
+
+        async def close(self):
+            return None
+
+        async def aclose(self):
+            return None
+
+    class _FakeRedis:
+        def pubsub(self):
+            return _FakePubSub()
+
+    app.state.redis = _FakeRedis()
+    app.dependency_overrides[get_messaging_auth] = _amy_auth
+    monkeypatch.setattr(chat_routes, "register_waiting", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_routes, "unregister_waiting", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_routes, "get_waiting_agents", AsyncMock(return_value=[]))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=5.0) as client:
+        history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
+        pending = await client.get("/v1/chat/pending")
+        stream = await client.get(
+            f"/v1/chat/sessions/{session_id}/stream",
+            params={
+                "deadline": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+                "after": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+            },
+        )
+
+    assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["from_address"] == "otherco.com/gsk"
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["pending"][0]["last_from_address"] == "otherco.com/gsk"
+    assert stream.status_code == 200, stream.text
+    assert '"from_address": "otherco.com/gsk"' in stream.text
+
+
+@pytest.mark.asyncio
+async def test_cross_org_chat_reply_persists_sender_address_without_local_metadata(aweb_cloud_db):
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-ops'),
+            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:team-support')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'ops:otherco.com', 'gsk')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES
+            ($1, 'did:aw:gsk', 'gsk'),
+            ($1, 'did:aw:amy', 'amy')
+        """,
+        session_id,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _amy_auth():
+        return MessagingAuth(
+            did_key="did:key:amy",
+            did_aw="did:aw:amy",
+            address="juan.aweb.ai/amy",
+            team_id="support:juan.aweb.ai",
+            alias="amy",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _amy_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        sent = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "reply"})
+
+    assert sent.status_code == 200, sent.text
+    stored = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT from_address FROM {{tables.chat_messages}} WHERE session_id = $1",
+        session_id,
+    )
+    assert stored == "juan.aweb.ai/amy"
+
+    async def _gsk_auth():
+        return MessagingAuth(
+            did_key="did:key:gsk",
+            did_aw="did:aw:gsk",
+            address="otherco.com/gsk",
+            team_id="ops:otherco.com",
+            alias="gsk",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _gsk_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
+
+    assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["from_address"] == "juan.aweb.ai/amy"
 
 
 @pytest.mark.asyncio

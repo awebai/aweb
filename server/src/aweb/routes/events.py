@@ -171,13 +171,13 @@ async def _current_actionable_chat(
                 "from_stable_id": participant_identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
-                "from_address": routable_chat_address(
+                "from_address": item.get("last_from_address") or routable_chat_address(
                     participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     viewer_team_id,
                     item.get("last_from") or "",
                 ),
                 "last_from": item.get("last_from") or "",
-                "last_from_address": routable_chat_address(
+                "last_from_address": item.get("last_from_address") or routable_chat_address(
                     participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
                     viewer_team_id,
                     item.get("last_from") or "",

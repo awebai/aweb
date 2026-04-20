@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS {{tables.chat_messages}} (
     from_agent_id   UUID REFERENCES {{tables.agents}}(agent_id),
     from_did        TEXT NOT NULL,
     from_alias      TEXT NOT NULL,
+    from_address    TEXT,
     body            TEXT NOT NULL,
     reply_to        UUID,
     sender_leaving  BOOLEAN NOT NULL DEFAULT FALSE,
