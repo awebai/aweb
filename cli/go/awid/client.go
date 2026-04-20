@@ -372,8 +372,9 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
 		isContact = nil
 	}
-	status = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
-	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta)
+	var registryConfirmedCurrentKey bool
+	status, registryConfirmedCurrentKey = c.checkStableIdentityRegistry(ctx, status, trustAddress, fromDID, fromStableID)
+	status = c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(rawAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, registryConfirmedCurrentKey)
 	return status, isContact
 }
 
@@ -383,30 +384,32 @@ func (c *Client) NormalizeRecipientBinding(status VerificationStatus, toDID stri
 	return c.checkRecipientBinding(status, toDID, toStableID)
 }
 
-func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) VerificationStatus {
+func (c *Client) checkStableIdentityRegistry(ctx context.Context, status VerificationStatus, trustAddress, fromDID, fromStableID string) (VerificationStatus, bool) {
 	if status != Verified || strings.TrimSpace(fromStableID) == "" || strings.TrimSpace(fromDID) == "" {
-		return status
+		return status, false
 	}
 	if !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		return status
+		return status, false
 	}
 	verifier, ok := c.resolver.(StableIdentityVerifier)
 	if !ok {
-		return status
+		return status, false
 	}
 	result := verifier.VerifyStableIdentity(ctx, trustAddress, fromStableID)
 	if result == nil {
-		return status
+		return status, false
 	}
 	switch result.Outcome {
 	case StableIdentityVerified:
-		if strings.TrimSpace(result.CurrentDIDKey) != "" && result.CurrentDIDKey != fromDID {
-			return IdentityMismatch
+		currentDIDKey := strings.TrimSpace(result.CurrentDIDKey)
+		if currentDIDKey != "" && currentDIDKey != fromDID {
+			return IdentityMismatch, false
 		}
+		return status, currentDIDKey == fromDID
 	case StableIdentityHardError:
-		return IdentityMismatch
+		return IdentityMismatch, false
 	}
-	return status
+	return status, false
 }
 
 // CheckTOFUPin checks a verified message against the TOFU pin store.
@@ -433,10 +436,10 @@ func (c *Client) CheckTOFUPin(ctx context.Context, status VerificationStatus, fr
 
 	trustAddress := c.canonicalTrustAddress(fromAddress)
 	meta := c.resolveAgentMeta(ctx, trustAddress)
-	return c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(fromAddress), trustAddress, fromDID, fromStableID, ra, repl, meta)
+	return c.checkTOFUPinWithMeta(ctx, status, strings.TrimSpace(fromAddress), trustAddress, fromDID, fromStableID, ra, repl, meta, false)
 }
 
-func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta) VerificationStatus {
+func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta, registryConfirmedCurrentKey bool) VerificationStatus {
 	if c.pinStore == nil || (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
 		return status
 	}
@@ -492,6 +495,15 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 	case PinOK:
 		if fromStableID != "" {
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
+				// A verified registry chain is authoritative for persistent
+				// identities; stale local TOFU must not block archive/recreate.
+				if registryConfirmedCurrentKey {
+					c.pinStore.StorePin(pinKey, trustAddress, "", "")
+					c.pinStore.Pins[pinKey].StableID = fromStableID
+					c.pinStore.Pins[pinKey].DIDKey = fromDID
+					c.savePinStore()
+					return status
+				}
 				if (ra == nil || !c.verifyRotationAnnouncement(ra, fromDID, pin.DIDKey)) &&
 					(repl == nil || !c.verifyReplacementAnnouncement(ctx, trustAddress, repl, fromDID, pin.DIDKey)) {
 					return IdentityMismatch
@@ -506,6 +518,16 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		c.savePinStore()
 	case PinMismatch:
 		pinnedKey := c.pinStore.Addresses[trustAddress]
+		// A verified registry chain proves the address now belongs to this
+		// stable identity and did:key, so replace the stale address pin.
+		if registryConfirmedCurrentKey && fromStableID != "" {
+			c.pinStore.RemoveAddress(trustAddress)
+			c.pinStore.StorePin(pinKey, trustAddress, "", "")
+			c.pinStore.Pins[pinKey].StableID = fromStableID
+			c.pinStore.Pins[pinKey].DIDKey = fromDID
+			c.savePinStore()
+			return status
+		}
 		if fromStableID != "" && pinnedKey == fromStableID {
 			if pin, ok := c.pinStore.Pins[pinnedKey]; ok {
 				if strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey == fromDID {

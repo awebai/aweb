@@ -220,6 +220,107 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
 
+  test("updates a stable-id pin when registry verifies the current did:key", async () => {
+    const oldIdentity = await didFromSeed(11);
+    const newIdentity = await didFromSeed(12);
+    const stableID = "did:aw:amy";
+    const store = new PinStore();
+    store.storePin(stableID, "acme.com/amy", "", "");
+    store.pins.get(stableID)!.stable_id = stableID;
+    store.pins.get(stableID)!.did_key = oldIdentity.did;
+
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: newIdentity.did }),
+        resolveIdentity: async () => ({
+          did: newIdentity.did,
+          stableID,
+          address: "acme.com/amy",
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          lifetime: "persistent",
+        }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "acme.com/amy", newIdentity.did, stableID, undefined);
+
+    expect(result.status).toBe("verified");
+    expect(store.addresses.get("acme.com/amy")).toBe(stableID);
+    expect(store.pins.get(stableID)?.did_key).toBe(newIdentity.did);
+  });
+
+  test("replaces a stale address pin when registry verifies a new stable identity", async () => {
+    const oldIdentity = await didFromSeed(13);
+    const newIdentity = await didFromSeed(14);
+    const oldStableID = "did:aw:oldAmy";
+    const newStableID = "did:aw:newAmy";
+    const store = new PinStore();
+    store.storePin(oldStableID, "acme.com/amy", "", "");
+    store.pins.get(oldStableID)!.stable_id = oldStableID;
+    store.pins.get(oldStableID)!.did_key = oldIdentity.did;
+
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: newIdentity.did }),
+        resolveIdentity: async () => ({
+          did: newIdentity.did,
+          stableID: newStableID,
+          address: "acme.com/amy",
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          lifetime: "persistent",
+        }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "acme.com/amy", newIdentity.did, newStableID, undefined);
+
+    expect(result.status).toBe("verified");
+    expect(store.pins.has(oldStableID)).toBe(false);
+    expect(store.addresses.get("acme.com/amy")).toBe(newStableID);
+    expect(store.pins.get(newStableID)?.did_key).toBe(newIdentity.did);
+  });
+
+  test("does not replace a stale address pin when registry verification degrades", async () => {
+    const oldIdentity = await didFromSeed(15);
+    const newIdentity = await didFromSeed(16);
+    const oldStableID = "did:aw:oldAmy";
+    const newStableID = "did:aw:newAmy";
+    const store = new PinStore();
+    store.storePin(oldStableID, "acme.com/amy", "", "");
+    store.pins.get(oldStableID)!.stable_id = oldStableID;
+    store.pins.get(oldStableID)!.did_key = oldIdentity.did;
+
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+        resolveIdentity: async () => ({
+          did: newIdentity.did,
+          stableID: newStableID,
+          address: "acme.com/amy",
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          lifetime: "persistent",
+        }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "acme.com/amy", newIdentity.did, newStableID, undefined);
+
+    expect(result.status).toBe("identity_mismatch");
+    expect(store.addresses.get("acme.com/amy")).toBe(oldStableID);
+  });
+
   test("does not create a TOFU pin when public-address resolution fails", async () => {
     const { did } = await didFromSeed(10);
     const stableID = "did:aw:test";

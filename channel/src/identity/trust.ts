@@ -75,12 +75,13 @@ export class SenderTrustManager {
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = await this.resolveAgentMeta(rawAddress);
-    status = await this.checkStableIdentityRegistry(
+    const registryCheck = await this.checkStableIdentityRegistry(
       status,
       (verificationAddress || rawAddress).trim(),
       fromDID,
       fromStableID,
     );
+    status = registryCheck.status;
     return this.checkTOFUPinWithMeta(
       store,
       status,
@@ -91,6 +92,7 @@ export class SenderTrustManager {
       rotationAnnouncement,
       replacementAnnouncement,
       meta,
+      registryCheck.confirmedCurrentKey,
     );
   }
 
@@ -109,23 +111,26 @@ export class SenderTrustManager {
     trustAddress: string,
     fromDID: string | undefined,
     fromStableID: string | undefined,
-  ): Promise<VerificationStatus | undefined> {
+  ): Promise<{ status: VerificationStatus | undefined; confirmedCurrentKey: boolean }> {
     if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
-      return status;
+      return { status, confirmedCurrentKey: false };
     }
 
     const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID);
     if (registryResult.outcome === "HARD_ERROR") {
-      return "identity_mismatch";
+      return { status: "identity_mismatch", confirmedCurrentKey: false };
     }
     if (
       registryResult.outcome === "OK_VERIFIED"
       && registryResult.currentDidKey
       && registryResult.currentDidKey !== fromDID
     ) {
-      return "identity_mismatch";
+      return { status: "identity_mismatch", confirmedCurrentKey: false };
     }
-    return status;
+    return {
+      status,
+      confirmedCurrentKey: registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey === fromDID,
+    };
   }
 
   private checkTOFUPinWithMeta(
@@ -138,6 +143,7 @@ export class SenderTrustManager {
     rotationAnnouncement: RotationAnnouncement | undefined,
     replacementAnnouncement: ReplacementAnnouncement | undefined,
     meta: AgentMeta,
+    registryConfirmedCurrentKey: boolean,
   ): TrustResult {
     if (
       !status
@@ -194,6 +200,15 @@ export class SenderTrustManager {
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
+            // A verified registry chain is authoritative for persistent
+            // identities; stale local TOFU must not block archive/recreate.
+            if (registryConfirmedCurrentKey) {
+              store.storePin(pinKey, trustAddress, "", "");
+              const updated = store.pins.get(pinKey)!;
+              updated.stable_id = fromStableID;
+              updated.did_key = fromDID;
+              return { status, stored: true };
+            }
             if (
               !this.verifyRotationAnnouncement(rotationAnnouncement, fromDID, pin.did_key)
               && !this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pin.did_key, meta)
@@ -212,6 +227,16 @@ export class SenderTrustManager {
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";
+        // A verified registry chain proves the address now belongs to this
+        // stable identity and did:key, so replace the stale address pin.
+        if (registryConfirmedCurrentKey && fromStableID) {
+          store.removeAddress(trustAddress);
+          store.storePin(pinKey, trustAddress, "", "");
+          const pin = store.pins.get(pinKey)!;
+          pin.stable_id = fromStableID;
+          pin.did_key = fromDID;
+          return { status, stored: true };
+        }
         if (fromStableID && pinnedKey === fromStableID) {
           const pin = store.pins.get(pinnedKey);
           if (pin?.did_key === fromDID) {
