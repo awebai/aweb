@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
 from aweb.deps import get_db
+from aweb.hooks import fire_mutation_hook
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ._reservation_utils import reservation_metadata, reservation_prefix_like
@@ -240,6 +241,18 @@ async def acquire_reservation(
                 json.dumps(metadata),
             )
 
+    await fire_mutation_hook(
+        request,
+        "reservation.acquired",
+        {
+            "team_id": identity.team_id,
+            "holder_agent_id": identity.agent_id,
+            "alias": identity.alias,
+            "resource_key": payload.resource_key,
+            "ttl_seconds": payload.ttl_seconds,
+        },
+    )
+
     return ReservationAcquireResponse(
         status="acquired",
         team_id=identity.team_id,
@@ -297,6 +310,18 @@ async def renew_reservation(
             expires_at,
         )
 
+    await fire_mutation_hook(
+        request,
+        "reservation.renewed",
+        {
+            "team_id": identity.team_id,
+            "holder_agent_id": identity.agent_id,
+            "alias": identity.alias,
+            "resource_key": payload.resource_key,
+            "ttl_seconds": payload.ttl_seconds,
+        },
+    )
+
     return ReservationRenewResponse(
         status="renewed",
         resource_key=payload.resource_key,
@@ -337,7 +362,8 @@ async def release_reservation(
                 expires_at=row["expires_at"].isoformat(),
             )
 
-        if row is not None:
+        released = row is not None
+        if released:
             await tx.execute(
                 """
                 DELETE FROM {{tables.reservations}}
@@ -346,6 +372,18 @@ async def release_reservation(
                 identity.team_id,
                 payload.resource_key,
             )
+
+    if released:
+        await fire_mutation_hook(
+            request,
+            "reservation.released",
+            {
+                "team_id": identity.team_id,
+                "holder_agent_id": identity.agent_id,
+                "alias": identity.alias,
+                "resource_key": payload.resource_key,
+            },
+        )
 
     return ReservationReleaseResponse(status="released", resource_key=payload.resource_key)
 

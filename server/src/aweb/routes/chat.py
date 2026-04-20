@@ -641,11 +641,19 @@ async def create_or_send(
         request,
         "chat.message_sent",
         {
+            "team_id": auth.team_id,
             "session_id": str(session_id),
             "message_id": str(msg_row["message_id"]),
             "from_agent_id": actor_agent_id,
+            "from_alias": auth.alias or "",
             "from_did": actor_did,
             "from_did_aw": (auth.did_aw or "").strip() or None,
+            "to_aliases": [
+                row["alias"]
+                for row in participants_rows
+                if (row.get("did") or "").strip() != actor_did
+            ],
+            "preview": payload.message[:80],
         },
     )
 
@@ -1356,11 +1364,15 @@ async def send_message(
         request,
         "chat.message_sent",
         {
+            "team_id": auth.team_id,
             "session_id": str(session_uuid),
             "message_id": str(msg_row["message_id"]),
             "from_agent_id": actor_agent_id,
+            "from_alias": auth.alias or "",
             "from_did": actor_did,
             "from_did_aw": (auth.did_aw or "").strip() or None,
+            "to_aliases": [row["alias"] for row in recipient_rows],
+            "preview": payload.body[:80],
         },
     )
 

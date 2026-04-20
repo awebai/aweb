@@ -517,7 +517,7 @@ async def ack_message(
         SET read_at = $1
         WHERE message_id = $2 AND to_did = ANY($3::text[])
           AND read_at IS NULL
-        RETURNING message_id
+        RETURNING message_id, from_alias, subject
         """,
         now,
         msg_uuid,
@@ -528,7 +528,7 @@ async def ack_message(
         # Either already read or not found — check existence
         existing = await aweb_db.fetch_one(
             """
-            SELECT message_id, read_at FROM {{tables.messages}}
+            SELECT message_id, read_at, from_alias, subject FROM {{tables.messages}}
             WHERE message_id = $1 AND to_did = ANY($2::text[])
             """,
             msg_uuid,
@@ -536,6 +536,20 @@ async def ack_message(
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Message not found")
+
+    if result:
+        await fire_mutation_hook(
+            request,
+            "message.acknowledged",
+            {
+                "team_id": auth.team_id,
+                "agent_id": auth.agent_id,
+                "alias": auth.alias,
+                "message_id": str(msg_uuid),
+                "from_alias": result["from_alias"],
+                "subject": result["subject"] or "",
+            },
+        )
 
     return AckResponse(
         message_id=str(msg_uuid),
