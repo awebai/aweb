@@ -16,7 +16,6 @@ from aweb.events import (
     TeamReservationRenewedEvent,
     TeamTaskClaimedEvent,
     TeamTaskStatusChangedEvent,
-    TeamTaskUnclaimedEvent,
 )
 
 
@@ -259,6 +258,7 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
             "team_id": "backend:acme.com",
             "from_alias": "alice",
             "to_aliases": ["bob", "carol"],
+            "preview": "short preview",
         },
     )
     await handler(
@@ -269,24 +269,6 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
             "title": "Ship dashboard events",
             "old_status": "open",
             "new_status": "closed",
-        },
-    )
-    await handler(
-        "task.claimed",
-        {
-            "team_id": "backend:acme.com",
-            "task_ref": "backend-1234",
-            "alias": "alice",
-            "title": "Ship dashboard events",
-        },
-    )
-    await handler(
-        "task.unclaimed",
-        {
-            "team_id": "backend:acme.com",
-            "task_ref": "backend-1234",
-            "alias": "alice",
-            "title": "Ship dashboard events",
         },
     )
     await handler(
@@ -314,7 +296,7 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
         },
     )
 
-    assert len(published) == 8
+    assert len(published) == 6
     assert all(event.team_id == "backend:acme.com" for event in published)
 
     assert isinstance(published[0], TeamMessageAcknowledgedEvent)
@@ -325,7 +307,7 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
     assert isinstance(published[1], TeamChatMessageSentEvent)
     assert published[1].from_alias == "alice"
     assert published[1].to_aliases == ["bob", "carol"]
-    assert "preview" not in published[1].to_dict()
+    assert published[1].preview == "short preview"
 
     assert isinstance(published[2], TeamTaskStatusChangedEvent)
     assert published[2].task_ref == "backend-1234"
@@ -333,27 +315,70 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
     assert published[2].old_status == "open"
     assert published[2].new_status == "closed"
 
-    assert isinstance(published[3], TeamTaskClaimedEvent)
-    assert published[3].task_ref == "backend-1234"
+    assert isinstance(published[3], TeamReservationAcquiredEvent)
     assert published[3].alias == "alice"
-    assert published[3].title == "Ship dashboard events"
+    assert published[3].paths == ["repo:backend"]
 
-    assert isinstance(published[4], TeamTaskUnclaimedEvent)
-    assert published[4].task_ref == "backend-1234"
+    assert isinstance(published[4], TeamReservationReleasedEvent)
     assert published[4].alias == "alice"
-    assert published[4].title == "Ship dashboard events"
+    assert published[4].paths == ["repo:backend"]
 
-    assert isinstance(published[5], TeamReservationAcquiredEvent)
+    assert isinstance(published[5], TeamReservationRenewedEvent)
     assert published[5].alias == "alice"
     assert published[5].paths == ["repo:backend"]
 
-    assert isinstance(published[6], TeamReservationReleasedEvent)
-    assert published[6].alias == "alice"
-    assert published[6].paths == ["repo:backend"]
 
-    assert isinstance(published[7], TeamReservationRenewedEvent)
-    assert published[7].alias == "alice"
-    assert published[7].paths == ["repo:backend"]
+@pytest.mark.asyncio
+async def test_task_status_changed_cascade_publishes_one_team_status_event(aweb_cloud_db, monkeypatch):
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    published_workspace: list[object] = []
+    published_team: list[object] = []
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
+        )
+        VALUES ($1, 'backend:acme.com', $2, 'alice', 'Alice', 'developer', 'manual')
+        """,
+        workspace_id,
+        agent_id,
+    )
+
+    async def _capture_workspace_event(_redis, event):
+        published_workspace.append(event)
+        return 1
+
+    async def _capture_team_event(_redis, event):
+        published_team.append(event)
+        return 1
+
+    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_team_event)
+
+    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    await handler(
+        "task.status_changed",
+        {
+            "team_id": "backend:acme.com",
+            "actor_agent_id": str(agent_id),
+            "task_ref": "backend-1234",
+            "title": "Ship dashboard events",
+            "old_status": "open",
+            "new_status": "in_progress",
+        },
+    )
+
+    team_status_events = [
+        event for event in published_team if isinstance(event, TeamTaskStatusChangedEvent)
+    ]
+    assert len(team_status_events) == 1
+    assert team_status_events[0].task_ref == "backend-1234"
+    assert team_status_events[0].old_status == "open"
+    assert team_status_events[0].new_status == "in_progress"
+    assert any(isinstance(event, TeamTaskClaimedEvent) for event in published_team)
+    assert any(getattr(event, "workspace_id", None) == str(workspace_id) for event in published_workspace)
 
 
 @pytest.mark.asyncio
