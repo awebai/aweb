@@ -588,6 +588,7 @@ def _translate_team_event(event_type: str, ctx: dict):
         return TeamTaskCreatedEvent(
             team_id=team_id,
             task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("actor_alias", "") or ""),
             title=str(ctx.get("title", "") or ""),
             status="open",
         )
@@ -599,6 +600,7 @@ def _translate_team_event(event_type: str, ctx: dict):
         return TeamTaskStatusChangedEvent(
             team_id=team_id,
             task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("actor_alias", "") or ""),
             title=str(ctx.get("title", "") or ""),
             old_status=str(ctx.get("old_status", "") or ""),
             new_status=str(ctx.get("new_status", "") or ""),

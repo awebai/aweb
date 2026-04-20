@@ -272,6 +272,14 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 		t.Fatal("did-key listing must not be reported as namespace ownership proof")
 	}
 
+	controllerList := run("id", "namespace", "addresses", "acme.com", "--authority", "namespace-controller", "--json")
+	if controllerList.AuthorityMode != registryReadAuthorityNamespaceController || controllerList.AuthoritySubject != controllerDID {
+		t.Fatalf("controller list authority=%s subject=%s want %s", controllerList.AuthorityMode, controllerList.AuthoritySubject, controllerDID)
+	}
+	if !controllerList.Payload.OwnershipProof {
+		t.Fatal("namespace-controller listing must be reported as ownership proof")
+	}
+
 	controllerAddress := run("id", "namespace", "resolve", "acme.com/alice", "--authority", "namespace-controller", "--json")
 	if controllerAddress.AuthorityMode != registryReadAuthorityNamespaceController || controllerAddress.AuthoritySubject != controllerDID {
 		t.Fatalf("controller authority=%s subject=%s want %s", controllerAddress.AuthorityMode, controllerAddress.AuthoritySubject, controllerDID)
@@ -279,14 +287,20 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 	if controllerAddress.Payload.Address == nil || controllerAddress.Payload.Address.DIDAW != stableID {
 		t.Fatalf("address payload=%+v", controllerAddress.Payload.Address)
 	}
+	if !controllerAddress.Payload.OwnershipProof {
+		t.Fatal("namespace-controller address resolve must be reported as ownership proof")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 2 || auths[0] != "" {
+	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || auths[0] != "" {
 		t.Fatalf("anonymous namespace address auth headers=%q", auths)
 	}
-	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 2 || !strings.Contains(auths[1], did) {
+	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || !strings.Contains(auths[1], did) {
 		t.Fatalf("did namespace address auth headers=%q want %s", auths, did)
+	}
+	if auths := seenAuth["/v1/namespaces/acme.com/addresses"]; len(auths) < 3 || !strings.Contains(auths[2], controllerDID) {
+		t.Fatalf("controller namespace address auth headers=%q want %s", auths, controllerDID)
 	}
 	if auths := seenAuth["/v1/namespaces/acme.com/addresses/alice"]; len(auths) != 1 || !strings.Contains(auths[0], controllerDID) {
 		t.Fatalf("controller resolve auth headers=%q want %s", auths, controllerDID)
