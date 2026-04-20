@@ -484,6 +484,98 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_external_to_address_without_local_agent(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice',
+            'persistent', 'developer', 'everyone'
+        )
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-2",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_address": "otherco.com/bob", "subject": "external", "body": "hello"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert send_resp.status_code == 200, send_resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT from_did, to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'external'
+        """
+    )
+    assert row["from_did"] == "did:aw:alice"
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is None
+    assert row["to_alias"] == "bob"
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key="did:key:bob",
+            did_aw="did:aw:bob",
+            address="otherco.com/bob",
+            team_id="ops:otherco.com",
+            alias="bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        inbox_resp = await client.get("/v1/messages/inbox")
+
+    assert inbox_resp.status_code == 200, inbox_resp.text
+    inbox = inbox_resp.json()
+    assert inbox["messages"][0]["to_did"] == "did:aw:bob"
+    assert inbox["messages"][0]["to_alias"] == "bob"
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_current_binding(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()

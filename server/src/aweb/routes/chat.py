@@ -243,9 +243,34 @@ async def _resolve_session_actor_did(db, *, session_id: UUID, actor_dids: list[s
 
 
 def _chat_to_address(participant_rows: list[dict[str, Any]], *, from_did: str) -> str:
-    refs = [row["alias"] for row in participant_rows if (row.get("did") or "").strip() != from_did]
+    refs = [
+        (row.get("address") or row["alias"])
+        for row in participant_rows
+        if (row.get("did") or "").strip() != from_did
+    ]
     refs.sort()
     return ",".join(refs)
+
+
+def _address_from_alias(value: str | None) -> str:
+    text = (value or "").strip()
+    return text if "/" in text else ""
+
+
+def _target_did(row: dict[str, Any]) -> str:
+    return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
+
+
+def _target_did_refs(row: dict[str, Any]) -> set[str]:
+    return {
+        value
+        for value in (
+            str(row.get("did_aw") or "").strip(),
+            str(row.get("did_key") or "").strip(),
+            str(row.get("did") or "").strip(),
+        )
+        if value
+    }
 
 
 def _group_participants_by_session(
@@ -356,16 +381,27 @@ async def _resolve_chat_targets(
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
         row = await resolve_agent_by_did(db, resolution.did_aw)
         if row is None:
-            raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
+            row = {
+                "agent_id": None,
+                "team_id": None,
+                "alias": name,
+                "address": address,
+                "did_aw": resolution.did_aw.strip(),
+                "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+                "messaging_policy": None,
+                "external": True,
+            }
         resolved[resolution.did_aw] = row
 
     if not resolved:
         raise HTTPException(status_code=422, detail="Must provide to_aliases, to_dids, or to_addresses")
 
-    if any(did in resolved for did in actor_did_set):
+    if any(_target_did_refs(row) & actor_did_set for row in resolved.values()):
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
     for row in resolved.values():
+        if row.get("external"):
+            continue
         try:
             await evaluate_messaging_policy(
                 db,
@@ -389,7 +425,7 @@ async def _resolve_session_recipient_rows(
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT did, alias
+        SELECT did, alias, address
         FROM {{tables.chat_participants}}
         WHERE session_id = $1
           AND NOT (did = ANY($2::text[]))
@@ -402,13 +438,20 @@ async def _resolve_session_recipient_rows(
     for row in rows:
         participant = dict(row)
         resolved = await resolve_agent_by_did(db, participant.get("did") or "")
+        participant_did = (participant.get("did") or "").strip()
+        participant_alias = (participant.get("alias") or "").strip()
+        participant_address = (participant.get("address") or "").strip()
         recipient_rows.append(
             {
-                "did": (participant.get("did") or "").strip(),
-                "alias": (participant.get("alias") or "").strip(),
-                "address": ((resolved or {}).get("address") or "").strip(),
-                "did_aw": ((resolved or {}).get("did_aw") or "").strip(),
-                "did_key": ((resolved or {}).get("did_key") or "").strip(),
+                "did": participant_did,
+                "alias": participant_alias,
+                "address": ((resolved or {}).get("address") or "").strip()
+                or participant_address
+                or _address_from_alias(participant_alias),
+                "did_aw": ((resolved or {}).get("did_aw") or "").strip()
+                or (participant_did if participant_did.startswith("did:aw:") else ""),
+                "did_key": ((resolved or {}).get("did_key") or "").strip()
+                or (participant_did if participant_did.startswith("did:key:") else ""),
             }
         )
     return recipient_rows
@@ -506,7 +549,7 @@ async def create_or_send(
         to_dids=payload.to_dids,
         to_addresses=payload.to_addresses,
     )
-    target_dids = sorted({(row.get("did_aw") or row.get("did_key") or "").strip() for row in target_rows})
+    target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
 
     participant_rows = [
         {
@@ -514,14 +557,15 @@ async def create_or_send(
             "did_key": auth.did_key,
             "agent_id": actor_agent_id,
             "alias": actor_alias,
+            "address": (auth.address or "").strip() or None,
         }
     ] + [
         {
-            "did": (row.get("did_aw") or row.get("did_key") or "").strip(),
+            "did": _target_did(row),
             "did_key": (row.get("did_key") or "").strip() or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
-            "alias": (row.get("alias") or row.get("address") or "").strip()
-            or (row.get("did_aw") or row.get("did_key") or "").strip(),
+            "alias": (row.get("alias") or "").strip() or _target_did(row),
+            "address": (row.get("address") or "").strip() or None,
         }
         for row in target_rows
     ]
@@ -617,7 +661,7 @@ async def create_or_send(
 
     participants_rows = await aweb_db.fetch_all(
         """
-        SELECT did, alias
+        SELECT did, alias, address
         FROM {{tables.chat_participants}}
         WHERE session_id = $1
         ORDER BY alias ASC
@@ -665,7 +709,10 @@ async def create_or_send(
             {
                 "did": str(row["did"]),
                 "alias": row["alias"],
-                "address": participant_address_map.get((row.get("did") or "").strip()) or None,
+                "address": participant_address_map.get((row.get("did") or "").strip())
+                or (row.get("address") or "").strip()
+                or _address_from_alias(row.get("alias"))
+                or None,
             }
             for row in participants_rows
         ],
@@ -721,7 +768,7 @@ async def pending(
     if session_ids:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.session_id, p.did, p.alias
+            SELECT p.session_id, p.did, p.alias, p.address
             FROM {{tables.chat_participants}} p
             WHERE p.session_id = ANY($1::uuid[])
             ORDER BY p.session_id, p.alias
@@ -760,7 +807,7 @@ async def pending(
             if (row.get("did") or "").strip() not in set(actor_dids)
         ]
         participant_addresses = [
-            routable_chat_address(
+            (row.get("address") or "").strip() or routable_chat_address(
                 identity_map.get((row.get("did") or "").strip(), {}),
                 auth.team_id,
                 row["alias"],
@@ -847,7 +894,7 @@ async def history(
 
     participant_rows = await aweb_db.fetch_all(
         """
-        SELECT p.did, p.alias
+        SELECT p.did, p.alias, p.address
         FROM {{tables.chat_participants}} p
         WHERE session_id = $1
         ORDER BY p.alias ASC
@@ -995,7 +1042,7 @@ async def _sse_events(
     try:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.did, p.alias
+            SELECT p.did, p.alias, p.address
             FROM {{tables.chat_participants}} p
             WHERE p.session_id = $1
             ORDER BY p.alias ASC
@@ -1456,7 +1503,7 @@ async def list_sessions(
     if session_ids:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.session_id, p.did, p.alias
+            SELECT p.session_id, p.did, p.alias, p.address
             FROM {{tables.chat_participants}} p
             WHERE p.session_id = ANY($1::uuid[])
             ORDER BY p.session_id, p.alias
@@ -1494,7 +1541,7 @@ async def list_sessions(
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
                 participant_addresses=[
-                    routable_chat_address(
+                    (participant.get("address") or "").strip() or routable_chat_address(
                         identity_map.get((participant.get("did") or "").strip(), {}),
                         auth.team_id,
                         participant["alias"],

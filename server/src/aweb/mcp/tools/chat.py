@@ -74,9 +74,19 @@ def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
     to_dids: list[str] = []
     to_stable_ids: list[str] = []
     for row in rows:
-        to_values.append(
-            (row.get("alias") or row.get("address") or row.get("did_aw") or row.get("did_key") or row.get("did") or "")
-        )
+        if row.get("external") and row.get("address"):
+            to_values.append(row["address"])
+        else:
+            to_values.append(
+                (
+                    row.get("alias")
+                    or row.get("address")
+                    or row.get("did_aw")
+                    or row.get("did_key")
+                    or row.get("did")
+                    or ""
+                )
+            )
         if row.get("did_key"):
             to_dids.append(row["did_key"])
         elif row.get("did") and str(row["did"]).startswith("did:key:"):
@@ -92,11 +102,27 @@ def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
     )
 
 
+def _target_did(row: dict) -> str:
+    return (row.get("did_aw") or row.get("did_key") or row.get("did") or "").strip()
+
+
+def _target_did_refs(row: dict) -> set[str]:
+    return {
+        value
+        for value in (
+            str(row.get("did_aw") or "").strip(),
+            str(row.get("did_key") or "").strip(),
+            str(row.get("did") or "").strip(),
+        )
+        if value
+    }
+
+
 async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: list[str]) -> list[dict]:
     aweb_db = db_infra.get_manager("aweb")
-    return await aweb_db.fetch_all(
+    rows = await aweb_db.fetch_all(
         """
-        SELECT p.did, p.alias, a.did_key, a.did_aw, a.address
+        SELECT p.did, p.alias, p.address AS participant_address, a.did_key, a.did_aw, a.address
         FROM {{tables.chat_participants}} p
         LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id
         WHERE p.session_id = $1
@@ -106,6 +132,14 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
         session_id,
         actor_dids,
     )
+    result: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        participant_address = (item.get("participant_address") or "").strip()
+        item["address"] = (item.get("address") or "").strip() or participant_address
+        item["external"] = bool(participant_address and not (item.get("did_aw") or item.get("did_key")))
+        result.append(item)
+    return result
 
 
 async def _resolve_actor_agent(db_infra, actor_dids: list[str]) -> dict | None:
@@ -263,33 +297,50 @@ async def chat_send(
                 return json.dumps({"error": f"Recipient address '{to_address}' not found"})
             target = await resolve_agent_by_did(db_infra, resolved.did_aw)
             if not target:
-                return json.dumps({"error": f"Recipient '{to_address}' not connected"})
+                target = {
+                    "agent_id": None,
+                    "team_id": None,
+                    "alias": name,
+                    "address": to_address.strip(),
+                    "did_aw": resolved.did_aw.strip(),
+                    "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
+                    "messaging_policy": None,
+                    "external": True,
+                }
 
-        target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
-        if target_did in set(actor_dids):
+        target_did = _target_did(target)
+        if _target_did_refs(target) & set(actor_dids):
             return json.dumps({"error": "Cannot chat with yourself"})
-        try:
-            await evaluate_messaging_policy(
-                db_infra,
-                registry_client=registry_client,
-                recipient_agent=target,
-                sender_did=actor_did,
-                sender_address=auth.address,
-            )
-        except ServiceError as exc:
-            return json.dumps({"error": exc.detail})
+        if not target.get("external"):
+            try:
+                await evaluate_messaging_policy(
+                    db_infra,
+                    registry_client=registry_client,
+                    recipient_agent=target,
+                    sender_did=actor_did,
+                    sender_address=auth.address,
+                )
+            except ServiceError as exc:
+                return json.dumps({"error": exc.detail})
 
         try:
             sid = await ensure_session(
                 db_infra,
                 team_id=auth.team_id,
                 participant_rows=[
-                    {"did": actor_did, "did_key": auth.did_key, "agent_id": actor_agent_id, "alias": actor_alias},
+                    {
+                        "did": actor_did,
+                        "did_key": auth.did_key,
+                        "agent_id": actor_agent_id,
+                        "alias": actor_alias,
+                        "address": (auth.address or "").strip() or None,
+                    },
                     {
                         "did": target_did,
                         "did_key": (target.get("did_key") or "").strip() or None,
                         "agent_id": str(target["agent_id"]) if target.get("agent_id") else None,
                         "alias": (target.get("alias") or target.get("address") or target_did).strip(),
+                        "address": (target.get("address") or "").strip() or None,
                     },
                 ],
                 created_by=actor_alias,
@@ -454,6 +505,7 @@ async def chat_pending(db_infra, redis) -> str:
         {
             "session_id": row["session_id"],
             "participants": row["participants"],
+            "participant_addresses": row.get("participant_addresses") or [],
             "last_message": row["last_message"],
             "last_from": row["last_from"],
             "unread_count": row["unread_count"],

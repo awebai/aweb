@@ -172,6 +172,7 @@ async def deliver_message(
     db,
     *,
     registry_client=None,
+    recipient_agent: dict | None = None,
     from_did: str,
     to_did: str,
     from_alias: str | None,
@@ -197,17 +198,18 @@ async def deliver_message(
         raise ValidationError("Missing to_did")
 
     sender = await resolve_agent_by_did(db, sender_did)
-    recipient = await resolve_agent_by_did(db, recipient_did)
+    recipient = await resolve_agent_by_did(db, recipient_did) or recipient_agent
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    await evaluate_messaging_policy(
-        db,
-        registry_client=registry_client,
-        recipient_agent=recipient,
-        sender_did=sender_did,
-        sender_address=sender_address,
-    )
+    if not recipient.get("external"):
+        await evaluate_messaging_policy(
+            db,
+            registry_client=registry_client,
+            recipient_agent=recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+        )
 
     if created_at is None:
         created_at = datetime.now(timezone.utc)
@@ -217,7 +219,9 @@ async def deliver_message(
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else (
         UUID(str(sender["agent_id"])) if sender is not None else None
     )
-    to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id") if to_agent_id else UUID(str(recipient["agent_id"]))
+    to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id") if to_agent_id else (
+        UUID(str(recipient["agent_id"])) if recipient.get("agent_id") else None
+    )
     from_alias_value = (from_alias or sender_address or (sender.get("alias") if sender else "") or sender_did).strip()
     from_address_value = (sender_address or "").strip() or None
     to_alias_value = (to_alias or recipient.get("alias") or recipient.get("address") or recipient_did).strip()

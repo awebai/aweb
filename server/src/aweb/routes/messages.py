@@ -219,6 +219,20 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload timestamp must match the mail message")
 
 
+def _external_recipient_from_address(address: str, resolution) -> dict:
+    _, name = address.split("/", 1)
+    return {
+        "agent_id": None,
+        "team_id": None,
+        "alias": name,
+        "address": address,
+        "did_aw": resolution.did_aw.strip(),
+        "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+        "messaging_policy": None,
+        "external": True,
+    }
+
+
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -298,20 +312,24 @@ async def send_message(
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
         resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is None:
+        if resolved is None or not resolved.did_aw:
             raise HTTPException(status_code=404, detail="Recipient address not found")
         recipient_did = resolved.did_aw
         recipient = await resolve_agent_by_did(db, recipient_did)
         if recipient is None:
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            recipient = _external_recipient_from_address(address, resolved)
         if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
-                raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
+            if recipient.get("external"):
+                if payload.to_alias.strip() != recipient["alias"]:
+                    raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
+            else:
+                bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
+                if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+                    raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
-            if payload.to_agent_id.strip() != str(recipient["agent_id"]):
+            if recipient.get("external") or payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_address recipient")
-        to_agent_id = str(recipient["agent_id"])
+        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias") or address
     elif to_agent_id is not None:
         recipient = await get_agent_by_id(
@@ -374,6 +392,7 @@ async def send_message(
         message_id, created_at = await deliver_message(
             db,
             registry_client=registry_client,
+            recipient_agent=recipient,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,

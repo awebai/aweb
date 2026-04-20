@@ -189,7 +189,8 @@ async def ensure_session(
                 "did": did,
                 "did_key": (row.get("did_key") or "").strip() or None,
                 "agent_id": _uuid_or_none(row.get("agent_id")),
-                "alias": (row.get("alias") or row.get("address") or did).strip(),
+                "alias": (row.get("alias") or did).strip(),
+                "address": (row.get("address") or "").strip() or None,
             }
         )
     if len(normalized_participants) < 2:
@@ -223,16 +224,18 @@ async def ensure_session(
         for participant in normalized_participants:
             await tx.execute(
                 """
-                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (session_id, did) DO UPDATE
                 SET agent_id = EXCLUDED.agent_id,
-                    alias = EXCLUDED.alias
+                    alias = EXCLUDED.alias,
+                    address = EXCLUDED.address
                 """,
                 session_id,
                 participant["did"],
                 participant["agent_id"],
                 participant["alias"],
+                participant["address"],
             )
 
     return UUID(str(session_id))
@@ -330,6 +333,7 @@ async def get_pending_conversations(
             s.session_id,
             array_agg(p2.alias ORDER BY p2.alias) AS participants,
             array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
+            array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
             lm.body AS last_message,
             lm.from_alias AS last_from,
             lm.from_address AS last_from_address,
@@ -416,6 +420,7 @@ async def get_pending_conversations(
             "session_id": str(row["session_id"]),
             "participants": list(row["participants"] or []),
             "participant_dids": list(row["participant_dids"] or []),
+            "participant_addresses": list(row["participant_addresses"] or []),
             "last_message": row["last_message"] or "",
             "last_from": row["last_from"] or "",
             "last_from_address": row["last_from_address"] or "",

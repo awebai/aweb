@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
+from awid.registry import Address
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp import auth as mcp_auth
@@ -450,6 +451,90 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
+async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES (
+            $1, $2, $3, 'did:aw:alice', 'acme.com/alice',
+            'alice', 'persistent', 'active', 'everyone'
+        )
+        """,
+        alice_agent_id,
+        team_id,
+        alice_did,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            return Address(
+                address_id="addr-2",
+                domain="otherco.com",
+                name="bob",
+                did_aw="did:aw:bob",
+                current_did_key="did:key:bob",
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to="otherco.com/bob",
+            subject="external",
+            body="hello external bob",
+        )
+    )
+
+    assert result["status"] == "delivered"
+    assert result["to"] == "bob"
+    message = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT from_did, to_did, to_agent_id, to_alias, from_address
+        FROM {{tables.messages}}
+        WHERE subject = 'external'
+        """
+    )
+    assert message["from_did"] == "did:aw:alice"
+    assert message["to_did"] == "did:aw:bob"
+    assert message["to_agent_id"] is None
+    assert message["to_alias"] == "bob"
+    assert message["from_address"] == "acme.com/alice"
+
+
+@pytest.mark.asyncio
 async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
@@ -629,6 +714,92 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert row["from_did"] == alice_did
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES (
+            $1, $2, $3, 'did:aw:alice', 'acme.com/alice',
+            'alice', 'persistent', 'active', 'everyone'
+        )
+        """,
+        alice_agent_id,
+        team_id,
+        alice_did,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            return Address(
+                address_id="addr-2",
+                domain="otherco.com",
+                name="bob",
+                did_aw="did:aw:bob",
+                current_did_key="did:key:bob",
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to_address="otherco.com/bob",
+            message="hello external bob",
+        )
+    )
+
+    assert result["delivered"] is True
+    participant = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT did, agent_id, alias, address
+        FROM {{tables.chat_participants}}
+        WHERE did = 'did:aw:bob'
+        """
+    )
+    assert participant["agent_id"] is None
+    assert participant["alias"] == "bob"
+    assert participant["address"] == "otherco.com/bob"
+    message = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT from_did, from_address FROM {{tables.chat_messages}}"
+    )
+    assert message["from_did"] == "did:aw:alice"
+    assert message["from_address"] == "acme.com/alice"
 
 
 @pytest.mark.asyncio

@@ -158,14 +158,15 @@ async def _current_actionable_chat(
                 "session_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
                 "participant_addresses": [
-                    routable_chat_address(
+                    (address or "").strip() or routable_chat_address(
                         participant_identity_map.get((did or "").strip(), {}),
                         viewer_team_id,
                         alias or "",
                     )
-                    for did, alias in zip(
+                    for did, alias, address in zip(
                         list(item.get("participant_dids") or []),
                         list(item.get("participants") or []),
+                        list(item.get("participant_addresses") or []),
                         strict=False,
                     )
                     if (did or "").strip() not in viewer_did_set

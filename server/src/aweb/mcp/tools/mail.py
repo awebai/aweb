@@ -24,6 +24,20 @@ from aweb.messaging.messages import (
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
 
+def _external_recipient_from_address(address: str, resolution) -> dict:
+    _, name = address.split("/", 1)
+    return {
+        "agent_id": None,
+        "team_id": None,
+        "alias": name,
+        "address": address,
+        "did_aw": resolution.did_aw.strip(),
+        "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+        "messaging_policy": None,
+        "external": True,
+    }
+
+
 async def send_mail(
     db_infra,
     *,
@@ -56,10 +70,12 @@ async def send_mail(
             return json.dumps({"error": "AWID registry unavailable"})
         domain, name = recipient_ref.split("/", 1)
         resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is None:
+        if resolved is None or not resolved.did_aw:
             return json.dumps({"error": f"Address '{recipient_ref}' not found"})
         recipient_did = resolved.did_aw
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
+        if recipient is None:
+            recipient = _external_recipient_from_address(recipient_ref, resolved)
     else:
         if not auth.team_id:
             return json.dumps({"error": "Alias delivery requires team context"})
@@ -119,13 +135,14 @@ async def send_mail(
         message_id, created_at = await deliver_message(
             db_infra,
             registry_client=registry_client,
+            recipient_agent=recipient,
             from_did=sender_did,
             to_did=recipient_did,
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
             sender_address=auth.address,
-            to_agent_id=str(recipient["agent_id"]),
+            to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
             to_alias=recipient_alias,
             subject=subject,
             body=body,
