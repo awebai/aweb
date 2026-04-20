@@ -355,17 +355,6 @@ async def _cascade_task_status_changed(
             alias=alias,
         ),
     )
-    await publish_team_event(
-        redis,
-        TeamTaskStatusChangedEvent(
-            team_id=team_id,
-            task_ref=task_ref,
-            title=title or "",
-            old_status=context.get("old_status", "") or "",
-            new_status=new_status,
-        ),
-    )
-
 
 async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context: dict) -> None:
     """Release all claims on a deleted task and publish unclaim events.
@@ -551,6 +540,40 @@ def _translate_team_event(event_type: str, ctx: dict):
             task_ref=str(ctx.get("task_ref", "")).strip(),
             title=str(ctx.get("title", "") or ""),
             status="open",
+        )
+
+    if event_type == "task.status_changed":
+        team_id = str(ctx.get("team_id", "")).strip()
+        if not team_id:
+            return None
+        return TeamTaskStatusChangedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            title=str(ctx.get("title", "") or ""),
+            old_status=str(ctx.get("old_status", "") or ""),
+            new_status=str(ctx.get("new_status", "") or ""),
+        )
+
+    if event_type == "task.claimed":
+        team_id = str(ctx.get("team_id", "")).strip()
+        if not team_id:
+            return None
+        return TeamTaskClaimedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("alias", "")).strip(),
+            title=str(ctx.get("title", "") or ""),
+        )
+
+    if event_type == "task.unclaimed":
+        team_id = str(ctx.get("team_id", "")).strip()
+        if not team_id:
+            return None
+        return TeamTaskUnclaimedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("alias", "")).strip(),
+            title=str(ctx.get("title", "") or ""),
         )
 
     return None
