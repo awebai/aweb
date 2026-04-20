@@ -212,6 +212,71 @@ def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str
     )
 
 
+def _agent_address(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
+    return (auth.address or "").strip() or ((actor_agent or {}).get("address") or "").strip()
+
+
+def _agent_team_id(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
+    return (auth.team_id or "").strip() or ((actor_agent or {}).get("team_id") or "").strip()
+
+
+def _cross_team_participant_alias(row: dict[str, Any], viewer_team_id: str | None) -> str:
+    alias = (row.get("alias") or row.get("address") or "").strip()
+    address = (row.get("address") or "").strip()
+    row_team_id = (row.get("team_id") or "").strip()
+    viewer_team_id = (viewer_team_id or "").strip()
+    if address and not viewer_team_id:
+        return address
+    if address and viewer_team_id and row_team_id and row_team_id != viewer_team_id:
+        return address
+    return alias or (row.get("did_aw") or row.get("did_key") or "").strip()
+
+
+def _actor_participant_alias(
+    auth: MessagingAuth,
+    actor_agent: dict[str, Any] | None,
+    target_rows: list[dict[str, Any]],
+) -> str:
+    alias = _actor_alias(auth, actor_agent)
+    address = _agent_address(auth, actor_agent)
+    actor_team_id = _agent_team_id(auth, actor_agent)
+    if address and actor_team_id:
+        for row in target_rows:
+            row_team_id = (row.get("team_id") or "").strip()
+            if row_team_id and row_team_id != actor_team_id:
+                return address
+    return alias
+
+
+async def _promote_cross_team_actor_alias(
+    db,
+    *,
+    session_id: UUID,
+    actor_did: str,
+    auth: MessagingAuth,
+    actor_agent: dict[str, Any] | None,
+    session_team_id: str | None,
+) -> None:
+    address = _agent_address(auth, actor_agent)
+    actor_team_id = _agent_team_id(auth, actor_agent)
+    session_team_id = (session_team_id or "").strip()
+    if not address or not actor_team_id:
+        return
+    if session_team_id and actor_team_id == session_team_id:
+        return
+    aweb_db = db.get_manager("aweb")
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.chat_participants}}
+        SET alias = $3
+        WHERE session_id = $1 AND did = $2
+        """,
+        session_id,
+        actor_did,
+        address,
+    )
+
+
 async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
     for did in actor_dids:
         if not did:
@@ -495,7 +560,6 @@ async def create_or_send(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     actor_agent = await _resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
-    actor_alias = _actor_alias(auth, actor_agent)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
 
     target_rows = await _resolve_chat_targets(
@@ -507,6 +571,7 @@ async def create_or_send(
         to_addresses=payload.to_addresses,
     )
     target_dids = sorted({(row.get("did_aw") or row.get("did_key") or "").strip() for row in target_rows})
+    actor_alias = _actor_participant_alias(auth, actor_agent, target_rows)
 
     participant_rows = [
         {
@@ -520,8 +585,7 @@ async def create_or_send(
             "did": (row.get("did_aw") or row.get("did_key") or "").strip(),
             "did_key": (row.get("did_key") or "").strip() or None,
             "agent_id": str(row["agent_id"]) if row.get("agent_id") else None,
-            "alias": (row.get("alias") or row.get("address") or "").strip()
-            or (row.get("did_aw") or row.get("did_key") or "").strip(),
+            "alias": _cross_team_participant_alias(row, auth.team_id),
         }
         for row in target_rows
     ]
@@ -1301,7 +1365,10 @@ async def send_message(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one(
+        "SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
+        session_uuid,
+    )
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -1338,6 +1405,15 @@ async def send_message(
         )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
+
+    await _promote_cross_team_actor_alias(
+        db,
+        session_id=session_uuid,
+        actor_did=actor_did,
+        auth=auth,
+        actor_agent=actor_agent,
+        session_team_id=sess.get("team_id"),
+    )
 
     try:
         msg_row = await send_in_session(
