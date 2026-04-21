@@ -126,11 +126,18 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
 	}
-	if sawStableID != stableID {
-		t.Fatalf("stable id header = %q want %q", sawStableID, stableID)
+	if sawStableID != "" {
+		t.Fatalf("unexpected stable id header: %q", sawStableID)
 	}
-	if sawCertHeader != "" {
-		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
+	if sawCertHeader == "" {
+		t.Fatal("missing team cert header")
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(sawCertHeader)
+	if err != nil {
+		t.Fatalf("decode team cert header: %v", err)
+	}
+	if cert.Team != "ops:acme.com" {
+		t.Fatalf("team cert team = %q want ops:acme.com", cert.Team)
 	}
 }
 
@@ -207,15 +214,22 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mail inbox failed: %v\n%s", err, string(out))
 	}
-	if sawStableID != stableID {
-		t.Fatalf("stable id header = %q want %q", sawStableID, stableID)
+	if sawStableID != "" {
+		t.Fatalf("unexpected stable id header: %q", sawStableID)
 	}
-	if sawCertHeader != "" {
-		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
+	if sawCertHeader == "" {
+		t.Fatal("missing team cert header")
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(sawCertHeader)
+	if err != nil {
+		t.Fatalf("decode team cert header: %v", err)
+	}
+	if cert.Team != "backend:demo" {
+		t.Fatalf("team cert team = %q want backend:demo", cert.Team)
 	}
 }
 
-func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
+func TestMailInboxUsesTeamCertificateWhenIdentityFileIsAbsent(t *testing.T) {
 	var sawAuth string
 	var sawStableID string
 	var sawCertHeader string
@@ -276,8 +290,15 @@ func TestMailInboxFallsBackToSigningKeyWhenIdentityFileIsAbsent(t *testing.T) {
 	if sawStableID != "" {
 		t.Fatalf("unexpected stable id header: %q", sawStableID)
 	}
-	if sawCertHeader != "" {
-		t.Fatalf("unexpected team cert header: %q", sawCertHeader)
+	if sawCertHeader == "" {
+		t.Fatal("missing team cert header")
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(sawCertHeader)
+	if err != nil {
+		t.Fatalf("decode team cert header: %v", err)
+	}
+	if cert.Team != "backend:demo" {
+		t.Fatalf("team cert team = %q want backend:demo", cert.Team)
 	}
 }
 

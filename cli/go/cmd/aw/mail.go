@@ -164,7 +164,7 @@ var mailInboxCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		c, sel, err := resolveIdentityMessagingClientSelection()
+		c, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}

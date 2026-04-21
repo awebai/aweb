@@ -57,14 +57,18 @@ BOB_DIR="$E2E_CWD/bob"
 CAROL_DIR="$E2E_CWD/carol"
 DAVE_DIR="$E2E_CWD/dave"
 GSK_DIR="$E2E_CWD/gsk"
+PARTNER_CONTROLLER_DIR="$E2E_CWD/partner-controller"
+PARTNER_BOB_DIR="$E2E_CWD/partner-bob"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
 DAVE_DIR="$(canonicalize_dir "$DAVE_DIR")"
 GSK_DIR="$(canonicalize_dir "$GSK_DIR")"
+PARTNER_CONTROLLER_DIR="$(canonicalize_dir "$PARTNER_CONTROLLER_DIR")"
+PARTNER_BOB_DIR="$(canonicalize_dir "$PARTNER_BOB_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
@@ -839,6 +843,160 @@ assert_contains "gsk receives address-routed chat reply" "$gsk_chat_history" "Re
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 12d: Per-membership addresses
+# ---------------------------------------------------------------------------
+echo "=== Phase 12d: Per-membership addresses ==="
+
+partner_controller_create="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id create \
+  --name controller \
+  --domain partner.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+PARTNER_CONTROLLER_DID="$(echo "$partner_controller_create" | jq_field did_key)"
+assert_not_empty "partner namespace controller did_key" "$PARTNER_CONTROLLER_DID"
+
+partner_address_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id namespace assign-address \
+  --domain partner.local \
+  --name alice \
+  --did-aw "$ALICE_DID_AW" \
+  --json 2>/dev/null)"
+PARTNER_ALICE_ADDRESS="$(echo "$partner_address_out" | jq_field address)"
+assert_eq "partner address assigned to alice" "partner.local/alice" "$PARTNER_ALICE_ADDRESS"
+
+partner_team_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team create \
+  --name main \
+  --namespace partner.local \
+  --registry "$AWID_URL" \
+  --json 2>/dev/null)"
+PARTNER_TEAM_ID="$(echo "$partner_team_out" | jq_field team_id)"
+assert_eq "partner team id" "main:partner.local" "$PARTNER_TEAM_ID"
+
+partner_bob_create="$(run_aw_in "$PARTNER_BOB_DIR" id create \
+  --name bob \
+  --domain partner.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+PARTNER_BOB_ADDRESS="$(echo "$partner_bob_create" | jq_field address)"
+assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
+
+partner_bob_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
+  --team main \
+  --namespace partner.local \
+  --json 2>/dev/null)"
+PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
+assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
+
+partner_bob_accept="$(run_aw_in "$PARTNER_BOB_DIR" id team accept-invite "$PARTNER_BOB_INVITE_TOKEN" \
+  --alias bob \
+  --json 2>/dev/null)"
+PARTNER_BOB_ACCEPT_STATUS="$(echo "$partner_bob_accept" | jq_field status)"
+assert_eq "partner bob accepted" "accepted" "$PARTNER_BOB_ACCEPT_STATUS"
+
+run_aw_in "$PARTNER_BOB_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+partner_bob_init_exit=$?
+assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
+
+partner_alice_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
+  --team main \
+  --namespace partner.local \
+  --json 2>/dev/null)"
+PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
+assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
+
+partner_alice_accept="$(run_aw_in "$ALICE_DIR" id team accept-invite "$PARTNER_ALICE_INVITE_TOKEN" \
+  --alias alice \
+  --address partner.local/alice \
+  --json 2>/dev/null)"
+PARTNER_ALICE_ACCEPT_STATUS="$(echo "$partner_alice_accept" | jq_field status)"
+assert_eq "alice accepted partner team with address" "accepted" "$PARTNER_ALICE_ACCEPT_STATUS"
+
+partner_alice_cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
+partner_alice_cert_team="$(echo "$partner_alice_cert_out" | jq_field team_id)"
+partner_alice_cert_address="$(echo "$partner_alice_cert_out" | jq_field member_address)"
+assert_eq "alice partner cert team" "main:partner.local" "$partner_alice_cert_team"
+assert_eq "alice partner cert member_address" "partner.local/alice" "$partner_alice_cert_address"
+
+run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+alice_switch_primary_exit=$?
+assert_eq "alice switches to primary team" "0" "$alice_switch_primary_exit"
+run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+alice_primary_reconnect_exit=$?
+assert_eq "alice reconnects primary team" "0" "$alice_primary_reconnect_exit"
+
+alice_primary_cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
+alice_primary_cert_address="$(echo "$alice_primary_cert_out" | jq_field member_address)"
+assert_eq "alice primary cert member_address" "test.local/alice" "$alice_primary_cert_address"
+
+run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Per-membership primary" \
+  --body "Primary address hello" >/dev/null 2>&1
+alice_primary_mail_exit=$?
+assert_eq "alice primary-team mail exit" "0" "$alice_primary_mail_exit"
+
+bob_per_membership_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_primary_from_address="$(echo "$bob_per_membership_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership primary'), ''))" 2>/dev/null || echo "")"
+assert_eq "bob sees alice primary from_address" "test.local/alice" "$bob_primary_from_address"
+
+run_aw_in "$BOB_DIR" mail send \
+  --to-address test.local/alice \
+  --subject "Reply primary address" \
+  --body "Reply to alice primary address" >/dev/null 2>&1
+bob_primary_reply_exit=$?
+assert_eq "bob replies to alice primary address" "0" "$bob_primary_reply_exit"
+
+alice_primary_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_primary_reply_body="$(echo "$alice_primary_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply primary address'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives primary address reply" "Reply to alice primary address" "$alice_primary_reply_body"
+
+run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+alice_switch_partner_exit=$?
+assert_eq "alice switches to partner team" "0" "$alice_switch_partner_exit"
+run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+alice_partner_reconnect_exit=$?
+assert_eq "alice reconnects partner team" "0" "$alice_partner_reconnect_exit"
+
+run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Per-membership partner" \
+  --body "Partner address hello" >/dev/null 2>&1
+alice_partner_mail_exit=$?
+assert_eq "alice partner-team mail exit" "0" "$alice_partner_mail_exit"
+
+partner_bob_inbox="$(run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+partner_bob_from_address="$(echo "$partner_bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership partner'), ''))" 2>/dev/null || echo "")"
+assert_eq "partner bob sees alice partner from_address" "partner.local/alice" "$partner_bob_from_address"
+
+run_aw_in "$PARTNER_BOB_DIR" mail send \
+  --to-address partner.local/alice \
+  --subject "Reply partner address" \
+  --body "Reply to alice partner address" >/dev/null 2>&1
+partner_bob_reply_exit=$?
+assert_eq "partner bob replies to alice partner address" "0" "$partner_bob_reply_exit"
+
+if alice_partner_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>&1)"; then
+  alice_partner_reply_inbox_exit=0
+else
+  alice_partner_reply_inbox_exit=$?
+fi
+assert_eq "alice partner inbox read exit" "0" "$alice_partner_reply_inbox_exit"
+if [[ "$alice_partner_reply_inbox_exit" != "0" ]]; then
+  echo "  alice partner inbox output: ${alice_partner_reply_inbox:0:240}"
+fi
+alice_partner_reply_body="$(echo "$alice_partner_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply partner address'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice receives partner address reply" "Reply to alice partner address" "$alice_partner_reply_body"
+
+run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+alice_restore_primary_exit=$?
+assert_eq "alice restores primary team" "0" "$alice_restore_primary_exit"
+run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+alice_restore_reconnect_exit=$?
+assert_eq "alice reconnects restored primary team" "0" "$alice_restore_reconnect_exit"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 13: Tasks
 # ---------------------------------------------------------------------------
 echo "=== Phase 13: Tasks ==="
@@ -974,7 +1132,9 @@ phase_aw_init_reconnect() {
   mkdir -p "$RECONNECT_DIR/.aw"
   cp "$ALICE_DIR/.aw/identity.yaml" "$RECONNECT_DIR/.aw/identity.yaml"
   cp "$ALICE_DIR/.aw/signing.key" "$RECONNECT_DIR/.aw/signing.key"
-  cp -R "$ALICE_DIR/.aw/team-certs" "$RECONNECT_DIR/.aw/team-certs"
+  mkdir -p "$RECONNECT_DIR/.aw/team-certs"
+  alice_primary_cert_path="$(team_cert_path "$ALICE_DIR" "devteam:test.local")"
+  cp "$alice_primary_cert_path" "$RECONNECT_DIR/.aw/team-certs/"
   RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
 
   reconnect_out="$(run_aw_in "$RECONNECT_DIR" init --url "$AWEB_URL" </dev/null 2>&1)"
