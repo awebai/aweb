@@ -12,6 +12,7 @@ from awid.did import did_from_public_key, generate_keypair
 from awid.registry import Address
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
+from aweb.identity_auth_deps import IdentityAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.signing import (
@@ -195,6 +196,47 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     assert ctx is not None
     assert ctx.agent_id == str(agent_id)
     assert ctx.did_aw == "did:aw:alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, monkeypatch):
+    team_id = "ops:gsk.aweb.ai"
+    agent_id = uuid4()
+    did_key = "did:key:z6MkGsk"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'gsk.aweb.ai', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, lifetime, status)
+        VALUES ($1, $2, $3, 'gsk', 'ephemeral', 'active')
+        """,
+        agent_id,
+        team_id,
+        did_key,
+    )
+
+    async def _fake_resolve_identity_auth(_request):
+        return IdentityAuth(did_key=did_key, did_aw=None, address=None)
+
+    monkeypatch.setattr(mcp_auth, "resolve_identity_auth", _fake_resolve_identity_auth)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    ctx = await middleware._resolve_auth(
+        _request_with_headers({"Authorization": f"DIDKey {did_key} signature"})
+    )
+
+    assert ctx is not None
+    assert ctx.did_key == did_key
+    assert ctx.team_id == team_id
+    assert ctx.agent_id == str(agent_id)
+    assert ctx.alias == "gsk"
 
 
 @pytest.mark.asyncio

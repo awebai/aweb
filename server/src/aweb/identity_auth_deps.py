@@ -105,6 +105,28 @@ async def get_identity_auth(request: Request, db=Depends(get_db)) -> IdentityAut
     return await resolve_identity_auth(request)
 
 
+async def lookup_identity_agent_context(db, *, did_key: str, did_aw: str | None = None) -> dict | None:
+    did_aw_value = (did_aw or "").strip()
+    aweb_db = _aweb_db(db)
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT agent_id, team_id, alias, did_aw, address, lifetime
+        FROM {{tables.agents}}
+        WHERE deleted_at IS NULL
+          AND (did_key = $1 OR ($2 <> '' AND did_aw = $2))
+        ORDER BY created_at DESC
+        LIMIT 2
+        """,
+        did_key,
+        did_aw_value,
+    )
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise HTTPException(status_code=409, detail="Authenticated DID matches multiple active local agents")
+    return dict(rows[0])
+
+
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
@@ -131,8 +153,13 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         )
 
     identity = await resolve_identity_auth(request)
+    row = await lookup_identity_agent_context(db, did_key=identity.did_key, did_aw=identity.did_aw)
     return MessagingAuth(
         did_key=identity.did_key,
-        did_aw=identity.did_aw,
-        address=identity.address,
+        did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
+        address=identity.address or ((row or {}).get("address") or None),
+        team_id=(row or {}).get("team_id") or None,
+        alias=(row or {}).get("alias") or None,
+        agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
+        lifetime=(row or {}).get("lifetime") or None,
     )
