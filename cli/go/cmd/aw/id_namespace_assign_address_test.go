@@ -182,6 +182,81 @@ func TestIDNamespaceAssignAddressIdempotentMatchingDID(t *testing.T) {
 	}
 }
 
+func TestIDNamespaceAssignAddressConflictWithStaleAddressKey(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	subjectPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectDID := awid.ComputeDIDKey(subjectPub)
+	subjectStableID := awid.ComputeStableID(subjectPub)
+	stalePub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDID := awid.ComputeDIDKey(stalePub)
+
+	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := awid.ComputeDIDKey(controllerPub)
+	if err := awconfig.SaveControllerKey("aweb.ai", controllerPriv); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+subjectStableID+"/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          subjectStableID,
+				"current_did_key": subjectDID,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-aweb",
+				"domain":              "aweb.ai",
+				"controller_did":      controllerDID,
+				"verification_status": "verified",
+				"created_at":          "2026-04-01T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/aweb.ai/addresses":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "address already exists"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/aweb.ai/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "aweb.ai",
+				"name":            "alice",
+				"did_aw":          subjectStableID,
+				"current_did_key": staleDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-15T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+
+	_, err = executeIDNamespaceAssignAddress(context.Background(), idNamespaceAssignAddressOptions{
+		Domain:       "aweb.ai",
+		Name:         "alice",
+		DIDAW:        subjectStableID,
+		Reachability: "public",
+	})
+	if err == nil {
+		t.Fatal("expected error for stale address key")
+	}
+	if !strings.Contains(err.Error(), staleDID) || !strings.Contains(err.Error(), subjectDID) {
+		t.Fatalf("error should mention stale and current did:key, got: %v", err)
+	}
+}
+
 func TestIDNamespaceAssignAddressConflictWithDifferentDID(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

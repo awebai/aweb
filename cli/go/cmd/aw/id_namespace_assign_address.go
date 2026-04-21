@@ -153,13 +153,17 @@ func executeIDNamespaceAssignAddress(ctx context.Context, opts idNamespaceAssign
 			if strings.TrimSpace(existing.DIDAW) != didAW {
 				return idNamespaceAssignAddressOutput{}, fmt.Errorf("address %s/%s is already assigned to %s (cannot reassign without dashboard Replace)", domain, name, existing.DIDAW)
 			}
+			existingDIDKey := strings.TrimSpace(existing.CurrentDIDKey)
+			if existingDIDKey != currentDIDKey {
+				return idNamespaceAssignAddressOutput{}, fmt.Errorf("address %s/%s is assigned to %s but resolves to did:key %s, not current did:key %s", domain, name, didAW, existingDIDKey, currentDIDKey)
+			}
 			return idNamespaceAssignAddressOutput{
 				Status:        "already_assigned",
 				Address:       fmt.Sprintf("%s/%s", domain, name),
 				Domain:        domain,
 				Name:          name,
 				DIDAW:         existing.DIDAW,
-				DIDKey:        strings.TrimSpace(existing.CurrentDIDKey),
+				DIDKey:        existingDIDKey,
 				Reachability:  strings.TrimSpace(existing.Reachability),
 				ControllerDID: expectedControllerDID,
 				RegistryURL:   registryURL,
@@ -198,4 +202,3 @@ func formatIDNamespaceAssignAddress(v any) string {
 	fmt.Fprintf(&b, "  registry:      %s\n", out.RegistryURL)
 	return b.String()
 }
-
