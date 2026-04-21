@@ -781,6 +781,17 @@ alice_ephemeral_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/
 alice_gsk_from_address="$(echo "$alice_ephemeral_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
 
+run_aw_in "$GSK_DIR" mail send \
+  --to-address test.local/alice \
+  --subject "Ephemeral identity-auth sender address" \
+  --body "Identity-auth hello from gsk" >/dev/null 2>&1
+gsk_identity_mail_exit=$?
+assert_eq "gsk→test.local/alice identity-auth mail exit" "0" "$gsk_identity_mail_exit"
+
+alice_identity_mail_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral identity-auth sender address'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice sees gsk identity-auth mail address" "test.local/gsk" "$alice_gsk_identity_from_address"
+
 if alice_gsk_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-address test.local/gsk \
   --subject "Reply to ephemeral address" \
