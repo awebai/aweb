@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from aweb.internal_auth import parse_internal_auth_context
-from aweb.identity_auth_deps import resolve_identity_auth
+from aweb.identity_auth_deps import lookup_identity_agent_context, resolve_identity_auth
 from aweb.team_auth_deps import _aweb_db, verify_request_certificate
 
 logger = logging.getLogger(__name__)
@@ -116,14 +116,19 @@ class MCPAuthMiddleware:
         cert_header = request.headers.get("x-awid-team-certificate", "")
         if not cert_header:
             identity = await resolve_identity_auth(request)
-            return AuthContext(
-                team_id=None,
-                agent_id=None,
-                workspace_id=None,
-                alias=None,
+            row = await lookup_identity_agent_context(
+                self.db_infra,
                 did_key=identity.did_key,
                 did_aw=identity.did_aw,
-                address=identity.address,
+            )
+            return AuthContext(
+                team_id=(row or {}).get("team_id") or None,
+                agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
+                workspace_id=None,
+                alias=(row or {}).get("alias") or None,
+                did_key=identity.did_key,
+                did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
+                address=identity.address or ((row or {}).get("address") or None),
             )
 
         cert_info = await verify_request_certificate(request, self.db_infra)

@@ -1632,6 +1632,58 @@ async def test_ephemeral_team_auth_mail_routes_by_did_key_and_inboxes_by_identit
 
 
 @pytest.mark.asyncio
+async def test_identity_auth_mail_derives_sender_address_from_agent_row(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:gsk.aweb.ai', 'gsk.aweb.ai', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:gsk.aweb.ai', $1, NULL, NULL, 'gsk', 'ephemeral', 'developer', 'everyone'),
+            ('ops:gsk.aweb.ai', $2, NULL, NULL, 'amy', 'ephemeral', 'developer', 'everyone')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_did": bob_did_key, "subject": "identity sender", "body": "hello"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT from_did, from_alias, from_address, to_did
+        FROM {{tables.messages}}
+        WHERE subject = 'identity sender'
+        """
+    )
+    assert row["from_did"] == alice_did_key
+    assert row["from_alias"] == "gsk"
+    assert row["from_address"] == "gsk.aweb.ai/gsk"
+    assert row["to_did"] == bob_did_key
+
+
+@pytest.mark.asyncio
 async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_partial(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     alice_sk, _, alice_did_key = _make_keypair()
