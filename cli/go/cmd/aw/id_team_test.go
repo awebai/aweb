@@ -489,6 +489,159 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	}
 }
 
+func TestTeamAcceptInviteRejectsAddressOnEphemeralInvite(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "local", "default", teamKey)
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID:  inviteID,
+		Domain:    "local",
+		TeamName:  "default",
+		Ephemeral: true,
+		Secret:    secret,
+		CreatedAt: "2026-04-16T00:00:00Z",
+	}
+	writeTeamInviteForTest(t, tmp, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
+		"--alias", "gsk",
+		"--address", "local/gsk")
+	runAccept.Env = idCreateCommandEnv(tmp)
+	runAccept.Dir = tmp
+	acceptOut, err := runAccept.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
+	}
+	if !strings.Contains(string(acceptOut), "--address is only valid for persistent invites") {
+		t.Fatalf("unexpected output:\n%s", string(acceptOut))
+	}
+	if _, err := os.Stat(awconfig.TeamCertificatePath(tmp, "default:local")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral cert should not be written, stat err=%v", err)
+	}
+}
+
+func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
+	t.Parallel()
+
+	var registerCalls int
+	var memberDIDKey string
+	var memberStableID string
+	otherDIDAW := "did:aw:other"
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/otherco.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-otherco-alice",
+				"domain":          "otherco.com",
+				"name":            "alice",
+				"did_aw":          otherDIDAW,
+				"current_did_key": memberDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-16T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			registerCalls++
+			t.Fatalf("certificate should not be registered when address ownership mismatches")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey = awid.ComputeDIDKey(memberPub)
+	memberStableID = awid.ComputeStableID(memberPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       memberDIDKey,
+		StableID:  memberStableID,
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-16T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID:    inviteID,
+		Domain:      "acme.com",
+		TeamName:    "backend",
+		Secret:      secret,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-04-16T00:00:00Z",
+	}
+	writeTeamInviteForTest(t, tmp, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
+		"--address", "otherco.com/alice")
+	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	runAccept.Dir = tmp
+	acceptOut, err := runAccept.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected accept-invite to fail:\n%s", string(acceptOut))
+	}
+	if !strings.Contains(string(acceptOut), `member address otherco.com/alice belongs to did:aw:other, not `+memberStableID) {
+		t.Fatalf("unexpected output:\n%s", string(acceptOut))
+	}
+	if registerCalls != 0 {
+		t.Fatalf("register calls=%d want 0", registerCalls)
+	}
+}
+
 func TestEphemeralAcceptInviteIgnoresPreseededIdentityStableFields(t *testing.T) {
 	t.Parallel()
 
