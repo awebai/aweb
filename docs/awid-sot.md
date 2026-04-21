@@ -391,6 +391,11 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, hosted deployment for
        managed). awid records the issuance but does not sign.
+       member_address is the address selected for this specific team
+       membership. A did:aw may have many awid addresses; the team
+       certificate chooses which one is used when acting as this team
+       member. If member_address is present, awid validates that it
+       resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
@@ -449,6 +454,13 @@ A certificate is a JSON document signed by the team controller's
 private key. It proves that a specific did:key is authorized as a
 member of a specific team. The agent carries it and presents it to
 any service.
+
+`member_address` is per team membership, not per identity. A persistent
+`did:aw` can hold multiple addresses at awid; each team certificate
+selects at most one address for that `(team_id, member)` relationship.
+Services use the address in the active team certificate as the sender's
+routable address for that team. They must not infer a canonical address
+by listing all addresses for a `did:aw`.
 
 ### Structure
 
@@ -555,9 +567,10 @@ Authorization model: the namespace controller of the team-owning namespace
 members. The home namespace of the external member (`partner.com`) does
 not need to authorize anything — the team controller is making a claim
 about who is in their team, not about who controls the external address.
-A verifying service that wants to additionally check that the external
-address actually belongs to the named identity can resolve the address
-against `partner.com`'s namespace at awid as a separate step.
+awid enforces that a non-empty `member_address` on a registered
+certificate resolves to the certificate's `member_did_aw`; services may
+also resolve the address when they need fresh reachability or current-key
+data.
 
 ---
 
@@ -654,7 +667,7 @@ CREATE TABLE team_certificates (
     certificate_id  TEXT NOT NULL,
     member_did_key  TEXT NOT NULL,
     member_did_aw   TEXT,
-    member_address  TEXT,
+    member_address  TEXT, -- address selected for this team membership
     alias           TEXT NOT NULL,
     lifetime        TEXT NOT NULL DEFAULT 'persistent'
                     CHECK (lifetime IN ('persistent', 'ephemeral')),
