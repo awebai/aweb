@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.log import identity_state_hash, log_entry_payload
+from awid.signing import sign_message
 
 from conftest import build_signed_headers as _sign
 
@@ -32,6 +35,60 @@ async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_na
     return team_signing_key, team_did_key, resp.json()
 
 
+async def _register_identity(client, signing_key, did_key):
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="register_did",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+    resp = await client.post(
+        "/v1/did",
+        json={
+            "did_aw": did_aw,
+            "new_did_key": did_key,
+            "operation": "register_did",
+            "previous_did_key": None,
+            "prev_entry_hash": None,
+            "seq": 1,
+            "state_hash": state_hash,
+            "authorized_by": did_key,
+            "timestamp": timestamp,
+            "proof": proof,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
+
+
+async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+    did_aw = await _register_identity(client, member_key, member_did_key)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": name,
+            "did_aw": did_aw,
+            "current_did_key": member_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/namespaces/{domain}/teams/{name}/certificates — register cert
 # ---------------------------------------------------------------------------
@@ -42,9 +99,11 @@ async def test_register_certificate(client, controller_identity):
     ns_key, ns_did = controller_identity
     team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "cert.com", "backend")
 
-    _, member_pub = generate_keypair()
+    member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
-    member_did_aw = stable_id_from_did_key(member_did_key)
+    member_did_aw = await _register_member_address(
+        client, ns_key, ns_did, "cert.com", "alice", member_key, member_did_key,
+    )
     cert_id = str(uuid4())
 
     headers = _sign(
@@ -68,6 +127,70 @@ async def test_register_certificate(client, controller_identity):
     body = resp.json()
     assert body["registered"] is True
     assert body["certificate_id"] == cert_id
+
+
+@pytest.mark.asyncio
+async def test_register_certificate_rejects_member_address_for_different_did_aw(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "mismatch.cert.com", "backend")
+
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    await _register_member_address(
+        client, ns_key, ns_did, "mismatch.cert.com", "alice", member_key, member_did_key,
+    )
+    other_did_aw = "did:aw:other"
+    cert_id = str(uuid4())
+
+    headers = _sign(
+        team_key, team_did,
+        domain="mismatch.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/mismatch.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "member_did_aw": other_did_aw,
+            "member_address": "mismatch.cert.com/alice",
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "member_address belongs to" in resp.json()["detail"]
+    assert other_did_aw in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_register_certificate_rejects_member_address_without_did_aw(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "missingdid.cert.com", "backend")
+
+    _, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    cert_id = str(uuid4())
+
+    headers = _sign(
+        team_key, team_did,
+        domain="missingdid.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/missingdid.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "member_address": "missingdid.cert.com/alice",
+            "alias": "alice",
+            "lifetime": "persistent",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "member_did_aw is required when member_address is set"
 
 
 @pytest.mark.asyncio

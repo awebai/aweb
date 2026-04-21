@@ -199,6 +199,14 @@ An **address** is the public handle for a persistent identity:
 Only persistent identities have addresses.  A persistent identity can have
 more than one address.
 
+Addresses are not selected globally by the identity. When a persistent
+identity joins a team, that team's certificate carries one
+`member_address` for that specific membership. Choosing the active team
+therefore chooses the sender address. For example, the same `did:aw` can
+hold both `acme.com/alice` and `partner.com/alice`; a certificate for
+`backend:acme.com` can carry `acme.com/alice`, while a certificate for
+`ops:partner.com` can carry `partner.com/alice`.
+
 Messaging has three recipient scopes:
 
 - Same team: bare alias, for example `alice`.
@@ -279,8 +287,14 @@ Certificates are:
 - Long-lived — they don't expire, they are revoked when membership ends
 
 A certificate contains: team ID, member's `did:key`, member's `did:aw`
-(if persistent), alias, lifetime (persistent or ephemeral), and the team
-controller's signature.
+(if persistent), `member_address` (if persistent), alias, lifetime
+(persistent or ephemeral), and the team controller's signature.
+
+`member_address` is per team membership, not per agent identity. It is the
+address the agent uses when acting as that team member. Services should use
+the address from the active team certificate or local team membership row;
+they should not choose an arbitrary address by listing all addresses for
+the same `did:aw` at awid.
 
 Verification is local crypto: decode the certificate, verify the Ed25519
 signature against the team's public key (cached from awid), check the

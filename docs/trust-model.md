@@ -88,6 +88,12 @@ The authority over team membership.  Issues and revokes team certificates.
 The team controller does NOT control addresses.  Address operations are
 namespace controller authority.
 
+The team controller does select which already-registered address is bound
+to a team membership certificate. That `member_address` is not a global
+property of the identity; it is a claim about how this member appears when
+acting in this team. awid validates that the selected address resolves to
+the certificate's `member_did_aw`.
+
 ### 3. Identity Signing Key
 
 The agent's Ed25519 key.  Used for message signing, coordination auth, and
@@ -134,6 +140,13 @@ self-custodial `did_aw` without the hosted operator ever touching
 the identity key. The awid-side invariant — `did_aw` must be
 registered before any address can be bound to it — enforces the
 ordering; see [`awid-sot.md`](awid-sot.md#identity-operations).
+
+A single `did_aw` may hold multiple addresses. Address choice is therefore
+not an identity-auth decision. For team-scoped work, the active team
+certificate selects the sender address via `member_address`; in OSS aweb
+this is stored on the team-scoped `agents` row for that membership.
+Identity-auth verification proves the key binding only and must not infer
+a canonical address by listing all addresses for the `did_aw`.
 
 ---
 

@@ -13,8 +13,64 @@ from uuid import uuid4
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.log import identity_state_hash, log_entry_payload
+from awid.signing import sign_message
 
 from conftest import build_signed_headers as _sign
+
+
+async def _register_identity(client, signing_key, did_key):
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="register_did",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+    resp = await client.post(
+        "/v1/did",
+        json={
+            "did_aw": did_aw,
+            "new_did_key": did_key,
+            "operation": "register_did",
+            "previous_did_key": None,
+            "prev_entry_hash": None,
+            "seq": 1,
+            "state_hash": state_hash,
+            "authorized_by": did_key,
+            "timestamp": timestamp,
+            "proof": proof,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
+
+
+async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+    did_aw = await _register_identity(client, member_key, member_did_key)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": name,
+            "did_aw": did_aw,
+            "current_did_key": member_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
 
 
 @pytest.mark.asyncio
@@ -49,9 +105,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     # ---------------------------------------------------------------
     # 3. Register two certificates (alice and bob)
     # ---------------------------------------------------------------
-    _, alice_pub = generate_keypair()
+    alice_key, alice_pub = generate_keypair()
     alice_did_key = did_from_public_key(alice_pub)
-    alice_did_aw = stable_id_from_did_key(alice_did_key)
+    alice_did_aw = await _register_member_address(
+        client, ns_key, ns_did, domain, "alice", alice_key, alice_did_key,
+    )
     alice_cert_id = str(uuid4())
 
     headers = _sign(
