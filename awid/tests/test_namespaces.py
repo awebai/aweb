@@ -272,8 +272,12 @@ async def _register_persistent_certificate_for_address(
     certificate_id,
     member_address,
 ):
-    _, member_pub = generate_keypair()
-    member_did_key = did_from_public_key(member_pub)
+    address_domain, address_name = member_address.split("/", 1)
+    address_resp = await client.get(f"/v1/namespaces/{address_domain}/addresses/{address_name}")
+    assert address_resp.status_code == 200, address_resp.text
+    address_body = address_resp.json()
+    member_did_key = address_body["current_did_key"]
+    member_did_aw = address_body["did_aw"]
     headers = _sign(
         team_key, team_did,
         domain=domain, operation="register_certificate",
@@ -284,7 +288,7 @@ async def _register_persistent_certificate_for_address(
         json={
             "certificate_id": certificate_id,
             "member_did_key": member_did_key,
-            "member_did_aw": stable_id_from_did_key(member_did_key),
+            "member_did_aw": member_did_aw,
             "member_address": member_address,
             "alias": "alice",
             "lifetime": "persistent",

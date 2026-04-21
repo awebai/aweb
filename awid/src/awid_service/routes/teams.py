@@ -85,6 +85,58 @@ async def _require_team_controller(
     return caller_did, row
 
 
+def _parse_member_address(member_address: str) -> tuple[str, str]:
+    parts = member_address.strip().split("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=422, detail="member_address must be domain/name")
+    domain = parts[0].strip().lower().rstrip(".")
+    name = parts[1].strip().lower()
+    if not domain or not name:
+        raise HTTPException(status_code=422, detail="member_address must be domain/name")
+    return domain, name
+
+
+async def _require_member_address_owned_by_did_aw(
+    db,
+    *,
+    member_address: str | None,
+    member_did_aw: str | None,
+) -> None:
+    member_address = (member_address or "").strip()
+    if not member_address:
+        return
+    member_did_aw = (member_did_aw or "").strip()
+    if not member_did_aw:
+        raise HTTPException(
+            status_code=422,
+            detail="member_did_aw is required when member_address is set",
+        )
+
+    address_domain, address_name = _parse_member_address(member_address)
+    row = await db.fetch_one(
+        """
+        SELECT pa.did_aw
+        FROM {{tables.public_addresses}} pa
+        JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id
+        WHERE ns.domain = $1
+          AND pa.name = $2
+          AND pa.deleted_at IS NULL
+          AND ns.deleted_at IS NULL
+        LIMIT 1
+        """,
+        address_domain,
+        address_name,
+    )
+    if row is None:
+        raise HTTPException(status_code=422, detail="member_address is not registered")
+    resolved_did_aw = str(row["did_aw"] or "").strip()
+    if resolved_did_aw != member_did_aw:
+        raise HTTPException(
+            status_code=422,
+            detail=f"member_address belongs to {resolved_did_aw}, not {member_did_aw}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Request/response models
 # ---------------------------------------------------------------------------
@@ -506,6 +558,11 @@ async def register_certificate(
     _, team_row = await _require_team_controller(
         request, db, domain=domain, name=name,
         operation="register_certificate", certificate_id=body.certificate_id,
+    )
+    await _require_member_address_owned_by_did_aw(
+        db,
+        member_address=body.member_address,
+        member_did_aw=body.member_did_aw,
     )
 
     try:

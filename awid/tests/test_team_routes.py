@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
-from awid.did import did_from_public_key, generate_keypair
+from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
@@ -18,6 +21,60 @@ async def _register_namespace(client, signing_key, controller_did, domain):
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _register_identity(client, signing_key, did_key):
+    did_aw = stable_id_from_did_key(did_key)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
+    proof = sign_message(
+        signing_key,
+        log_entry_payload(
+            did_aw=did_aw,
+            seq=1,
+            operation="register_did",
+            previous_did_key=None,
+            new_did_key=did_key,
+            prev_entry_hash=None,
+            state_hash=state_hash,
+            authorized_by=did_key,
+            timestamp=timestamp,
+        ),
+    )
+    resp = await client.post(
+        "/v1/did",
+        json={
+            "did_aw": did_aw,
+            "new_did_key": did_key,
+            "operation": "register_did",
+            "previous_did_key": None,
+            "prev_entry_hash": None,
+            "seq": 1,
+            "state_hash": state_hash,
+            "authorized_by": did_key,
+            "timestamp": timestamp,
+            "proof": proof,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
+
+
+async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+    did_aw = await _register_identity(client, member_key, member_did_key)
+    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    resp = await client.post(
+        f"/v1/namespaces/{domain}/addresses",
+        json={
+            "name": name,
+            "did_aw": did_aw,
+            "current_did_key": member_did_key,
+            "reachability": "public",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return did_aw
 
 
 def _bad_signature_headers(signing_key, header_did, *, domain, operation, **extra):
@@ -207,7 +264,11 @@ async def test_get_team_member_by_alias(client, controller_identity):
     )
     assert resp.status_code == 200, resp.text
 
-    _, member_pub = generate_keypair()
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    member_did_aw = await _register_member_address(
+        client, signing_key, controller_did, "members.com", "alice", member_key, member_did_key,
+    )
     headers = _sign(
         team_key,
         team_did_key,
@@ -220,8 +281,8 @@ async def test_get_team_member_by_alias(client, controller_identity):
         "/v1/namespaces/members.com/teams/backend/certificates",
         json={
             "certificate_id": "cert-1",
-            "member_did_key": did_from_public_key(member_pub),
-            "member_did_aw": "did:aw:member1",
+            "member_did_key": member_did_key,
+            "member_did_aw": member_did_aw,
             "member_address": "members.com/alice",
             "alias": "alice",
             "lifetime": "persistent",
@@ -235,7 +296,7 @@ async def test_get_team_member_by_alias(client, controller_identity):
     body = resp.json()
     assert body["team_id"] == "backend:members.com"
     assert body["certificate_id"] == "cert-1"
-    assert body["member_did_aw"] == "did:aw:member1"
+    assert body["member_did_aw"] == member_did_aw
     assert body["member_address"] == "members.com/alice"
     assert body["alias"] == "alice"
 

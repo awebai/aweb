@@ -394,9 +394,8 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        member_address is the address selected for this specific team
        membership. A did:aw may have many awid addresses; the team
        certificate chooses which one is used when acting as this team
-       member. The certificate issuer is responsible for validating
-       member_address ownership before registration; awid records the
-       signed certificate fields.
+       member. If member_address is present, awid validates that it
+       resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
