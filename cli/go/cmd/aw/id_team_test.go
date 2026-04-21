@@ -236,8 +236,20 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
+	var memberDIDKey string
+	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-alice",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          memberStableID,
+				"current_did_key": memberDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-06T00:00:00Z",
+			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
@@ -267,10 +279,11 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberDIDKey := awid.ComputeDIDKey(memberPub)
+	memberDIDKey = awid.ComputeDIDKey(memberPub)
+	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:       memberDIDKey,
-		StableID:  awid.ComputeStableID(memberPub),
+		StableID:  memberStableID,
 		Address:   "acme.com/alice",
 		Custody:   awid.CustodySelf,
 		Lifetime:  awid.LifetimePersistent,
@@ -365,6 +378,114 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	teamPub := teamKey.Public().(ed25519.PublicKey)
 	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
 		t.Fatalf("verify certificate: %v", err)
+	}
+}
+
+func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
+	t.Parallel()
+
+	var registeredCert map[string]any
+	var memberDIDKey string
+	var memberStableID string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/otherco.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-otherco-alice",
+				"domain":          "otherco.com",
+				"name":            "alice",
+				"did_aw":          memberStableID,
+				"current_did_key": memberDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-16T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey = awid.ComputeDIDKey(memberPub)
+	memberStableID = awid.ComputeStableID(memberPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:       memberDIDKey,
+		StableID:  memberStableID,
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-16T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	inviteID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := awconfig.GenerateInviteSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID:    inviteID,
+		Domain:      "acme.com",
+		TeamName:    "backend",
+		Secret:      secret,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-04-16T00:00:00Z",
+	}
+	writeTeamInviteForTest(t, tmp, invite)
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token,
+		"--address", "otherco.com/alice",
+		"--json")
+	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	runAccept.Dir = tmp
+	acceptOut, err := runAccept.CombinedOutput()
+	if err != nil {
+		t.Fatalf("accept-invite failed: %v\n%s", err, string(acceptOut))
+	}
+
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
+	if err != nil {
+		t.Fatalf("load certificate: %v", err)
+	}
+	if cert.MemberAddress != "otherco.com/alice" {
+		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+	if registeredCert["member_address"] != "otherco.com/alice" {
+		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
+	}
+	if registeredCert["member_did_aw"] != memberStableID {
+		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
 	}
 }
 
@@ -781,8 +902,20 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 	t.Parallel()
 
 	var registeredCert map[string]any
+	var memberDID string
+	memberDIDAW := "did:aw:alice"
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-alice",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          memberDIDAW,
+				"current_did_key": memberDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-06T00:00:00Z",
+			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
@@ -810,7 +943,7 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberDID := awid.ComputeDIDKey(memberPub)
+	memberDID = awid.ComputeDIDKey(memberPub)
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
 		"--team", "backend",
@@ -818,7 +951,7 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 		"--did", memberDID,
 		"--alias", "alice",
 		"--lifetime", awid.LifetimePersistent,
-		"--did-aw", "did:aw:alice",
+		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
 		"--json")
 	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -841,7 +974,7 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 	if registeredCert["member_did_key"] != memberDID {
 		t.Fatalf("registry cert member_did_key=%v", registeredCert["member_did_key"])
 	}
-	if registeredCert["member_did_aw"] != "did:aw:alice" {
+	if registeredCert["member_did_aw"] != memberDIDAW {
 		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
 	}
 	if registeredCert["member_address"] != "acme.com/alice" {
@@ -849,6 +982,72 @@ func TestTeamAddMemberByDIDIssuesPersistentCertificateWhenStableFieldsProvided(t
 	}
 	if registeredCert["lifetime"] != awid.LifetimePersistent {
 		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
+	}
+}
+
+func TestTeamAddMemberByDIDRejectsAddressForDifferentDID(t *testing.T) {
+	t.Parallel()
+
+	var registerCalls int
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	otherDIDAW := "did:aw:other"
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-alice",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          otherDIDAW,
+				"current_did_key": memberDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-06T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			registerCalls++
+			t.Fatalf("certificate should not be registered when address ownership mismatches")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "add-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--did", memberDID,
+		"--alias", "alice",
+		"--lifetime", awid.LifetimePersistent,
+		"--did-aw", "did:aw:alice",
+		"--address", "acme.com/alice")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected add-member to fail:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `member address acme.com/alice belongs to did:aw:other, not did:aw:alice`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if registerCalls != 0 {
+		t.Fatalf("register calls=%d want 0", registerCalls)
 	}
 }
 
@@ -1045,8 +1244,20 @@ func TestTeamListMigratesMembershipsFromWorkspaceYAML(t *testing.T) {
 
 func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	var registeredCert map[string]any
+	var memberDIDKey string
+	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-alice",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          memberStableID,
+				"current_did_key": memberDIDKey,
+				"reachability":    "public",
+				"created_at":      "2026-04-09T00:00:00Z",
+			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
@@ -1069,8 +1280,8 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberDIDKey := awid.ComputeDIDKey(memberPub)
-	memberStableID := awid.ComputeStableID(memberPub)
+	memberDIDKey = awid.ComputeDIDKey(memberPub)
+	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:         memberDIDKey,
 		StableID:    memberStableID,

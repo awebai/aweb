@@ -129,8 +129,10 @@ var (
 	teamInviteNamespace string
 	teamInviteEphemeral bool
 
-	teamAcceptAlias string
-	teamAddAlias    string
+	teamAcceptAlias   string
+	teamAcceptAddress string
+	teamAddAlias      string
+	teamAddAddress    string
 
 	teamAddTeam           string
 	teamAddNamespace      string
@@ -236,9 +238,11 @@ func init() {
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
+	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Registered address to place in the persistent member certificate")
 	teamCmd.AddCommand(teamAcceptInviteCmd)
 
 	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Alias for the added team membership (defaults to the current identity name)")
+	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the persistent member certificate")
 	teamCmd.AddCommand(teamAddCmd)
 	teamCmd.AddCommand(teamSwitchCmd)
 	teamCmd.AddCommand(teamListCmd)
@@ -251,7 +255,7 @@ func init() {
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAlias, "alias", "", "Alias to use with --did")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberLifetime, "lifetime", awid.LifetimeEphemeral, "Certificate lifetime for --did (ephemeral or persistent)")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Optional member address when using --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Persistent member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
 
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveTeam, "team", "", "Team name")
@@ -358,7 +362,7 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAcceptAlias)
+	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAcceptAlias, teamAcceptAddress)
 	if err != nil {
 		return err
 	}
@@ -382,7 +386,7 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 		teamState = &awconfig.TeamState{}
 	}
 
-	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAddAlias)
+	accepted, err := acceptTeamInviteWithDetails(workingDir, args[0], teamAddAlias, teamAddAddress)
 	if err != nil {
 		return err
 	}
@@ -541,7 +545,7 @@ func createTeamInviteToken(domain, team, registryURL string, ephemeral bool) (st
 	return inviteID, token, nil
 }
 
-func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*acceptedTeamInvite, error) {
+func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
 		return nil, err
@@ -577,12 +581,37 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 
 	lifetime := awid.LifetimePersistent
 	if invite.Ephemeral {
+		if strings.TrimSpace(addressOverride) != "" {
+			return nil, usageError("--address is only valid for persistent invites")
+		}
 		lifetime = awid.LifetimeEphemeral
 	}
 
 	var memberDIDAW, memberAddress string
 	if !invite.Ephemeral {
 		memberDIDAW, memberAddress = resolveIdentityFieldsForCert(workingDir)
+		if strings.TrimSpace(addressOverride) != "" {
+			memberAddress = strings.TrimSpace(addressOverride)
+		}
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return nil, err
+	}
+	registryURL := strings.TrimSpace(decoded.RegistryURL)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMemberAddressForCertificate(ctx, registry, registryURL, memberAddress, memberDIDAW, memberDIDKey, lookupSigningKey); err != nil {
+		return nil, err
 	}
 
 	// Sign certificate
@@ -597,17 +626,6 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint string) (*accepted
 	if err != nil {
 		return nil, err
 	}
-
-	registry, err := newConfiguredRegistryClient(nil, "")
-	if err != nil {
-		return nil, err
-	}
-	registryURL := strings.TrimSpace(decoded.RegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
@@ -703,6 +721,14 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
 			return usageError("invalid --lifetime %q (use %q or %q)", lifetime, awid.LifetimeEphemeral, awid.LifetimePersistent)
 		}
+		if memberAddress != "" {
+			if lifetime != awid.LifetimePersistent {
+				return usageError("--address requires --lifetime %s when using --did", awid.LifetimePersistent)
+			}
+			if memberDIDAW == "" {
+				return usageError("--did-aw is required when --address is set")
+			}
+		}
 	}
 
 	teamID := awid.BuildTeamID(domain, team)
@@ -752,6 +778,20 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		memberAlias = memberName
 		// --lifetime only applies to the direct --did path; address-backed members are always persistent.
 		lifetime = awid.LifetimePersistent
+	}
+
+	if member == "" && memberDID != "" && memberAddress != "" {
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
+		if err != nil {
+			return err
+		}
+		if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), memberAddress, memberDIDAW, memberDID, lookupSigningKey); err != nil {
+			return err
+		}
 	}
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
@@ -1149,6 +1189,58 @@ func bootstrapLocalTeamMemberWithLifetime(
 		TeamKeyPath: registration.TeamKeyPath,
 		Certificate: cert,
 	}, nil
+}
+
+func validateMemberAddressForCertificate(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, memberAddress, memberDIDAW, memberDIDKey string,
+	signingKey ed25519.PrivateKey,
+) error {
+	memberAddress = strings.TrimSpace(memberAddress)
+	if memberAddress == "" {
+		return nil
+	}
+	memberDIDAW = strings.TrimSpace(memberDIDAW)
+	memberDIDKey = strings.TrimSpace(memberDIDKey)
+	if memberDIDAW == "" {
+		return usageError("member address %q requires member_did_aw", memberAddress)
+	}
+	if memberDIDKey == "" {
+		return usageError("member address %q requires member_did_key", memberAddress)
+	}
+	if registry == nil {
+		return fmt.Errorf("registry client is required")
+	}
+	registryURL = strings.TrimSpace(registryURL)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+	domain, name, err := parseAddress(memberAddress)
+	if err != nil {
+		return err
+	}
+	var address *awid.RegistryAddress
+	if signingKey != nil {
+		address, _, err = registry.GetNamespaceAddressAtSigned(ctx, registryURL, domain, name, signingKey)
+	} else {
+		address, _, err = registry.GetNamespaceAddressAt(ctx, registryURL, domain, name)
+	}
+	if err != nil {
+		return fmt.Errorf("validate member address %s: %w", memberAddress, err)
+	}
+	resolvedDIDAW := strings.TrimSpace(address.DIDAW)
+	if resolvedDIDAW != memberDIDAW {
+		return fmt.Errorf("member address %s belongs to %s, not %s", memberAddress, resolvedDIDAW, memberDIDAW)
+	}
+	resolvedDIDKey := strings.TrimSpace(address.CurrentDIDKey)
+	if resolvedDIDKey == "" {
+		return fmt.Errorf("member address %s registry record is missing current_did_key", memberAddress)
+	}
+	if resolvedDIDKey != memberDIDKey {
+		return fmt.Errorf("member address %s resolves to did:key %s, not %s", memberAddress, resolvedDIDKey, memberDIDKey)
+	}
+	return nil
 }
 
 func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
