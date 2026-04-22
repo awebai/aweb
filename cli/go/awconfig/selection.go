@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awid"
@@ -156,11 +157,17 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 			domain = teamDomain
 			alias = strings.TrimSpace(selectedMembership.Alias)
 			workspaceID = strings.TrimSpace(selectedMembership.WorkspaceID)
+			certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+			if cert, err := awid.LoadTeamCertificate(certPath); err == nil {
+				if v := strings.TrimSpace(cert.MemberAddress); v != "" {
+					address = v
+				}
+			}
 		}
 		awebURL = strings.TrimSpace(ws.AwebURL)
 	}
 	if identity != nil {
-		if v := strings.TrimSpace(identity.Address); v != "" {
+		if v := strings.TrimSpace(identity.Address); v != "" && address == "" {
 			address = v
 		}
 		if v := strings.TrimSpace(identity.DID); v != "" {

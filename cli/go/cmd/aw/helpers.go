@@ -286,6 +286,7 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 		configuredSel.StableID = ""
 		configuredSel.Domain = ""
 		configuredSel.Alias = ""
+		sel = &configuredSel
 	}
 	if err := configureResolvedClient(c, &configuredSel, baseURL); err != nil {
 		return nil, nil, err

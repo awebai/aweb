@@ -8,7 +8,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
+func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -48,6 +48,103 @@ func TestResolvePrefersIdentityAddressForPersistentBYOD(t *testing.T) {
 	}
 	if sel.Domain != "myteam.aweb.ai" {
 		t.Fatalf("domain=%q", sel.Domain)
+	}
+}
+
+func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	if _, err := SaveTeamCertificateForTeam(tmp, teamID, &awid.TeamCertificate{
+		Version:       1,
+		CertificateID: "cert-amy",
+		Team:          teamID,
+		TeamDIDKey:    "did:key:z6MkTeam",
+		MemberDIDKey:  "did:key:z6MkAmy",
+		MemberDIDAW:   "did:aw:amy",
+		MemberAddress: "aweb.ai/amy",
+		Alias:         "amy",
+		Lifetime:      awid.LifetimePersistent,
+		IssuedAt:      "2026-04-21T00:00:00Z",
+		Signature:     "sig",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: teamID,
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "amy",
+			WorkspaceID: "agent-amy",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
+		DID:       "did:key:z6MkAmy",
+		StableID:  "did:aw:amy",
+		Address:   "juan.aweb.ai/amy",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-21T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Address != "aweb.ai/amy" {
+		t.Fatalf("address=%q want %q", sel.Address, "aweb.ai/amy")
+	}
+	if sel.Domain != "aweb.ai" {
+		t.Fatalf("domain=%q", sel.Domain)
+	}
+}
+
+func TestResolveLeavesAddressEmptyWhenIdentityAndActiveCertAddressMissing(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:acme.com"
+	if _, err := SaveTeamCertificateForTeam(tmp, teamID, &awid.TeamCertificate{
+		Version:       1,
+		CertificateID: "cert-empty",
+		Team:          teamID,
+		TeamDIDKey:    "did:key:z6MkTeam",
+		MemberDIDKey:  "did:key:z6MkAlice",
+		Alias:         "alice",
+		Lifetime:      awid.LifetimePersistent,
+		IssuedAt:      "2026-04-21T00:00:00Z",
+		Signature:     "sig",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
+		AwebURL:    "https://app.aweb.ai",
+		ActiveTeam: teamID,
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "alice",
+			WorkspaceID: "agent-alice",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Address != "" {
+		t.Fatalf("address=%q want empty", sel.Address)
 	}
 }
 

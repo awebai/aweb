@@ -153,6 +153,66 @@ func TestAwWhoAmIIsCanonicalCommandName(t *testing.T) {
 	}
 }
 
+func TestAwWhoamiJSONUsesActiveCertMemberAddress(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "backend:aweb.ai",
+		Alias:       "amy",
+		WorkspaceID: "workspace-amy",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "aweb.ai/amy",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  key,
+		CreatedAt:   "2026-04-21T00:00:00Z",
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   "juan.aweb.ai/amy",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-21T00:00:00Z",
+	})
+
+	run := exec.CommandContext(ctx, bin, "whoami", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("whoami failed: %v\n%s", err, string(out))
+	}
+	var got struct {
+		Address string `json:"address"`
+		Domain  string `json:"domain"`
+	}
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("parse whoami json: %v\n%s", err, string(out))
+	}
+	if got.Address != "aweb.ai/amy" || got.Domain != "aweb.ai" {
+		t.Fatalf("whoami address/domain=%q/%q want aweb.ai/amy/aweb.ai", got.Address, got.Domain)
+	}
+}
+
 func TestAwInitRejectsProjectOverrideFlag(t *testing.T) {
 	t.Parallel()
 
