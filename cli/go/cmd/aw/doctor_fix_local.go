@@ -214,7 +214,7 @@ func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 	if reason != "" {
 		return refusedLocalFixPlan(plan, localFixReasonAmbiguousState, reason, "Repair workspace memberships manually or reinitialize the workspace binding."), nil
 	}
-	if workspace.Membership(workspace.ActiveTeam) != nil && strings.EqualFold(strings.TrimSpace(workspace.ActiveTeam), teamID) {
+	if teamState, err := awconfig.LoadTeamState(ctx.WorkingDir); err == nil && teamState.Membership(teamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), teamID) {
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
@@ -254,7 +254,7 @@ func (h localActiveTeamFixHandler) Apply(_ context.Context, ctx doctorFixContext
 	if err != nil {
 		return refusedLocalFixPlan(plan, "precondition", "workspace_yaml_unreadable", "Workspace binding could not be loaded for active_team repair."), nil
 	}
-	if wantTeamID != "" && workspace.Membership(workspace.ActiveTeam) != nil && strings.EqualFold(strings.TrimSpace(workspace.ActiveTeam), wantTeamID) {
+	if teamState, err := awconfig.LoadTeamState(ctx.WorkingDir); err == nil && wantTeamID != "" && teamState.Membership(wantTeamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), wantTeamID) {
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
@@ -266,12 +266,28 @@ func (h localActiveTeamFixHandler) Apply(_ context.Context, ctx doctorFixContext
 	if reason != "" || (wantTeamID != "" && !strings.EqualFold(teamID, wantTeamID)) {
 		return refusedLocalFixPlan(plan, localFixReasonStateChanged, "workspace_membership_changed", "Workspace memberships changed after planning; rerun doctor before applying fixes."), nil
 	}
-	workspace.ActiveTeam = teamID
-	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+	teamState := teamStateRepairFromWorkspaceMemberships(workspace, teamID)
+	if err := awconfig.SaveTeamState(ctx.WorkingDir, teamState); err != nil {
 		return doctorFixPlan{}, err
 	}
 	plan.Status = doctorFixStatusApplied
 	return plan, nil
+}
+
+func teamStateRepairFromWorkspaceMemberships(workspace *awconfig.WorktreeWorkspace, activeTeam string) *awconfig.TeamState {
+	if workspace == nil {
+		return nil
+	}
+	state := &awconfig.TeamState{ActiveTeam: strings.TrimSpace(activeTeam)}
+	for _, membership := range workspace.Memberships {
+		state.Memberships = append(state.Memberships, awconfig.TeamMembership{
+			TeamID:   strings.TrimSpace(membership.TeamID),
+			Alias:    strings.TrimSpace(membership.Alias),
+			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
+			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+		})
+	}
+	return state
 }
 
 func localSelectableActiveTeam(workspace *awconfig.WorktreeWorkspace) (string, string) {

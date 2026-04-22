@@ -853,9 +853,10 @@ func TestAwDoctorLocalChecksWorkspaceSemanticFailures(t *testing.T) {
 
 	bin, buildTmp := buildDoctorBinary(t)
 	tests := []struct {
-		name   string
-		body   string
-		checks map[string]doctorStatus
+		name     string
+		body     string
+		teamBody string
+		checks   map[string]doctorStatus
 	}{
 		{
 			name: "missing active team",
@@ -884,6 +885,12 @@ memberships:
     workspace_id: ws-1
     cert_path: team-certs/backend__example.com.pem
 `,
+			teamBody: `active_team: backend:missing.example.com
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    cert_path: team-certs/backend__example.com.pem
+`,
 			checks: map[string]doctorStatus{
 				doctorCheckWorkspaceParse:      doctorStatusOK,
 				doctorCheckWorkspaceActiveTeam: doctorStatusOK,
@@ -898,6 +905,12 @@ active_team: backend:example.com
 memberships:
   - team_id: backend:example.com
     alias: mia
+`,
+			teamBody: `active_team: backend:example.com
+memberships:
+  - team_id: backend:example.com
+    alias: mia
+    cert_path: team-certs/backend__example.com.pem
 `,
 			checks: map[string]doctorStatus{
 				doctorCheckWorkspaceParse:       doctorStatusOK,
@@ -917,6 +930,11 @@ memberships:
 				t.Fatalf("mkdir case dir: %v", err)
 			}
 			writeDoctorWorkspaceYAML(t, tmp, tc.body)
+			if strings.TrimSpace(tc.teamBody) != "" {
+				if err := os.WriteFile(awconfig.TeamStatePath(tmp), []byte(strings.TrimSpace(tc.teamBody)+"\n"), 0o600); err != nil {
+					t.Fatalf("write teams.yaml: %v", err)
+				}
+			}
 			out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
 			if err != nil {
 				t.Fatalf("doctor should report workspace semantic issue as checks: %v\n%s", err, string(out))

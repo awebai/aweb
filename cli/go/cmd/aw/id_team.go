@@ -999,7 +999,6 @@ func applyTeamStateToWorkspaceCache(workspace *awconfig.WorktreeWorkspace, teamS
 	if workspace == nil {
 		return
 	}
-	workspace.ActiveTeam = strings.TrimSpace(teamState.ActiveTeam)
 	if teamState == nil || len(teamState.Memberships) == 0 {
 		workspace.Memberships = nil
 		return

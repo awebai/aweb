@@ -73,9 +73,9 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		}
 	}
 
-	workspace, workspacePath, err := LoadWorktreeWorkspaceFromDir(workingDir)
+	workspace, teamState, rootDir, err := LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if workspace == nil && errors.Is(err, os.ErrNotExist) {
 			// No workspace — check for a standalone identity (created by aw id create).
 			if identity, _, identityErr := LoadWorktreeIdentityFromDir(workingDir); identityErr == nil {
 				return finalizeStandaloneIdentitySelection(workingDir, identity), nil
@@ -97,7 +97,7 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		baseURL = overrideBaseURL
 	}
 	selectedTeamID := strings.TrimSpace(opts.TeamIDOverride)
-	activeMembership := workspace.ActiveMembership()
+	activeMembership := ActiveMembershipFor(workspace, teamState)
 	selectedMembership := activeMembership
 	if selectedTeamID != "" {
 		selectedMembership = workspace.Membership(selectedTeamID)
@@ -113,8 +113,8 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		return nil, errors.New("worktree workspace binding is missing aweb_url")
 	}
 	if teamID == "" {
-		if strings.TrimSpace(workspace.ActiveTeam) != "" {
-			return nil, fmt.Errorf("active team %q is not in memberships; run aw id team switch <valid-team>", workspace.ActiveTeam)
+		if strings.TrimSpace(teamState.ActiveTeam) != "" {
+			return nil, fmt.Errorf("active team %q is not in memberships; run aw id team switch <valid-team>", teamState.ActiveTeam)
 		}
 		return nil, errors.New("worktree workspace binding is missing active_team membership")
 	}
@@ -130,10 +130,11 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		}
 		serverName = derived
 	}
-	return finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL, workspace, identity, teamID), nil
+	workspacePath := filepath.Join(rootDir, DefaultWorktreeWorkspaceRelativePath())
+	return finalizeWorkspaceSelection(rootDir, workspacePath, serverName, baseURL, workspace, teamState, identity, teamID), nil
 }
 
-func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, identity *WorktreeIdentity, selectedTeamID string) *Selection {
+func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, ts *TeamState, identity *WorktreeIdentity, selectedTeamID string) *Selection {
 	domain := ""
 	alias := ""
 	workspaceID := ""
@@ -149,7 +150,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 	if ws != nil {
 		selectedMembership := ws.Membership(selectedTeamID)
 		if selectedMembership == nil {
-			selectedMembership = ws.ActiveMembership()
+			selectedMembership = ActiveMembershipFor(ws, ts)
 		}
 		if selectedMembership != nil {
 			teamID = strings.TrimSpace(selectedMembership.TeamID)

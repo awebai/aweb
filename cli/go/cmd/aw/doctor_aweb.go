@@ -158,7 +158,9 @@ func collectDoctorAwebState(workingDir string) *doctorAwebState {
 	} else {
 		state.workspace = workspace
 		state.workspacePath = workspacePath
-		state.membership = workspace.ActiveMembership()
+		if teamState, err := awconfig.LoadTeamState(workingDir); err == nil {
+			state.membership = awconfig.ActiveMembershipFor(workspace, teamState)
+		}
 		if safe, err := sanitizeLocalURLForOutput(workspace.AwebURL); err != nil {
 			state.urlErr = err
 		} else {

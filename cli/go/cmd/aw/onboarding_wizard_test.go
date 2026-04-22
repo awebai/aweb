@@ -588,8 +588,12 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, workspace)
-	if workspace.ActiveTeam != "default:jack.aweb.ai" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("LoadTeamState: %v", err)
+	}
+	if teamState.ActiveTeam != "default:jack.aweb.ai" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
@@ -989,8 +993,12 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, workspace)
-	if workspace.ActiveTeam != "default:acme.com" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("LoadTeamState: %v", err)
+	}
+	if teamState.ActiveTeam != "default:acme.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if workspace.AwebURL != connectServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)

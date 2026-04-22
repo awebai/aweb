@@ -157,7 +157,11 @@ func (s *doctorIdentityState) loadIdentityExpectationFromCertificate() {
 	if err != nil {
 		return
 	}
-	membership := workspace.ActiveMembership()
+	teamState, err := awconfig.LoadTeamState(s.workingDir)
+	if err != nil {
+		return
+	}
+	membership := awconfig.ActiveMembershipFor(workspace, teamState)
 	if membership == nil {
 		return
 	}

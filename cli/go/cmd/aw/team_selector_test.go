@@ -99,8 +99,7 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	}
 
 	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:    server.URL,
-		ActiveTeam: "backend:acme.com",
+		AwebURL: server.URL,
 		Memberships: []awconfig.WorktreeMembership{
 			{
 				TeamID:      "backend:acme.com",

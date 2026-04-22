@@ -654,8 +654,12 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		t.Fatalf("LoadWorktreeWorkspaceFrom: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, workspace)
-	if workspace.ActiveTeam != "default:local" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("LoadTeamState: %v", err)
+	}
+	if teamState.ActiveTeam != "default:local" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)

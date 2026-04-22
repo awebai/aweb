@@ -103,12 +103,12 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 	}
 	got = decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, "doctor.fix.applied", doctorStatusOK)
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	teamState, err := awconfig.LoadTeamState(tmp)
 	if err != nil {
-		t.Fatalf("load workspace after apply: %v", err)
+		t.Fatalf("load team state after apply: %v", err)
 	}
-	if workspace.ActiveTeam != "backend:example.com" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	if teamState.ActiveTeam != "backend:example.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 
 	handler, ok := doctorFixHandlers[doctorCheckWorkspaceActiveTeam]

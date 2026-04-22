@@ -175,8 +175,12 @@ func TestConnectBootstrapPersistent(t *testing.T) {
 		t.Fatalf("workspace.yaml missing: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, workspace)
-	if workspace.ActiveTeam != "default:juanre.aweb.ai" {
-		t.Fatalf("active_team=%q", workspace.ActiveTeam)
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+	if teamState.ActiveTeam != "default:juanre.aweb.ai" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if activeMembership.TeamID != "default:juanre.aweb.ai" {
 		t.Fatalf("team_id=%q", activeMembership.TeamID)

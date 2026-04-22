@@ -22,7 +22,8 @@ func testCommandEnv(home string) []string {
 
 func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfig.WorktreeWorkspace) string {
 	t.Helper()
-	activeMembership := state.ActiveMembership()
+	teamState := teamStateForWorkspaceBindingForTest(state)
+	activeMembership := awconfig.ActiveMembershipFor(&state, teamState)
 	if strings.TrimSpace(state.AwebURL) != "" && activeMembership != nil {
 		certPath := awconfig.TeamCertificatePath(workingDir, activeMembership.TeamID)
 		signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
@@ -45,7 +46,32 @@ func writeWorkspaceBindingForTest(t *testing.T, workingDir string, state awconfi
 	if err := awconfig.SaveWorktreeWorkspaceTo(path, &state); err != nil {
 		t.Fatalf("write workspace binding: %v", err)
 	}
+	if teamState != nil && len(teamState.Memberships) > 0 {
+		if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
+			t.Fatalf("write team state: %v", err)
+		}
+	}
 	return path
+}
+
+func teamStateForWorkspaceBindingForTest(state awconfig.WorktreeWorkspace) *awconfig.TeamState {
+	teamState := &awconfig.TeamState{}
+	for _, membership := range state.Memberships {
+		teamID := strings.TrimSpace(membership.TeamID)
+		if teamID == "" {
+			continue
+		}
+		if strings.TrimSpace(teamState.ActiveTeam) == "" {
+			teamState.ActiveTeam = teamID
+		}
+		teamState.Memberships = append(teamState.Memberships, awconfig.TeamMembership{
+			TeamID:   teamID,
+			Alias:    strings.TrimSpace(membership.Alias),
+			CertPath: strings.TrimSpace(membership.CertPath),
+			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+		})
+	}
+	return teamState
 }
 
 func writeTeamStateForTest(t *testing.T, workingDir string, state awconfig.TeamState) string {
@@ -95,8 +121,7 @@ func writeDefaultWorkspaceBindingForTest(t *testing.T, workingDir, serverURL str
 func workspaceBinding(serverURL, teamID, alias, workspaceID string) awconfig.WorktreeWorkspace {
 	teamID = resolvedTeamIDForTest(teamID)
 	return awconfig.WorktreeWorkspace{
-		AwebURL:    strings.TrimSpace(serverURL),
-		ActiveTeam: teamID,
+		AwebURL: strings.TrimSpace(serverURL),
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      teamID,
 			Alias:       strings.TrimSpace(alias),
@@ -125,7 +150,7 @@ func activeMembershipForTest(t *testing.T, state *awconfig.WorktreeWorkspace) *a
 	if state == nil {
 		t.Fatal("workspace state is nil")
 	}
-	activeMembership := state.ActiveMembership()
+	activeMembership := awconfig.ActiveMembershipFor(state, teamStateForWorkspaceBindingForTest(*state))
 	if activeMembership == nil {
 		t.Fatal("workspace missing active membership")
 	}
@@ -149,8 +174,7 @@ type testSelectionFixture struct {
 func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testSelectionFixture) {
 	t.Helper()
 	workspace := awconfig.WorktreeWorkspace{
-		AwebURL:    fixture.AwebURL,
-		ActiveTeam: resolvedTeamIDForTest(fixture.TeamID),
+		AwebURL: fixture.AwebURL,
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      resolvedTeamIDForTest(fixture.TeamID),
 			Alias:       fixture.Alias,
@@ -189,7 +213,7 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, workspace awconfig.WorktreeWorkspace, fixture *testSelectionFixture) {
 	t.Helper()
 
-	activeMembership := workspace.ActiveMembership()
+	activeMembership := awconfig.ActiveMembershipFor(&workspace, teamStateForWorkspaceBindingForTest(workspace))
 	if activeMembership == nil {
 		t.Fatal("workspace missing active membership")
 	}

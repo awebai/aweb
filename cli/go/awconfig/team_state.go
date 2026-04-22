@@ -114,6 +114,15 @@ func (s *TeamState) ActiveMembership() *TeamMembership {
 	return s.Membership(s.ActiveTeam)
 }
 
+// ActiveMembershipFor returns the workspace membership whose TeamID matches
+// the active team recorded in ts.
+func ActiveMembershipFor(ws *WorktreeWorkspace, ts *TeamState) *WorktreeMembership {
+	if ws == nil || ts == nil {
+		return nil
+	}
+	return ws.Membership(strings.TrimSpace(ts.ActiveTeam))
+}
+
 func (s *TeamState) AvailableTeamIDs() []string {
 	if s == nil || len(s.Memberships) == 0 {
 		return nil
@@ -241,24 +250,32 @@ func LoadTeamState(workingDir string) (*TeamState, error) {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
-		state, migrateErr := migrateTeamStateFromWorkspace(workingDir)
-		if migrateErr != nil {
-			if os.IsNotExist(migrateErr) {
-				return nil, &os.PathError{
-					Op:   "load teams state",
-					Path: fmt.Sprintf("%s (neither teams.yaml nor workspace.yaml exists)", filepath.Join(filepath.Clean(workingDir), ".aw")),
-					Err:  os.ErrNotExist,
-				}
-			}
-			return nil, migrateErr
-		}
-		return state, nil
+		return migrateTeamStateFromWorkspace(workingDir)
 	}
 	var state TeamState
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
 	return &state, nil
+}
+
+// LoadWorkspaceAndTeamState loads workspace.yaml and teams.yaml from the same
+// worktree root. teams.yaml is authoritative for active-team selection after
+// LoadTeamState has applied any one-time legacy workspace migration.
+func LoadWorkspaceAndTeamState(startDir string) (*WorktreeWorkspace, *TeamState, string, error) {
+	workspace, workspacePath, err := LoadWorktreeWorkspaceFromDir(startDir)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	root := WorktreeRootFromWorkspacePath(workspacePath)
+	if strings.TrimSpace(root) == "" {
+		root = strings.TrimSpace(startDir)
+	}
+	teamState, err := LoadTeamState(root)
+	if err != nil {
+		return workspace, nil, root, err
+	}
+	return workspace, teamState, root, nil
 }
 
 func SaveTeamState(workingDir string, state *TeamState) error {
@@ -276,21 +293,46 @@ func migrateTeamStateFromWorkspace(workingDir string) (*TeamState, error) {
 	workspacePath := filepath.Join(filepath.Clean(workingDir), DefaultWorktreeWorkspaceRelativePath())
 	workspace, err := LoadWorktreeWorkspaceFrom(workspacePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &os.PathError{Op: "load teams state", Path: TeamStatePath(workingDir), Err: os.ErrNotExist}
+		}
 		return nil, err
 	}
-	state := teamStateFromWorkspace(workspace)
+	activeTeam, err := loadLegacyWorkspaceActiveTeam(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if activeTeam == "" {
+		return nil, &os.PathError{Op: "load teams state", Path: TeamStatePath(workingDir), Err: os.ErrNotExist}
+	}
+	if workspace.Membership(activeTeam) == nil {
+		return nil, fmt.Errorf("workspace.yaml legacy active_team %q is not present in memberships", activeTeam)
+	}
+	state := teamStateFromLegacyWorkspace(workspace, activeTeam)
 	if err := SaveTeamState(workingDir, state); err != nil {
 		return nil, err
 	}
 	return state, nil
 }
 
-func teamStateFromWorkspace(workspace *WorktreeWorkspace) *TeamState {
+func loadLegacyWorkspaceActiveTeam(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var raw worktreeWorkspaceYAML
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(raw.ActiveTeam), nil
+}
+
+func teamStateFromLegacyWorkspace(workspace *WorktreeWorkspace, activeTeam string) *TeamState {
 	if workspace == nil {
 		return nil
 	}
 	state := &TeamState{
-		ActiveTeam: strings.TrimSpace(workspace.ActiveTeam),
+		ActiveTeam: strings.TrimSpace(activeTeam),
 	}
 	for _, membership := range workspace.Memberships {
 		state.Memberships = append(state.Memberships, TeamMembership{

@@ -9,9 +9,8 @@ import (
 
 func canonicalWorkspaceState() *WorktreeWorkspace {
 	return &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		APIKey:     "aw_sk_workspace",
-		ActiveTeam: "backend:acme.com",
+		AwebURL: "https://app.aweb.ai",
+		APIKey:  "aw_sk_workspace",
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:acme.com",
 			Alias:       "alice",
@@ -20,6 +19,32 @@ func canonicalWorkspaceState() *WorktreeWorkspace {
 			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
 			JoinedAt:    "2026-04-09T00:00:00Z",
 		}},
+	}
+}
+
+func TestLoadWorktreeWorkspaceFromToleratesLegacyActiveTeam(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "workspace.yaml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	workspace, err := LoadWorktreeWorkspaceFrom(path)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if got := workspace.Membership("backend:acme.com"); got == nil || got.Alias != "alice" {
+		t.Fatalf("membership=%#v", got)
 	}
 }
 
@@ -64,6 +89,9 @@ func TestSaveWorktreeWorkspaceToWritesCanonicalRoleNameKey(t *testing.T) {
 	}
 	if strings.Contains(text, "\nrole:") {
 		t.Fatalf("workspace yaml still wrote legacy role key:\n%s", text)
+	}
+	if strings.Contains(text, "active_team:") {
+		t.Fatalf("workspace yaml should not write active_team:\n%s", text)
 	}
 }
 
@@ -290,7 +318,6 @@ func TestLoadWorktreeWorkspaceFromRejectsEmptyMemberships(t *testing.T) {
 	path := filepath.Join(tmp, "workspace.yaml")
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
 aweb_url: https://app.aweb.ai
-active_team: backend:acme.com
 memberships: []
 `)+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace: %v", err)

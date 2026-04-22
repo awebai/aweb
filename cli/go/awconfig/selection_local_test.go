@@ -3,18 +3,72 @@ package awconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
 )
 
-func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
+func saveWorkspaceAndTeamStateForSelectionTest(t *testing.T, root string, activeTeam string, workspace *WorktreeWorkspace) {
+	t.Helper()
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(root, ".aw", "workspace.yaml"), workspace); err != nil {
+		t.Fatal(err)
+	}
+	teamState := &TeamState{ActiveTeam: activeTeam}
+	for _, membership := range workspace.Memberships {
+		teamState.Memberships = append(teamState.Memberships, TeamMembership{
+			TeamID:   membership.TeamID,
+			Alias:    membership.Alias,
+			CertPath: membership.CertPath,
+			JoinedAt: membership.JoinedAt,
+		})
+	}
+	if err := SaveTeamState(root, teamState); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveWorkspaceWithMissingTeamsYAMLDoesNotFallbackToIdentity(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: "backend:myteam.aweb.ai",
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			WorkspaceID: "workspace-1",
+			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
+		DID:       "did:key:z6MkAlice",
+		StableID:  "did:aw:alice",
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-21T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected missing teams.yaml to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid worktree workspace") || !strings.Contains(err.Error(), "teams.yaml") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, "backend:myteam.aweb.ai", &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:myteam.aweb.ai",
 			Alias:       "support",
@@ -22,9 +76,7 @@ func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
 			CertPath:    TeamCertificateRelativePath("backend:myteam.aweb.ai"),
 			JoinedAt:    "2026-04-09T00:00:00Z",
 		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
 		DID:       "did:key:z6MkBYOD",
 		StableID:  "did:aw:byod-support",
@@ -71,9 +123,8 @@ func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: teamID,
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
 		Memberships: []WorktreeMembership{{
 			TeamID:      teamID,
 			Alias:       "amy",
@@ -81,9 +132,7 @@ func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) 
 			CertPath:    TeamCertificateRelativePath(teamID),
 			JoinedAt:    "2026-04-21T00:00:00Z",
 		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
 		DID:       "did:key:z6MkAmy",
 		StableID:  "did:aw:amy",
@@ -125,9 +174,8 @@ func TestResolveLeavesAddressEmptyWhenIdentityAndActiveCertAddressMissing(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: teamID,
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
 		Memberships: []WorktreeMembership{{
 			TeamID:      teamID,
 			Alias:       "alice",
@@ -135,9 +183,7 @@ func TestResolveLeavesAddressEmptyWhenIdentityAndActiveCertAddressMissing(t *tes
 			CertPath:    TeamCertificateRelativePath(teamID),
 			JoinedAt:    "2026-04-21T00:00:00Z",
 		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
 	if err != nil {
@@ -152,9 +198,8 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: "backend:acme.com",
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, "backend:acme.com", &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:acme.com",
 			Alias:       "alice",
@@ -162,9 +207,7 @@ func TestResolveDerivesWorkspaceIdentityFromCanonicalBinding(t *testing.T) {
 			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
 			JoinedAt:    "2026-04-09T00:00:00Z",
 		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
 	if err != nil {
@@ -185,9 +228,8 @@ func TestResolveWorkspaceRejectsUnknownTeamOverrideWithAvailableMemberships(t *t
 	t.Parallel()
 
 	tmp := t.TempDir()
-	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, ".aw", "workspace.yaml"), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai",
-		ActiveTeam: "backend:acme.com",
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, "backend:acme.com", &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
 		Memberships: []WorktreeMembership{
 			{
 				TeamID:      "backend:acme.com",
@@ -204,9 +246,7 @@ func TestResolveWorkspaceRejectsUnknownTeamOverrideWithAvailableMemberships(t *t
 				JoinedAt:    "2026-04-09T00:00:00Z",
 			},
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp, TeamIDOverride: "unknown:acme.com"})
 	if err == nil {

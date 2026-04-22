@@ -49,6 +49,7 @@ type doctorLocalState struct {
 
 	workspacePath string
 	workspace     *awconfig.WorktreeWorkspace
+	teamState     *awconfig.TeamState
 
 	membership *awconfig.WorktreeMembership
 
@@ -84,6 +85,18 @@ type doctorWorkspaceMembershipYAML struct {
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
 	CertPath    string `yaml:"cert_path,omitempty"`
 	JoinedAt    string `yaml:"joined_at,omitempty"`
+}
+
+type doctorTeamStateYAML struct {
+	ActiveTeam  string                     `yaml:"active_team,omitempty"`
+	Memberships []doctorTeamMembershipYAML `yaml:"memberships,omitempty"`
+}
+
+type doctorTeamMembershipYAML struct {
+	TeamID   string `yaml:"team_id,omitempty"`
+	Alias    string `yaml:"alias,omitempty"`
+	CertPath string `yaml:"cert_path,omitempty"`
+	JoinedAt string `yaml:"joined_at,omitempty"`
 }
 
 func (r *doctorRunner) runLocalChecks() {
@@ -131,7 +144,10 @@ func (r *doctorRunner) runLocalChecks() {
 
 	state.workspace = workspace
 	state.workspacePath = workspacePath
-	state.membership = workspace.ActiveMembership()
+	if teamState, err := loadDoctorTeamStateFromDir(r.workingDir); err == nil {
+		state.teamState = teamState
+		state.membership = awconfig.ActiveMembershipFor(workspace, teamState)
+	}
 
 	r.add(localPathCheck(
 		doctorCheckWorkspaceExists,
@@ -186,7 +202,10 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		r.add(check)
 	}
 
-	activeTeam := strings.TrimSpace(workspace.ActiveTeam)
+	activeTeam := ""
+	if state.teamState != nil {
+		activeTeam = strings.TrimSpace(state.teamState.ActiveTeam)
+	}
 	if activeTeam == "" {
 		check := localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusFail, nil, "Workspace active_team is missing.", "Recreate or repair .aw/workspace.yaml.", nil)
 		check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceActiveTeam)
@@ -737,6 +756,31 @@ func loadDoctorWorkspaceFromDir(startDir string) (*awconfig.WorktreeWorkspace, s
 	return workspace, path, nil
 }
 
+func loadDoctorTeamStateFromDir(workingDir string) (*awconfig.TeamState, error) {
+	data, err := os.ReadFile(awconfig.TeamStatePath(workingDir))
+	if err != nil {
+		return nil, err
+	}
+	var raw doctorTeamStateYAML
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
+	state := &awconfig.TeamState{
+		ActiveTeam: strings.TrimSpace(raw.ActiveTeam),
+	}
+	for _, membership := range raw.Memberships {
+		state.Memberships = append(state.Memberships, awconfig.TeamMembership{
+			TeamID:   strings.TrimSpace(membership.TeamID),
+			Alias:    strings.TrimSpace(membership.Alias),
+			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
+			JoinedAt: strings.TrimSpace(membership.JoinedAt),
+		})
+	}
+	return state, nil
+}
+
 func loadDoctorWorkspaceFrom(path string) (*awconfig.WorktreeWorkspace, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -763,7 +807,6 @@ func loadDoctorWorkspaceFrom(path string) (*awconfig.WorktreeWorkspace, error) {
 	return &awconfig.WorktreeWorkspace{
 		AwebURL:         strings.TrimSpace(raw.AwebURL),
 		APIKey:          strings.TrimSpace(raw.APIKey),
-		ActiveTeam:      strings.TrimSpace(raw.ActiveTeam),
 		Memberships:     memberships,
 		HumanName:       strings.TrimSpace(raw.HumanName),
 		AgentType:       strings.TrimSpace(raw.AgentType),

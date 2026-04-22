@@ -31,7 +31,7 @@ func init() {
 }
 
 func runRoleNameSet(cmd *cobra.Command, args []string) error {
-	client, _, err := resolveClientSelection()
+	client, sel, err := resolveClientSelection()
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("setting role name: %w", err)
 	}
-	activeMembership, err := workspaceMembershipForSelection(workspace, nil)
+	activeMembership, err := workspaceMembershipForSelection(workspace, sel)
 	if err != nil {
 		return err
 	}

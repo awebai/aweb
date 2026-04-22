@@ -17,8 +17,7 @@ func TestResolveIdentityMessagingClientSelectionFallsBackToSigningKeyWithoutIden
 	}
 
 	workspace := awconfig.WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.test",
-		ActiveTeam: "backend:demo",
+		AwebURL: "https://app.aweb.test",
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      "backend:demo",
 			Alias:       "alice",

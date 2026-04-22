@@ -23,7 +23,6 @@ type WorktreeMembership struct {
 type WorktreeWorkspace struct {
 	AwebURL         string               `yaml:"aweb_url,omitempty"`
 	APIKey          string               `yaml:"api_key,omitempty"`
-	ActiveTeam      string               `yaml:"active_team,omitempty"`
 	Memberships     []WorktreeMembership `yaml:"memberships,omitempty"`
 	HumanName       string               `yaml:"human_name,omitempty"`
 	AgentType       string               `yaml:"agent_type,omitempty"`
@@ -142,7 +141,6 @@ func (w *WorktreeWorkspace) normalize() {
 		return
 	}
 	w.syncURLFields()
-	w.ActiveTeam = strings.TrimSpace(w.ActiveTeam)
 	w.HumanName = strings.TrimSpace(w.HumanName)
 	w.AgentType = strings.TrimSpace(w.AgentType)
 	w.RepoID = strings.TrimSpace(w.RepoID)
@@ -177,13 +175,6 @@ func (w *WorktreeWorkspace) Membership(teamID string) *WorktreeMembership {
 	return nil
 }
 
-func (w *WorktreeWorkspace) ActiveMembership() *WorktreeMembership {
-	if w == nil {
-		return nil
-	}
-	return w.Membership(w.ActiveTeam)
-}
-
 func (w *WorktreeWorkspace) AvailableTeamIDs() []string {
 	if w == nil || len(w.Memberships) == 0 {
 		return nil
@@ -210,7 +201,7 @@ func (w *WorktreeWorkspace) HasBinding() bool {
 	if w == nil {
 		return false
 	}
-	return strings.TrimSpace(w.AwebURL) != "" && w.ActiveMembership() != nil
+	return strings.TrimSpace(w.AwebURL) != "" && len(w.Memberships) > 0
 }
 
 func (w *WorktreeWorkspace) HasTeamBinding() bool {
@@ -227,9 +218,6 @@ func (w *WorktreeWorkspace) validate() error {
 	if len(w.Memberships) == 0 {
 		return errors.New("workspace.yaml must contain at least one membership")
 	}
-	if strings.TrimSpace(w.ActiveTeam) == "" {
-		return errors.New("workspace.yaml is missing active_team")
-	}
 	seen := make(map[string]struct{}, len(w.Memberships))
 	for _, membership := range w.Memberships {
 		if membership.TeamID == "" {
@@ -243,9 +231,6 @@ func (w *WorktreeWorkspace) validate() error {
 			return fmt.Errorf("workspace.yaml contains duplicate membership for %q", membership.TeamID)
 		}
 		seen[key] = struct{}{}
-	}
-	if w.ActiveMembership() == nil {
-		return fmt.Errorf("workspace.yaml active_team %q is not present in memberships", w.ActiveTeam)
 	}
 	return nil
 }
@@ -359,7 +344,6 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 	*w = WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
 		APIKey:          raw.APIKey,
-		ActiveTeam:      raw.ActiveTeam,
 		Memberships:     memberships,
 		HumanName:       raw.HumanName,
 		AgentType:       raw.AgentType,
@@ -392,7 +376,6 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 	return worktreeWorkspaceYAML{
 		AwebURL:         w.AwebURL,
 		APIKey:          w.APIKey,
-		ActiveTeam:      w.ActiveTeam,
 		Memberships:     memberships,
 		HumanName:       w.HumanName,
 		AgentType:       w.AgentType,

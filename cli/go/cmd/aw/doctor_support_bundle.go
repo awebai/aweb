@@ -113,7 +113,8 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 		}
 		meta.Hostname = strings.TrimSpace(workspace.Hostname)
 		meta.WorkspacePath = strings.TrimSpace(workspace.WorkspacePath)
-		if membership := workspace.ActiveMembership(); membership != nil {
+		teamState, _ := awconfig.LoadTeamState(workingDir)
+		if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
 			meta.TeamID = strings.TrimSpace(membership.TeamID)
 			meta.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
 			meta.Alias = strings.TrimSpace(membership.Alias)
@@ -194,7 +195,8 @@ func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
 	if workspace, _, err := loadDoctorWorkspaceFromDir(workingDir); err == nil && workspace != nil {
 		add(workspace.APIKey, "api_key")
 		addURLSecrets(workspace.AwebURL)
-		if membership := workspace.ActiveMembership(); membership != nil {
+		teamState, _ := awconfig.LoadTeamState(workingDir)
+		if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
 			certPath := resolveWorkspaceCertificatePath(workingDir, membership.CertPath)
 			if strings.TrimSpace(certPath) != "" {
 				if data, err := os.ReadFile(certPath); err == nil {

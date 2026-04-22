@@ -1317,7 +1317,7 @@ func TestCertShow(t *testing.T) {
 	}
 }
 
-func TestTeamListMigratesMembershipsFromWorkspaceYAML(t *testing.T) {
+func TestTeamListMigratesLegacyWorkspaceYAML(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1327,29 +1327,32 @@ func TestTeamListMigratesMembershipsFromWorkspaceYAML(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	writeWorkspaceBindingForTest(t, tmp, awconfig.WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai/api",
-		ActiveTeam: "backend:acme.com",
-		Memberships: []awconfig.WorktreeMembership{
-			{
-				TeamID:      "backend:acme.com",
-				Alias:       "alice",
-				WorkspaceID: "ws-backend",
-				CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
-				JoinedAt:    "2026-04-13T00:00:00Z",
-			},
-			{
-				TeamID:      "ops:acme.com",
-				Alias:       "alice-ops",
-				WorkspaceID: "ws-ops",
-				CertPath:    awconfig.TeamCertificateRelativePath("ops:acme.com"),
-				JoinedAt:    "2026-04-14T00:00:00Z",
-			},
-		},
-	})
+	workspacePath := filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	if err := os.MkdirAll(filepath.Dir(workspacePath), 0o700); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(workspacePath, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai/api
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    role_name: backend
+    workspace_id: ws-backend
+    cert_path: team-certs/backend__acme.com.pem
+    joined_at: "2026-04-13T00:00:00Z"
+  - team_id: ops:acme.com
+    alias: alice-ops
+    role_name: ops
+    workspace_id: ws-ops
+    cert_path: team-certs/ops__acme.com.pem
+    joined_at: "2026-04-14T00:00:00Z"
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
 
 	if _, err := os.Stat(awconfig.TeamStatePath(tmp)); !os.IsNotExist(err) {
-		t.Fatalf("teams.yaml should not exist before migration, stat err=%v", err)
+		t.Fatalf("teams.yaml should not exist before list, stat err=%v", err)
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "list", "--json")

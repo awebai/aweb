@@ -1800,6 +1800,7 @@ func TestAwIDShowFailsWhenEphemeralCertMissingMemberDIDKey(t *testing.T) {
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(awDir, "workspace.yaml"), &workspace); err != nil {
 		t.Fatal(err)
 	}
+	writeTeamStateForTest(t, tmp, teamStateBinding("default:alice.aweb.ai", "alice-laptop"))
 	cert := &awid.TeamCertificate{
 		Version:       1,
 		CertificateID: "cert-1",

@@ -112,9 +112,11 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return usageError("selected account has no identity; run 'aw init' first")
 	}
 
-	state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("load workspace state: %w", err)
+	state, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	if err != nil {
+		if !(state == nil && os.IsNotExist(err)) {
+			return fmt.Errorf("load workspace state: %w", err)
+		}
 	}
 
 	workspaceID := strings.TrimSpace(sel.WorkspaceID)
@@ -185,7 +187,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 
 	printOutput(workspaceStatusOutput{
 		SelectedTeam:       strings.TrimSpace(sel.TeamID),
-		Memberships:        membershipItemsForWorkspaceState(state, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
+		Memberships:        membershipItemsForWorkspaceState(state, teamState, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
 		Workspace:          self,
 		ContextKind:        inferWorkspaceContextKind(self, state),
 		Locks:              locksByWorkspace[workspaceID],
@@ -229,7 +231,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
 	}
 
-	state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	state, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
 		return fmt.Errorf("load workspace binding: %w", err)
 	}
@@ -237,7 +239,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing team binding; run `aw init` first")
 	}
 
-	activeMembership := state.ActiveMembership()
+	activeMembership := awconfig.ActiveMembershipFor(state, teamState)
 	if activeMembership == nil {
 		return usageError("current worktree is missing active_team membership; run `aw init` first")
 	}
@@ -457,13 +459,17 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	}
 
 	if workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil && workspace != nil {
+		teamState, teamStateErr := awconfig.LoadTeamState(workingDir)
+		if teamStateErr != nil {
+			return teamStateErr
+		}
 		output := workspaceMigrateMultiTeamOutput{
 			Status:      "already_multi_team",
-			ActiveTeam:  strings.TrimSpace(workspace.ActiveTeam),
+			ActiveTeam:  strings.TrimSpace(teamState.ActiveTeam),
 			Workspace:   workspacePath,
 			LegacyMoved: false,
 		}
-		if activeMembership := workspace.ActiveMembership(); activeMembership != nil {
+		if activeMembership := awconfig.ActiveMembershipFor(workspace, teamState); activeMembership != nil {
 			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
 		}
 		printOutput(output, formatWorkspaceMigrateMultiTeam)
@@ -498,8 +504,7 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
 	state := awconfig.WorktreeWorkspace{
-		AwebURL:    legacy.AwebURL,
-		ActiveTeam: legacy.TeamID,
+		AwebURL: legacy.AwebURL,
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      legacy.TeamID,
 			Alias:       legacy.Alias,
@@ -517,6 +522,18 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 		UpdatedAt:       firstNonEmpty(strings.TrimSpace(legacy.UpdatedAt), time.Now().UTC().Format(time.RFC3339)),
 	}
 	if err := saveWorktreeWorkspaceTo(workspacePath, &state); err != nil {
+		return workspaceMigrateMultiTeamOutput{}, err
+	}
+	teamState := &awconfig.TeamState{
+		ActiveTeam: legacy.TeamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   legacy.TeamID,
+			Alias:    legacy.Alias,
+			CertPath: certPath,
+			JoinedAt: firstNonEmpty(strings.TrimSpace(cert.IssuedAt), strings.TrimSpace(legacy.UpdatedAt)),
+		}},
+	}
+	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
 	if err := os.Remove(legacyCertPath); err != nil && !os.IsNotExist(err) {
@@ -984,9 +1001,13 @@ func formatWorkspaceStatus(v any) string {
 	return sb.String()
 }
 
-func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, selectedTeam string, includeAll bool) []workspaceTeamMembershipItem {
+func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, teamState *awconfig.TeamState, selectedTeam string, includeAll bool) []workspaceTeamMembershipItem {
 	if state == nil {
 		return nil
+	}
+	activeTeam := ""
+	if teamState != nil {
+		activeTeam = strings.TrimSpace(teamState.ActiveTeam)
 	}
 	if !includeAll {
 		if membership := state.Membership(selectedTeam); membership != nil {
@@ -995,7 +1016,7 @@ func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, selecte
 				Alias:       strings.TrimSpace(membership.Alias),
 				RoleName:    strings.TrimSpace(membership.RoleName),
 				WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
-				Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(state.ActiveTeam)),
+				Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), activeTeam),
 			}}
 		}
 		return nil
@@ -1008,7 +1029,7 @@ func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, selecte
 			Alias:       strings.TrimSpace(membership.Alias),
 			RoleName:    strings.TrimSpace(membership.RoleName),
 			WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
-			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(state.ActiveTeam)),
+			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), activeTeam),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {

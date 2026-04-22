@@ -159,14 +159,14 @@ func resolveClaimHumanUsername(workingDir, address, override string) (string, er
 		return usernameFromMemberAddress(address)
 	}
 
-	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if workspace == nil && errors.Is(err, os.ErrNotExist) {
 			return "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
 		}
 		return "", fmt.Errorf("failed to load workspace: %w", err)
 	}
-	activeMembership := workspace.ActiveMembership()
+	activeMembership := awconfig.ActiveMembershipFor(workspace, teamState)
 	if activeMembership == nil {
 		return "", usageError("current workspace is missing active_team membership; run `aw init` first")
 	}

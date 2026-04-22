@@ -239,43 +239,57 @@ memberships:
 	}
 }
 
-func TestLoadTeamStateMigratesFromWorkspaceYAML(t *testing.T) {
+func TestLoadTeamStateMigratesFromLegacyWorkspaceYAML(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	workspacePath := filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath())
-	if err := SaveWorktreeWorkspaceTo(workspacePath, &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai/api",
-		APIKey:     "aw_sk_secret",
-		ActiveTeam: "backend:acme.com",
-		Memberships: []WorktreeMembership{
+	if err := os.MkdirAll(filepath.Dir(workspacePath), 0o700); err != nil {
+		t.Fatalf("mkdir .aw: %v", err)
+	}
+	if err := os.WriteFile(workspacePath, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai/api
+api_key: aw_sk_secret
+active_team: ops:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    role_name: backend
+    workspace_id: ws-backend
+    cert_path: team-certs/backend__acme.com.pem
+    joined_at: "2026-04-13T00:00:00Z"
+  - team_id: ops:acme.com
+    alias: alice-ops
+    role_name: ops
+    workspace_id: ws-ops
+    cert_path: team-certs/ops__acme.com.pem
+    joined_at: "2026-04-14T00:00:00Z"
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	want := &TeamState{
+		ActiveTeam: "ops:acme.com",
+		Memberships: []TeamMembership{
 			{
-				TeamID:      "backend:acme.com",
-				Alias:       "alice",
-				RoleName:    "backend",
-				WorkspaceID: "ws-backend",
-				CertPath:    TeamCertificateRelativePath("backend:acme.com"),
-				JoinedAt:    "2026-04-13T00:00:00Z",
+				TeamID:   "backend:acme.com",
+				Alias:    "alice",
+				CertPath: "team-certs/backend__acme.com.pem",
+				JoinedAt: "2026-04-13T00:00:00Z",
 			},
 			{
-				TeamID:      "ops:acme.com",
-				Alias:       "alice-ops",
-				RoleName:    "ops",
-				WorkspaceID: "ws-ops",
-				CertPath:    TeamCertificateRelativePath("ops:acme.com"),
-				JoinedAt:    "2026-04-14T00:00:00Z",
+				TeamID:   "ops:acme.com",
+				Alias:    "alice-ops",
+				CertPath: "team-certs/ops__acme.com.pem",
+				JoinedAt: "2026-04-14T00:00:00Z",
 			},
 		},
-	}); err != nil {
-		t.Fatalf("save workspace: %v", err)
 	}
 
 	got, err := LoadTeamState(tmp)
 	if err != nil {
-		t.Fatalf("load team state: %v", err)
+		t.Fatalf("load migrated team state: %v", err)
 	}
-
-	want := canonicalTeamState()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated state mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
@@ -285,17 +299,57 @@ func TestLoadTeamStateMigratesFromWorkspaceYAML(t *testing.T) {
 		t.Fatalf("read migrated teams.yaml: %v", err)
 	}
 	text := string(data)
-	if strings.Contains(text, "workspace_id:") {
-		t.Fatalf("teams.yaml should not contain workspace_id:\n%s", text)
+	for _, needle := range []string{"workspace_id:", "role_name:", "api_key:", "aw_sk_secret"} {
+		if strings.Contains(text, needle) {
+			t.Fatalf("teams.yaml leaked workspace-only field %q:\n%s", needle, text)
+		}
 	}
-	if strings.Contains(text, "role_name:") {
-		t.Fatalf("teams.yaml should not contain role_name:\n%s", text)
+
+	if err := os.WriteFile(workspacePath, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai/api
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: changed
+    cert_path: team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("rewrite workspace: %v", err)
 	}
-	if strings.Contains(text, "api_key:") {
-		t.Fatalf("teams.yaml should not contain api_key:\n%s", text)
+	got, err = LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("reload migrated team state: %v", err)
 	}
-	if strings.Contains(text, "aw_sk_secret") {
-		t.Fatalf("teams.yaml leaked workspace api key:\n%s", text)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("existing teams.yaml should win after migration:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestLoadTeamStateRequiresTeamsYAMLWithoutLegacyActiveTeam(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	workspacePath := filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath())
+	if err := SaveWorktreeWorkspaceTo(workspacePath, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai/api",
+		APIKey:  "aw_sk_secret",
+		Memberships: []WorktreeMembership{{
+			TeamID:   "backend:acme.com",
+			Alias:    "alice",
+			CertPath: TeamCertificateRelativePath("backend:acme.com"),
+		}},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+
+	_, err := LoadTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected missing teams.yaml to fail")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected not-exist error, got %v", err)
+	}
+	if _, statErr := os.Stat(TeamStatePath(tmp)); !os.IsNotExist(statErr) {
+		t.Fatalf("teams.yaml should not be synthesized, stat err=%v", statErr)
 	}
 }
 
@@ -304,8 +358,7 @@ func TestLoadTeamStatePrefersExistingTeamsYAMLOverWorkspaceYAML(t *testing.T) {
 
 	tmp := t.TempDir()
 	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath()), &WorktreeWorkspace{
-		AwebURL:    "https://app.aweb.ai/api",
-		ActiveTeam: "backend:acme.com",
+		AwebURL: "https://app.aweb.ai/api",
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:acme.com",
 			Alias:       "workspace-alice",
@@ -339,7 +392,87 @@ func TestLoadTeamStatePrefersExistingTeamsYAMLOverWorkspaceYAML(t *testing.T) {
 	}
 }
 
-func TestLoadTeamStateRejectsWhenNoTeamsOrWorkspaceExist(t *testing.T) {
+func TestLoadWorkspaceAndTeamStateLoadsMatchingFiles(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath()), &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai/api",
+		Memberships: []WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "workspace-alice",
+			WorkspaceID: "ws-backend",
+			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-04-13T00:00:00Z",
+		}},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	wantTeamState := &TeamState{
+		ActiveTeam: "backend:acme.com",
+		Memberships: []TeamMembership{{
+			TeamID:   "backend:acme.com",
+			Alias:    "teams-alice",
+			CertPath: TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt: "2026-04-15T00:00:00Z",
+		}},
+	}
+	if err := SaveTeamState(tmp, wantTeamState); err != nil {
+		t.Fatalf("save team state: %v", err)
+	}
+
+	workspace, teamState, root, err := LoadWorkspaceAndTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load workspace and teams: %v", err)
+	}
+	if root != tmp {
+		t.Fatalf("root=%q want %q", root, tmp)
+	}
+	if workspace.Membership("backend:acme.com") == nil {
+		t.Fatalf("workspace membership missing: %#v", workspace)
+	}
+	if !reflect.DeepEqual(teamState, wantTeamState) {
+		t.Fatalf("team state mismatch:\n got: %#v\nwant: %#v", teamState, wantTeamState)
+	}
+}
+
+func TestLoadWorkspaceAndTeamStateRequiresTeamsYAML(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := SaveWorktreeWorkspaceTo(filepath.Join(tmp, DefaultWorktreeWorkspaceRelativePath()), &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai/api",
+		Memberships: []WorktreeMembership{{
+			TeamID:   "backend:acme.com",
+			Alias:    "workspace-alice",
+			CertPath: TeamCertificateRelativePath("backend:acme.com"),
+		}},
+	}); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+
+	workspace, teamState, root, err := LoadWorkspaceAndTeamState(tmp)
+	if err == nil {
+		t.Fatal("expected missing teams.yaml to fail")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected not-exist error, got %v", err)
+	}
+	if workspace == nil || workspace.Membership("backend:acme.com") == nil {
+		t.Fatalf("workspace should be loaded when teams.yaml is missing: %#v", workspace)
+	}
+	if teamState != nil {
+		t.Fatalf("team state=%#v want nil", teamState)
+	}
+	if root != tmp {
+		t.Fatalf("root=%q want %q", root, tmp)
+	}
+	if _, statErr := os.Stat(TeamStatePath(tmp)); !os.IsNotExist(statErr) {
+		t.Fatalf("teams.yaml should not be synthesized, stat err=%v", statErr)
+	}
+}
+
+func TestLoadTeamStateRejectsWhenTeamsYAMLMissing(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -350,7 +483,7 @@ func TestLoadTeamStateRejectsWhenNoTeamsOrWorkspaceExist(t *testing.T) {
 	if !os.IsNotExist(err) {
 		t.Fatalf("expected not-exist error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "neither teams.yaml nor workspace.yaml exists") {
+	if !strings.Contains(err.Error(), "teams.yaml") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

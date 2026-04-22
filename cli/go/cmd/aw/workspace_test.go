@@ -265,8 +265,7 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := awconfig.WorktreeWorkspace{
-		AwebURL:    server.URL,
-		ActiveTeam: "backend:demo",
+		AwebURL: server.URL,
 		Memberships: []awconfig.WorktreeMembership{
 			{
 				TeamID:      "backend:demo",
@@ -1001,8 +1000,12 @@ func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 		t.Fatalf("unmarshal child workspace binding: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, &childState)
-	if childState.ActiveTeam != teamID {
-		t.Fatalf("child active_team=%q", childState.ActiveTeam)
+	childTeamState, err := awconfig.LoadTeamState(child)
+	if err != nil {
+		t.Fatalf("load child team state: %v", err)
+	}
+	if childTeamState.ActiveTeam != teamID {
+		t.Fatalf("child active_team=%q", childTeamState.ActiveTeam)
 	}
 	if activeMembership.TeamID != teamID {
 		t.Fatalf("child team_id=%q", activeMembership.TeamID)
@@ -1229,9 +1232,8 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatalf("save parent cert: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL:    awebServer.URL,
-		APIKey:     "workspace-sk-parent",
-		ActiveTeam: teamID,
+		AwebURL: awebServer.URL,
+		APIKey:  "workspace-sk-parent",
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      teamID,
 			Alias:       "alice",
@@ -1242,6 +1244,15 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	}); err != nil {
 		t.Fatalf("save parent workspace: %v", err)
 	}
+	writeTeamStateForTest(t, repo, awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   teamID,
+			Alias:    "alice",
+			CertPath: awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt: "2026-04-16T00:00:00Z",
+		}},
+	})
 	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
 		t.Fatalf("save context: %v", err)
 	}
@@ -2102,8 +2113,12 @@ updated_at: "2026-04-09T00:00:00Z"
 		t.Fatalf("load migrated workspace: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, state)
-	if state.ActiveTeam != "backend:acme.com" {
-		t.Fatalf("active_team=%q", state.ActiveTeam)
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 	if activeMembership.TeamID != "backend:acme.com" {
 		t.Fatalf("team_id=%q", activeMembership.TeamID)

@@ -151,9 +151,6 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 		t.Fatalf("load workspace: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, ws)
-	if ws.ActiveTeam != "backend:acme.com" {
-		t.Fatalf("workspace active_team=%q", ws.ActiveTeam)
-	}
 	if activeMembership.TeamID != "backend:acme.com" {
 		t.Fatalf("workspace team_id=%q", activeMembership.TeamID)
 	}
@@ -364,9 +361,6 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 		t.Fatalf("load workspace: %v", err)
 	}
 	activeMembership := activeMembershipForTest(t, ws)
-	if ws.ActiveTeam != "backend:acme.com" {
-		t.Fatalf("active_team=%q", ws.ActiveTeam)
-	}
 	if activeMembership.TeamID != "backend:acme.com" {
 		t.Fatalf("team_id=%q", activeMembership.TeamID)
 	}
