@@ -73,7 +73,7 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   const identity = await readYAML<IdentityConfig>(identityPath);
   const did = computeDIDKey(ed.getPublicKey(signingKey));
   const stableID = ((identity?.stable_id || "").trim()) || (certificate.member_did_aw || "").trim();
-  const address = ((identity?.address || "").trim()) || (certificate.member_address || "").trim();
+  const address = ((certificate.member_address || "").trim()) || ((identity?.address || "").trim());
 
   if ((identity?.did || "").trim() && did !== identity?.did?.trim()) {
     throw new Error("identity.yaml did does not match .aw/signing.key");

@@ -90,6 +90,40 @@ describe("resolveConfig", () => {
     expect(config.teamCertificateHeader).toBeTruthy();
   });
 
+  test("prefers active team certificate member_address over identity address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(join(awDir, "team-certs"), { recursive: true });
+    const seed = new Uint8Array(32).fill(13);
+    const stableID = "did:aw:amy";
+    const { did } = await writeTeamCertificate(join(awDir, "team-certs", "backend__aweb.ai.pem"), seed, {
+      team_id: "backend:aweb.ai",
+      alias: "amy",
+      member_did_aw: stableID,
+      member_address: "aweb.ai/amy",
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
+
+    writeFileSync(join(awDir, "workspace.yaml"), [
+      "aweb_url: https://app.aweb.ai",
+      "active_team: backend:aweb.ai",
+      "memberships:",
+      "  - team_id: backend:aweb.ai",
+      "    alias: amy",
+      "    cert_path: team-certs/backend__aweb.ai.pem",
+      "",
+    ].join("\n"));
+    writeFileSync(join(awDir, "identity.yaml"), [
+      `did: ${did}`,
+      `stable_id: ${stableID}`,
+      "address: juan.aweb.ai/amy",
+      "",
+    ].join("\n"));
+
+    const config = await resolveConfig(dir);
+    expect(config.address).toBe("aweb.ai/amy");
+  });
+
   test("derives identity from team certificate when identity.yaml is absent", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
