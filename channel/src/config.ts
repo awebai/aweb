@@ -31,9 +31,20 @@ interface WorkspaceMembership {
 
 interface WorkspaceConfig {
   aweb_url?: string;
-  active_team?: string;
   memberships?: WorkspaceMembership[];
   team_address?: string;
+}
+
+interface TeamMembership {
+  team_id?: string;
+  alias?: string;
+  cert_path?: string;
+  joined_at?: string;
+}
+
+interface TeamStateConfig {
+  active_team?: string;
+  memberships?: TeamMembership[];
 }
 
 interface IdentityConfig {
@@ -45,6 +56,7 @@ interface IdentityConfig {
 
 export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   const workspacePath = join(workdir, ".aw", "workspace.yaml");
+  const teamsPath = join(workdir, ".aw", "teams.yaml");
   const identityPath = join(workdir, ".aw", "identity.yaml");
   const signingKeyPath = join(workdir, ".aw", "signing.key");
 
@@ -60,16 +72,23 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
       "This workspace is on the legacy single-team shape (.aw/workspace.yaml has team_address but no memberships). Run aw workspace migrate-multi-team to convert, then retry.",
     );
   }
-  const activeTeam = (workspace.active_team || "").trim();
-  const membership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
+
+  const teamState = await readYAML<TeamStateConfig>(teamsPath);
+  if (!teamState) {
+    throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
+  }
+  const activeTeam = (teamState.active_team || "").trim();
+  const teamMembership = (teamState.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
+  const workspaceMembership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const teamID = activeTeam;
-  const alias = ((membership?.alias || "").trim());
-  if (!baseURL || !teamID || !membership || !alias) {
+  const alias = ((teamMembership?.alias || "").trim());
+  const certPath = ((teamMembership?.cert_path || "").trim());
+  if (!baseURL || !teamID || !teamMembership || !workspaceMembership || !alias || !certPath) {
     throw new Error("worktree workspace binding is missing aweb_url, active_team, or the active membership alias");
   }
 
   const signingKey = await loadSigningKey(signingKeyPath);
-  const certificate = await loadActiveTeamCertificate(workdir, teamID);
+  const certificate = await loadConfiguredTeamCertificate(workdir, teamID, certPath);
   const identity = await readYAML<IdentityConfig>(identityPath);
   const did = computeDIDKey(ed.getPublicKey(signingKey));
   const stableID = ((identity?.stable_id || "").trim()) || (certificate.member_did_aw || "").trim();
@@ -82,10 +101,10 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
     throw new Error("team certificate member_did_key does not match .aw/signing.key");
   }
   if ((certificate.team_id || "").trim() !== teamID) {
-    throw new Error(`workspace.yaml active_team does not match certificate for ${teamID}`);
+    throw new Error(`team certificate does not match active team ${teamID}`);
   }
   if ((certificate.alias || "").trim() !== alias) {
-    throw new Error("workspace.yaml active membership alias does not match the team certificate");
+    throw new Error("active membership alias does not match the team certificate");
   }
 
   return {
@@ -98,6 +117,17 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
     signingKey,
     teamCertificateHeader: encodeTeamCertificateHeader(certificate),
   };
+}
+
+async function loadConfiguredTeamCertificate(workdir: string, activeTeam: string, certPath: string): Promise<TeamCertificate> {
+  try {
+    return await loadTeamCertificate(join(workdir, ".aw", certPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    return loadActiveTeamCertificate(workdir, activeTeam);
+  }
 }
 
 async function loadActiveTeamCertificate(workdir: string, activeTeam: string): Promise<TeamCertificate> {

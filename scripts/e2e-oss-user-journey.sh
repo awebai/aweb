@@ -1143,8 +1143,9 @@ phase_aw_init_reconnect() {
   assert_not_contains "reconnect skipped onboarding path prompt" "$reconnect_out" "How should this agent get its identity?"
   assert_not_contains "reconnect skipped post-init prompts" "$reconnect_out" "Inject agent docs into this repo?"
   assert_file_exists "reconnect workspace.yaml written" "$RECONNECT_DIR/.aw/workspace.yaml"
+  assert_file_exists "reconnect teams.yaml written" "$RECONNECT_DIR/.aw/teams.yaml"
 
-  reconnect_team="$(yaml_field "$RECONNECT_DIR/.aw/workspace.yaml" active_team)"
+  reconnect_team="$(yaml_field "$RECONNECT_DIR/.aw/teams.yaml" active_team)"
   reconnect_alias="$(workspace_membership_field "$RECONNECT_DIR/.aw/workspace.yaml" "$reconnect_team" alias)"
   reconnect_role="$(workspace_membership_field "$RECONNECT_DIR/.aw/workspace.yaml" "$reconnect_team" role_name)"
   assert_eq "reconnect workspace team" "devteam:test.local" "$reconnect_team"
@@ -1188,11 +1189,12 @@ phase_aw_init_local_quickstart() {
   fi
   assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
   assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
+  assert_file_exists "wizard teams.yaml written" "$WIZARD_BYOD_DIR/.aw/teams.yaml"
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
   wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$local_team")"
   assert_file_exists "wizard team certificate written" "$wizard_cert_path"
 
-  wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" active_team)"
+  wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/teams.yaml" active_team)"
   wizard_workspace_alias="$(workspace_membership_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" "$wizard_workspace_team" alias)"
   assert_eq "wizard workspace team" "$local_team" "$wizard_workspace_team"
   assert_eq "wizard workspace alias" "$local_alias" "$wizard_workspace_alias"

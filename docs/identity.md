@@ -107,7 +107,8 @@ Common identity-related files in `.aw/`:
 - `identity.yaml`: persistent identity metadata
 - `signing.key`: local Ed25519 private key for self-custodial identities
 - `team-certs/`: team membership certificates
-- `workspace.yaml`: local aweb binding, including `memberships` and `active_team`
+- `teams.yaml`: team memberships and `active_team`
+- `workspace.yaml`: local aweb binding, including aweb URL and workspace metadata
 
 ## Further Reading
 

@@ -47,8 +47,30 @@ async function writeTeamCertificate(
   return { did };
 }
 
+function writeWorkspaceBinding(awDir: string, teamID: string, alias: string, certPath: string): void {
+  writeFileSync(join(awDir, "workspace.yaml"), [
+    "aweb_url: https://app.aweb.ai",
+    "memberships:",
+    `  - team_id: ${teamID}`,
+    `    alias: ${alias}`,
+    `    cert_path: ${certPath}`,
+    "",
+  ].join("\n"));
+}
+
+function writeTeamState(awDir: string, teamID: string, alias: string, certPath: string): void {
+  writeFileSync(join(awDir, "teams.yaml"), [
+    `active_team: ${teamID}`,
+    "memberships:",
+    `  - team_id: ${teamID}`,
+    `    alias: ${alias}`,
+    `    cert_path: ${certPath}`,
+    "",
+  ].join("\n"));
+}
+
 describe("resolveConfig", () => {
-  test("loads channel config from aweb workspace binding and team certificate", async () => {
+  test("loads channel config when workspace omits active_team and teams.yaml selects the team", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
     mkdirSync(join(awDir, "team-certs"), { recursive: true });
@@ -63,15 +85,8 @@ describe("resolveConfig", () => {
     });
     writeSigningKey(join(awDir, "signing.key"), seed);
 
-    writeFileSync(join(awDir, "workspace.yaml"), [
-      "aweb_url: https://app.aweb.ai",
-      "active_team: backend:acme.com",
-      "memberships:",
-      "  - team_id: backend:acme.com",
-      "    alias: support",
-      "    cert_path: team-certs/backend__acme.com.pem",
-      "",
-    ].join("\n"));
+    writeWorkspaceBinding(awDir, "backend:acme.com", "support", "team-certs/backend__acme.com.pem");
+    writeTeamState(awDir, "backend:acme.com", "support", "team-certs/backend__acme.com.pem");
     writeFileSync(join(awDir, "identity.yaml"), [
       `did: ${did}`,
       `stable_id: ${stableID}`,
@@ -90,6 +105,37 @@ describe("resolveConfig", () => {
     expect(config.teamCertificateHeader).toBeTruthy();
   });
 
+  test("ignores stray active_team in workspace.yaml and uses teams.yaml as source of truth", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(join(awDir, "team-certs"), { recursive: true });
+    const seed = new Uint8Array(32).fill(19);
+    const { did } = await writeTeamCertificate(join(awDir, "team-certs", "ops__acme.com.pem"), seed, {
+      team_id: "ops:acme.com",
+      alias: "ops-alice",
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
+
+    writeFileSync(join(awDir, "workspace.yaml"), [
+      "aweb_url: https://app.aweb.ai",
+      "active_team: backend:acme.com",
+      "memberships:",
+      "  - team_id: backend:acme.com",
+      "    alias: backend-alice",
+      "    cert_path: team-certs/backend__acme.com.pem",
+      "  - team_id: ops:acme.com",
+      "    alias: ops-alice",
+      "    cert_path: team-certs/ops__acme.com.pem",
+      "",
+    ].join("\n"));
+    writeTeamState(awDir, "ops:acme.com", "ops-alice", "team-certs/ops__acme.com.pem");
+
+    const config = await resolveConfig(dir);
+    expect(config.teamID).toBe("ops:acme.com");
+    expect(config.alias).toBe("ops-alice");
+    expect(config.did).toBe(did);
+  });
+
   test("prefers active team certificate member_address over identity address", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");
@@ -104,15 +150,8 @@ describe("resolveConfig", () => {
     });
     writeSigningKey(join(awDir, "signing.key"), seed);
 
-    writeFileSync(join(awDir, "workspace.yaml"), [
-      "aweb_url: https://app.aweb.ai",
-      "active_team: backend:aweb.ai",
-      "memberships:",
-      "  - team_id: backend:aweb.ai",
-      "    alias: amy",
-      "    cert_path: team-certs/backend__aweb.ai.pem",
-      "",
-    ].join("\n"));
+    writeWorkspaceBinding(awDir, "backend:aweb.ai", "amy", "team-certs/backend__aweb.ai.pem");
+    writeTeamState(awDir, "backend:aweb.ai", "amy", "team-certs/backend__aweb.ai.pem");
     writeFileSync(join(awDir, "identity.yaml"), [
       `did: ${did}`,
       `stable_id: ${stableID}`,
@@ -135,15 +174,8 @@ describe("resolveConfig", () => {
     });
     writeSigningKey(join(awDir, "signing.key"), seed);
 
-    writeFileSync(join(awDir, "workspace.yaml"), [
-      "aweb_url: https://app.aweb.ai",
-      "active_team: backend:acme.com",
-      "memberships:",
-      "  - team_id: backend:acme.com",
-      "    alias: alice",
-      "    cert_path: team-certs/backend__acme.com.pem",
-      "",
-    ].join("\n"));
+    writeWorkspaceBinding(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
+    writeTeamState(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
 
     const config = await resolveConfig(dir);
     expect(config.baseURL).toBe("https://app.aweb.ai");
@@ -161,17 +193,25 @@ describe("resolveConfig", () => {
     const seed = new Uint8Array(32).fill(11);
     writeSigningKey(join(awDir, "signing.key"), seed);
 
-    writeFileSync(join(awDir, "workspace.yaml"), [
-      "aweb_url: https://app.aweb.ai",
-      "active_team: backend:acme.com",
-      "memberships:",
-      "  - team_id: backend:acme.com",
-      "    alias: alice",
-      "    cert_path: team-certs/backend__acme.com.pem",
-      "",
-    ].join("\n"));
+    writeWorkspaceBinding(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
+    writeTeamState(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
 
     await expect(resolveConfig(dir)).rejects.toThrow(/migrate-multi-team/);
+  });
+
+  test("errors clearly when teams.yaml is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
+    const awDir = join(dir, ".aw");
+    mkdirSync(join(awDir, "team-certs"), { recursive: true });
+    const seed = new Uint8Array(32).fill(17);
+    await writeTeamCertificate(join(awDir, "team-certs", "backend__acme.com.pem"), seed, {
+      team_id: "backend:acme.com",
+      alias: "alice",
+    });
+    writeSigningKey(join(awDir, "signing.key"), seed);
+    writeWorkspaceBinding(awDir, "backend:acme.com", "alice", "team-certs/backend__acme.com.pem");
+
+    await expect(resolveConfig(dir)).rejects.toThrow(/teams\.yaml/);
   });
 
   test("errors clearly on the legacy single-team workspace shape", async () => {

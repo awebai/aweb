@@ -967,7 +967,7 @@ relies on are:
 | `aw id team accept-invite <token>` | Accept invite, receive certificate |
 | `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
-| `aw id team list` | Show local team memberships stored in `.aw/workspace.yaml` |
+| `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
@@ -978,7 +978,7 @@ relies on are:
 | `aw workspace status [--all]` | Show team coordination state for the selected team, optionally including all local memberships |
 
 Most coordination commands also accept `--team <team_id>` to override `active_team`
-for a single invocation without mutating `.aw/workspace.yaml`.
+for a single invocation without mutating `.aw/teams.yaml`.
 
 All coordination commands (mail, chat, tasks, claims, locks, roles,
 instructions, work, contacts, etc.) are listed in
@@ -1010,18 +1010,28 @@ aw mcp-config
 .aw/
   identity.yaml       # Persistent identity (did:aw, did:key, address, registry_url)
   signing.key          # Ed25519 private key
-  workspace.yaml       # aweb server URL + memberships + active_team
+  teams.yaml           # awid team memberships + active_team
+  workspace.yaml       # aweb server URL + workspace membership metadata
   team-certs/          # Team certificates keyed by team_id
+```
+
+### teams.yaml
+
+```yaml
+active_team: backend:acme.com
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    cert_path: team-certs/backend__acme.com.pem
+    joined_at: "2026-04-06T..."
 ```
 
 ### workspace.yaml (new format)
 
 ```yaml
 aweb_url: https://app.aweb.ai
-active_team: backend:acme.com
 memberships:
   - team_id: backend:acme.com
-    alias: alice
     role_name: developer
     workspace_id: "550e8400-e29b-41d4-a716-446655440000"
     cert_path: team-certs/backend__acme.com.pem
@@ -1037,11 +1047,13 @@ updated_at: "2026-04-06T..."
 
 The identity state lives in `identity.yaml`, including `registry_url`
 when the identity needs one. The credentials live under `team-certs/`.
-`workspace.yaml` is an aweb coordination binding only: it carries the
-aweb server URL, the active team pointer, the per-team membership
-bindings, and local repo/workspace metadata. It does not carry
-awid-specific URL fields, hosted-specific URL fields, or identity key
-material.
+`teams.yaml` is the source of truth for the active team and the
+identity-level team membership view. `workspace.yaml` is an aweb
+coordination binding only: it carries the aweb server URL, per-team
+workspace bindings such as `workspace_id` and `role_name`, and local
+repo/workspace metadata. It does not carry awid-specific URL fields,
+hosted-specific URL fields, identity key material, or the active team
+selection.
 
 ---
 

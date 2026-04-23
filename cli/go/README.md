@@ -148,7 +148,8 @@ The local files that bind a workspace to a team and identity:
 | File | Purpose |
 | --- | --- |
 | `.aw/team-certs/` | Team membership certificates (auth credentials) |
-| `.aw/workspace.yaml` | Repo/worktree-local aweb binding, including `memberships` and `active_team` |
+| `.aw/teams.yaml` | Team memberships and `active_team` |
+| `.aw/workspace.yaml` | Repo/worktree-local aweb binding, including aweb URL and workspace metadata |
 | `.aw/identity.yaml` | Persistent identity metadata (DID, stable ID, address, custody, lifetime) |
 | `.aw/signing.key` | Self-custodial private signing key (worktree-local) |
 | `.aw/context` | Small non-secret local coordination pointer |
