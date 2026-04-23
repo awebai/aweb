@@ -574,7 +574,7 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
             workspace_placeholders.append(f"${len(workspace_params)}")
         workspace_rows = await aweb_db.fetch_all(
             f"""
-            SELECT w.workspace_id, w.alias, w.current_branch, r.canonical_origin
+            SELECT w.workspace_id, w.alias, r.canonical_origin
             FROM {{{{tables.workspaces}}}} w
             LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
             WHERE w.team_id = $1
@@ -586,7 +586,6 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
         workspace_meta_by_id = {
             str(row["workspace_id"]): {
                 "alias": row["alias"],
-                "branch": row["current_branch"],
                 "canonical_origin": row["canonical_origin"],
             }
             for row in workspace_rows

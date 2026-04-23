@@ -226,6 +226,9 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
     task_id = uuid4()
+    workspace_id = uuid4()
+    agent_id = uuid4()
+    repo_id = uuid4()
     await _insert_task(
         aweb_cloud_db.aweb_db,
         task_id=task_id,
@@ -235,12 +238,61 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
         title="Active task without updates",
         status="in_progress",
     )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        repo_id,
+        TEAM_ID,
+        "https://example.com/acme/backend.git",
+        "backend",
+        "backend",
+        datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, repo_id, alias, human_name,
+            role, hostname, workspace_path, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+        """,
+        workspace_id,
+        TEAM_ID,
+        agent_id,
+        repo_id,
+        "alice",
+        "Alice",
+        "developer",
+        "mac.local",
+        "/tmp/backend",
+        datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (
+            team_id, workspace_id, alias, human_name, task_ref, claimed_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        TEAM_ID,
+        workspace_id,
+        "alice",
+        "Alice",
+        "backend-aaaa",
+        datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
+    )
 
     tasks = await list_active_work(db, team_id=TEAM_ID)
 
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == str(task_id)
     assert tasks[0]["updated_at"] is None
+    assert tasks[0]["workspace_id"] == str(workspace_id)
+    assert tasks[0]["owner_alias"] == "alice"
+    assert tasks[0]["canonical_origin"] == "backend"
+    assert tasks[0]["branch"] is None
 
 
 @pytest.mark.asyncio
