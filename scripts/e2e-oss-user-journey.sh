@@ -920,10 +920,13 @@ assert_eq "alice partner cert member_address" "partner.local/alice" "$partner_al
 
 run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
 alice_switch_primary_exit=$?
-assert_eq "alice switches to primary team" "0" "$alice_switch_primary_exit"
-run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
-alice_primary_reconnect_exit=$?
-assert_eq "alice reconnects primary team" "0" "$alice_primary_reconnect_exit"
+assert_eq "alice switches to primary team without re-init" "0" "$alice_switch_primary_exit"
+
+alice_primary_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+alice_primary_whoami_domain="$(echo "$alice_primary_whoami" | jq_field domain)"
+alice_primary_whoami_address="$(echo "$alice_primary_whoami" | jq_field address)"
+assert_eq "alice primary whoami domain after switch" "test.local" "$alice_primary_whoami_domain"
+assert_eq "alice primary whoami address after switch" "test.local/alice" "$alice_primary_whoami_address"
 
 alice_primary_cert_out="$(run_aw_in "$ALICE_DIR" id cert show --json 2>/dev/null)"
 alice_primary_cert_address="$(echo "$alice_primary_cert_out" | jq_field member_address)"
@@ -940,23 +943,51 @@ bob_per_membership_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>
 bob_primary_from_address="$(echo "$bob_per_membership_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership primary'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice primary from_address" "test.local/alice" "$bob_primary_from_address"
 
-run_aw_in "$BOB_DIR" mail send \
+run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership primary chat" >/dev/null 2>&1
+alice_primary_chat_exit=$?
+assert_eq "alice primary-team chat exit" "0" "$alice_primary_chat_exit"
+
+bob_primary_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+bob_primary_chat_from_address="$(echo "$bob_primary_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership primary chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "bob sees alice primary chat from_address" "test.local/alice" "$bob_primary_chat_from_address"
+
+if bob_primary_reply_out="$(run_aw_in "$BOB_DIR" mail send \
   --to-address test.local/alice \
   --subject "Reply primary address" \
-  --body "Reply to alice primary address" >/dev/null 2>&1
-bob_primary_reply_exit=$?
+  --body "Reply to alice primary address" 2>&1)"; then
+  bob_primary_reply_exit=0
+else
+  bob_primary_reply_exit=$?
+fi
 assert_eq "bob replies to alice primary address" "0" "$bob_primary_reply_exit"
+if [[ "$bob_primary_reply_exit" != "0" ]]; then
+  echo "  bob primary reply output: ${bob_primary_reply_out:0:240}"
+fi
 
 alice_primary_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_primary_reply_body="$(echo "$alice_primary_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Reply primary address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice receives primary address reply" "Reply to alice primary address" "$alice_primary_reply_body"
 
 run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
-alice_switch_partner_exit=$?
-assert_eq "alice switches to partner team" "0" "$alice_switch_partner_exit"
+alice_partner_setup_switch_exit=$?
+assert_eq "alice switches to partner team for initial connect" "0" "$alice_partner_setup_switch_exit"
 run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
-alice_partner_reconnect_exit=$?
-assert_eq "alice reconnects partner team" "0" "$alice_partner_reconnect_exit"
+alice_partner_initial_connect_exit=$?
+assert_eq "alice initially connects partner team" "0" "$alice_partner_initial_connect_exit"
+run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
+alice_primary_setup_restore_exit=$?
+assert_eq "alice returns to primary after partner setup" "0" "$alice_primary_setup_restore_exit"
+
+run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+alice_switch_partner_exit=$?
+assert_eq "alice switches to partner team without re-init" "0" "$alice_switch_partner_exit"
+
+alice_partner_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+alice_partner_whoami_domain="$(echo "$alice_partner_whoami" | jq_field domain)"
+alice_partner_whoami_address="$(echo "$alice_partner_whoami" | jq_field address)"
+assert_eq "alice partner whoami domain after switch" "partner.local" "$alice_partner_whoami_domain"
+assert_eq "alice partner whoami address after switch" "partner.local/alice" "$alice_partner_whoami_address"
 
 run_aw_in "$ALICE_DIR" mail send \
   --to bob \
@@ -969,12 +1000,27 @@ partner_bob_inbox="$(run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all 2
 partner_bob_from_address="$(echo "$partner_bob_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership partner'), ''))" 2>/dev/null || echo "")"
 assert_eq "partner bob sees alice partner from_address" "partner.local/alice" "$partner_bob_from_address"
 
-run_aw_in "$PARTNER_BOB_DIR" mail send \
+run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership partner chat" >/dev/null 2>&1
+alice_partner_chat_exit=$?
+assert_eq "alice partner-team chat exit" "0" "$alice_partner_chat_exit"
+
+partner_bob_pending="$(run_aw_in "$PARTNER_BOB_DIR" chat pending --json 2>/dev/null)"
+partner_bob_chat_from_address="$(echo "$partner_bob_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership partner chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "partner bob sees alice partner chat from_address" "partner.local/alice" "$partner_bob_chat_from_address"
+
+if partner_bob_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
   --to-address partner.local/alice \
   --subject "Reply partner address" \
-  --body "Reply to alice partner address" >/dev/null 2>&1
-partner_bob_reply_exit=$?
+  --body "Reply to alice partner address" 2>&1)"; then
+  partner_bob_reply_exit=0
+else
+  partner_bob_reply_exit=$?
+fi
 assert_eq "partner bob replies to alice partner address" "0" "$partner_bob_reply_exit"
+if [[ "$partner_bob_reply_exit" != "0" ]]; then
+  echo "  partner bob reply output: ${partner_bob_reply_out:0:240}"
+fi
 
 if alice_partner_reply_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>&1)"; then
   alice_partner_reply_inbox_exit=0
@@ -990,10 +1036,33 @@ assert_eq "alice receives partner address reply" "Reply to alice partner address
 
 run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1
 alice_restore_primary_exit=$?
-assert_eq "alice restores primary team" "0" "$alice_restore_primary_exit"
-run_aw_in "$ALICE_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
-alice_restore_reconnect_exit=$?
-assert_eq "alice reconnects restored primary team" "0" "$alice_restore_reconnect_exit"
+assert_eq "alice restores primary team without re-init" "0" "$alice_restore_primary_exit"
+
+alice_restored_whoami="$(run_aw_in "$ALICE_DIR" whoami --json 2>/dev/null)"
+alice_restored_whoami_domain="$(echo "$alice_restored_whoami" | jq_field domain)"
+alice_restored_whoami_address="$(echo "$alice_restored_whoami" | jq_field address)"
+assert_eq "alice restored whoami domain after switch" "test.local" "$alice_restored_whoami_domain"
+assert_eq "alice restored whoami address after switch" "test.local/alice" "$alice_restored_whoami_address"
+
+run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Per-membership restored primary" \
+  --body "Restored primary address hello" >/dev/null 2>&1
+alice_restored_mail_exit=$?
+assert_eq "alice restored primary-team mail exit" "0" "$alice_restored_mail_exit"
+
+bob_restored_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_restored_from_address="$(echo "$bob_restored_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Per-membership restored primary'), ''))" 2>/dev/null || echo "")"
+assert_eq "bob sees alice restored primary from_address" "test.local/alice" "$bob_restored_from_address"
+
+run_aw_in "$ALICE_DIR" chat send-and-leave bob \
+  "Per-membership restored primary chat" >/dev/null 2>&1
+alice_restored_chat_exit=$?
+assert_eq "alice restored primary-team chat exit" "0" "$alice_restored_chat_exit"
+
+bob_restored_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 echo ""
 
 # ---------------------------------------------------------------------------
