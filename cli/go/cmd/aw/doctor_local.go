@@ -18,7 +18,7 @@ const (
 	doctorCheckWorkspaceExists       = "local.workspace_yaml.exists"
 	doctorCheckWorkspaceParse        = "local.workspace_yaml.parse"
 	doctorCheckWorkspaceAwebURL      = "local.workspace.aweb_url_syntax"
-	doctorCheckWorkspaceActiveTeam   = "local.workspace.active_team"
+	doctorCheckTeamsActiveTeam       = "local.teams.active_team"
 	doctorCheckWorkspaceMembership   = "local.workspace.active_membership"
 	doctorCheckWorkspaceWorkspaceID  = "local.workspace.active_membership.workspace_id"
 	doctorCheckWorkspaceCertPath     = "local.workspace.membership_cert_path"
@@ -207,15 +207,15 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		activeTeam = strings.TrimSpace(state.teamState.ActiveTeam)
 	}
 	if activeTeam == "" {
-		check := localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusFail, nil, "Workspace active_team is missing.", "Recreate or repair .aw/workspace.yaml.", nil)
-		check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceActiveTeam)
+		check := localPathCheck(doctorCheckTeamsActiveTeam, doctorStatusFail, awconfig.TeamStatePath(state.workingDir), "teams.yaml active_team is missing.", "Recreate or repair .aw/teams.yaml.", nil)
+		check.Fix = safeDoctorFixInfo(doctorCheckTeamsActiveTeam)
 		r.add(check)
 	} else {
-		r.add(localCheck(doctorCheckWorkspaceActiveTeam, doctorStatusOK, &doctorTarget{Type: "team", ID: activeTeam}, "Workspace active_team is present.", "", map[string]any{"team_id": activeTeam}))
+		r.add(localCheck(doctorCheckTeamsActiveTeam, doctorStatusOK, &doctorTarget{Type: "team", ID: activeTeam}, "teams.yaml active_team is present.", "", map[string]any{"team_id": activeTeam}))
 	}
 
 	if state.membership == nil {
-		check := localCheck(doctorCheckWorkspaceMembership, doctorStatusFail, &doctorTarget{Type: "team", ID: activeTeam}, "Workspace active_team is not present in memberships.", "Run `aw id team switch <team>` or reinitialize the workspace binding.", nil)
+		check := localCheck(doctorCheckWorkspaceMembership, doctorStatusFail, &doctorTarget{Type: "team", ID: activeTeam}, "teams.yaml active_team is not present in workspace memberships.", "Run `aw id team switch <team>` or reinitialize the workspace binding.", nil)
 		if activeTeam != "" {
 			check.Fix = safeDoctorFixInfo(doctorCheckWorkspaceMembership)
 		}
@@ -822,7 +822,7 @@ func (r *doctorRunner) addWorkspaceDependentBlockedChecks(workspacePath, prerequ
 	target := localPathTarget(workspacePath)
 	for _, id := range []string{
 		doctorCheckWorkspaceAwebURL,
-		doctorCheckWorkspaceActiveTeam,
+		doctorCheckTeamsActiveTeam,
 		doctorCheckWorkspaceMembership,
 		doctorCheckWorkspaceWorkspaceID,
 		doctorCheckWorkspaceCertPath,

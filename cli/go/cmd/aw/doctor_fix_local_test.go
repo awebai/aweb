@@ -44,9 +44,6 @@ func writeDoctorFixWorkspaceYAML(t *testing.T, workingDir, awebURL, activeTeam s
 	}
 	var sb strings.Builder
 	sb.WriteString("aweb_url: " + awebURL + "\n")
-	if activeTeam != "" {
-		sb.WriteString("active_team: " + activeTeam + "\n")
-	}
 	sb.WriteString("memberships:\n")
 	for _, membership := range memberships {
 		sb.WriteString("  - team_id: " + membership.TeamID + "\n")
@@ -62,6 +59,20 @@ func writeDoctorFixWorkspaceYAML(t *testing.T, workingDir, awebURL, activeTeam s
 	}
 	if err := os.WriteFile(workspacePath, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("write workspace.yaml: %v", err)
+	}
+	if activeTeam != "" {
+		teamState := &awconfig.TeamState{ActiveTeam: activeTeam}
+		for _, membership := range memberships {
+			teamState.Memberships = append(teamState.Memberships, awconfig.TeamMembership{
+				TeamID:   membership.TeamID,
+				Alias:    membership.Alias,
+				CertPath: membership.CertPath,
+				JoinedAt: membership.JoinedAt,
+			})
+		}
+		if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
+			t.Fatalf("write teams.yaml: %v", err)
+		}
 	}
 	return workspacePath
 }
@@ -79,7 +90,7 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 		t.Fatalf("read workspace before dry-run: %v", err)
 	}
 
-	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--fix", "--dry-run", doctorCheckWorkspaceActiveTeam, "--json")
+	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--fix", "--dry-run", doctorCheckTeamsActiveTeam, "--json")
 	if err != nil {
 		t.Fatalf("doctor active_team dry-run failed: %v\n%s", err, string(out))
 	}
@@ -89,6 +100,9 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 	if !plan.DryRun || len(plan.PlannedMutations) != 1 || plan.PlannedMutations[0].Resource != "active_team" {
 		t.Fatalf("unexpected dry-run plan: %#v", plan)
 	}
+	if plan.PlannedMutations[0].Operation != "rewrite_teams_metadata" || plan.PlannedMutations[0].Path != awconfig.DefaultTeamStateRelativePath() {
+		t.Fatalf("active_team fix should target teams.yaml, got mutation: %#v", plan.PlannedMutations[0])
+	}
 	afterDryRun, err := os.ReadFile(workspacePath)
 	if err != nil {
 		t.Fatalf("read workspace after dry-run: %v", err)
@@ -97,7 +111,7 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 		t.Fatalf("dry-run mutated workspace.yaml\nbefore:\n%s\nafter:\n%s", string(before), string(afterDryRun))
 	}
 
-	out, err = runDoctorCLI(t, bin, tmp, "doctor", "--fix", doctorCheckWorkspaceActiveTeam, "--json")
+	out, err = runDoctorCLI(t, bin, tmp, "doctor", "--fix", doctorCheckTeamsActiveTeam, "--json")
 	if err != nil {
 		t.Fatalf("doctor active_team apply failed: %v\n%s", err, string(out))
 	}
@@ -111,11 +125,11 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
 
-	handler, ok := doctorFixHandlers[doctorCheckWorkspaceActiveTeam]
+	handler, ok := doctorFixHandlers[doctorCheckTeamsActiveTeam]
 	if !ok {
 		t.Fatalf("active_team handler is not registered")
 	}
-	check := advertisedDoctorFixCheck(doctorCheckWorkspaceActiveTeam, true)
+	check := advertisedDoctorFixCheck(doctorCheckTeamsActiveTeam, true)
 	planned, err := handler.Plan(context.Background(), doctorFixContext{WorkingDir: tmp}, check)
 	if err != nil {
 		t.Fatalf("plan active_team after apply: %v", err)
@@ -133,8 +147,8 @@ func TestAwDoctorLocalFixActiveTeamRefusesChangedAndAmbiguousState(t *testing.T)
 		WorkspaceID: "ws-1",
 		CertPath:    "team-certs/backend__example.com.pem",
 	}})
-	handler := doctorFixHandlers[doctorCheckWorkspaceActiveTeam]
-	check := advertisedDoctorFixCheck(doctorCheckWorkspaceActiveTeam, true)
+	handler := doctorFixHandlers[doctorCheckTeamsActiveTeam]
+	check := advertisedDoctorFixCheck(doctorCheckTeamsActiveTeam, true)
 	plan, err := handler.Plan(context.Background(), doctorFixContext{WorkingDir: tmp}, check)
 	if err != nil {
 		t.Fatalf("plan active_team: %v", err)
@@ -164,7 +178,7 @@ memberships:
 		{TeamID: "backend:example.com", Alias: "mia", WorkspaceID: "ws-1", CertPath: "team-certs/backend__example.com.pem"},
 		{TeamID: "frontend:example.com", Alias: "mia", WorkspaceID: "ws-2", CertPath: "team-certs/frontend__example.com.pem"},
 	})
-	out, err := runDoctorCLI(t, bin, ambiguousDir, "doctor", "--fix", doctorCheckWorkspaceActiveTeam, "--json")
+	out, err := runDoctorCLI(t, bin, ambiguousDir, "doctor", "--fix", doctorCheckTeamsActiveTeam, "--json")
 	if err != nil {
 		t.Fatalf("doctor ambiguous active_team failed: %v\n%s", err, string(out))
 	}

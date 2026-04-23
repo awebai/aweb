@@ -869,7 +869,7 @@ memberships:
 `,
 			checks: map[string]doctorStatus{
 				doctorCheckWorkspaceParse:       doctorStatusOK,
-				doctorCheckWorkspaceActiveTeam:  doctorStatusFail,
+				doctorCheckTeamsActiveTeam:      doctorStatusFail,
 				doctorCheckWorkspaceMembership:  doctorStatusFail,
 				doctorCheckWorkspaceWorkspaceID: doctorStatusBlocked,
 				doctorCheckWorkspaceCertPath:    doctorStatusBlocked,
@@ -893,7 +893,7 @@ memberships:
 `,
 			checks: map[string]doctorStatus{
 				doctorCheckWorkspaceParse:      doctorStatusOK,
-				doctorCheckWorkspaceActiveTeam: doctorStatusOK,
+				doctorCheckTeamsActiveTeam:     doctorStatusOK,
 				doctorCheckWorkspaceMembership: doctorStatusFail,
 				doctorCheckWorkspaceCertPath:   doctorStatusBlocked,
 			},
