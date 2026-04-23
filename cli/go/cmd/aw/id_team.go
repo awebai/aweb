@@ -995,31 +995,6 @@ func loadOptionalTeamState(workingDir string) (*awconfig.TeamState, error) {
 	return nil, err
 }
 
-func applyTeamStateToWorkspaceCache(workspace *awconfig.WorktreeWorkspace, teamState *awconfig.TeamState) {
-	if workspace == nil {
-		return
-	}
-	if teamState == nil || len(teamState.Memberships) == 0 {
-		workspace.Memberships = nil
-		return
-	}
-	memberships := make([]awconfig.WorktreeMembership, 0, len(teamState.Memberships))
-	for _, membership := range teamState.Memberships {
-		cached := awconfig.WorktreeMembership{
-			TeamID:   strings.TrimSpace(membership.TeamID),
-			Alias:    strings.TrimSpace(membership.Alias),
-			CertPath: filepath.ToSlash(strings.TrimSpace(membership.CertPath)),
-			JoinedAt: strings.TrimSpace(membership.JoinedAt),
-		}
-		if existing := workspace.Membership(membership.TeamID); existing != nil {
-			cached.RoleName = strings.TrimSpace(existing.RoleName)
-			cached.WorkspaceID = strings.TrimSpace(existing.WorkspaceID)
-		}
-		memberships = append(memberships, cached)
-	}
-	workspace.Memberships = memberships
-}
-
 func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membership awconfig.WorktreeMembership) {
 	if workspace == nil {
 		return

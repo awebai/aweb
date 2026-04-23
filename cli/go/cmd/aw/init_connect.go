@@ -146,7 +146,6 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		CertPath:    filepath.ToSlash(certPath),
 		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
 	})
-	applyTeamStateToWorkspaceCache(workspaceState, teamState)
 	workspaceState.RepoID = resp.RepoID
 	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(repoOrigin)
 	workspaceState.HumanName = reqBody.HumanName
