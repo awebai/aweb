@@ -103,6 +103,48 @@ func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
 	}
 }
 
+func TestResolveSurfacesActiveCertParseError(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:myteam.aweb.ai"
+	certPath := TeamCertificatePath(tmp, teamID)
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "support",
+			WorkspaceID: "agent-1",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-09T00:00:00Z",
+		}},
+	})
+	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
+		DID:       "did:key:z6MkBYOD",
+		StableID:  "did:aw:byod-support",
+		Address:   "acme.com/support",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-04T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected corrupt active certificate to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "load active team certificate") || !strings.Contains(got, "parse certificate") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) {
 	t.Parallel()
 

@@ -131,10 +131,10 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 		serverName = derived
 	}
 	workspacePath := filepath.Join(rootDir, DefaultWorktreeWorkspaceRelativePath())
-	return finalizeWorkspaceSelection(rootDir, workspacePath, serverName, baseURL, workspace, teamState, identity, teamID), nil
+	return finalizeWorkspaceSelection(rootDir, workspacePath, serverName, baseURL, workspace, teamState, identity, teamID)
 }
 
-func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, ts *TeamState, identity *WorktreeIdentity, selectedTeamID string) *Selection {
+func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL string, ws *WorktreeWorkspace, ts *TeamState, identity *WorktreeIdentity, selectedTeamID string) (*Selection, error) {
 	domain := ""
 	alias := ""
 	workspaceID := ""
@@ -163,6 +163,8 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 				if v := strings.TrimSpace(cert.MemberAddress); v != "" {
 					address = v
 				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("load active team certificate %s: %w", certPath, err)
 			}
 		}
 		awebURL = strings.TrimSpace(ws.AwebURL)
@@ -217,7 +219,7 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		Custody:       custody,
 		Lifetime:      lifetime,
 		RegistryURL:   registryURL,
-	}
+	}, nil
 }
 
 func finalizeStandaloneIdentitySelection(workingDir string, identity *WorktreeIdentity) *Selection {
