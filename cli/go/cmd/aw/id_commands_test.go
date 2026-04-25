@@ -1414,7 +1414,7 @@ func TestResolveRegistryClientForLookupRejectsAWIDRegistryURLLocal(t *testing.T)
 	if err == nil {
 		t.Fatal("expected AWID_REGISTRY_URL=local to fail")
 	}
-	if !strings.Contains(err.Error(), "AWID_REGISTRY_URL=local is not supported") {
+	if !strings.Contains(err.Error(), "registry URL 'local' is not supported") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
