@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal
 
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import canonical_payload, verify_did_key_signature
 
 
 MessageType = Literal["mail", "chat"]
@@ -34,7 +34,7 @@ class HostedMessageSigningError(RuntimeError):
 
 def canonical_signed_payload(payload: dict[str, Any]) -> str:
     """Return the canonical JSON string used for message signing."""
-    return canonical_json_bytes(payload).decode("utf-8")
+    return canonical_payload(payload).decode("utf-8")
 
 
 def _result_field(result: HostedMessageSigningResult | dict[str, Any], field: str) -> Any:

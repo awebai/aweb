@@ -337,6 +337,19 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
 
 
 @pytest.mark.asyncio
+async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud_db, monkeypatch):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)
+
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    with pytest.raises(HTTPException) as exc_info:
+        await middleware._resolve_auth(_request_with_headers({}))
+
+    assert exc_info.value.status_code == 500
+    assert "misconfigured" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_team_id", [
     "ops:acme.com:evil",
     "bad team:acme.com",
@@ -401,6 +414,26 @@ async def test_mcp_auth_ignores_trusted_proxy_headers_when_not_enabled(aweb_clou
     )
 
     assert ctx is None
+
+
+def test_canonical_signed_payload_filters_unsigned_fields():
+    payload = {
+        "body": "hello",
+        "from": "acme.com/alice",
+        "from_did": "did:key:z6MkAlice",
+        "message_id": "message-1",
+        "subject": "launch",
+        "timestamp": "2026-04-25T00:00:00Z",
+        "to": "acme.com/bob",
+        "to_did": "did:key:z6MkBob",
+        "type": "mail",
+        "transport_only": "must not be signed",
+    }
+
+    signed_payload = canonical_signed_payload(payload)
+
+    assert "transport_only" not in signed_payload
+    assert signed_payload == canonical_signed_payload({k: v for k, v in payload.items() if k != "transport_only"})
 
 
 @pytest.mark.asyncio

@@ -80,23 +80,24 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
     """Parse and validate trusted proxy auth headers.
 
     Returns None when proxy-header trust is disabled or no internal auth header
-    is present. Raises 401 when proxy auth is present but malformed or invalid.
+    is present. Raises 500 when proxy-header trust is enabled without a shared
+    secret, and 401 when proxy auth is present but malformed or invalid.
     """
     if not _trust_aweb_proxy_headers():
-        return None
-
-    internal_auth = request.headers.get(INTERNAL_AUTH_HEADER)
-    if not internal_auth:
         return None
 
     secret = _get_internal_auth_secret()
     if not secret:
         path = request.scope.get("path") or ""
-        logger.warning(
-            "Ignoring %s header because AWEB_INTERNAL_AUTH_SECRET is not configured (path=%s)",
-            INTERNAL_AUTH_HEADER,
+        logger.error(
+            "AWEB_TRUST_PROXY_HEADERS is enabled but %s is not configured (path=%s)",
+            "AWEB_INTERNAL_AUTH_SECRET",
             path,
         )
+        raise HTTPException(status_code=500, detail="Internal proxy authentication is misconfigured")
+
+    internal_auth = request.headers.get(INTERNAL_AUTH_HEADER)
+    if not internal_auth:
         return None
 
     team_id = (request.headers.get(INTERNAL_TEAM_HEADER) or "").strip()
