@@ -226,7 +226,7 @@ func TestExecuteHostedPathRejectsServersWithoutManagedOnboarding(t *testing.T) {
 	var out bytes.Buffer
 	_, err := executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader("Alice\nacme.com\n"),
+		PromptIn:   strings.NewReader("\nAlice\nacme.com\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
 	})
@@ -254,7 +254,7 @@ func TestGuidedOnboardingBYODErrorsBubbleUpInsteadOfPanicking(t *testing.T) {
 	var out bytes.Buffer
 	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader("2\nalice\nacme.com\n"),
+		PromptIn:   strings.NewReader("2\n\nalice\nacme.com\n"),
 		PromptOut:  &out,
 	})
 	if err == nil {
@@ -262,6 +262,110 @@ func TestGuidedOnboardingBYODErrorsBubbleUpInsteadOfPanicking(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "byod provisioning failed") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecuteBYODPathDefaultsToEphemeralAlias(t *testing.T) {
+	oldProvision := guidedOnboardingProvisionBYODIdentity
+	oldConnect := guidedOnboardingConnect
+	t.Cleanup(func() {
+		guidedOnboardingProvisionBYODIdentity = oldProvision
+		guidedOnboardingConnect = oldConnect
+	})
+
+	tmp := t.TempDir()
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
+		Team:         "default:acme.com",
+		MemberDIDKey: didKey,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotReq guidedOnboardingRequest
+	var gotName, gotDomain string
+	guidedOnboardingProvisionBYODIdentity = func(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
+		gotReq = req
+		gotName = name
+		gotDomain = domain
+		return &guidedBYODProvision{
+			Identity: &preparedIDCreate{
+				Plan: &idCreatePlan{
+					Name:           name,
+					Domain:         "acme.com",
+					Address:        "acme.com/" + name,
+					DIDAW:          awid.ComputeStableID(pub),
+					DIDKey:         didKey,
+					RegistryURL:    "https://registry.example",
+					IdentityPath:   filepath.Join(tmp, ".aw", "identity.yaml"),
+					SigningKeyPath: filepath.Join(tmp, ".aw", "signing.key"),
+					CreatedAt:      "2026-04-07T00:00:00Z",
+				},
+				IdentityKey: signingKey,
+			},
+			Certificate: cert,
+		}, nil
+	}
+	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
+		return connectOutput{Status: "connected", TeamID: "default:acme.com", Alias: "alice", AwebURL: serverURL}, nil
+	}
+
+	var out bytes.Buffer
+	_, err = executeBYODPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("\nAlice\nAcme.com\n"),
+		PromptOut:  &out,
+		BaseURL:    "https://app.example",
+		Role:       "developer",
+	})
+	if err != nil {
+		t.Fatalf("executeBYODPath: %v", err)
+	}
+
+	if gotReq.Persistent {
+		t.Fatal("expected default BYOD identity type to be ephemeral")
+	}
+	if gotName != "alice" {
+		t.Fatalf("name=%q", gotName)
+	}
+	if gotDomain != "Acme.com" {
+		t.Fatalf("domain=%q", gotDomain)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"Ephemeral",
+		"Persistent",
+		"Agent alias",
+		"Creating ephemeral BYOD identity",
+		`Agent alias "alice"`,
+		"No public did:aw address will be registered",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "Name:") {
+		t.Fatalf("BYOD wizard should not prompt with bare Name:\n%s", output)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral BYOD should not write identity.yaml: %v", err)
+	}
+	savedCert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:acme.com"))
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+	if savedCert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("cert lifetime=%q", savedCert.Lifetime)
+	}
+	if savedCert.MemberDIDAW != "" || savedCert.MemberAddress != "" {
+		t.Fatalf("ephemeral cert should not carry stable fields: %+v", savedCert)
 	}
 }
 
@@ -282,6 +386,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	didAW := awid.ComputeStableID(pub)
 
 	var gotName, gotDomain string
+	var gotReq guidedOnboardingRequest
 	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
 		Team:          "default:acme.com",
 		MemberDIDKey:  didKey,
@@ -295,6 +400,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	}
 
 	guidedOnboardingProvisionBYODIdentity = func(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
+		gotReq = req
 		gotName = name
 		gotDomain = domain
 		normalizedDomain := awconfig.NormalizeDomain(domain)
@@ -333,7 +439,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
+		PromptIn:   strings.NewReader("2\nAlice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    "https://app.example",
 		Role:       "developer",
@@ -344,6 +450,9 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 
 	if gotName != "alice" {
 		t.Fatalf("name=%q", gotName)
+	}
+	if !gotReq.Persistent {
+		t.Fatal("expected persistent BYOD identity type")
 	}
 	if gotDomain != "Acme.com" {
 		t.Fatalf("domain=%q", gotDomain)
@@ -398,6 +507,113 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	}
 	if savedCert.MemberAddress != "acme.com/alice" {
 		t.Fatalf("member_address=%q", savedCert.MemberAddress)
+	}
+}
+
+func TestExecuteBYODPathProvisionsEphemeralTeamWithoutIdentityRegistrationAgainstServers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AWID_SKIP_DNS_VERIFY", "true")
+
+	var gotNamespacePayload map[string]any
+	var gotTeamPayload map[string]any
+	var gotCertPayload map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
+			if err := json.NewDecoder(r.Body).Decode(&gotNamespacePayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":        "ns-1",
+				"domain":              "acme.com",
+				"controller_did":      gotNamespacePayload["controller_did"],
+				"verification_status": "verified",
+				"created_at":          "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			t.Fatal("ephemeral BYOD must not register a did:aw identity")
+		case strings.Contains(r.URL.Path, "/addresses"):
+			t.Fatalf("ephemeral BYOD must not register or resolve public addresses: %s %s", r.Method, r.URL.Path)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
+			if err := json.NewDecoder(r.Body).Decode(&gotTeamPayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "team-1",
+				"domain":       "acme.com",
+				"name":         "default",
+				"team_did_key": gotTeamPayload["team_did_key"],
+				"created_at":   "2026-04-07T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/default/certificates":
+			if err := json.NewDecoder(r.Body).Decode(&gotCertPayload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			cert := requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:acme.com",
+				"alias":        cert.Alias,
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": gotTeamPayload["team_did_key"],
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	_, err := executeBYODPath(guidedOnboardingRequest{
+		WorkingDir:  tmp,
+		PromptIn:    strings.NewReader("\nAlice\nAcme.com\n"),
+		PromptOut:   &out,
+		BaseURL:     awebServer.URL,
+		RegistryURL: registryServer.URL,
+		Role:        "developer",
+	})
+	if err != nil {
+		t.Fatalf("executeBYODPath: %v", err)
+	}
+
+	if gotNamespacePayload == nil {
+		t.Fatal("expected namespace registration")
+	}
+	if gotCertPayload["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("cert lifetime=%v", gotCertPayload["lifetime"])
+	}
+	if _, ok := gotCertPayload["member_did_aw"]; ok {
+		t.Fatalf("ephemeral certificate registration should omit member_did_aw: %v", gotCertPayload["member_did_aw"])
+	}
+	if _, ok := gotCertPayload["member_address"]; ok {
+		t.Fatalf("ephemeral certificate registration should omit member_address: %v", gotCertPayload["member_address"])
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral BYOD should not write identity.yaml: %v", err)
+	}
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:acme.com"))
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("saved cert lifetime=%q", cert.Lifetime)
 	}
 }
 
@@ -932,13 +1148,14 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	tmp := t.TempDir()
 	var out bytes.Buffer
 	_, err = executeBYODPath(guidedOnboardingRequest{
-		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
-		PromptOut:  &out,
-		BaseURL:    connectServer.URL,
-		Role:       "developer",
-		HumanName:  "Operator Jane",
-		AgentType:  "codex",
+		WorkingDir:  tmp,
+		PromptIn:    strings.NewReader("2\nAlice\nAcme.com\n"),
+		PromptOut:   &out,
+		BaseURL:     connectServer.URL,
+		RegistryURL: registryServer.URL,
+		Role:        "developer",
+		HumanName:   "Operator Jane",
+		AgentType:   "codex",
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -1164,7 +1381,7 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	tmp := t.TempDir()
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
+		PromptIn:   strings.NewReader("2\nAlice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    onboardingServer.URL,
 		Role:       "developer",

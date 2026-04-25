@@ -179,7 +179,13 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
-	name, err := resolveGuidedBYODName(req)
+	persistent, err := resolveGuidedBYODPersistent(req)
+	if err != nil {
+		return nil, err
+	}
+	req.Persistent = persistent
+
+	name, err := resolveGuidedBYODName(req, persistent)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +193,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
+	printGuidedBYODIdentityPlan(req.PromptOut, persistent, name, domain)
 
 	serviceURLs, err := resolveOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
@@ -316,16 +323,52 @@ func guidedOnboardingSkipDNSVerify() bool {
 	}
 }
 
-func resolveGuidedBYODName(req guidedOnboardingRequest) (string, error) {
+func resolveGuidedBYODPersistent(req guidedOnboardingRequest) (bool, error) {
+	if req.Persistent {
+		return true, nil
+	}
+	if strings.TrimSpace(req.Name) != "" && strings.TrimSpace(req.Alias) == "" {
+		return true, nil
+	}
+	if strings.TrimSpace(req.Alias) != "" && strings.TrimSpace(req.Name) == "" {
+		return false, nil
+	}
+	return promptIdentityLifetime(req.PromptIn, req.PromptOut)
+}
+
+func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string, error) {
 	name := strings.TrimSpace(req.Name)
+	label := "Agent name"
+	if !persistent {
+		name = strings.TrimSpace(req.Alias)
+		if name == "" {
+			name = strings.TrimSpace(req.Name)
+		}
+		label = "Agent alias"
+	}
 	if name == "" {
-		prompted, err := promptRequiredStringWithIO("Name", "", req.PromptIn, req.PromptOut)
+		prompted, err := promptRequiredStringWithIO(label, "", req.PromptIn, req.PromptOut)
 		if err != nil {
 			return "", err
 		}
 		name = prompted
 	}
 	return normalizeIDCreateName(name)
+}
+
+func printGuidedBYODIdentityPlan(out io.Writer, persistent bool, name, domain string) {
+	if out == nil {
+		return
+	}
+	normalizedDomain := awconfig.NormalizeDomain(domain)
+	if persistent {
+		fmt.Fprintln(out, "Creating persistent BYOD identity.")
+		fmt.Fprintf(out, "  Agent name %q becomes public address %s/%s.\n", name, normalizedDomain, name)
+		return
+	}
+	fmt.Fprintln(out, "Creating ephemeral BYOD identity.")
+	fmt.Fprintf(out, "  Agent alias %q is used inside team %s:%s.\n", name, guidedOnboardingDefaultTeamName, normalizedDomain)
+	fmt.Fprintln(out, "  No public did:aw address will be registered for this workspace.")
 }
 
 func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*guidedBYODProvision, error) {
@@ -360,9 +403,13 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// The BYOD wizard shares the id-create registry path: namespace, identity,
-	// then controller-signed address binding.
-	if err := ensureStandaloneRegistryRegistration(ctx, registry, prepared.Plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
+	if req.Persistent {
+		// Persistent BYOD shares the id-create registry path: namespace, identity,
+		// then controller-signed address binding.
+		if err := ensureStandaloneRegistryRegistration(ctx, registry, prepared.Plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
+			return nil, err
+		}
+	} else if err := ensureStandaloneNamespace(ctx, registry, prepared.Plan, prepared.ControllerKey); err != nil {
 		return nil, err
 	}
 
@@ -370,7 +417,15 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	if alias == "" {
 		alias = prepared.Plan.Name
 	}
-	team, err := bootstrapFirstLocalTeamMember(
+	lifetime := awid.LifetimeEphemeral
+	memberDIDAW := ""
+	memberAddress := ""
+	if req.Persistent {
+		lifetime = awid.LifetimePersistent
+		memberDIDAW = prepared.Plan.DIDAW
+		memberAddress = prepared.Plan.Address
+	}
+	team, err := bootstrapLocalTeamMemberWithLifetime(
 		ctx,
 		registry,
 		prepared.Plan.RegistryURL,
@@ -379,9 +434,10 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		"",
 		prepared.ControllerKey,
 		prepared.IdentityKey,
-		prepared.Plan.DIDAW,
-		prepared.Plan.Address,
+		memberDIDAW,
+		memberAddress,
 		alias,
+		lifetime,
 	)
 	if err != nil {
 		return nil, err
@@ -404,6 +460,9 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	workingDir := filepath.Dir(filepath.Dir(plan.IdentityPath))
 	if err := persistLocalSigningKeyAndCertificate(workingDir, provisioned.Identity.IdentityKey, provisioned.Certificate); err != nil {
 		return err
+	}
+	if strings.TrimSpace(provisioned.Certificate.Lifetime) == awid.LifetimeEphemeral {
+		return nil
 	}
 	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
 		DID:            plan.DIDKey,
