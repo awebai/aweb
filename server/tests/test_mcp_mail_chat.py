@@ -770,6 +770,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
             to_alias="bob",
             message="hello chat",
             leaving=True,
+            hang_on=True,
         )
     )
 
@@ -784,9 +785,11 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     assert seen[0]["payload"]["sender_leaving"] is True
+    assert seen[0]["payload"]["hang_on"] is True
 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == alice_did
+    assert row["hang_on"] is True
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 

@@ -405,6 +405,8 @@ async def chat_send(
             signed_fields["to_stable_id"] = to_stable_id
         if auth.did_aw:
             signed_fields["from_stable_id"] = auth.did_aw
+        if hang_on:
+            signed_fields["hang_on"] = True
         if wait:
             signed_fields["wait_seconds"] = wait_seconds
         if leaving:
