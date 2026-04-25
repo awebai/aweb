@@ -124,17 +124,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-			WorkingDir:  wd,
-			AwebURL:     awebURL,
-			RegistryURL: registryURL,
-			APIKey:      apiKey,
+			WorkingDir:   wd,
+			AwebURL:      awebURL,
+			RegistryURL:  registryURL,
+			APIKey:       apiKey,
 			Name:         strings.TrimSpace(initName),
 			Alias:        resolveAliasValue(strings.TrimSpace(initAlias)),
 			Reachability: strings.TrimSpace(initReachability),
 			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
-			AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Persistent:  initPersistent,
+			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+			Persistent:   initPersistent,
 		})
 		if err != nil {
 			return err
@@ -228,7 +228,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if !initIsTTY() {
-			return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding or get a team certificate first with `aw id team accept-invite`")
+			return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding, or join an existing team with `aw id team request` then the printed `aw id team fetch-cert` command")
 		}
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 			WorkingDir:  wd,
