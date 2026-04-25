@@ -57,16 +57,22 @@ BOB_DIR="$E2E_CWD/bob"
 CAROL_DIR="$E2E_CWD/carol"
 DAVE_DIR="$E2E_CWD/dave"
 GSK_DIR="$E2E_CWD/gsk"
+REMOTE_ERIN_DIR="$E2E_CWD/remote-erin"
+WRONG_DID_DIR="$E2E_CWD/wrong-did"
 PARTNER_CONTROLLER_DIR="$E2E_CWD/partner-controller"
 PARTNER_BOB_DIR="$E2E_CWD/partner-bob"
 RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
+WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
 DAVE_DIR="$(canonicalize_dir "$DAVE_DIR")"
 GSK_DIR="$(canonicalize_dir "$GSK_DIR")"
+REMOTE_ERIN_DIR="$(canonicalize_dir "$REMOTE_ERIN_DIR")"
+WRONG_DID_DIR="$(canonicalize_dir "$WRONG_DID_DIR")"
 PARTNER_CONTROLLER_DIR="$(canonicalize_dir "$PARTNER_CONTROLLER_DIR")"
 PARTNER_BOB_DIR="$(canonicalize_dir "$PARTNER_BOB_DIR")"
 RECONNECT_DIR="$(canonicalize_dir "$RECONNECT_DIR")"
@@ -82,7 +88,7 @@ cleanup() {
     cd "$SERVER_DIR" && docker compose --env-file .env.e2e down -v 2>/dev/null || true
     rm -f "$SERVER_DIR/.env.e2e"
   fi
-  rm -rf "$E2E_HOME" "$E2E_CWD"
+  rm -rf "$E2E_HOME" "$REMOTE_ERIN_HOME" "$WRONG_DID_HOME" "$E2E_CWD"
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -117,7 +123,7 @@ assert_not_empty() {
 
 assert_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if echo "$haystack" | grep -q "$needle"; then
+  if echo "$haystack" | grep -q -- "$needle"; then
     echo "  PASS: $label"
     pass=$((pass + 1))
   else
@@ -128,7 +134,7 @@ assert_contains() {
 
 assert_not_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if echo "$haystack" | grep -q "$needle"; then
+  if echo "$haystack" | grep -q -- "$needle"; then
     echo "  FAIL: $label (did not expect '$needle', got: ${haystack:0:120})"
     fail=$((fail + 1))
   else
@@ -176,14 +182,20 @@ assert_status() {
 # Run aw in the isolated environment with a specific working directory.
 # Alice and bob share E2E_HOME so the team key and invites are accessible
 # to both (simulates same-machine BYOD setup).
-run_aw_in() {
-  local workdir="$1"
-  shift
-  HOME="$E2E_HOME" \
-  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+run_aw_with_home_in() {
+  local home="$1" workdir="$2"
+  shift 2
+  HOME="$home" \
+  AW_CONFIG_PATH="$home/.config/aw/config.yaml" \
   AWID_REGISTRY_URL="$AWID_URL" \
   AWID_SKIP_DNS_VERIFY=1 \
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
+}
+
+run_aw_in() {
+  local workdir="$1"
+  shift
+  run_aw_with_home_in "$E2E_HOME" "$workdir" "$@"
 }
 
 run_aw_tty_in() {
@@ -579,6 +591,109 @@ bob_msg_body="$(echo "$bob_inbox" | python3 -c "import sys,json; msgs=json.load(
 
 assert_eq "bob has 1 message" "1" "$bob_msg_count"
 assert_eq "message body" "Hello from alice" "$bob_msg_body"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 11a: Cross-machine request/add-member/fetch-cert
+# ---------------------------------------------------------------------------
+echo "=== Phase 11a: Cross-machine request/add-member/fetch-cert ==="
+
+erin_create="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id create \
+  --name erin \
+  --domain erin.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+ERIN_DID_KEY="$(echo "$erin_create" | jq_field did_key)"
+ERIN_DID_AW="$(echo "$erin_create" | jq_field did_aw)"
+ERIN_ADDRESS="$(echo "$erin_create" | jq_field address)"
+assert_not_empty "remote erin did_key" "$ERIN_DID_KEY"
+assert_not_empty "remote erin did_aw" "$ERIN_DID_AW"
+assert_eq "remote erin address" "erin.local/erin" "$ERIN_ADDRESS"
+
+erin_request="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team request \
+  --team devteam:test.local \
+  --alias erin \
+  --json 2>/dev/null)"
+erin_add_command="$(echo "$erin_request" | jq_field command)"
+assert_contains "erin request prints add-member" "$erin_add_command" "aw id team add-member"
+assert_contains "erin request includes did" "$erin_add_command" "$ERIN_DID_KEY"
+assert_contains "erin request includes address" "$erin_add_command" "--address erin.local/erin"
+
+erin_add="$(run_aw_in "$ALICE_DIR" id team add-member \
+  --team devteam \
+  --namespace test.local \
+  --did "$ERIN_DID_KEY" \
+  --alias erin \
+  --lifetime persistent \
+  --did-aw "$ERIN_DID_AW" \
+  --address "$ERIN_ADDRESS" \
+  --json 2>/dev/null)"
+ERIN_CERT_ID="$(echo "$erin_add" | jq_field certificate_id)"
+ERIN_FETCH_COMMAND="$(echo "$erin_add" | jq_field fetch_command)"
+assert_not_empty "erin certificate id" "$ERIN_CERT_ID"
+assert_contains "erin add-member prints fetch-cert" "$ERIN_FETCH_COMMAND" "aw id team fetch-cert"
+
+erin_fetch="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id team fetch-cert \
+  --namespace test.local \
+  --team devteam \
+  --cert-id "$ERIN_CERT_ID" \
+  --json 2>/dev/null)"
+ERIN_FETCH_STATUS="$(echo "$erin_fetch" | jq_field status)"
+assert_eq "erin fetch-cert installed" "installed" "$ERIN_FETCH_STATUS"
+erin_cert_path="$(team_cert_path "$REMOTE_ERIN_DIR" "devteam:test.local")"
+assert_file_exists "erin fetched cert file" "$erin_cert_path"
+erin_team_state="$REMOTE_ERIN_DIR/.aw/teams.yaml"
+erin_active_team="$(yaml_field "$erin_team_state" active_team)"
+assert_eq "erin active team after fetch" "devteam:test.local" "$erin_active_team"
+if [[ ! -f "$REMOTE_ERIN_HOME/.config/aw/team-keys/test.local/devteam.key" ]]; then
+  echo "  PASS: erin remote home has no controller team key"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: erin remote home unexpectedly has controller team key"
+  fail=$((fail + 1))
+fi
+
+run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" init --url "$AWEB_URL" >/dev/null 2>&1
+erin_init_exit=$?
+assert_eq "erin init after fetch-cert" "0" "$erin_init_exit"
+
+run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" mail send \
+  --to alice \
+  --subject "Remote fetch-cert mail" \
+  --body "Remote fetch-cert path works" >/dev/null 2>&1
+erin_mail_exit=$?
+assert_eq "erin mail after fetch-cert" "0" "$erin_mail_exit"
+alice_erin_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_erin_from_address="$(echo "$alice_erin_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Remote fetch-cert mail'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice sees erin remote from_address" "erin.local/erin" "$alice_erin_from_address"
+
+run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" chat send-and-leave alice \
+  "Remote fetch-cert chat" >/dev/null 2>&1
+erin_chat_exit=$?
+assert_eq "erin chat after fetch-cert" "0" "$erin_chat_exit"
+alice_erin_pending="$(run_aw_in "$ALICE_DIR" chat pending --json 2>/dev/null)"
+alice_erin_chat_from_address="$(echo "$alice_erin_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Remote fetch-cert chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "alice sees erin remote chat from_address" "erin.local/erin" "$alice_erin_chat_from_address"
+
+mallory_create="$(run_aw_with_home_in "$WRONG_DID_HOME" "$WRONG_DID_DIR" id create \
+  --name mallory \
+  --domain mallory.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+MALLORY_DID_KEY="$(echo "$mallory_create" | jq_field did_key)"
+assert_not_empty "wrong did identity created" "$MALLORY_DID_KEY"
+if mallory_fetch_out="$(run_aw_with_home_in "$WRONG_DID_HOME" "$WRONG_DID_DIR" id team fetch-cert \
+  --namespace test.local \
+  --team devteam \
+  --cert-id "$ERIN_CERT_ID" 2>&1)"; then
+  mallory_fetch_exit=0
+else
+  mallory_fetch_exit=$?
+fi
+assert_eq "wrong did fetch-cert rejected" "1" "$mallory_fetch_exit"
+assert_contains "wrong did fetch-cert explains auth" "$mallory_fetch_out" "403"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1117,7 +1232,7 @@ assert_eq "awid team name" "devteam" "$team_get_name"
 
 certs_list="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 cert_count="$(echo "$certs_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "3 active certificates" "3" "$cert_count"
+assert_eq "4 active certificates" "4" "$cert_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1146,7 +1261,7 @@ assert_eq "1 revocation" "1" "$revocation_count"
 
 active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "2 active certificates (alice and gsk)" "2" "$active_count"
+assert_eq "3 active certificates (alice, erin, and gsk)" "3" "$active_count"
 echo ""
 
 # ---------------------------------------------------------------------------

@@ -150,6 +150,45 @@ before contacting the registry.
 Public namespace listing is discovery, not ownership proof. Do not use it as
 evidence that a caller owns or may mutate a namespace or address.
 
+## Team Certificate Fetch Support
+
+Blob-backed team certificates can be fetched by the certificate subject with:
+
+```bash
+aw id team fetch-cert --namespace <domain> --team <team> --cert-id <certificate_id>
+```
+
+If fetch returns that the certificate blob is unavailable or not fetchable,
+the registry has an old metadata-only certificate row. Do not reconstruct a
+certificate locally and do not mark the install as successful. The remediation
+is controller-side reissue:
+
+```bash
+aw id team add-member --namespace <domain> --team <team> --member <domain>/<name>
+```
+
+For direct DID approvals, use the values from the member's request:
+
+```bash
+aw id team add-member --namespace <domain> --team <team> \
+  --did <did:key> --alias <alias> \
+  --lifetime persistent --did-aw <did:aw> --address <domain>/<name>
+```
+
+`add-member` prints the new `certificate_id` and a fetch command for the
+member. After confirming the new blob-backed certificate works, revoke stale
+metadata-only rows so they no longer appear as active membership records:
+
+```bash
+aw id team remove-member --namespace <domain> --team <team> --member <domain>/<name>
+```
+
+When inspecting registry state, treat records with `revoked_at` as historical
+audit rows. Treat active records with no blob as pre-fix rows requiring
+reissue. The team controller private key must remain on the controller machine;
+support should ask the controller owner to reissue rather than requesting or
+moving controller key material.
+
 ## Support Bundles
 
 `aw doctor support-bundle --output <file> --json` writes a redacted JSON bundle

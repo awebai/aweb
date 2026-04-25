@@ -276,6 +276,69 @@ async def test_fetch_certificate_rejects_other_did(client, controller_identity):
 
 
 @pytest.mark.asyncio
+async def test_fetch_certificate_rejects_revoked_certificate(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "revokedfetch.cert.com", "backend")
+
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    cert_id = str(uuid4())
+    certificate = _signed_certificate_blob(
+        team_key,
+        certificate_id=cert_id,
+        team_id="backend:revokedfetch.cert.com",
+        team_did_key=team_did,
+        member_did_key=member_did_key,
+        alias="alice",
+        lifetime="ephemeral",
+    )
+
+    headers = _sign(
+        team_key,
+        team_did,
+        domain="revokedfetch.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/revokedfetch.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "alias": "alice",
+            "lifetime": "ephemeral",
+            "certificate": certificate,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    headers = _sign(
+        team_key,
+        team_did,
+        domain="revokedfetch.cert.com",
+        operation="revoke_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/revokedfetch.cert.com/teams/backend/certificates/revoke",
+        json={"certificate_id": cert_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    path = f"/v1/namespaces/revokedfetch.cert.com/teams/backend/certificates/{cert_id}"
+    resp = await client.get(
+        path,
+        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+    )
+    assert resp.status_code == 409, resp.text
+    assert "revoked" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_fetch_certificate_metadata_only_record_has_explicit_error(client, controller_identity):
     ns_key, ns_did = controller_identity
     team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacyfetch.cert.com", "backend")
