@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 from datetime import datetime, timezone
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -16,7 +18,14 @@ from awid_service.deps import get_db
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
-from awid.dns_auth import verify_signed_json_request
+from awid.dns_auth import (
+    enforce_timestamp_skew,
+    parse_didkey_auth,
+    require_timestamp,
+    verify_signed_json_request,
+)
+from awid.did import public_key_from_did
+from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid.team_ids import build_team_id
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"])
@@ -137,6 +146,84 @@ async def _require_member_address_owned_by_did_aw(
         )
 
 
+def _parse_certificate_blob(value: str | None) -> dict | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        raw = base64.b64decode(value, validate=True)
+        cert = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="certificate must be base64-encoded JSON") from exc
+    if not isinstance(cert, dict):
+        raise HTTPException(status_code=422, detail="certificate must decode to a JSON object")
+    return cert
+
+
+def _verify_certificate_blob(
+    certificate: str | None,
+    *,
+    team_id: str,
+    team_did_key: str,
+    body: "CertificateRegisterRequest",
+) -> None:
+    cert = _parse_certificate_blob(certificate)
+    if cert is None:
+        return
+
+    expected = {
+        "version": 1,
+        "certificate_id": body.certificate_id,
+        "team_id": team_id,
+        "team_did_key": team_did_key,
+        "member_did_key": body.member_did_key,
+        "alias": body.alias,
+        "lifetime": body.lifetime,
+    }
+    if body.member_did_aw:
+        expected["member_did_aw"] = body.member_did_aw
+    if body.member_address:
+        expected["member_address"] = body.member_address
+
+    for key, expected_value in expected.items():
+        if cert.get(key) != expected_value:
+            raise HTTPException(status_code=422, detail=f"certificate {key} does not match registration")
+
+    for key in ("member_did_aw", "member_address"):
+        if not expected.get(key) and cert.get(key):
+            raise HTTPException(status_code=422, detail=f"certificate {key} does not match registration")
+
+    signature = cert.get("signature")
+    if not isinstance(signature, str) or not signature.strip():
+        raise HTTPException(status_code=422, detail="certificate signature is required")
+    issued_at = cert.get("issued_at")
+    if not isinstance(issued_at, str) or not issued_at.strip():
+        raise HTTPException(status_code=422, detail="certificate issued_at is required")
+
+    payload = {k: v for k, v in cert.items() if k != "signature"}
+    try:
+        public_key = public_key_from_did(team_did_key)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="team_did_key is invalid") from exc
+    if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
+        raise HTTPException(status_code=422, detail="certificate signature verification failed")
+
+
+def _verify_path_signature(request: Request, authorization: str | None) -> str:
+    try:
+        did_key, sig = parse_didkey_auth(authorization)
+        timestamp = require_timestamp(request)
+        enforce_timestamp_skew(timestamp)
+        payload = f"{timestamp}\n{request.method}\n{request.url.path}".encode("utf-8")
+        if verify_signature_with_public_key(public_key_from_did(did_key), payload, sig) != VerifyResult.VERIFIED:
+            raise ValueError("invalid signature")
+        return did_key
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Request/response models
 # ---------------------------------------------------------------------------
@@ -225,6 +312,7 @@ class CertificateRegisterRequest(BaseModel):
     member_address: str | None = Field(default=None, max_length=256)
     alias: str = Field(..., min_length=1, max_length=128)
     lifetime: str = Field(default="persistent", max_length=32)
+    certificate: str | None = Field(default=None, max_length=16384)
 
     @field_validator("member_did_key")
     @classmethod
@@ -254,6 +342,10 @@ class CertificateResponse(BaseModel):
     lifetime: str
     issued_at: str
     revoked_at: str | None = None
+
+
+class CertificateFetchResponse(CertificateResponse):
+    certificate: str
 
 
 class CertificateListResponse(BaseModel):
@@ -564,14 +656,21 @@ async def register_certificate(
         member_address=body.member_address,
         member_did_aw=body.member_did_aw,
     )
+    team_id = build_team_id(domain, name)
+    _verify_certificate_blob(
+        body.certificate,
+        team_id=team_id,
+        team_did_key=team_row["team_did_key"],
+        body=body,
+    )
 
     try:
         await db.execute(
             """
             INSERT INTO {{tables.team_certificates}}
                 (team_uuid, certificate_id, member_did_key, member_did_aw,
-                 member_address, alias, lifetime)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 member_address, alias, lifetime, certificate)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
             team_row["team_uuid"],
             body.certificate_id,
@@ -580,6 +679,7 @@ async def register_certificate(
             body.member_address,
             body.alias,
             body.lifetime,
+            body.certificate,
         )
     except QueryError as exc:
         cause = exc.__cause__
@@ -754,6 +854,60 @@ async def get_team_member(
         alias=row["alias"],
         lifetime=row["lifetime"],
         issued_at=row["issued_at"].isoformat(),
+    )
+
+
+@router.get(
+    "/{name}/certificates/{certificate_id}",
+    response_model=CertificateFetchResponse,
+    dependencies=[Depends(rate_limit_dep("certificate_fetch"))],
+)
+async def fetch_certificate(
+    request: Request,
+    domain: str,
+    name: str,
+    certificate_id: str,
+    authorization: str | None = Header(default=None),
+    db_infra=Depends(get_db),
+) -> CertificateFetchResponse:
+    caller_did = _verify_path_signature(request, authorization)
+    db = db_infra.get_manager("aweb")
+
+    row = await db.fetch_one(
+        """
+        SELECT tc.certificate_id, tc.member_did_key, tc.member_did_aw,
+               tc.member_address, tc.alias, tc.lifetime, tc.issued_at,
+               tc.revoked_at, tc.certificate, t.domain, t.name, t.team_did_key
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1
+          AND t.name = $2
+          AND t.deleted_at IS NULL
+          AND tc.certificate_id = $3
+        LIMIT 1
+        """,
+        domain,
+        name,
+        certificate_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    if caller_did != row["member_did_key"]:
+        raise HTTPException(status_code=403, detail="Certificate is not readable by this DID")
+    if row["revoked_at"] is not None:
+        raise HTTPException(status_code=409, detail="Certificate has been revoked")
+
+    certificate = (row["certificate"] or "").strip()
+    if not certificate:
+        raise HTTPException(
+            status_code=409,
+            detail="Certificate blob is not available; reissue and register a blob-backed certificate",
+        )
+
+    return CertificateFetchResponse(
+        **_cert_response(row).model_dump(),
+        certificate=certificate,
     )
 
 

@@ -350,7 +350,82 @@ func TestRegisterCertificate(t *testing.T) {
 	if gotPayload["member_did_key"] != ComputeDIDKey(memberPub) {
 		t.Fatalf("member_did_key=%v", gotPayload["member_did_key"])
 	}
+	encoded, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPayload["certificate"] != encoded {
+		t.Fatalf("certificate blob not sent")
+	}
 	_ = teamPub
+}
+
+func TestFetchTeamCertificate(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: ComputeDIDKey(memberPub),
+		Alias:        "alice",
+		Lifetime:     LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotAuth string
+	var gotTimestamp string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates/"+cert.CertificateID {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		gotTimestamp = strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "backend:acme.com",
+			"certificate_id": cert.CertificateID,
+			"member_did_key": cert.MemberDIDKey,
+			"alias":          "alice",
+			"lifetime":       "persistent",
+			"issued_at":      cert.IssuedAt,
+			"certificate":    encoded,
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.FetchTeamCertificate(ctx, server.URL, "acme.com", "backend", cert.CertificateID, memberKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CertificateID != cert.CertificateID {
+		t.Fatalf("certificate_id=%q", got.CertificateID)
+	}
+	if err := VerifyTeamCertificate(got, teamPub); err != nil {
+		t.Fatalf("VerifyTeamCertificate: %v", err)
+	}
+	parts := strings.Fields(gotAuth)
+	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != cert.MemberDIDKey {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
+	if gotTimestamp == "" {
+		t.Fatal("missing X-AWEB-Timestamp")
+	}
 }
 
 func TestListCertificates(t *testing.T) {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -7,9 +9,50 @@ import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.log import identity_state_hash, log_entry_payload
-from awid.signing import sign_message
+from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers as _sign
+
+
+def _path_signed_headers(signing_key, did_key, *, method: str, path: str):
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = f"{ts}\n{method}\n{path}".encode("utf-8")
+    sig = sign_message(signing_key, payload)
+    return {
+        "Authorization": f"DIDKey {did_key} {sig}",
+        "X-AWEB-Timestamp": ts,
+    }
+
+
+def _signed_certificate_blob(
+    team_key,
+    *,
+    certificate_id: str,
+    team_id: str,
+    team_did_key: str,
+    member_did_key: str,
+    alias: str,
+    lifetime: str = "persistent",
+    member_did_aw: str | None = None,
+    member_address: str | None = None,
+) -> str:
+    cert = {
+        "version": 1,
+        "certificate_id": certificate_id,
+        "team_id": team_id,
+        "team_did_key": team_did_key,
+        "member_did_key": member_did_key,
+        "alias": alias,
+        "lifetime": lifetime,
+        "issued_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    if member_did_aw:
+        cert["member_did_aw"] = member_did_aw
+    if member_address:
+        cert["member_address"] = member_address
+    cert["signature"] = sign_message(team_key, canonical_json_bytes(cert))
+    data = json.dumps(cert, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.b64encode(data).decode("ascii")
 
 
 async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_name):
@@ -127,6 +170,144 @@ async def test_register_certificate(client, controller_identity):
     body = resp.json()
     assert body["registered"] is True
     assert body["certificate_id"] == cert_id
+
+
+@pytest.mark.asyncio
+async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "blob.cert.com", "backend")
+
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    member_did_aw = await _register_member_address(
+        client, ns_key, ns_did, "blob.cert.com", "alice", member_key, member_did_key,
+    )
+    cert_id = str(uuid4())
+    certificate = _signed_certificate_blob(
+        team_key,
+        certificate_id=cert_id,
+        team_id="backend:blob.cert.com",
+        team_did_key=team_did,
+        member_did_key=member_did_key,
+        member_did_aw=member_did_aw,
+        member_address="blob.cert.com/alice",
+        alias="alice",
+    )
+
+    headers = _sign(
+        team_key, team_did,
+        domain="blob.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/blob.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "member_did_aw": member_did_aw,
+            "member_address": "blob.cert.com/alice",
+            "alias": "alice",
+            "lifetime": "persistent",
+            "certificate": certificate,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    path = f"/v1/namespaces/blob.cert.com/teams/backend/certificates/{cert_id}"
+    resp = await client.get(
+        path,
+        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["team_id"] == "backend:blob.cert.com"
+    assert body["certificate_id"] == cert_id
+    assert body["member_did_key"] == member_did_key
+    assert body["member_did_aw"] == member_did_aw
+    assert body["member_address"] == "blob.cert.com/alice"
+    assert body["certificate"] == certificate
+
+
+@pytest.mark.asyncio
+async def test_fetch_certificate_rejects_other_did(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "otherfetch.cert.com", "backend")
+
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    cert_id = str(uuid4())
+    certificate = _signed_certificate_blob(
+        team_key,
+        certificate_id=cert_id,
+        team_id="backend:otherfetch.cert.com",
+        team_did_key=team_did,
+        member_did_key=member_did_key,
+        alias="alice",
+        lifetime="ephemeral",
+    )
+
+    headers = _sign(
+        team_key, team_did,
+        domain="otherfetch.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/otherfetch.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "alias": "alice",
+            "lifetime": "ephemeral",
+            "certificate": certificate,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    other_key, other_pub = generate_keypair()
+    other_did = did_from_public_key(other_pub)
+    path = f"/v1/namespaces/otherfetch.cert.com/teams/backend/certificates/{cert_id}"
+    resp = await client.get(
+        path,
+        headers=_path_signed_headers(other_key, other_did, method="GET", path=path),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_fetch_certificate_metadata_only_record_has_explicit_error(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacyfetch.cert.com", "backend")
+
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    cert_id = str(uuid4())
+
+    headers = _sign(
+        team_key, team_did,
+        domain="legacyfetch.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/legacyfetch.cert.com/teams/backend/certificates",
+        json={
+            "certificate_id": cert_id,
+            "member_did_key": member_did_key,
+            "alias": "alice",
+            "lifetime": "ephemeral",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    path = f"/v1/namespaces/legacyfetch.cert.com/teams/backend/certificates/{cert_id}"
+    resp = await client.get(
+        path,
+        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+    )
+    assert resp.status_code == 409, resp.text
+    assert "reissue" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio

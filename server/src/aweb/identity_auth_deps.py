@@ -105,7 +105,13 @@ async def get_identity_auth(request: Request, db=Depends(get_db)) -> IdentityAut
     return await resolve_identity_auth(request)
 
 
-async def lookup_identity_agent_context(db, *, did_key: str, did_aw: str | None = None) -> dict | None:
+async def lookup_identity_agent_context(
+    db,
+    *,
+    did_key: str,
+    did_aw: str | None = None,
+    allow_ambiguous_persistent_identity: bool = False,
+) -> dict | None:
     did_aw_value = (did_aw or "").strip()
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
@@ -123,6 +129,8 @@ async def lookup_identity_agent_context(db, *, did_key: str, did_aw: str | None 
     if not rows:
         return None
     if len(rows) > 1:
+        if allow_ambiguous_persistent_identity and did_aw_value:
+            return None
         raise HTTPException(status_code=409, detail="Authenticated DID matches multiple active local agents")
     return dict(rows[0])
 
@@ -153,7 +161,14 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         )
 
     identity = await resolve_identity_auth(request)
-    row = await lookup_identity_agent_context(db, did_key=identity.did_key, did_aw=identity.did_aw)
+    # Identity-scoped messaging routes by DID/address; a persistent identity may
+    # have multiple local team rows, so ambiguity must not force a team choice.
+    row = await lookup_identity_agent_context(
+        db,
+        did_key=identity.did_key,
+        did_aw=identity.did_aw,
+        allow_ambiguous_persistent_identity=True,
+    )
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),

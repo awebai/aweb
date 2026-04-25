@@ -191,6 +191,13 @@ For identity-only auth, the signed canonical JSON is
 routes that are explicitly identity-scoped and do not require a team
 certificate.
 
+Identity-scoped messaging routes route by authenticated DID and address, not
+by local team membership. If a persistent `did:aw` has multiple active local
+team rows, messaging by DID/address must proceed without selecting a team
+context. Team-scoped operations and alias-scoped coordination still require a
+team certificate or another unambiguous team selector, and must reject
+ambiguous identity-only context rather than guessing a team.
+
 The `X-AWEB-Timestamp` header carries the signed request timestamp in
 RFC 3339 UTC format. Servers reject requests outside the allowed clock-skew
 window of +/-300 seconds against the server wall clock.
@@ -964,12 +971,13 @@ relies on are:
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; persistent when `--address` is supplied, ephemeral otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
-| `aw id team accept-invite <token>` | Accept invite, receive certificate |
+| `aw id team accept-invite <token>` | Accept a same-machine local controller invite, receive certificate |
 | `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
+| `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
 | `aw claim-human --email <email>` | Attach an email to a hosted account on the configured operator (for the public hosted service, <https://app.aweb.ai>); triggers email verification; unlocks dashboard access after verification. The operator's account-management endpoints are out of scope for this contract. |

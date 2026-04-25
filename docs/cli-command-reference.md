@@ -204,6 +204,7 @@ Inspect or recover namespace controller state
 
 Subcommands:
 - `addresses` List registry namespace addresses
+- `assign-address` Assign a namespace address to an existing did:aw using the local controller key
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
 
@@ -219,6 +220,20 @@ List registry namespace addresses
 Flags:
 - `--authority string Authority mode: anonymous, did, or namespace-controller (default "anonymous")`
 - `-h, --help help for addresses`
+
+## `id namespace assign-address`
+
+### `id namespace assign-address`
+
+Assign a namespace address to an existing did:aw using the local controller key
+
+Flags:
+- `--did-aw string Existing did:aw to bind the address to`
+- `--domain string Namespace domain (e.g. aweb.ai)`
+- `-h, --help help for assign-address`
+- `--name string Address name (e.g. alice)`
+- `--reachability string Address reachability (public|nobody|org_only|team_members_only) (default "public")`
+- `--visible-to-team-id string Required when reachability=team_members_only`
 
 ## `id namespace resolve`
 
@@ -309,10 +324,11 @@ Flags:
 Team management (create, invite, membership)
 
 Subcommands:
-- `accept-invite` Accept a team invite and receive a membership certificate
+- `accept-invite` Accept a local controller invite and receive a membership certificate
 - `add` Join another team with the current identity
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
+- `fetch-cert` Fetch and install an approved team certificate
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
@@ -327,9 +343,15 @@ Flags:
 
 ### `id team accept-invite`
 
-Accept a team invite and receive a membership certificate
+Accept a local controller invite and receive a membership certificate.
+
+This command is a same-machine helper: it requires the local invite record
+and the local team controller key. For cross-machine BYOIT joins, use
+`aw id team request`, have the controller run `aw id team add-member`,
+then install with `aw id team fetch-cert` on the joining machine.
 
 Flags:
+- `--address string Registered address to place in the persistent member certificate`
 - `--alias string Alias for the accepting agent (defaults to identity name)`
 - `-h, --help help for accept-invite`
 
@@ -340,6 +362,7 @@ Flags:
 Join another team with the current identity
 
 Flags:
+- `--address string Registered address to place in the persistent member certificate`
 - `--alias string Alias for the added team membership (defaults to the current identity name)`
 - `-h, --help help for add`
 
@@ -350,7 +373,7 @@ Flags:
 Add a member directly to a team (controller signs certificate)
 
 Flags:
-- `--address string Optional member address when using --did`
+- `--address string Persistent member address when using --did; must resolve to --did-aw`
 - `--alias string Alias to use with --did`
 - `--did string Member did:key for direct certificate issuance`
 - `--did-aw string Optional stable did:aw when using --did`
@@ -372,6 +395,20 @@ Flags:
 - `--name string Team name`
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
+
+## `id team fetch-cert`
+
+### `id team fetch-cert`
+
+Fetch and install an approved team certificate
+
+Flags:
+- `--cert-id string Certificate id`
+- `--force Overwrite an existing local certificate for the team`
+- `-h, --help help for fetch-cert`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team invite`
 

@@ -576,6 +576,167 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
 
 
 @pytest.mark.asyncio
+async def test_identity_scoped_send_by_address_allows_persistent_multi_membership(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
+            ('dev:acme.com', 'acme.com', 'dev', 'did:key:team-dev')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-bob",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-alice",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_address": "otherco.com/bob", "subject": "multi membership external", "body": "hello"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert send_resp.status_code == 200, send_resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_did, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'multi membership external'
+        """
+    )
+    assert row["team_id"] is None
+    assert row["from_agent_id"] is None
+    assert row["from_alias"] == "acme.com/alice"
+    assert row["from_did"] == "did:aw:alice"
+    assert row["from_address"] == "acme.com/alice"
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_alias"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_membership(aweb_cloud_db):
+    ops_team_sk, _, ops_team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', $1),
+            ('dev:acme.com', 'acme.com', 'dev', 'did:key:team-dev')
+        """,
+        ops_team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+    alice_ops_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT agent_id
+        FROM {{tables.agents}}
+        WHERE team_id = 'ops:acme.com' AND alias = 'alice'
+        """
+    )
+    assert alice_ops_row is not None
+
+    cert = _make_certificate(
+        ops_team_sk,
+        ops_team_did_key,
+        alice_did_key,
+        team_id="ops:acme.com",
+        alias="alice",
+        member_did_aw="did:aw:alice",
+        member_address="acme.com/alice",
+    )
+    registry = AsyncMock()
+    registry.get_team_public_key = AsyncMock(return_value=ops_team_did_key)
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_alias": "bob", "subject": "multi membership team auth", "body": "hello"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_team_headers(
+            alice_sk,
+            alice_did_key,
+            "ops:acme.com",
+            _encode_certificate(cert),
+            body_bytes,
+        ),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        send_resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert send_resp.status_code == 200, send_resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'multi membership team auth'
+        """
+    )
+    assert row["team_id"] == "ops:acme.com"
+    assert row["from_agent_id"] == alice_ops_row["agent_id"]
+    assert row["from_alias"] == "alice"
+    assert row["from_did"] == "did:aw:alice"
+    assert row["from_address"] == "acme.com/alice"
+    assert row["to_alias"] == "bob"
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_current_binding(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -1714,6 +1875,14 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
         VALUES ('did:aw:bob', 'acme.com/alice', 'Alice')
         """
     )
+    alice_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT agent_id
+        FROM {{tables.agents}}
+        WHERE team_id = 'backend:acme.com' AND alias = 'alice'
+        """
+    )
+    assert alice_row is not None
 
     cert = _make_certificate(
         team_sk,
@@ -1742,8 +1911,9 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
 
     assert resp.status_code == 200, resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
+        "SELECT from_agent_id, from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
     )
+    assert row["from_agent_id"] == alice_row["agent_id"]
     assert row["from_did"] == "did:aw:alice"
 
 

@@ -77,15 +77,18 @@ aw chat send-and-wait bob "are you ready to start?"
 aw mail inbox
 ```
 
-### Joining an existing team via invite
+### Joining an existing team from another machine
 
 ```bash
-# In an existing team workspace, create an invite token
-aw id team invite --namespace myteam.aweb.ai --team backend
+# On the joining workspace, print the approval command
+aw id team request --team backend:myteam.aweb.ai --alias alice
 
-# On the joining workspace (any directory, any machine), accept it.
-# This writes the team membership certificate under .aw/team-certs/.
-aw id team accept-invite <token>
+# On the controller machine, run the printed add-member command.
+# It prints a fetch-cert command containing the issued certificate id.
+aw id team add-member --namespace myteam.aweb.ai --team backend --member myteam.aweb.ai/alice
+
+# Back on the joining workspace, install the certificate.
+aw id team fetch-cert --namespace myteam.aweb.ai --team backend --cert-id <id>
 
 # Bind the workspace to the coordination server using the certificate
 AWEB_URL=http://localhost:8000 aw init
@@ -110,7 +113,7 @@ same repo, use git worktrees (each worktree gets its own `.aw/`).
 
 Team membership is proven by a **team certificate** signed by the team
 controller. The certificate is stored under `.aw/team-certs/` after running
-`aw id team accept-invite <token>`. The certificate is the agent's auth
+`aw id team fetch-cert` or a hosted bootstrap command. The certificate is the agent's auth
 credential — no separate API keys are needed for normal coordination.
 
 Identities come in two classes:
@@ -185,9 +188,10 @@ aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
 aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
 aw id team create                     # Create a team at awid
-aw id team invite                     # Issue a team invite token
-aw id team accept-invite <token>      # Accept an invite (writes .aw/team-certs/<team>.pem)
-aw id team add-member                 # Add a member to a team
+aw id team request                    # Print the controller-side add-member command
+aw id team add-member                 # Add a member to a team and publish a fetchable cert
+aw id team fetch-cert                 # Fetch and install an approved team certificate
+aw id team accept-invite <token>      # Same-machine local-controller invite helper
 aw id team remove-member              # Remove a member from a team
 aw id access-mode [open|contacts_only] # Get/set identity access mode
 aw id rotate-key                      # Rotate the local signing key

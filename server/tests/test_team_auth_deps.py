@@ -362,3 +362,43 @@ async def test_get_messaging_auth_rejects_ambiguous_identity_auth_agent_rows(awe
         )
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_membership(aweb_cloud_db, monkeypatch):
+    db = aweb_cloud_db.aweb_db
+
+    await db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:gsk.aweb.ai', 'gsk.aweb.ai', 'ops', 'did:key:z6MkTeamOps'),
+            ('dev:gsk.aweb.ai', 'gsk.aweb.ai', 'dev', 'did:key:z6MkTeamDev')
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (team_id, did_key, did_aw, address, alias, lifetime, status)
+        VALUES
+            ('ops:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'persistent', 'active'),
+            ('dev:gsk.aweb.ai', 'did:key:z6MkGsk', 'did:aw:gsk', 'gsk.aweb.ai/grace', 'grace', 'persistent', 'active')
+        """
+    )
+
+    async def _fake_resolve_identity_auth(_request):
+        return IdentityAuth(did_key="did:key:z6MkGsk", did_aw="did:aw:gsk", address="gsk.aweb.ai/grace")
+
+    monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
+
+    auth = await get_messaging_auth(
+        _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"}),
+        db,
+    )
+
+    assert auth.did_key == "did:key:z6MkGsk"
+    assert auth.did_aw == "did:aw:gsk"
+    assert auth.address == "gsk.aweb.ai/grace"
+    assert auth.team_id is None
+    assert auth.alias is None
+    assert auth.agent_id is None

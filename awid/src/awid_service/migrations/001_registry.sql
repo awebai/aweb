@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS {{tables.team_certificates}} (
     alias           TEXT NOT NULL,
     lifetime        TEXT NOT NULL DEFAULT 'persistent'
                     CHECK (lifetime IN ('persistent', 'ephemeral')),
+    certificate     TEXT,
     issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     revoked_at      TIMESTAMPTZ,
 

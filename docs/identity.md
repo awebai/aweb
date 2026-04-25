@@ -63,6 +63,13 @@ DIDKey signature plus the active team certificate referenced from
 `.aw/workspace.yaml`; see [aweb-sot.md](aweb-sot.md) for the exact request
 contract.
 
+For cross-machine BYOIT membership, the controller signs and registers the
+full public certificate blob with awid via `aw id team add-member`. The
+joining machine then uses its local identity key to run
+`aw id team fetch-cert --namespace <domain> --team <team> --cert-id <id>`,
+which downloads, verifies, and installs the certificate locally. The team
+controller private key never leaves the controller machine.
+
 ## Message Verification
 
 Every mail and chat message carries sender identity fields and an Ed25519

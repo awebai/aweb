@@ -836,6 +836,186 @@ func TestTeamAddMemberFlow(t *testing.T) {
 	if registeredCert["lifetime"] != awid.LifetimePersistent {
 		t.Fatalf("registry cert lifetime=%v", registeredCert["lifetime"])
 	}
+	encodedCert, ok := registeredCert["certificate"].(string)
+	if !ok || strings.TrimSpace(encodedCert) == "" {
+		t.Fatalf("registry cert certificate blob missing: %v", registeredCert["certificate"])
+	}
+	decodedCert, err := awid.DecodeTeamCertificateHeader(encodedCert)
+	if err != nil {
+		t.Fatalf("decode registered certificate: %v", err)
+	}
+	if decodedCert.CertificateID != got["certificate_id"] {
+		t.Fatalf("registered certificate_id=%q output=%v", decodedCert.CertificateID, got["certificate_id"])
+	}
+	if fetchCommand, ok := got["fetch_command"].(string); !ok || !strings.Contains(fetchCommand, "aw id team fetch-cert") || !strings.Contains(fetchCommand, decodedCert.CertificateID) {
+		t.Fatalf("fetch_command=%v", got["fetch_command"])
+	}
+}
+
+func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
+	t.Parallel()
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	teamDID := awid.ComputeDIDKey(teamPub)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: memberDID,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotAuth string
+	var forceCert *awid.TeamCertificate
+	var encodedForceCert string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/") {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		gotAuth = strings.TrimSpace(r.Header.Get("Authorization"))
+		certificateID := strings.TrimPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/")
+		responseCert := cert
+		responseBlob := encodedCert
+		if forceCert != nil && certificateID == forceCert.CertificateID {
+			responseCert = forceCert
+			responseBlob = encodedForceCert
+		}
+		if certificateID != responseCert.CertificateID {
+			t.Fatalf("unexpected certificate fetch %s", certificateID)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id":        "backend:acme.com",
+			"certificate_id": responseCert.CertificateID,
+			"member_did_key": memberDID,
+			"alias":          "alice",
+			"lifetime":       awid.LifetimePersistent,
+			"issued_at":      responseCert.IssuedAt,
+			"certificate":    responseBlob,
+		})
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "fetch-cert",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--cert-id", cert.CertificateID,
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fetch-cert failed: %v\n%s", err, string(out))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(out))
+	}
+	if got["status"] != "installed" {
+		t.Fatalf("status=%v", got["status"])
+	}
+	if got["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", got["team_id"])
+	}
+	if !strings.Contains(gotAuth, memberDID) {
+		t.Fatalf("Authorization=%q", gotAuth)
+	}
+
+	installed, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
+	if err != nil {
+		t.Fatalf("load installed certificate: %v", err)
+	}
+	if installed.CertificateID != cert.CertificateID {
+		t.Fatalf("installed certificate_id=%q", installed.CertificateID)
+	}
+	if installed.TeamDIDKey != teamDID {
+		t.Fatalf("installed team_did_key=%q", installed.TeamDIDKey)
+	}
+	teamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatalf("load team state: %v", err)
+	}
+	if teamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("active_team=%q", teamState.ActiveTeam)
+	}
+	if len(teamState.Memberships) != 1 || teamState.Memberships[0].CertPath == "" {
+		t.Fatalf("memberships=%+v", teamState.Memberships)
+	}
+
+	otherCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: memberDID,
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runOverwrite := exec.CommandContext(ctx, bin, "id", "team", "fetch-cert",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--cert-id", otherCert.CertificateID,
+		"--json")
+	runOverwrite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	runOverwrite.Dir = tmp
+	overwriteOut, err := runOverwrite.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected fetch-cert overwrite to fail:\n%s", string(overwriteOut))
+	}
+	if !strings.Contains(string(overwriteOut), "--force") {
+		t.Fatalf("overwrite error should mention --force:\n%s", string(overwriteOut))
+	}
+
+	forceCert = otherCert
+	encodedForceCert, err = awid.EncodeTeamCertificateHeader(forceCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runForce := exec.CommandContext(ctx, bin, "id", "team", "fetch-cert",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--cert-id", forceCert.CertificateID,
+		"--force",
+		"--json")
+	runForce.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	runForce.Dir = tmp
+	forceOut, err := runForce.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fetch-cert --force failed: %v\n%s", err, string(forceOut))
+	}
+	installed, err = awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
+	if err != nil {
+		t.Fatalf("load force-installed certificate: %v", err)
+	}
+	if installed.CertificateID != forceCert.CertificateID {
+		t.Fatalf("force-installed certificate_id=%q", installed.CertificateID)
+	}
 }
 
 func TestTeamRemoveMemberFlow(t *testing.T) {

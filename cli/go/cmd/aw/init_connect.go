@@ -68,7 +68,7 @@ func initCertificateConnect(workingDir, awebURL, role string) (connectOutput, er
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
 	cert, certPath, err := loadCertificateForConnect(workingDir)
 	if err != nil {
-		return connectOutput{}, fmt.Errorf("load team certificate: %w\n(run `aw id team accept-invite` or `aw id team add-member` first to get a certificate under %s)", err, filepath.Join(workingDir, ".aw", "team-certs"))
+		return connectOutput{}, fmt.Errorf("load team certificate: %w\n(run `aw id team fetch-cert` after controller approval to install a certificate under %s)", err, filepath.Join(workingDir, ".aw", "team-certs"))
 	}
 
 	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))

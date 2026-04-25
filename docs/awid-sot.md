@@ -504,12 +504,66 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
 
 ### Issuance flow
 
-1. Team controller invites agent (`aw id team invite`)
-2. Agent accepts (`aw id team accept-invite <token>`)
-3. Team controller signs certificate for the agent's did:key
-4. Team controller registers certificate at awid
+For cross-machine BYOIT membership, the controller machine owns the
+team private key and the joining machine owns the member identity key.
+Those keys must not move between machines.
+
+1. Joining agent identifies its `did:key` and optional `did:aw` address
+   (`aw id team request` can print the controller-side command).
+2. Team controller approves the member with `aw id team add-member`.
+3. Team controller signs the certificate for the member's did:key.
+4. Team controller registers certificate metadata and the full signed
+   public certificate blob at awid
    (`POST /v1/namespaces/{domain}/teams/{name}/certificates`)
-5. Certificate delivered to agent, stored under `.aw/team-certs/`
+5. Joining agent fetches the blob with identity auth
+   (`aw id team fetch-cert --namespace <domain> --team <team> --cert-id <id>`).
+6. CLI verifies that the fetched certificate matches the local signing key
+   and requested team, then stores it under `.aw/team-certs/`.
+
+Registration is atomic from the registry contract's point of view: awid
+validates the signed blob against the team record and request metadata, then
+stores metadata and blob in one certificate record. A registry must not create
+a metadata-only record after accepting a blob-backed registration request.
+
+The certificate blob is not a secret. It contains public identity and
+membership claims plus the controller signature, and agents already send it
+to aweb services on authenticated requests. awid stores the blob so a
+member can retrieve its own certificate without access to the controller
+private key or the controller machine's local invite state. awid never stores
+or derives the team controller private key.
+
+Pre-blob metadata-only certificate records are not fetchable. If a member
+requests a certificate record that exists but has no stored blob, awid returns
+HTTP 409 with an explicit not-fetchable/reissue message. The CLI must surface
+that as an instruction to have the controller reissue/register a blob-backed
+certificate; it must not attempt to reconstruct a certificate locally or claim
+that the install succeeded.
+
+Fetch responses are JSON envelopes, not raw files:
+
+```json
+{
+  "team_id": "backend:acme.com",
+  "certificate_id": "uuid",
+  "member_did_key": "did:key:z6Mk...",
+  "member_did_aw": "did:aw:...",
+  "member_address": "acme.com/alice",
+  "alias": "alice",
+  "lifetime": "persistent",
+  "issued_at": "2026-04-06T...",
+  "revoked_at": null,
+  "certificate": "<base64-encoded certificate JSON>"
+}
+```
+
+The `certificate` field is base64 of the exact UTF-8 team certificate JSON
+document that the CLI stores and sends as `X-AWID-Team-Certificate`; it is not
+PEM and is not an inline JSON object.
+
+`aw id team fetch-cert` is refuse-overwrite by default. If a local
+certificate already exists for the target team with a different
+`certificate_id`, the CLI must stop and require `--force` before replacing it.
+Re-running fetch for the same certificate id is idempotent.
 
 ### Reissuance (rare)
 
@@ -518,6 +572,12 @@ A new certificate is needed only when:
   certificate no longer matches
 - Team key is rotated — old certificates have signatures from the
   old key
+
+awid certificate records are append-only for reissuance. A replacement
+certificate creates a new `certificate_id` and stores a new blob; existing
+records remain available unless revoked. Controllers should revoke superseded
+certificates when they should no longer authenticate. Fetching a revoked
+certificate returns a revoked error rather than the blob.
 
 Both are administrative events, not routine operations.
 

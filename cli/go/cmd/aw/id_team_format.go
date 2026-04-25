@@ -45,6 +45,20 @@ func formatTeamAddMember(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Member:      %s\n", firstNonEmpty(out.Member, out.MemberAddress)))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertificateID))
+	if strings.TrimSpace(out.FetchCommand) != "" {
+		sb.WriteString(fmt.Sprintf("Fetch:       %s\n", out.FetchCommand))
+	}
+	return sb.String()
+}
+
+func formatTeamFetchCert(v any) string {
+	out := v.(teamFetchCertOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
+	sb.WriteString(fmt.Sprintf("Alias:       %s\n", out.Alias))
+	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertificateID))
+	sb.WriteString(fmt.Sprintf("Path:        %s\n", out.CertPath))
 	return sb.String()
 }
 

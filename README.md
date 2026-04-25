@@ -101,17 +101,17 @@ For another local agent in the same git repo on the same controller machine:
 aw workspace add-worktree developer
 ```
 
-For another repo or machine when the same controller machine can mint the
-invite:
+For another repo or machine, have the joining machine print a request:
 
 ```bash
-aw id team invite --namespace <namespace> --team <team>
+aw id team request --team <team>:<namespace> --alias <alias>
 ```
 
-In the target directory:
+Run the printed `aw id team add-member ...` command on the controller machine,
+then run the printed fetch command back on the joining machine:
 
 ```bash
-aw id team accept-invite <token>
+aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
 AWEB_URL=http://localhost:8000 aw init --aweb-url "$AWEB_URL"
 ```
 
@@ -122,10 +122,11 @@ For agents joining from a different machine that does not hold the team
 controller key:
 
 - BYOIT / self-hosted: the planned `aw id team request` + fetch-cert flow is
-  not complete yet. For now, use the invite flow: run
-  `aw id team invite --namespace <namespace> --team <team>` on the controller
-  machine, share the token, then run `aw id team accept-invite <token>` where
-  the team key is available and finish with `aw init`.
+  the cross-machine path. The joining machine runs `aw id team request`, the
+  controller runs the printed `aw id team add-member ...` command, and the
+  joining machine installs the approved certificate with
+  `aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`
+  before `aw init`.
 - Cloud-hosted: use the dashboard/API-key bootstrap path (`AWEB_API_KEY=... aw init ...`)
   when the workspace is provisioned from the hosted service.
 

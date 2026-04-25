@@ -44,6 +44,15 @@ type teamAddMemberOutput struct {
 	TeamID        string `json:"team_id"`
 	MemberAddress string `json:"member_address,omitempty"`
 	CertificateID string `json:"certificate_id"`
+	FetchCommand  string `json:"fetch_command,omitempty"`
+}
+
+type teamFetchCertOutput struct {
+	Status        string `json:"status"`
+	TeamID        string `json:"team_id"`
+	Alias         string `json:"alias"`
+	CertificateID string `json:"certificate_id"`
+	CertPath      string `json:"cert_path"`
 }
 
 type teamRemoveMemberOutput struct {
@@ -143,6 +152,12 @@ var (
 	teamAddMemberDIDAW    string
 	teamAddMemberAddress  string
 
+	teamFetchCertTeam      string
+	teamFetchCertNamespace string
+	teamFetchCertID        string
+	teamFetchCertRegistry  string
+	teamFetchCertForce     bool
+
 	teamRemoveTeam        string
 	teamRemoveNamespace   string
 	teamRemoveMember      string
@@ -170,9 +185,14 @@ var teamInviteCmd = &cobra.Command{
 
 var teamAcceptInviteCmd = &cobra.Command{
 	Use:   "accept-invite <token>",
-	Short: "Accept a team invite and receive a membership certificate",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runTeamAcceptInvite,
+	Short: "Accept a local controller invite and receive a membership certificate",
+	Long: "Accept a local controller invite and receive a membership certificate.\n\n" +
+		"This command is a same-machine helper: it requires the local invite record\n" +
+		"and the local team controller key. For cross-machine BYOIT joins, use\n" +
+		"`aw id team request`, have the controller run `aw id team add-member`,\n" +
+		"then install with `aw id team fetch-cert` on the joining machine.",
+	Args: cobra.ExactArgs(1),
+	RunE: runTeamAcceptInvite,
 }
 
 var teamAddCmd = &cobra.Command{
@@ -206,6 +226,12 @@ var teamAddMemberCmd = &cobra.Command{
 	Use:   "add-member",
 	Short: "Add a member directly to a team (controller signs certificate)",
 	RunE:  runTeamAddMember,
+}
+
+var teamFetchCertCmd = &cobra.Command{
+	Use:   "fetch-cert",
+	Short: "Fetch and install an approved team certificate",
+	RunE:  runTeamFetchCert,
 }
 
 var teamRemoveMemberCmd = &cobra.Command{
@@ -257,6 +283,13 @@ func init() {
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Persistent member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
+
+	teamFetchCertCmd.Flags().StringVar(&teamFetchCertTeam, "team", "", "Team name")
+	teamFetchCertCmd.Flags().StringVar(&teamFetchCertNamespace, "namespace", "", "Namespace domain")
+	teamFetchCertCmd.Flags().StringVar(&teamFetchCertID, "cert-id", "", "Certificate id")
+	teamFetchCertCmd.Flags().StringVar(&teamFetchCertRegistry, "registry", "", "Registry origin override")
+	teamFetchCertCmd.Flags().BoolVar(&teamFetchCertForce, "force", false, "Overwrite an existing local certificate for the team")
+	teamCmd.AddCommand(teamFetchCertCmd)
 
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveTeam, "team", "", "Team name")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveNamespace, "namespace", "", "Namespace domain")
@@ -563,7 +596,7 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 
 	teamKey, err := awconfig.LoadTeamKey(invite.Domain, invite.TeamName)
 	if err != nil {
-		return nil, fmt.Errorf("team key for %s not found: %w (accept-invite must run on the machine that created the team)", teamID, err)
+		return nil, fmt.Errorf("local team controller key for %s not found: %w (cross-machine joins should use `aw id team request`, controller-side `aw id team add-member`, then invitee-side `aw id team fetch-cert`)", teamID, err)
 	}
 
 	memberDIDKey, err := resolveOrGenerateMemberDIDKey(workingDir, invite.Ephemeral)
@@ -811,13 +844,116 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("register certificate: %w", err)
 	}
 
+	fetchCommand := teamFetchCertificateCommand(domain, team, cert.CertificateID, "")
 	printOutput(teamAddMemberOutput{
 		Status:        "added",
 		Member:        firstNonEmpty(memberAddress, memberDID),
 		TeamID:        teamID,
 		MemberAddress: memberAddress,
 		CertificateID: cert.CertificateID,
+		FetchCommand:  fetchCommand,
 	}, formatTeamAddMember)
+	return nil
+}
+
+func runTeamFetchCert(cmd *cobra.Command, args []string) error {
+	team := strings.ToLower(strings.TrimSpace(teamFetchCertTeam))
+	domain := awconfig.NormalizeDomain(teamFetchCertNamespace)
+	certificateID := strings.TrimSpace(teamFetchCertID)
+	if team == "" {
+		return usageError("--team is required")
+	}
+	if domain == "" {
+		return usageError("--namespace is required")
+	}
+	if certificateID == "" {
+		return usageError("--cert-id is required")
+	}
+	teamID := awid.BuildTeamID(domain, team)
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	certPathAbs := awconfig.TeamCertificatePath(workingDir, teamID)
+	existingCert, existingErr := awconfig.LoadTeamCertificateForTeam(workingDir, teamID)
+	if existingErr == nil && existingCert != nil {
+		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
+			certPath := awconfig.TeamCertificateRelativePath(teamID)
+			if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
+				Status:   "already_installed",
+				TeamID:   teamID,
+				Alias:    strings.TrimSpace(existingCert.Alias),
+				CertPath: certPath,
+			}, existingCert, false); err != nil {
+				return err
+			}
+			printOutput(teamFetchCertOutput{
+				Status:        "already_installed",
+				TeamID:        teamID,
+				Alias:         strings.TrimSpace(existingCert.Alias),
+				CertificateID: strings.TrimSpace(existingCert.CertificateID),
+				CertPath:      certPath,
+			}, formatTeamFetchCert)
+			return nil
+		}
+		if !teamFetchCertForce {
+			return usageError("team certificate already exists at %s with certificate_id %s; use --force to overwrite", certPathAbs, existingCert.CertificateID)
+		}
+	} else if !os.IsNotExist(existingErr) {
+		if !teamFetchCertForce {
+			return fmt.Errorf("existing team certificate at %s could not be read: %w (use --force to overwrite)", certPathAbs, existingErr)
+		}
+	}
+	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
+	if err != nil {
+		return fmt.Errorf("load local signing key: %w (run `aw id create` first on this machine)", err)
+	}
+
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return err
+	}
+	registryURL := strings.TrimSpace(teamFetchCertRegistry)
+	if registryURL != "" {
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return fmt.Errorf("invalid --registry: %w", err)
+		}
+	} else {
+		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cert, err := registry.FetchTeamCertificate(ctx, registryURL, domain, team, certificateID, signingKey)
+	if err != nil {
+		return fmt.Errorf("fetch certificate: %w", err)
+	}
+	if strings.TrimSpace(cert.Team) != teamID {
+		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
+	}
+
+	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
+	if err != nil {
+		return err
+	}
+	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
+		Status:   "installed",
+		TeamID:   teamID,
+		Alias:    strings.TrimSpace(cert.Alias),
+		CertPath: certPath,
+	}, cert, false); err != nil {
+		return err
+	}
+
+	printOutput(teamFetchCertOutput{
+		Status:        "installed",
+		TeamID:        teamID,
+		Alias:         strings.TrimSpace(cert.Alias),
+		CertificateID: strings.TrimSpace(cert.CertificateID),
+		CertPath:      certPath,
+	}, formatTeamFetchCert)
 	return nil
 }
 
@@ -1278,4 +1414,17 @@ func parseAddress(address string) (domain, name string, err error) {
 		return "", "", usageError("invalid address %q (expected domain/name)", address)
 	}
 	return awconfig.NormalizeDomain(parts[0]), strings.ToLower(strings.TrimSpace(parts[1])), nil
+}
+
+func teamFetchCertificateCommand(domain, team, certificateID, registryURL string) string {
+	parts := []string{
+		"aw", "id", "team", "fetch-cert",
+		"--namespace", awconfig.NormalizeDomain(domain),
+		"--team", strings.ToLower(strings.TrimSpace(team)),
+		"--cert-id", strings.TrimSpace(certificateID),
+	}
+	if strings.TrimSpace(registryURL) != "" {
+		parts = append(parts, "--registry", strings.TrimSpace(registryURL))
+	}
+	return strings.Join(parts, " ")
 }

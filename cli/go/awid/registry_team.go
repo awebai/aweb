@@ -24,10 +24,25 @@ type RegistryCertificate struct {
 	CertificateID string `json:"certificate_id"`
 	TeamID        string `json:"team_id"`
 	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
 	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
+}
+
+type registryCertificateFetchResponse struct {
+	CertificateID string `json:"certificate_id"`
+	TeamID        string `json:"team_id"`
+	MemberDIDKey  string `json:"member_did_key"`
+	MemberDIDAW   string `json:"member_did_aw,omitempty"`
+	MemberAddress string `json:"member_address,omitempty"`
+	Alias         string `json:"alias"`
+	Lifetime      string `json:"lifetime"`
+	IssuedAt      string `json:"issued_at"`
+	RevokedAt     string `json:"revoked_at,omitempty"`
+	Certificate   string `json:"certificate"`
 }
 
 // TeamMemberReference resolves a (team_id, alias) reference to an active member.
@@ -53,8 +68,6 @@ type teamVisibilityRequest struct {
 	Visibility string `json:"visibility"`
 }
 
-// certificateRegisterRequest sends only issuance metadata to awid.
-// The full certificate (including signature and team_did_key) stays with the agent.
 type certificateRegisterRequest struct {
 	CertificateID string `json:"certificate_id"`
 	MemberDIDKey  string `json:"member_did_key"`
@@ -62,6 +75,7 @@ type certificateRegisterRequest struct {
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
 	Lifetime      string `json:"lifetime"`
+	Certificate   string `json:"certificate,omitempty"`
 }
 
 type certificateRevokeRequest struct {
@@ -238,6 +252,10 @@ func (c *RegistryClient) RegisterCertificate(
 	if teamKey == nil {
 		return fmt.Errorf("team signing key is required")
 	}
+	encodedCert, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		return fmt.Errorf("encode team certificate: %w", err)
+	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates"
 	return c.requestJSON(
@@ -256,9 +274,65 @@ func (c *RegistryClient) RegisterCertificate(
 			MemberAddress: cert.MemberAddress,
 			Alias:         cert.Alias,
 			Lifetime:      cert.Lifetime,
+			Certificate:   encodedCert,
 		},
 		nil,
 	)
+}
+
+// FetchTeamCertificate downloads a signed team certificate blob from awid.
+// Auth: the certificate subject's DIDKey signature, or another DID authorized
+// by awid policy for this certificate.
+func (c *RegistryClient) FetchTeamCertificate(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	certificateID string,
+	signingKey ed25519.PrivateKey,
+) (*TeamCertificate, error) {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	certificateID = strings.TrimSpace(certificateID)
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("team name is required")
+	}
+	if certificateID == "" {
+		return nil, fmt.Errorf("certificate_id is required")
+	}
+	if signingKey == nil {
+		return nil, fmt.Errorf("signing key is required")
+	}
+
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates/" + urlPathEscape(certificateID)
+	var out registryCertificateFetchResponse
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, signedPathHeaders(http.MethodGet, path, signingKey), nil, &out); err != nil {
+		return nil, err
+	}
+	cert, err := DecodeTeamCertificateHeader(strings.TrimSpace(out.Certificate))
+	if err != nil {
+		return nil, fmt.Errorf("decode fetched certificate: %w", err)
+	}
+	if strings.TrimSpace(cert.CertificateID) != certificateID {
+		return nil, fmt.Errorf("fetched certificate_id %q does not match requested %q", cert.CertificateID, certificateID)
+	}
+	if strings.TrimSpace(out.TeamID) != "" && strings.TrimSpace(cert.Team) != strings.TrimSpace(out.TeamID) {
+		return nil, fmt.Errorf("fetched certificate team_id %q does not match response team_id %q", cert.Team, out.TeamID)
+	}
+	if did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); strings.TrimSpace(cert.MemberDIDKey) != did {
+		return nil, fmt.Errorf("fetched certificate member_did_key %q does not match local signing key %q", cert.MemberDIDKey, did)
+	}
+	teamPub, err := ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
+	if err != nil {
+		return nil, fmt.Errorf("decode fetched certificate team_did_key: %w", err)
+	}
+	if err := VerifyTeamCertificate(cert, teamPub); err != nil {
+		return nil, fmt.Errorf("verify fetched certificate: %w", err)
+	}
+	return cert, nil
 }
 
 // ListCertificates lists certificates for a team.
