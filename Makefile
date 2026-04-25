@@ -1,5 +1,7 @@
 .PHONY: help clean test test-server test-awid test-cli test-channel test-e2e build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
+	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
+	awid-prod-drop awid-prod-reset \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
 	release-awid-pypi-tag release-awid-pypi-push \
@@ -25,6 +27,13 @@ help:
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
+	@echo ""
+	@echo "  awid-prod-verify    Print awid prod table row counts"
+	@echo "  awid-prod-dump      Dump awid prod data to /tmp (--column-inserts)"
+	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
+	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
+	@echo "  awid-prod-drop      DROP SCHEMA awid CASCADE on prod (requires CONFIRM=yes)"
+	@echo "  awid-prod-reset     dump -> drop -> migrate -> restore on awid prod (CONFIRM=yes)"
 	@echo ""
 	@echo "  release-all-check   Validate ALL products before release"
 	@echo "  release-all-tag     Commit version bumps and create all tags"
@@ -75,6 +84,33 @@ awid-down:
 
 awid-logs:
 	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
+
+# ---- awid production DB lifecycle (Neon) ------------------------------------
+# All targets default to ./.env.awid-production. Override with ENV_FILE=...
+# Override the dump destination with DUMP=... where applicable.
+
+AWID_PROD_ENV_FILE ?= $(CURDIR)/.env.awid-production
+
+awid-prod-verify:
+	cd awid && uv run python scripts/prod_db_reset.py verify --env-file $(AWID_PROD_ENV_FILE)
+
+awid-prod-dump:
+	cd awid && uv run python scripts/prod_db_reset.py dump --env-file $(AWID_PROD_ENV_FILE) $(if $(DUMP),--output $(DUMP),)
+
+awid-prod-restore:
+	@test -n "$(DUMP)" || (echo "DUMP=path/to/dump.sql is required"; exit 1)
+	cd awid && uv run python scripts/prod_db_reset.py restore --env-file $(AWID_PROD_ENV_FILE) --dump $(DUMP)
+
+awid-prod-migrate:
+	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
+
+awid-prod-drop:
+	@test "$(CONFIRM)" = "yes" || (echo "Refusing to drop. Re-run with CONFIRM=yes"; exit 1)
+	cd awid && uv run python scripts/prod_db_reset.py drop-schema --env-file $(AWID_PROD_ENV_FILE) --yes
+
+awid-prod-reset:
+	@test "$(CONFIRM)" = "yes" || (echo "Refusing to reset. Re-run with CONFIRM=yes"; exit 1)
+	cd awid && uv run python scripts/prod_db_reset.py reset --env-file $(AWID_PROD_ENV_FILE) --yes $(if $(DUMP),--output $(DUMP),)
 
 release-server-check:
 	rm -rf /tmp/uv-cache /tmp/pycache
