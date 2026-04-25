@@ -75,3 +75,27 @@ Whenever you finish a task make sure that:
 - You merge main back to your branch.
 
 This is VERY important. It is impossible to keep many agents coordinated if they do not keep their branches in sync with main.
+
+## Database migrations
+
+awid uses a single consolidated migration file
+(`awid/src/awid_service/migrations/001_registry.sql`). pgdbm hashes every
+applied migration and refuses to boot when the bundled file's checksum
+disagrees with the row in `schema_migrations`. So:
+
+- **Every additive schema change is a NEW ordered file** —
+  `002_<name>.sql`, `003_<name>.sql`, ...
+- **Never edit the existing `001_registry.sql` for schema changes.**
+  Comment/whitespace fixes are fine. Anything that alters DDL is not.
+- **Editing 001 in place forces a destructive dump-restore cutover.**
+  This already happened once: the aala epic added
+  `team_certificates.certificate TEXT` by editing 001, which forced
+  the awid prod 0.3.1→0.5.1 cutover on 2026-04-25 (see
+  `ai.aweb/docs/decisions.md`). Recovery escape hatch is
+  `awid/scripts/prod_db_reset.py` + Makefile targets `awid-prod-*`,
+  but the cost of needing it is real downtime.
+
+If you genuinely need to fold changes back into a fresh consolidated
+001 (e.g. another consolidation pass), that is a planned cutover with
+coordination — not a quiet edit. Escalate to coord-aweb (John) or
+coord-awid (Goto) before touching the file.
