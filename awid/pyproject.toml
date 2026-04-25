@@ -1,6 +1,6 @@
 [project]
 name = "awid-service"
-version = "0.5.0"
+version = "0.5.1"
 description = "awid.ai identity registry service and shared awid primitives package"
 readme = "README.md"
 license = "MIT"

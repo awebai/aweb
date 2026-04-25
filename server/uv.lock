@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.18.0"
+version = "1.18.1"
 source = { editable = "." }
 dependencies = [
     { name = "awid-service" },
@@ -139,7 +139,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },
