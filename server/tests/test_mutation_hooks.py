@@ -8,7 +8,9 @@ import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import (
     ReservationAcquiredEvent,
+    TaskClaimedEvent,
     TaskCreatedEvent,
+    TaskUnclaimedEvent,
     TeamChatMessageSentEvent,
     TeamMessageAcknowledgedEvent,
     TeamReservationAcquiredEvent,
@@ -16,6 +18,7 @@ from aweb.events import (
     TeamReservationRenewedEvent,
     TeamTaskClaimedEvent,
     TeamTaskStatusChangedEvent,
+    TeamTaskUnclaimedEvent,
 )
 
 
@@ -272,6 +275,24 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
         },
     )
     await handler(
+        "task.claimed",
+        {
+            "team_id": "backend:acme.com",
+            "task_ref": "backend-1234",
+            "title": "Ship dashboard events",
+            "alias": "alice",
+        },
+    )
+    await handler(
+        "task.unclaimed",
+        {
+            "team_id": "backend:acme.com",
+            "task_ref": "backend-1234",
+            "title": "Ship dashboard events",
+            "alias": "alice",
+        },
+    )
+    await handler(
         "reservation.acquired",
         {
             "team_id": "backend:acme.com",
@@ -296,7 +317,7 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
         },
     )
 
-    assert len(published) == 6
+    assert len(published) == 8
     assert all(event.team_id == "backend:acme.com" for event in published)
 
     assert isinstance(published[0], TeamMessageAcknowledgedEvent)
@@ -315,17 +336,59 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
     assert published[2].old_status == "open"
     assert published[2].new_status == "closed"
 
-    assert isinstance(published[3], TeamReservationAcquiredEvent)
+    assert isinstance(published[3], TeamTaskClaimedEvent)
+    assert published[3].task_ref == "backend-1234"
+    assert published[3].title == "Ship dashboard events"
     assert published[3].alias == "alice"
-    assert published[3].paths == ["repo:backend"]
 
-    assert isinstance(published[4], TeamReservationReleasedEvent)
+    assert isinstance(published[4], TeamTaskUnclaimedEvent)
+    assert published[4].task_ref == "backend-1234"
+    assert published[4].title == "Ship dashboard events"
     assert published[4].alias == "alice"
-    assert published[4].paths == ["repo:backend"]
 
-    assert isinstance(published[5], TeamReservationRenewedEvent)
+    assert isinstance(published[5], TeamReservationAcquiredEvent)
     assert published[5].alias == "alice"
     assert published[5].paths == ["repo:backend"]
+
+    assert isinstance(published[6], TeamReservationReleasedEvent)
+    assert published[6].alias == "alice"
+    assert published[6].paths == ["repo:backend"]
+
+    assert isinstance(published[7], TeamReservationRenewedEvent)
+    assert published[7].alias == "alice"
+    assert published[7].paths == ["repo:backend"]
+
+
+def test_translate_task_claim_events():
+    claimed = mutation_hooks._translate(
+        "task.claimed",
+        {
+            "workspace_id": "workspace-1",
+            "task_ref": "backend-1234",
+            "alias": "alice",
+            "title": "Claimed task",
+        },
+    )
+    assert isinstance(claimed, TaskClaimedEvent)
+    assert claimed.workspace_id == "workspace-1"
+    assert claimed.task_ref == "backend-1234"
+    assert claimed.alias == "alice"
+    assert claimed.title == "Claimed task"
+
+    unclaimed = mutation_hooks._translate(
+        "task.unclaimed",
+        {
+            "workspace_id": "workspace-1",
+            "task_ref": "backend-1234",
+            "alias": "alice",
+            "title": "Claimed task",
+        },
+    )
+    assert isinstance(unclaimed, TaskUnclaimedEvent)
+    assert unclaimed.workspace_id == "workspace-1"
+    assert unclaimed.task_ref == "backend-1234"
+    assert unclaimed.alias == "alice"
+    assert unclaimed.title == "Claimed task"
 
 
 @pytest.mark.asyncio

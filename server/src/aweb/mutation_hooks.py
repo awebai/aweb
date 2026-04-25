@@ -507,6 +507,22 @@ def _translate(event_type: str, ctx: dict):
             title=ctx.get("title"),
         )
 
+    if event_type == "task.claimed":
+        return TaskClaimedEvent(
+            workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+            task_ref=ctx.get("task_ref", ""),
+            alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
+            title=ctx.get("title"),
+        )
+
+    if event_type == "task.unclaimed":
+        return TaskUnclaimedEvent(
+            workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+            task_ref=ctx.get("task_ref", ""),
+            alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
+            title=ctx.get("title"),
+        )
+
     if event_type == "reservation.acquired":
         return ReservationAcquiredEvent(
             workspace_id=ctx.get("holder_workspace_id", ""),
@@ -604,6 +620,28 @@ def _translate_team_event(event_type: str, ctx: dict):
             title=str(ctx.get("title", "") or ""),
             old_status=str(ctx.get("old_status", "") or ""),
             new_status=str(ctx.get("new_status", "") or ""),
+        )
+
+    if event_type == "task.claimed":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamTaskClaimedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("actor_alias", "") or ctx.get("alias", "") or ""),
+            title=str(ctx.get("title", "") or ""),
+        )
+
+    if event_type == "task.unclaimed":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamTaskUnclaimedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("actor_alias", "") or ctx.get("alias", "") or ""),
+            title=str(ctx.get("title", "") or ""),
         )
 
     if event_type == "reservation.acquired":
