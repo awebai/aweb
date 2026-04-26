@@ -3,9 +3,9 @@
 These vectors define shared trust-verification contract cases that must pass in
 both the Go CLI verifier and the channel TypeScript verifier.
 
-The first vector files cover crypto signatures, sender registry verification,
-and recipient binding. Later files should extend the same pattern for TOFU pin
-continuity.
+The vector files cover crypto signatures, sender registry verification, TOFU
+pin continuity, and recipient binding. New passes should use
+`<pass>-v<N>.json` names so schema changes are explicit.
 
 ## `crypto-sig-v1.json`
 
@@ -60,6 +60,55 @@ Vector fields:
 - `expected_status`: canonical status after sender registry verification.
 - `expected_confirmed_current_key`: whether the registry proved that the
   current key exactly matches `from_did`, for downstream pin disambiguation.
+
+Registry harness stubs must fail closed on unexpected lookup keys. Skip vectors
+therefore prove the resolver was not called, instead of silently degrading.
+
+## `tofu-v1.json`
+
+TOFU vectors cover Pass D. They start after crypto, recipient binding, and
+sender registry verification, and assert mutable pin-store continuity behavior.
+Production time is not overridden by the harness. Announcement cases that
+depend on the seven-day freshness window generate real Ed25519 signatures at
+test runtime from deterministic seed bytes and `timestamp_delta_seconds`.
+
+Top-level fields:
+
+- `schema`: must be `aweb.trust.tofu.v1`.
+- `description`: human-readable summary.
+- `vectors`: ordered list of TOFU pin-continuity cases.
+
+Vector fields:
+
+- `name`: stable test case identifier.
+- `initial_status`: input status from upstream passes.
+- `raw_address`: sender wire-form address.
+- `trust_address`: canonical sender address used for the pin reverse index.
+- `from_did`: sender `did:key`.
+- `from_stable_id`: sender stable `did:aw`, or empty.
+- `rotation_announcement`: `null` or a runtime-generated announcement:
+  - `mode`: `runtime_generated`.
+  - `old_did`, `new_did`: rotation claim fields.
+  - `timestamp_delta_seconds`: offset from current test time.
+  - `old_seed_byte`: deterministic Ed25519 private-key seed byte for `old_did`.
+  - `corrupt_signature`: optional boolean; when true, the harness flips the
+    generated signature while preserving a fresh timestamp.
+- `replacement_announcement`: `null` or a runtime-generated announcement:
+  - `mode`: `runtime_generated`.
+  - `address`, `old_did`, `new_did`, `controller_did`: replacement claim fields.
+  - `timestamp_delta_seconds`: offset from current test time.
+  - `controller_seed_byte`: deterministic Ed25519 private-key seed byte for `controller_did`.
+- `agent_meta`: resolved sender metadata:
+  - `lifetime`: `persistent` or `ephemeral`.
+  - `custody`: `self` or `custodial`.
+  - `controller_did`: optional controller used for replacement verification.
+- `registry_confirmed_current_key`: Pass C output used to disambiguate stale pins.
+- `pin_store_before`: initial pin store with `pins` and `addresses` maps.
+- `expected_status`: canonical status after TOFU normalization.
+- `expected_pin_store_after`: expected post-state, or `null` for unchanged.
+
+Pin timestamp expectations may use `$ANY_TIMESTAMP` for newly written pins and
+`$CHANGED_TIMESTAMP` for existing pins whose `last_seen` should be refreshed.
 
 ## `recipient-binding-v1.json`
 

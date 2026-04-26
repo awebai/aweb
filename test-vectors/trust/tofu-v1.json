@@ -1,0 +1,480 @@
+{
+  "schema": "aweb.trust.tofu.v1",
+  "description": "Shared TOFU pin-continuity conformance vectors for Go CLI and channel TypeScript verifiers.",
+  "vectors": [
+    {
+      "name": "first-contact-writes-did-key-pin",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {"pins": {}, "addresses": {}},
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      }
+    },
+    {
+      "name": "matching-did-key-pin-updates-last-seen",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "$CHANGED_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      }
+    },
+    {
+      "name": "mismatched-did-key-without-authority-rejects",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "mismatched-did-key-with-valid-rotation-repins",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": {
+        "mode": "runtime_generated",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "timestamp_delta_seconds": 0,
+        "old_seed_byte": 22
+      },
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q"
+        }
+      }
+    },
+    {
+      "name": "mismatched-did-key-with-valid-replacement-repins",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": {
+        "mode": "runtime_generated",
+        "address": "alice.example.com/alice",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "controller_did": "did:key:z6Mkk4Li7FrksouqV6ehQnbKh8R5kEkkqtmpQtohPvE3fnKU",
+        "timestamp_delta_seconds": 0,
+        "controller_seed_byte": 24
+      },
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self",
+        "controller_did": "did:key:z6Mkk4Li7FrksouqV6ehQnbKh8R5kEkkqtmpQtohPvE3fnKU"
+      },
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q"
+        }
+      }
+    },
+    {
+      "name": "mismatched-did-key-with-expired-rotation-rejects",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": {
+        "mode": "runtime_generated",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "timestamp_delta_seconds": -691200,
+        "old_seed_byte": 22
+      },
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "mismatched-did-key-with-bad-rotation-signature-rejects",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": {
+        "mode": "runtime_generated",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "timestamp_delta_seconds": 0,
+        "old_seed_byte": 22,
+        "corrupt_signature": true
+      },
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "registry-confirmed-current-key-repins-stable-id",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "did:aw:alice",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": true,
+      "pin_store_before": {
+        "pins": {
+          "did:aw:alice": {
+            "address": "alice.example.com/alice",
+            "stable_id": "did:aw:alice",
+            "did_key": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:aw:alice"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:aw:alice": {
+            "address": "alice.example.com/alice",
+            "stable_id": "did:aw:alice",
+            "did_key": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "$CHANGED_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:aw:alice"
+        }
+      }
+    },
+    {
+      "name": "ephemeral-sender-clears-existing-pin",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "ephemeral", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {"pins": {}, "addresses": {}}
+    },
+    {
+      "name": "custodial-sender-promotes-status-and-writes-pin",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "custodial"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {"pins": {}, "addresses": {}},
+      "expected_status": "verified_custodial",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      }
+    },
+    {
+      "name": "failed-status-skips-tofu",
+      "initial_status": "failed",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "rotation_announcement": null,
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {"pins": {}, "addresses": {}},
+      "expected_status": "failed",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "stable-id-pin-valid-rotation-updates-did-key",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "did:aw:alice",
+      "rotation_announcement": {
+        "mode": "runtime_generated",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "timestamp_delta_seconds": 0,
+        "old_seed_byte": 22
+      },
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:aw:alice": {
+            "address": "alice.example.com/alice",
+            "stable_id": "did:aw:alice",
+            "did_key": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:aw:alice"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:aw:alice": {
+            "address": "alice.example.com/alice",
+            "stable_id": "did:aw:alice",
+            "did_key": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "$CHANGED_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:aw:alice"
+        }
+      }
+    },
+    {
+      "name": "raw-did-key-pin-valid-rotation-rekeys-pin",
+      "initial_status": "verified",
+      "raw_address": "alice.example.com/alice",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "rotation_announcement": {
+        "mode": "runtime_generated",
+        "old_did": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb",
+        "new_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "timestamp_delta_seconds": 0,
+        "old_seed_byte": 22
+      },
+      "replacement_announcement": null,
+      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "registry_confirmed_current_key": false,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
+            "address": "alice.example.com/alice",
+            "first_seen": "2026-04-01T00:00:00Z",
+            "last_seen": "2026-04-01T00:00:00Z",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q": {
+            "address": "alice.example.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "$ANY_TIMESTAMP",
+            "last_seen": "$ANY_TIMESTAMP",
+            "server": ""
+          }
+        },
+        "addresses": {
+          "alice.example.com/alice": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q"
+        }
+      }
+    }
+  ]
+}
