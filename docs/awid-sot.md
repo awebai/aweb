@@ -102,7 +102,7 @@ Identity handles within namespaces. `acme.com/alice`.
 ```
 POST   /v1/namespaces/{domain}/addresses          Create (controller auth)
 GET    /v1/namespaces/{domain}/addresses           List (public, paginated)
-GET    /v1/namespaces/{domain}/addresses/{name}    Read (public)
+GET    /v1/namespaces/{domain}/addresses/{name}    Read (anon for public; signed for elevated visibility — see Reachability)
 PUT    /v1/namespaces/{domain}/addresses/{name}    Update reachability
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
@@ -151,6 +151,24 @@ Ephemeral team certificates (`lifetime='ephemeral'`) do not satisfy
 `org_only` or `team_members_only` checks. Anonymous callers see only
 public addresses; non-public addresses return `404`, not `403`, to avoid
 leaking existence.
+
+**Authenticated address read.** `GET /v1/namespaces/{domain}/addresses/{name}`
+accepts an optional signed-request envelope to elevate visibility:
+
+- `Authorization: DIDKey <did:key> <base64-signature>`
+- `X-AWEB-Timestamp: <RFC3339>`
+- Canonical signed payload: `{domain, name, operation: "get_address", timestamp}`
+- Skew window: 300 seconds
+- Signature scheme: Ed25519 over `canonical_json(payload)`
+
+When valid, the caller's `did:key` is resolved to a `did:aw` and team-cert
+membership is evaluated against the row's reachability tier. If authorized,
+the row is returned; otherwise `404` (same response as anonymous to avoid
+leaking existence).
+
+Used by the aweb CLI's `RegistryResolver` so authorized teammates can
+resolve `org_only` / `team_members_only` rows without a prior known-agent
+pin. Anonymous callers continue to see only `public` rows.
 
 ## Identity operations
 
