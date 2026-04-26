@@ -64,13 +64,29 @@ writeMessage({
 });
 
 const timer = setTimeout(() => {
+  // Give the channel a brief grace period to flush + exit cleanly on
+  // SIGTERM, then SIGKILL if it's still alive. The channel's MCP loop
+  // can ignore SIGTERM in some configurations; SIGKILL guarantees the
+  // capture window terminates so the bash `wait` doesn't hang.
   proc.kill("SIGTERM");
+  setTimeout(() => {
+    try { proc.kill("SIGKILL"); } catch {}
+  }, 2000);
 }, captureSeconds * 1000);
 
 proc.on("exit", () => {
   clearTimeout(timer);
   process.exit(0);
 });
+
+// Hard outer safety: if neither SIGTERM nor SIGKILL produce an exit
+// event within (captureSeconds + 10) seconds, bail with a non-zero
+// status so bash `wait` returns and the phase can continue/fail.
+setTimeout(() => {
+  try { proc.kill("SIGKILL"); } catch {}
+  process.stderr.write("capture-channel-events: hard timeout, exiting\n");
+  process.exit(2);
+}, (captureSeconds + 10) * 1000);
 
 const cleanup = (sig) => {
   proc.kill(sig);

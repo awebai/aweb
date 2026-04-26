@@ -1526,19 +1526,25 @@ phase_amy_symptom_reproducer() {
     echo "  amy reproducer: appended registry_url=$AWID_URL to identity.yaml"
   fi
 
-  # Spawn the channel-capture process subscribed to bob's events. The
-  # channel runs in bob's workspace dir and connects to the test aweb
-  # server like a normal plugin would. Notifications/claude/channel
-  # notifications stream to the capture file.
+  # Spawn the channel-capture process subscribed to PARTNER_BOB's events.
+  # When alice is on her partner.local team (the aako-pattern membership),
+  # her "bob" alias resolves to the partner_bob identity, not the
+  # devteam:test.local bob (whose cert was revoked in Phase 17).
+  # PARTNER_BOB_DIR is the only valid receiver workspace at this point in
+  # the script. The channel runs in that workspace and connects to the
+  # test aweb server like a normal plugin would.
+  # POSIX mktemp requires the X's at the END of the template (no extension
+  # suffix). Use plain temp files; consumers (python parse) don't care about
+  # the file extension.
   local capture_file
-  capture_file="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture.XXXXXX.jsonl")"
+  capture_file="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture-jsonl.XXXXXX")"
   local capture_log
-  capture_log="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture.XXXXXX.log")"
+  capture_log="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture-log.XXXXXX")"
   HOME="$E2E_HOME" \
   AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
   AWID_REGISTRY_URL="$AWID_URL" \
   AWID_SKIP_DNS_VERIFY=1 \
-    bash -c 'cd "$1" && shift && exec "$@"' _ "$BOB_DIR" \
+    bash -c 'cd "$1" && shift && exec "$@"' _ "$PARTNER_BOB_DIR" \
     node "$REPO_ROOT/scripts/lib/capture-channel-events.mjs" "$channel_dist" "$capture_seconds" \
     >"$capture_file" 2>"$capture_log" &
   local capture_pid=$!
@@ -1566,10 +1572,10 @@ phase_amy_symptom_reproducer() {
   # Wait for the channel-capture to complete.
   wait "$capture_pid" 2>/dev/null || true
 
-  # Server-side: verification_status from bob's mail inbox + chat history
-  # for messages from alice in this phase.
+  # Server-side: verification_status from partner_bob's mail inbox + chat
+  # history for messages from alice in this phase.
   local bob_inbox_json
-  bob_inbox_json="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+  bob_inbox_json="$(run_aw_in "$PARTNER_BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
   local server_mail_vs
   server_mail_vs="$(echo "$bob_inbox_json" | python3 -c "
 import sys, json
@@ -1581,15 +1587,18 @@ print(msg.get('verification_status', '') if msg else '')
 " "$mail_subject")"
   echo "  amy reproducer: server_mail_verification_status=$server_mail_vs"
 
-  local bob_pending_json
-  bob_pending_json="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+  # `chat pending` returns conversation summaries without per-message
+  # verification_status. Use `chat history alice` to pull the message-level
+  # detail and find the chat we just sent.
+  local bob_history_json
+  bob_history_json="$(run_aw_in "$PARTNER_BOB_DIR" chat history alice --json 2>/dev/null)"
   local server_chat_vs
-  server_chat_vs="$(echo "$bob_pending_json" | python3 -c "
+  server_chat_vs="$(echo "$bob_history_json" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-pending = data.get('pending', [])
-target = next((p for p in pending if p.get('last_message') == 'amy reproducer chat'), None)
-print(target.get('last_verification_status', '') if target else '')
+messages = data.get('messages', [])
+target = next((m for m in messages if m.get('body') == 'amy reproducer chat'), None)
+print(target.get('verification_status', '') if target else '')
 ")"
   echo "  amy reproducer: server_chat_verification_status=$server_chat_vs"
 
@@ -1641,15 +1650,38 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
   # Mode-specific assertions.
   case "$mode" in
     baseline)
-      assert_eq "amy reproducer baseline: server mail vs=identity_mismatch" "identity_mismatch" "$server_mail_vs"
-      assert_eq "amy reproducer baseline: server chat vs=identity_mismatch" "identity_mismatch" "$server_chat_vs"
-      assert_eq "amy reproducer baseline: channel mail header verified=false" "false" "$channel_mail_verified"
-      assert_eq "amy reproducer baseline: channel chat header verified=true" "true" "$channel_chat_verified"
+      # Canonical baseline gate-clear for aalg substance: pre-aalg sender
+      # produces malformed envelope (to_did="" + no to_stable_id) → server
+      # records identity_mismatch on BOTH transports. This is the bug-on-
+      # pre-fix half of Randy's gate-clear-for-tag signal; the closure-on-
+      # post-fix half lives in the INTERMEDIATE mode assertions.
+      #
+      # Channel rendering during BASELINE is captured but NOT asserted.
+      # Reason: TOFU pin state from earlier e2e phases (alice was
+      # successfully pinned at PARTNER_BOB during Phases 9-12d when her
+      # mail verified) can upgrade subsequent verification regardless of
+      # fresh server status. Channel observations are diagnostic only;
+      # the reliable aalg-substance signal is server VS.
+      #
+      # Reproducing Amy's exact observed channel asymmetry (mail=false /
+      # chat=true) requires a third-mode setup (post-aalg sender + npm
+      # channel 1.3.2 — the pre-Pass-B published artifact). That is
+      # outside this harness's scope; the aalg-bug-dominant BASELINE +
+      # POST-fix INTERMEDIATE is sufficient for the v0.5.8 gate-clear
+      # per Randy's collapsed framing (his ab0105ad).
+      assert_eq "amy reproducer baseline: server mail vs=identity_mismatch (aalg-bug reproduced)" "identity_mismatch" "$server_mail_vs"
+      assert_eq "amy reproducer baseline: server chat vs=identity_mismatch (aalg-bug reproduced)" "identity_mismatch" "$server_chat_vs"
+      echo "  amy reproducer baseline: channel rendering captured (informational; pin-state from earlier phases can upgrade): mail=$channel_mail_verified chat=$channel_chat_verified"
       ;;
     intermediate)
-      assert_eq "amy reproducer intermediate: server mail vs=verified" "verified" "$server_mail_vs"
-      assert_eq "amy reproducer intermediate: server chat vs=verified" "verified" "$server_chat_vs"
-      assert_eq "amy reproducer intermediate: channel mail header verified=false (renderer asymmetry)" "false" "$channel_mail_verified"
+      # Current main (post-aalg + post-Pass-B-recipient-binding-conformance).
+      # Pass B's recipient-binding TS port closed the renderer-asymmetry
+      # user-symptom — channel mail-event header now also renders verified=true,
+      # not just chat-event. The original v0.5.8/v0.5.9 split (which expected
+      # mail=false here) was wrong; collapsed per Randy ab0105ad.
+      assert_eq "amy reproducer intermediate: server mail vs=verified (aalg fix)" "verified" "$server_mail_vs"
+      assert_eq "amy reproducer intermediate: server chat vs=verified (aalg fix)" "verified" "$server_chat_vs"
+      assert_eq "amy reproducer intermediate: channel mail header verified=true (Pass B closes renderer asymmetry)" "true" "$channel_mail_verified"
       assert_eq "amy reproducer intermediate: channel chat header verified=true" "true" "$channel_chat_verified"
       ;;
     post)
