@@ -1036,6 +1036,125 @@ async def test_send_message_accepts_to_stable_id_address_binding_with_duplicate_
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_identity_rows(aweb_cloud_db):
+    _, _, bob_old_did_key = _make_keypair()
+    _, _, bob_current_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:team-stable'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-address')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $2, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_old_did_key,
+        bob_current_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": bob_old_did_key,
+        "to_stable_id": "did:aw:bob",
+        "subject": "duplicate did binding rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate did binding rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "bob-stable"
+
+
+@pytest.mark.asyncio
+async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_identity_rows(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:team-stable'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-address')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:otherco.com",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_alias": "bob",
+        "to_stable_id": "did:aw:bob",
+        "subject": "duplicate stable alias binding rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate stable alias binding rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "bob-stable"
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     _, _, carol_did_key = _make_keypair()
@@ -1431,6 +1550,65 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity_rows(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:team-stable'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-address')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_did_key,
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:otherco.com",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": "did:aw:bob",
+        "to_alias": "bob",
+        "subject": "duplicate did alias binding rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate did alias binding rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "bob-stable"
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_mismatched_to_agent_id_and_to_address(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     _, _, carol_did_key = _make_keypair()
@@ -1558,6 +1736,77 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_address(aweb_clou
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_to_address_alias_binding_with_duplicate_identity_rows(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:team-stable'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-address')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-1",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:otherco.com",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_address": "otherco.com/bob",
+        "to_alias": "bob",
+        "subject": "duplicate address alias binding rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate address alias binding rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "bob-stable"
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     _, _, carol_did_key = _make_keypair()
@@ -1609,6 +1858,69 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_clo
 
     assert resp.status_code == 422
     assert "to_alias" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_identity_rows(aweb_cloud_db):
+    _, _, bob_old_did_key = _make_keypair()
+    _, _, bob_current_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('ops:otherco.com', $2, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_old_did_key,
+        bob_current_did_key,
+    )
+    stable = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'bob-stable'"
+    )
+    assert stable is not None
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:otherco.com",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_agent_id": str(stable["agent_id"]),
+        "to_alias": "bob",
+        "subject": "duplicate agent alias binding rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate agent alias binding rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert str(row["to_agent_id"]) == str(stable["agent_id"])
+    assert row["to_alias"] == "bob-stable"
 
 
 @pytest.mark.asyncio

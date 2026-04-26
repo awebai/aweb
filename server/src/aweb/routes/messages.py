@@ -313,14 +313,14 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_did must match the to_stable_id recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_stable_id recipient")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_stable_id recipient")
         if payload.to_address is not None and payload.to_address.strip():
             address = payload.to_address.strip()
@@ -342,7 +342,7 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_did recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
@@ -392,7 +392,7 @@ async def send_message(
                     raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
             else:
                 bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
-                if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+                if not _recipient_identity_matches(bound_recipient, recipient):
                     raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
             if recipient.get("external") or payload.to_agent_id.strip() != str(recipient["agent_id"]):
@@ -407,7 +407,7 @@ async def send_message(
             raise HTTPException(status_code=404, detail="Recipient agent not found")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip())
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_agent_id recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         to_alias = recipient.get("alias")
