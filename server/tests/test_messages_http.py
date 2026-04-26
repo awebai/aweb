@@ -1170,11 +1170,32 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
 
     app.dependency_overrides[get_messaging_auth] = _send_auth_override
 
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hi",
+            "from": "did:aw:alice",
+            "from_did": "did:aw:alice",
+            "message_id": message_id,
+            "priority": "normal",
+            "subject": "local address binding",
+            "timestamp": timestamp,
+            "to": "test.local/gsk",
+            "to_did": "did:aw:bob",
+            "type": "mail",
+        }
+    )
     payload = {
         "to_did": "did:aw:bob",
         "to_address": "test.local/gsk",
         "subject": "local address binding",
         "body": "hi",
+        "from_did": "did:aw:alice",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": "test-signature",
+        "signed_payload": signed_payload.decode(),
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", json=payload)

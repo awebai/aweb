@@ -317,6 +317,7 @@ async def send_message(
             )
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
+            recipient = _with_requested_address(recipient, address)
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
     elif payload.to_did is not None:
@@ -341,6 +342,7 @@ async def send_message(
             )
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
+            recipient = _with_requested_address(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient.get("alias")
