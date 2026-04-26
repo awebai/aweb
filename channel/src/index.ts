@@ -61,7 +61,7 @@ async function main() {
   });
   const pinStore = await loadPinStore();
   const registry = new RegistryResolver(fetch, undefined, undefined, {
-    fallbackRegistryURL: embeddedRegistryFallbackURL(config.baseURL),
+    fallbackRegistryURL: resolveRegistryFallbackURL(config.baseURL, config.registryURL),
   });
   const trust = new SenderTrustManager(
     client,
@@ -111,10 +111,13 @@ Control events (type="control") are operational signals. On "pause", stop curren
   );
 }
 
-function embeddedRegistryFallbackURL(baseURL: string): string | undefined {
-  return (process.env.AWID_REGISTRY_URL || "").trim().toLowerCase() === "local"
-    ? baseURL
-    : undefined;
+export function resolveRegistryFallbackURL(baseURL: string, identityRegistryURL: string = ""): string | undefined {
+  const envRegistryURL = (process.env.AWID_REGISTRY_URL || "").trim();
+  if (envRegistryURL) {
+    return envRegistryURL.toLowerCase() === "local" ? baseURL : envRegistryURL;
+  }
+  const configuredRegistryURL = identityRegistryURL.trim();
+  return configuredRegistryURL || undefined;
 }
 
 async function startEventLoop(

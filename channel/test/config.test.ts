@@ -91,6 +91,7 @@ describe("resolveConfig", () => {
       `did: ${did}`,
       `stable_id: ${stableID}`,
       `address: ${address}`,
+      "registry_url: https://registry.example.test",
       "",
     ].join("\n"));
 
@@ -101,6 +102,7 @@ describe("resolveConfig", () => {
     expect(config.did).toBe(did);
     expect(config.stableID).toBe(stableID);
     expect(config.address).toBe(address);
+    expect(config.registryURL).toBe("https://registry.example.test");
     expect(config.signingKey).toEqual(seed);
     expect(config.teamCertificateHeader).toBeTruthy();
   });
@@ -184,6 +186,7 @@ describe("resolveConfig", () => {
     expect(config.did).toBe(did);
     expect(config.stableID).toBe("");
     expect(config.address).toBe("");
+    expect(config.registryURL).toBe("");
   });
 
   test("errors clearly when the team-certs directory is missing", async () => {
