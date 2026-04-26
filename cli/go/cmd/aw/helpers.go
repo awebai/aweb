@@ -347,6 +347,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	if err != nil {
 		return err
 	}
+	registry.SetLookupSigningKey(c.Client.SigningKey())
 	c.SetResolver(&awid.ChainResolver{
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,

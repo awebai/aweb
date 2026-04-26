@@ -79,6 +79,7 @@ type RegistryResolver struct {
 	DNSResolver         TXTResolver
 	Now                 func() time.Time
 	fallbackRegistryURL string
+	lookupSigningKey    ed25519.PrivateKey
 
 	mu            sync.Mutex
 	registryCache map[string]cachedValue[DomainAuthority]
@@ -104,6 +105,24 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		memberCache:   make(map[string]cachedValue[*registryTeamMemberCacheValue]),
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
+	}
+}
+
+// SetLookupSigningKey configures optional DIDKey authentication for namespace
+// address reads so private reachability rows can be resolved when authorized.
+func (r *RegistryResolver) SetLookupSigningKey(key ed25519.PrivateKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if key == nil {
+		r.lookupSigningKey = nil
+		if r.addressCache != nil {
+			r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
+		}
+		return
+	}
+	r.lookupSigningKey = append(ed25519.PrivateKey(nil), key...)
+	if r.addressCache != nil {
+		r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
 	}
 }
 
@@ -334,7 +353,7 @@ func (r *RegistryResolver) resolveAddress(ctx context.Context, domain, name stri
 		return nil, err
 	}
 	var resp registryAddressResponse
-	if err := r.getJSON(ctx, authority.RegistryURL, "/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name), &resp); err != nil {
+	if err := r.getAddressJSON(ctx, authority.RegistryURL, domain, name, &resp); err != nil {
 		return nil, err
 	}
 	value := &registryAddressCacheValue{
@@ -444,12 +463,53 @@ func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string)
 	return authority, nil
 }
 
+func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, name string, out any) error {
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses/" + urlPathEscape(name)
+	headers, err := r.addressLookupAuthHeaders(domain, name)
+	if err != nil {
+		return err
+	}
+	return r.getJSONWithHeaders(ctx, baseURL, path, headers, out)
+}
+
+func (r *RegistryResolver) addressLookupAuthHeaders(domain, name string) (map[string]string, error) {
+	r.mu.Lock()
+	key := append(ed25519.PrivateKey(nil), r.lookupSigningKey...)
+	r.mu.Unlock()
+	if key == nil {
+		return nil, nil
+	}
+	if len(key) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("registry lookup signing key has invalid length")
+	}
+	timestamp := r.now().UTC().Format(time.RFC3339)
+	didKey, signature, _, err := SignArbitraryPayload(key, map[string]any{
+		"domain":    canonicalizeDomain(domain),
+		"name":      strings.TrimSpace(name),
+		"operation": "get_address",
+	}, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"Authorization":    "DIDKey " + didKey + " " + signature,
+		"X-AWEB-Timestamp": timestamp,
+	}, nil
+}
+
 func (r *RegistryResolver) getJSON(ctx context.Context, baseURL, path string, out any) error {
+	return r.getJSONWithHeaders(ctx, baseURL, path, nil, out)
+}
+
+func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path string, headers map[string]string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	resp, err := r.HTTPClient.Do(req)
 	if err != nil {
 		return err

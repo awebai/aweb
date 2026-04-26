@@ -1145,10 +1145,19 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	recipientStableID := awid.ComputeStableID(recipientPub)
 
 	var registryHits atomic.Int64
+	var signedAddressHits atomic.Int64
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registryHits.Add(1)
 		switch r.URL.Path {
 		case "/v1/namespaces/example.invalid/addresses/randy":
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "DIDKey "+did+" ") {
+				t.Fatalf("address lookup Authorization=%q, want DIDKey auth for sender", auth)
+			}
+			if strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp")) == "" {
+				t.Fatal("address lookup missing X-AWEB-Timestamp")
+			}
+			signedAddressHits.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"address_id":      "addr-randy",
 				"domain":          "example.invalid",
@@ -1253,6 +1262,9 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 
 	if registryHits.Load() == 0 {
 		t.Fatal("identity registry_url was not used for messaging recipient resolution")
+	}
+	if signedAddressHits.Load() != 2 {
+		t.Fatalf("signed address lookups=%d, want 2", signedAddressHits.Load())
 	}
 	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
 	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
