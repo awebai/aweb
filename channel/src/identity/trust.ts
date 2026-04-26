@@ -109,7 +109,9 @@ export class SenderTrustManager {
     const selfStableID = this.selfStableID.trim();
     const recipientStableID = (toStableID || "").trim();
     if (selfStableID && recipientStableID) {
-      return recipientStableID === selfStableID ? status : "identity_mismatch";
+      return recipientStableID.toLowerCase() === selfStableID.toLowerCase()
+        ? status
+        : "identity_mismatch";
     }
     const selfDID = this.selfDid.trim();
     const recipientDID = (toDID || "").trim();

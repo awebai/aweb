@@ -12,6 +12,15 @@
       "expected_status": "verified"
     },
     {
+      "name": "stable-recipient-match-case-insensitive",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:Self",
+      "to_did": "did:aw:self",
+      "to_stable_id": "did:aw:SELF",
+      "expected_status": "verified"
+    },
+    {
       "name": "stable-recipient-mismatch-downgrades",
       "initial_status": "verified",
       "self_did": "did:key:zSelfCurrent",
