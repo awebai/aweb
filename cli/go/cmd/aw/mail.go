@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ var (
 	mailSendToAddress string
 	mailSendSubject   string
 	mailSendBody      string
+	mailSendBodyFile  string
 	mailSendPriority  string
 )
 
@@ -32,9 +34,11 @@ var mailSendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Send a message to another agent",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if mailSendBody == "" {
-			return usageError("missing required flag: --body")
+		body, err := resolveMailBody(mailSendBody, mailSendBodyFile)
+		if err != nil {
+			return err
 		}
+		mailSendBody = body
 		targetKind, targetValue, err := resolveMailTarget()
 		if err != nil {
 			return err
@@ -115,6 +119,34 @@ var mailSendCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// resolveMailBody returns the message body, sourcing it from --body or
+// --body-file. Reading from a file bypasses shell interpolation and is the
+// only safe way to send markdown that contains backticks. Exactly one
+// trailing newline is stripped from file contents (editors and heredocs add
+// it; users almost never want it on the wire).
+func resolveMailBody(bodyArg, bodyFileArg string) (string, error) {
+	bodySet := bodyArg != ""
+	fileSet := bodyFileArg != ""
+	if bodySet && fileSet {
+		return "", usageError("--body and --body-file are mutually exclusive")
+	}
+	if bodySet {
+		return bodyArg, nil
+	}
+	if !fileSet {
+		return "", usageError("missing required flag: --body or --body-file")
+	}
+	contents, err := os.ReadFile(bodyFileArg)
+	if err != nil {
+		return "", fmt.Errorf("read body file %q: %w", bodyFileArg, err)
+	}
+	body := strings.TrimSuffix(string(contents), "\n")
+	if body == "" {
+		return "", usageError("body file %q is empty", bodyFileArg)
+	}
+	return body, nil
 }
 
 func resolveMailTarget() (string, string, error) {
@@ -238,7 +270,8 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
 	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
 	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")
-	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", "Body")
+	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", "Body (mutually exclusive with --body-file)")
+	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", "Read body from file (use this for markdown with backticks; bypasses shell interpolation)")
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
