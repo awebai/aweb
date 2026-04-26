@@ -61,7 +61,7 @@ async function main() {
   });
   const pinStore = await loadPinStore();
   const registry = new RegistryResolver(fetch, undefined, undefined, {
-    fallbackRegistryURL: resolveRegistryFallbackURL(config.baseURL, config.registryURL),
+    fallbackRegistryURL: resolveRegistryFallbackURL(config.registryURL),
   });
   const trust = new SenderTrustManager(
     client,
@@ -112,10 +112,13 @@ Control events (type="control") are operational signals. On "pause", stop curren
   );
 }
 
-export function resolveRegistryFallbackURL(baseURL: string, identityRegistryURL: string = ""): string | undefined {
+export function resolveRegistryFallbackURL(identityRegistryURL: string = ""): string | undefined {
   const envRegistryURL = (process.env.AWID_REGISTRY_URL || "").trim();
   if (envRegistryURL) {
-    return envRegistryURL.toLowerCase() === "local" ? baseURL : envRegistryURL;
+    if (envRegistryURL.toLowerCase() === "local") {
+      throw new Error("AWID_REGISTRY_URL=local is not supported; set AWID_REGISTRY_URL=https://api.awid.ai");
+    }
+    return envRegistryURL;
   }
   const configuredRegistryURL = identityRegistryURL.trim();
   return configuredRegistryURL || undefined;

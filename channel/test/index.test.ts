@@ -48,27 +48,27 @@ describe("resolveRegistryFallbackURL", () => {
   test("uses AWID_REGISTRY_URL as a URL override", () => {
     process.env.AWID_REGISTRY_URL = "https://registry.example.test";
 
-    expect(resolveRegistryFallbackURL("https://app.example.test/api", "https://identity-registry.example.test"))
+    expect(resolveRegistryFallbackURL("https://identity-registry.example.test"))
       .toBe("https://registry.example.test");
   });
 
-  test("maps AWID_REGISTRY_URL=local to the aweb base URL", () => {
+  test("rejects AWID_REGISTRY_URL=local", () => {
     process.env.AWID_REGISTRY_URL = "local";
 
-    expect(resolveRegistryFallbackURL("http://127.0.0.1:8010", "https://identity-registry.example.test"))
-      .toBe("http://127.0.0.1:8010");
+    expect(() => resolveRegistryFallbackURL("https://identity-registry.example.test"))
+      .toThrow("AWID_REGISTRY_URL=local is not supported; set AWID_REGISTRY_URL=https://api.awid.ai");
   });
 
   test("falls back to identity registry_url when AWID_REGISTRY_URL is unset", () => {
     delete process.env.AWID_REGISTRY_URL;
 
-    expect(resolveRegistryFallbackURL("https://app.example.test/api", "https://identity-registry.example.test"))
+    expect(resolveRegistryFallbackURL("https://identity-registry.example.test"))
       .toBe("https://identity-registry.example.test");
   });
 
   test("leaves registry fallback unset when no source is configured", () => {
     delete process.env.AWID_REGISTRY_URL;
 
-    expect(resolveRegistryFallbackURL("https://app.example.test/api", "")).toBeUndefined();
+    expect(resolveRegistryFallbackURL("")).toBeUndefined();
   });
 });
