@@ -1,0 +1,69 @@
+{
+  "schema": "aweb.trust.recipient-binding.v1",
+  "description": "Shared recipient-binding conformance vectors for Go CLI and channel TypeScript verifiers.",
+  "vectors": [
+    {
+      "name": "stable-recipient-match-wins-over-to-did",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:aw:self",
+      "to_stable_id": "did:aw:self",
+      "expected_status": "verified"
+    },
+    {
+      "name": "stable-recipient-mismatch-downgrades",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:aw:other",
+      "to_stable_id": "did:aw:other",
+      "expected_status": "identity_mismatch"
+    },
+    {
+      "name": "did-key-recipient-match-fallback",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:key:zSelfCurrent",
+      "to_stable_id": "",
+      "expected_status": "verified"
+    },
+    {
+      "name": "did-key-recipient-mismatch-downgrades",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:key:zOtherCurrent",
+      "to_stable_id": "",
+      "expected_status": "identity_mismatch"
+    },
+    {
+      "name": "absent-recipient-binding-preserves-verified",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "",
+      "to_stable_id": "",
+      "expected_status": "verified"
+    },
+    {
+      "name": "recipient-binding-does-not-upgrade-failed-crypto",
+      "initial_status": "failed",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:key:zSelfCurrent",
+      "to_stable_id": "did:aw:self",
+      "expected_status": "failed"
+    },
+    {
+      "name": "legacy-aalf-shape-did-aw-in-to-did-without-stable-field-mismatches",
+      "initial_status": "verified",
+      "self_did": "did:key:zSelfCurrent",
+      "self_stable_id": "did:aw:self",
+      "to_did": "did:aw:self",
+      "to_stable_id": "",
+      "expected_status": "identity_mismatch"
+    }
+  ]
+}

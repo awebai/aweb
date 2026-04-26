@@ -55,6 +55,7 @@ export class SenderTrustManager {
     private readonly registry: RegistryResolver,
     private readonly teamID: string,
     private readonly selfDid: string,
+    private readonly selfStableID: string = "",
   ) {}
 
   async normalizeTrust(
@@ -64,11 +65,12 @@ export class SenderTrustManager {
     fromDID: string | undefined,
     fromStableID: string | undefined,
     toDID: string | undefined,
+    toStableID: string | undefined,
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
     verificationAddress?: string,
   ): Promise<TrustResult> {
-    let status = this.checkRecipientBinding(verificationStatus, toDID);
+    let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     if (!status || !rawAddress.trim()) {
       return { status, stored: false };
     }
@@ -99,11 +101,22 @@ export class SenderTrustManager {
   private checkRecipientBinding(
     status: VerificationStatus | undefined,
     toDID: string | undefined,
+    toStableID: string | undefined,
   ): VerificationStatus | undefined {
-    if (status !== "verified" || !toDID || !this.selfDid) {
+    if (status !== "verified") {
       return status;
     }
-    return toDID === this.selfDid ? status : "identity_mismatch";
+    const selfStableID = this.selfStableID.trim();
+    const recipientStableID = (toStableID || "").trim();
+    if (selfStableID && recipientStableID) {
+      return recipientStableID === selfStableID ? status : "identity_mismatch";
+    }
+    const selfDID = this.selfDid.trim();
+    const recipientDID = (toDID || "").trim();
+    if (!recipientDID || !selfDID) {
+      return status;
+    }
+    return recipientDID === selfDID ? status : "identity_mismatch";
   }
 
   private async checkStableIdentityRegistry(

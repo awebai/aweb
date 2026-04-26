@@ -119,6 +119,7 @@ describe("SenderTrustManager", () => {
       newIdentity.did,
       undefined,
       undefined,
+      undefined,
       announcement,
     );
     expect(result.status).toBe("verified");
@@ -172,6 +173,7 @@ describe("SenderTrustManager", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       announcement,
     );
     expect(result.status).toBe("verified");
@@ -208,6 +210,7 @@ describe("SenderTrustManager", () => {
       "alice",
       did,
       stableID,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -344,6 +347,7 @@ describe("SenderTrustManager", () => {
       "acme.com/alice",
       did,
       stableID,
+      undefined,
       undefined,
       undefined,
       undefined,

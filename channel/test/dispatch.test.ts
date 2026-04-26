@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentEvent } from "../src/api/events.js";
 import { PinStore } from "../src/identity/pinstore.js";
-import { signMessage, type MessageEnvelope } from "../src/identity/signing.js";
+import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 import { SenderTrustManager } from "../src/identity/trust.js";
 import { dispatchEvent } from "../src/index.js";
 
@@ -49,6 +49,41 @@ async function signedInboxMail(messageID: string) {
     from_stable_id: env.from_stable_id,
     signature,
     signing_key_id: env.from_did,
+  };
+}
+
+async function signedInboxMailWithStableRecipient(messageID: string, selfStableID: string) {
+  const env: MessageEnvelope = {
+    from: "acme.com/alice",
+    from_did: vectors.did,
+    to: selfStableID,
+    to_did: selfStableID,
+    type: "mail",
+    subject: "stable recipient",
+    body: "stable-bound mail",
+    timestamp: "2025-01-01T00:00:00Z",
+    from_stable_id: vectors.stableID,
+    to_stable_id: selfStableID,
+    message_id: messageID,
+  };
+  const signature = await signMessage(b64ToBytes(vectors.seed), env);
+  return {
+    message_id: messageID,
+    from_agent_id: "agent-1",
+    from_alias: "alice",
+    from_address: env.from,
+    to_alias: "eve",
+    subject: env.subject,
+    body: env.body,
+    priority: "normal",
+    created_at: env.timestamp,
+    from_did: env.from_did,
+    from_stable_id: env.from_stable_id,
+    to_did: env.to_did,
+    to_stable_id: env.to_stable_id,
+    signature,
+    signing_key_id: env.from_did,
+    signed_payload: canonicalJSON(env),
   };
 }
 
@@ -198,6 +233,7 @@ describe("dispatchEvent", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       "acme.com/alice",
     );
     expect(notification).toHaveBeenCalledWith({
@@ -251,6 +287,59 @@ describe("dispatchEvent", () => {
       },
     });
     expect(pinStore.pins.size).toBe(0);
+  });
+
+  test("renders mail verified when stable recipient binding matches the receiver", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [await signedInboxMailWithStableRecipient("msg-stable-recipient", self.stableID)],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: vi.fn(async () => ({ outcome: "OK_DEGRADED" })),
+        resolveIdentity: vi.fn(async () => ({
+          did: vectors.did,
+          stableID: vectors.stableID,
+          address: "acme.com/alice",
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          lifetime: "persistent",
+        })),
+      } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      new Set(),
+      { type: "mail_message", message_id: "msg-stable-recipient" } satisfies AgentEvent,
+    );
+
+    expect(notification).toHaveBeenCalledWith({
+      method: "notifications/claude/channel",
+      params: {
+        content: "stable-bound mail",
+        meta: {
+          type: "mail",
+          from: "acme.com/alice",
+          message_id: "msg-stable-recipient",
+          subject: "stable recipient",
+          verified: "true",
+        },
+      },
+    });
   });
 
   test("fetches mail by triggering message_id instead of a latest-10 window", async () => {

@@ -68,6 +68,7 @@ async function main() {
     registry,
     config.teamID,
     config.did,
+    config.stableID,
   );
 
   const mcp = new Server(
@@ -166,6 +167,7 @@ export async function dispatchEvent(
           msg.from_did,
           msg.from_stable_id,
           msg.to_did,
+          msg.to_stable_id,
           msg.rotation_announcement,
           msg.replacement_announcement,
           msg.from_address || msg.from_alias || "",
@@ -214,6 +216,7 @@ export async function dispatchEvent(
           msg.from_did,
           msg.from_stable_id,
           msg.to_did,
+          msg.to_stable_id,
           msg.rotation_announcement,
           msg.replacement_announcement,
           msg.from_address || msg.from_agent || "",
