@@ -285,6 +285,37 @@ func TestChainResolverDoesNotFallBackToPinOnRegistryHardError(t *testing.T) {
 	}
 }
 
+func TestChainResolverDoesNotFallBackToPinOnRegistryUnauthorized(t *testing.T) {
+	t.Parallel()
+
+	address := "juan.aweb.ai/randy"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	ps := NewPinStore()
+	ps.StorePin("did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm", address, "randy", server.URL)
+	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	cr := &ChainResolver{
+		DIDKey:   &DIDKeyResolver{},
+		Registry: registry,
+		Pin:      &PinResolver{Store: ps},
+	}
+
+	_, err := cr.Resolve(context.Background(), address)
+	if err == nil {
+		t.Fatal("expected registry unauthorized error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("err=%T %v, want registry 401", err, err)
+	}
+}
+
 func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	t.Parallel()
 
@@ -298,6 +329,12 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/namespaces/acme.com/addresses/alice":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Fatalf("Authorization=%q, want unsigned address lookup without configured key", got)
+			}
+			if got := r.Header.Get("X-AWEB-Timestamp"); got != "" {
+				t.Fatalf("X-AWEB-Timestamp=%q, want unset without configured key", got)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-1",
 				"domain":          "acme.com",
