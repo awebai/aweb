@@ -65,7 +65,9 @@ RECONNECT_DIR="$E2E_CWD/reconnect-alice"
 WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
+CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
 mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
@@ -88,7 +90,7 @@ cleanup() {
     cd "$SERVER_DIR" && docker compose --env-file .env.e2e down -v 2>/dev/null || true
     rm -f "$SERVER_DIR/.env.e2e"
   fi
-  rm -rf "$E2E_HOME" "$REMOTE_ERIN_HOME" "$WRONG_DID_HOME" "$E2E_CWD"
+  rm -rf "$E2E_HOME" "$REMOTE_ERIN_HOME" "$WRONG_DID_HOME" "$CAROL_NO_PIN_HOME" "$E2E_CWD"
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -283,6 +285,50 @@ set_messaging_policy() {
   )
 }
 
+set_awid_address_reachability() {
+  local domain="$1" name="$2" reachability="$3" visible_to_team_id="${4:-}"
+  local actual actual_reachability actual_visible_to_team_id expected_visible_to_team_id
+  actual="$(
+    cd "$SERVER_DIR"
+    docker compose --env-file .env.e2e exec -T postgres \
+      psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
+      -Atq -v ON_ERROR_STOP=1 \
+      -c "WITH updated AS (
+          UPDATE awid.public_addresses pa
+          SET reachability = '${reachability}',
+              visible_to_team_id = NULLIF('${visible_to_team_id}', '')
+          FROM awid.dns_namespaces ns
+          WHERE pa.namespace_id = ns.namespace_id
+            AND ns.domain = '${domain}'
+             AND pa.name = '${name}'
+             AND pa.deleted_at IS NULL
+           RETURNING pa.reachability, COALESCE(pa.visible_to_team_id, '') AS visible_to_team_id
+         )
+         SELECT COALESCE((SELECT reachability || '|' || visible_to_team_id FROM updated LIMIT 1), '|');" 2>/dev/null | tr -d '\r' | tail -n 1
+  )"
+  actual_reachability="${actual%%|*}"
+  actual_visible_to_team_id="${actual#*|}"
+  expected_visible_to_team_id=""
+  if [[ "$reachability" == "team_members_only" ]]; then
+    expected_visible_to_team_id="$visible_to_team_id"
+  fi
+  if [[ "$actual_reachability" != "$reachability" || "$actual_visible_to_team_id" != "$expected_visible_to_team_id" ]]; then
+    echo "  FAIL: set $domain/$name reachability to $reachability/$expected_visible_to_team_id (got '$actual_reachability/$actual_visible_to_team_id')"
+    fail=$((fail + 1))
+  fi
+  (
+    cd "$SERVER_DIR"
+    docker compose --env-file .env.e2e exec -T redis sh -c "
+      for version in v1 v2; do
+        redis-cli --scan --pattern \"awid:registry_cache:\${version}:address:*:${domain}:${name}:*\" |
+          while IFS= read -r key; do [ -n \"\$key\" ] && redis-cli DEL \"\$key\" >/dev/null; done
+        redis-cli --scan --pattern \"awid:registry_cache:\${version}:domain_addresses:*:${domain}:*\" |
+          while IFS= read -r key; do [ -n \"\$key\" ] && redis-cli DEL \"\$key\" >/dev/null; done
+      done
+    " >/dev/null 2>&1 || true
+  )
+}
+
 yaml_field() {
   python3 - "$1" "$2" <<'PY'
 import sys
@@ -395,6 +441,7 @@ POSTGRES_PORT=$PG_PORT
 AWEB_LOG_JSON=true
 AWID_LOG_JSON=true
 AWID_RATE_LIMIT_BACKEND=redis
+AWID_RATE_LIMIT_DISABLED=1
 AWID_SKIP_DNS_VERIFY=1
 EOF
 
@@ -568,7 +615,9 @@ bob_create="$(run_aw_in "$BOB_DIR" id create \
   --json 2>/dev/null)"
 
 BOB_DID_KEY="$(echo "$bob_create" | jq_field did_key)"
+BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
+assert_not_empty "bob did_aw" "$BOB_DID_AW"
 
 # Alice creates invite for bob
 bob_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
@@ -1204,6 +1253,178 @@ assert_eq "alice restored primary-team chat exit" "0" "$alice_restored_chat_exit
 bob_restored_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 12e: Messaging identity/reachability matrix
+# ---------------------------------------------------------------------------
+echo "=== Phase 12e: Messaging identity/reachability matrix ==="
+
+seed_bob_address_out="$(run_aw_in "$ALICE_DIR" id namespace assign-address \
+  --domain test.local \
+  --name bob \
+  --did-aw "$BOB_DID_AW" \
+  --reachability public \
+  --json 2>/dev/null)"
+seed_bob_address_status="$(echo "$seed_bob_address_out" | jq_field status)"
+if [[ "$seed_bob_address_status" == "assigned" || "$seed_bob_address_status" == "already_assigned" ]]; then
+  echo "  PASS: matrix bob registry address seeded"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: matrix bob registry address seeded (status=$seed_bob_address_status output=${seed_bob_address_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+set_awid_address_reachability "test.local" "bob" "public"
+
+if alice_public_addr_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Matrix public direct address" \
+  --body "Matrix public direct address mail" 2>&1)"; then
+  alice_public_addr_mail_exit=0
+else
+  alice_public_addr_mail_exit=$?
+fi
+assert_eq "matrix public direct-address mail exit" "0" "$alice_public_addr_mail_exit"
+if [[ "$alice_public_addr_mail_exit" != "0" ]]; then
+  echo "  matrix public direct-address mail output: ${alice_public_addr_mail_out:0:240}"
+fi
+
+bob_matrix_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_public_addr_vs="$(echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix public direct address'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix public direct-address mail verified" "verified" "$bob_public_addr_vs"
+if [[ "$bob_public_addr_vs" != "verified" ]]; then
+  echo "$bob_matrix_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('subject')=='Matrix public direct address'), {}); print('  matrix public mail debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
+fi
+
+if alice_public_addr_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
+  "Matrix public direct address chat" 2>&1)"; then
+  alice_public_addr_chat_exit=0
+else
+  alice_public_addr_chat_exit=$?
+fi
+assert_eq "matrix public direct-address chat exit" "0" "$alice_public_addr_chat_exit"
+if [[ "$alice_public_addr_chat_exit" != "0" ]]; then
+  echo "  matrix public direct-address chat output: ${alice_public_addr_chat_out:0:240}"
+fi
+bob_public_addr_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_public_addr_chat_vs="$(echo "$bob_public_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix public direct address chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix public direct-address chat verified" "verified" "$bob_public_addr_chat_vs"
+if [[ "$bob_public_addr_chat_vs" != "verified" ]]; then
+  echo "$bob_public_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); m=next((m for m in msgs if m.get('body')=='Matrix public direct address chat'), {}); print('  matrix public chat debug:', {k:m.get(k,'') for k in ['from_address','from_did','from_stable_id','to_address','to_did','to_stable_id','verification_status']})" 2>/dev/null || true
+fi
+
+set_awid_address_reachability "test.local" "bob" "org_only"
+if alice_org_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Matrix org-only direct address" \
+  --body "Matrix org-only direct address mail" 2>&1)"; then
+  alice_org_mail_exit=0
+else
+  alice_org_mail_exit=$?
+fi
+assert_eq "matrix org_only direct-address mail exit" "0" "$alice_org_mail_exit"
+if [[ "$alice_org_mail_exit" != "0" ]]; then
+  echo "  matrix org_only mail output: ${alice_org_mail_out:0:240}"
+fi
+bob_org_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_org_vs="$(echo "$bob_org_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix org-only direct address'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix org_only direct-address mail verified" "verified" "$bob_org_vs"
+
+if alice_org_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
+  "Matrix org-only direct address chat" 2>&1)"; then
+  alice_org_chat_exit=0
+else
+  alice_org_chat_exit=$?
+fi
+assert_eq "matrix org_only direct-address chat exit" "0" "$alice_org_chat_exit"
+if [[ "$alice_org_chat_exit" != "0" ]]; then
+  echo "  matrix org_only chat output: ${alice_org_chat_out:0:240}"
+fi
+bob_org_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_org_chat_vs="$(echo "$bob_org_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix org-only direct address chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix org_only direct-address chat verified" "verified" "$bob_org_chat_vs"
+
+set_awid_address_reachability "test.local" "bob" "team_members_only" "devteam:test.local"
+if alice_team_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Matrix team-only direct address" \
+  --body "Matrix team-only direct address mail" 2>&1)"; then
+  alice_team_mail_exit=0
+else
+  alice_team_mail_exit=$?
+fi
+assert_eq "matrix team_members_only direct-address mail exit" "0" "$alice_team_mail_exit"
+if [[ "$alice_team_mail_exit" != "0" ]]; then
+  echo "  matrix team_members_only mail output: ${alice_team_mail_out:0:240}"
+fi
+bob_team_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_team_vs="$(echo "$bob_team_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('subject')=='Matrix team-only direct address'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix team_members_only direct-address mail verified" "verified" "$bob_team_vs"
+
+if alice_team_chat_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave test.local/bob \
+  "Matrix team-only direct address chat" 2>&1)"; then
+  alice_team_chat_exit=0
+else
+  alice_team_chat_exit=$?
+fi
+assert_eq "matrix team_members_only direct-address chat exit" "0" "$alice_team_chat_exit"
+if [[ "$alice_team_chat_exit" != "0" ]]; then
+  echo "  matrix team_members_only chat output: ${alice_team_chat_out:0:240}"
+fi
+bob_team_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_team_chat_vs="$(echo "$bob_team_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix team-only direct address chat'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix team_members_only direct-address chat verified" "verified" "$bob_team_chat_vs"
+
+if carol_hidden_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CAROL_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Matrix hidden should not send" \
+  --body "Matrix unauthorized hidden direct address mail" 2>&1)"; then
+  carol_hidden_mail_exit=0
+else
+  carol_hidden_mail_exit=$?
+fi
+if [[ "$carol_hidden_mail_exit" != "0" ]] && echo "$carol_hidden_mail_out" | grep -qi "resolve recipient\|Address not found\|404"; then
+  echo "  PASS: matrix unauthorized team_members_only direct-address mail fails closed"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: matrix unauthorized team_members_only direct-address mail should fail closed (exit=$carol_hidden_mail_exit output=${carol_hidden_mail_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+set_awid_address_reachability "test.local" "bob" "nobody"
+if alice_pin_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Matrix known pin fallback" \
+  --body "Matrix known pin fallback mail" 2>&1)"; then
+  alice_pin_mail_exit=0
+else
+  alice_pin_mail_exit=$?
+fi
+assert_eq "matrix known-agent pin fallback mail exit" "0" "$alice_pin_mail_exit"
+if [[ "$alice_pin_mail_exit" != "0" ]]; then
+  echo "  matrix known-agent pin fallback output: ${alice_pin_mail_out:0:240}"
+fi
+
+set_awid_address_reachability "test.local" "bob" "public"
+if alice_stable_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-did "$BOB_DID_AW" \
+  --subject "Matrix stable did target" \
+  --body "Matrix stable did target mail" 2>&1)"; then
+  alice_stable_mail_exit=0
+else
+  alice_stable_mail_exit=$?
+fi
+assert_eq "matrix stable did:aw mail exit" "0" "$alice_stable_mail_exit"
+if [[ "$alice_stable_mail_exit" != "0" ]]; then
+  echo "  matrix stable did:aw mail output: ${alice_stable_mail_out:0:240}"
+fi
+
+bob_matrix_final_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_pin_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Matrix known pin fallback'), ''))" 2>/dev/null || echo "")"
+bob_stable_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Matrix stable did target'), ''))" 2>/dev/null || echo "")"
+assert_eq "matrix known-agent pin fallback delivered" "Matrix known pin fallback mail" "$bob_pin_body"
+assert_eq "matrix stable did:aw delivered" "Matrix stable did target mail" "$bob_stable_body"
 echo ""
 
 # ---------------------------------------------------------------------------
