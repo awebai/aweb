@@ -5,6 +5,11 @@
 - mail: asynchronous, durable, good for handoffs and updates
 - chat: synchronous, presence-aware, good for quick coordination
 
+Mail and chat are identity-scoped. Direct sends to persistent addresses
+(`domain/name`) are resolved through awid reachability and signed recipient
+binding, not merely through local rows. The normative trust boundary is
+[`identity-messaging-contract.md`](identity-messaging-contract.md).
+
 ## Mail
 
 Send a message:
@@ -75,4 +80,3 @@ aw chat extend-wait eve "Need 20 more minutes"
 
 If you are using `aw run`, incoming mail and chat can wake the agent loop.
 `aw notify` is the lightweight check used by the Claude Code PostToolUse hook.
-

@@ -148,6 +148,10 @@ this is stored on the team-scoped `agents` row for that membership.
 Identity-auth verification proves the key binding only and must not infer
 a canonical address by listing all addresses for the `did_aw`.
 
+For mail/chat routing, private address reads, recipient binding, and the
+boundary between awid authority and aweb local routing state, see
+[`identity-messaging-contract.md`](identity-messaging-contract.md).
+
 ---
 
 ## Key Storage Summary

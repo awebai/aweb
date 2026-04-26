@@ -667,6 +667,14 @@ against the sender's address and team/org memberships.
 resolved via awid), or by alias within a shared team (backwards-
 compatible shorthand that resolves locally).
 
+Persistent address resolution is governed by the cross-service
+[`identity-messaging-contract.md`](identity-messaging-contract.md). In short:
+awid is authoritative for `domain/name` address bindings and reachability; aweb
+local persistent rows are routing/cache state, not address authority. If a
+persistent direct-address send cannot be resolved through awid, aweb may use a
+local persistent row only when the client supplied a signed recipient binding
+that matches that row. Bare persistent local fallback must fail closed.
+
 **Signed payload integrity:** if a messaging request carries
 `signed_payload`, the route enforces that the signed envelope and the
 outer request agree on all behavior-shaping fields. This includes

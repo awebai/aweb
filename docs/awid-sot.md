@@ -166,6 +166,13 @@ membership is evaluated against the row's reachability tier. If authorized,
 the row is returned; otherwise `404` (same response as anonymous to avoid
 leaking existence).
 
+This is caller-private-key authority. A service that only knows the caller's
+`did:key` string cannot elevate an address read on the caller's behalf; it must
+either receive a valid signed lookup from the client or treat the read as
+unauthorized. See
+[`identity-messaging-contract.md`](identity-messaging-contract.md) for the
+mail/chat recipient-binding contract that relies on this rule.
+
 Used by the aweb CLI's `RegistryResolver` so authorized teammates can
 resolve `org_only` / `team_members_only` rows without a prior known-agent
 pin. Anonymous callers continue to see only `public` rows.

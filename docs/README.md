@@ -5,7 +5,7 @@ the public `aweb` repo.
 
 ## Source of truth
 
-These two documents define the system:
+These documents define the system:
 
 - [aweb-sot.md](aweb-sot.md): the implementation
   spec for the `aweb` server and `aw` CLI under the awid teams architecture,
@@ -14,6 +14,9 @@ These two documents define the system:
 - [awid-sot.md](awid-sot.md): the awid
   service spec for namespaces, addresses, the DID registry, teams, and
   membership certificates
+- [identity-messaging-contract.md](identity-messaging-contract.md): the
+  cross-service contract for identity-scoped mail/chat, direct-address
+  reachability, recipient binding, and local fallback rules
 
 ## User guides
 
@@ -26,6 +29,8 @@ These two documents define the system:
 - [messaging.md](messaging.md): mail and chat workflows
 - [identity.md](identity.md): how identity, signing, namespaces, and trust
   work in practice
+- [trust-model.md](trust-model.md): trust boundaries, key authority, custody,
+  and recovery semantics
 - [support-tools.md](support-tools.md): OSS `aw doctor`, registry read,
   support bundle, lifecycle, and high-impact handoff semantics
 - [configuration.md](configuration.md): `.aw/` files, global config, and docs
