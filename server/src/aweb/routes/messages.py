@@ -273,12 +273,46 @@ def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
     return False
 
 
+def _signed_payload_matches_address_binding(
+    signed_payload: str | None,
+    *,
+    address: str,
+    recipient: dict,
+) -> bool:
+    if not signed_payload:
+        return True
+    try:
+        payload = json.loads(signed_payload)
+    except Exception:
+        return False
+    if not isinstance(payload, dict) or payload.get("type") != "mail":
+        return False
+    signed_to = str(payload.get("to") or "").strip()
+    if signed_to and signed_to != address:
+        return False
+    recipient_stable_id = str(recipient.get("did_aw") or "").strip()
+    recipient_current_did = str(recipient.get("did_key") or "").strip()
+    signed_to_did = str(payload.get("to_did") or "").strip()
+    if signed_to_did and signed_to_did not in {recipient_stable_id, recipient_current_did}:
+        return False
+    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
+    if signed_to_stable_id and signed_to_stable_id != recipient_stable_id:
+        return False
+    return bool(recipient_stable_id or recipient_current_did)
+
+
+def _requires_registry_address_binding(row: dict | None) -> bool:
+    return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
+
+
 async def _bound_recipient_from_address(
     db,
     *,
     registry_client,
     auth: MessagingAuth,
     address: str,
+    expected_recipient: dict | None = None,
+    signed_payload: str | None = None,
 ) -> dict | None:
     if registry_client is None:
         raise HTTPException(status_code=503, detail="AWID registry unavailable")
@@ -290,7 +324,20 @@ async def _bound_recipient_from_address(
         bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
         if bound_recipient is not None:
             return bound_recipient
-    return await _local_recipient_from_address(db, domain=domain, name=name)
+    local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
+    if _requires_registry_address_binding(local_recipient):
+        if (
+            expected_recipient is not None
+            and _recipient_identity_matches(local_recipient, expected_recipient)
+            and _signed_payload_matches_address_binding(
+                signed_payload,
+                address=address,
+                recipient=local_recipient,
+            )
+        ):
+            return local_recipient
+        return None
+    return local_recipient
 
 
 @router.post("", response_model=SendMessageResponse)
@@ -329,6 +376,8 @@ async def send_message(
                 registry_client=registry_client,
                 auth=auth,
                 address=address,
+                expected_recipient=recipient,
+                signed_payload=payload.signed_payload,
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
@@ -354,6 +403,8 @@ async def send_message(
                 registry_client=registry_client,
                 auth=auth,
                 address=address,
+                expected_recipient=recipient,
+                signed_payload=payload.signed_payload,
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
@@ -381,6 +432,8 @@ async def send_message(
                     raise HTTPException(status_code=404, detail="Recipient agent not found")
                 if registry_client is None:
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
+                raise HTTPException(status_code=404, detail="Recipient address not found")
+            if registry_client is not None and _requires_registry_address_binding(recipient):
                 raise HTTPException(status_code=404, detail="Recipient address not found")
             recipient = _with_requested_address(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()

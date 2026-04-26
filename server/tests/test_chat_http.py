@@ -770,6 +770,110 @@ async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agen
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_to_address_does_not_fall_back_to_local_persistent_agent_when_awid_misses(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(return_value=None)
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_addresses": ["otherco.com/bob"], "message": "hidden"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 404, resp.text
+    assert "Recipient address not found" in resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_to_private_address_uses_client_recipient_binding(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(return_value=None)
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "private chat",
+            "from": "did:aw:alice",
+            "from_did": "did:aw:alice",
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        }
+    )
+    payload = {
+        "to_addresses": ["otherco.com/bob"],
+        "message": "private chat",
+        "from_did": "did:aw:alice",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+    }
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    body_json = resp.json()
+    assert {participant["did"] for participant in body_json["participants"]} == {"did:aw:alice", "did:aw:bob"}
+    assert {participant["address"] for participant in body_json["participants"]} == {"otherco.com/bob", None}
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -3161,3 +3161,124 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
 
     assert resp.status_code == 403, resp.text
     assert "Recipient does not accept messages" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_address_does_not_fall_back_to_local_persistent_agent_when_awid_misses(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(return_value=None)
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 404, resp.text
+    assert "Recipient address not found" in resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_private_address_uses_client_recipient_binding(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(return_value=None)
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hi",
+            "from": "did:aw:alice",
+            "from_did": "did:aw:alice",
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "priority": "normal",
+            "subject": "private bound",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    )
+    payload = {
+        "to_address": "otherco.com/bob",
+        "to_stable_id": "did:aw:bob",
+        "subject": "private bound",
+        "body": "hi",
+        "from_did": "did:aw:alice",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+    }
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_alias
+        FROM {{tables.messages}}
+        WHERE message_id = $1
+        """,
+        UUID(message_id),
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_alias"] == "bob"
