@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { PinStore } from "../src/identity/pinstore.js";
 import { SenderTrustManager } from "../src/identity/trust.js";
-import type { VerificationStatus } from "../src/identity/signing.js";
+import { verifySignedPayload, type VerificationStatus } from "../src/identity/signing.js";
 
 interface RecipientBindingVectorFile {
   schema: string;
@@ -21,7 +21,27 @@ interface RecipientBindingVector {
   expected_status: VerificationStatus;
 }
 
+interface CryptoSignatureVectorFile {
+  schema: string;
+  vectors: CryptoSignatureVector[];
+}
+
+interface CryptoSignatureVector {
+  name: string;
+  signed_payload: string;
+  signature: string;
+  from_did: string;
+  signing_key_id: string | null;
+  expected_status: VerificationStatus;
+}
+
 const testDir = dirname(fileURLToPath(import.meta.url));
+
+function loadCryptoSignatureVectors(): CryptoSignatureVectorFile {
+  return JSON.parse(
+    readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "crypto-sig-v1.json"), "utf-8"),
+  ) as CryptoSignatureVectorFile;
+}
 
 function loadRecipientBindingVectors(): RecipientBindingVectorFile {
   return JSON.parse(
@@ -30,6 +50,22 @@ function loadRecipientBindingVectors(): RecipientBindingVectorFile {
 }
 
 describe("trust conformance vectors", () => {
+  test("crypto signatures match the shared contract", async () => {
+    const vectorFile = loadCryptoSignatureVectors();
+    expect(vectorFile.schema).toBe("aweb.trust.crypto-sig.v1");
+
+    for (const vector of vectorFile.vectors) {
+      const result = await verifySignedPayload(
+        vector.signed_payload,
+        vector.signature,
+        vector.from_did,
+        vector.signing_key_id ?? "",
+      );
+
+      expect(result, vector.name).toBe(vector.expected_status);
+    }
+  });
+
   test("recipient binding matches the shared contract", async () => {
     const vectorFile = loadRecipientBindingVectors();
     expect(vectorFile.schema).toBe("aweb.trust.recipient-binding.v1");
