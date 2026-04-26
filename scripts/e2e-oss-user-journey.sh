@@ -198,6 +198,32 @@ run_aw_in() {
   run_aw_with_home_in "$E2E_HOME" "$workdir" "$@"
 }
 
+# Like run_aw_in but strips AWID_REGISTRY_URL from the env so the CLI must
+# fall back to identity.yaml's registry_url. Used by the aako-pattern
+# reproducer to exercise the env-unset-with-identity-fallback code path
+# (the aweb-aalg / aweb-aale bug-trigger condition).
+run_aw_no_env_registry_in() {
+  local workdir="$1"
+  shift
+  HOME="$E2E_HOME" \
+  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_SKIP_DNS_VERIFY=1 \
+  bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
+}
+
+# Run a specific aw binary (not necessarily the one built at Phase 0) in
+# the isolated environment, with AWID_REGISTRY_URL stripped. Used for the
+# aako-pattern reproducer's BASELINE mode where the sender CLI must come
+# from a pre-aalg-fix worktree.
+run_aw_bin_no_env_registry_in() {
+  local aw_bin="$1" workdir="$2"
+  shift 2
+  HOME="$E2E_HOME" \
+  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_SKIP_DNS_VERIFY=1 \
+  bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$aw_bin" "$@"
+}
+
 run_aw_tty_in() {
   local workdir="$1" input="$2"
   shift 2
@@ -1410,5 +1436,239 @@ phase_aw_init_local_quickstart() {
 
 phase_aw_init_reconnect
 phase_aw_init_local_quickstart
+
+# ---------------------------------------------------------------------------
+# Phase 23: Amy-symptom reproducer (aweb-aalj)
+# ---------------------------------------------------------------------------
+# Per Randy's 2bc20cf6: reproducer-as-gate discipline. Amy's stack is the
+# bug-DATA source; dev environment must verify locally before any v0.5.8
+# release tags fire.
+#
+# This phase reuses Phase 12d's setup (alice has a cross-team-cert
+# membership in main:partner.local while her identity is in test.local —
+# exactly the aako-pattern: cert.member_address ≠ identity.address). Her
+# did:aw is already registered under both test.local/alice and
+# partner.local/alice.
+#
+# Three modes (env: AMY_REPRODUCER_MODE = baseline | intermediate | post):
+#   - baseline:     pre-aalg-fix sender CLI + channel 1.3.2 dist
+#                   → server vs=identity_mismatch on both transports
+#                   → channel mail header verified=false; chat verified=true
+#   - intermediate: current sender CLI + channel 1.3.2 dist (default)
+#                   → server vs=verified on both transports (aalg fix landed)
+#                   → channel mail header still verified=false
+#                     (aale-renderer-asymmetry not yet fixed); chat verified=true
+#   - post:         current sender CLI + post-aale-fix channel dist
+#                   → server vs=verified on both
+#                   → channel mail header verified=true; chat verified=true
+#
+# Env overrides:
+#   AMY_REPRODUCER_MODE       baseline | intermediate (default) | post
+#   AMY_BASELINE_AW_BIN       path to a pre-aalg-fix aw binary (required for baseline mode)
+#   AMY_CHANNEL_DIST_PATH     path to channel/dist/index.js (default: $REPO_ROOT/channel/dist/index.js)
+#   AMY_CAPTURE_SECONDS       channel-capture window (default: 25)
+phase_amy_symptom_reproducer() {
+  echo "=== Phase 23: Amy-symptom reproducer (aako-pattern + cross-namespace + channel capture) ==="
+
+  local mode="${AMY_REPRODUCER_MODE:-intermediate}"
+  local capture_seconds="${AMY_CAPTURE_SECONDS:-25}"
+  local channel_dist="${AMY_CHANNEL_DIST_PATH:-$REPO_ROOT/channel/dist/index.js}"
+  local sender_bin="$CLI_DIR/aw"
+  case "$mode" in
+    baseline)
+      if [[ -z "${AMY_BASELINE_AW_BIN:-}" || ! -x "$AMY_BASELINE_AW_BIN" ]]; then
+        echo "  SKIP: baseline mode requires AMY_BASELINE_AW_BIN pointing at a pre-aalg-fix aw binary"
+        return 0
+      fi
+      sender_bin="$AMY_BASELINE_AW_BIN"
+      ;;
+    intermediate|post)
+      ;;
+    *)
+      echo "  FAIL: unknown AMY_REPRODUCER_MODE=$mode"
+      fail=$((fail + 1))
+      return 0
+      ;;
+  esac
+  echo "  mode=$mode sender_bin=$sender_bin channel_dist=$channel_dist capture_seconds=$capture_seconds"
+
+  if [[ ! -f "$channel_dist" ]]; then
+    echo "  Building channel dist (one-time)..."
+    (cd "$REPO_ROOT/channel" && npm install --silent && npm run build --silent) >/dev/null 2>&1 || {
+      echo "  FAIL: channel dist build failed at $REPO_ROOT/channel"
+      fail=$((fail + 1))
+      return 0
+    }
+  fi
+  if [[ ! -f "$channel_dist" ]]; then
+    echo "  FAIL: channel dist still missing at $channel_dist after build"
+    fail=$((fail + 1))
+    return 0
+  fi
+
+  # Switch alice to her cross-team-cert team (main:partner.local). Her
+  # identity remains in test.local so cert.member_address (partner.local/alice)
+  # ≠ identity.address (test.local/alice) — the aako-pattern.
+  run_aw_in "$ALICE_DIR" id team switch main:partner.local >/dev/null 2>&1
+  local switch_exit=$?
+  assert_eq "amy reproducer: alice switches to partner.local team" "0" "$switch_exit"
+
+  local alice_active_team
+  alice_active_team="$(yaml_field "$ALICE_DIR/.aw/teams.yaml" active_team)"
+  assert_eq "amy reproducer: active_team is partner cross-team-cert" "main:partner.local" "$alice_active_team"
+
+  # Ensure alice's identity.yaml has registry_url set (the bug-trigger
+  # condition is: AWID_REGISTRY_URL env stripped + identity.yaml has
+  # registry_url + cross-team-cert workspace). The registry_url field may
+  # or may not have been written by `id create --registry`; ensure it is.
+  if ! grep -q "^registry_url:" "$ALICE_DIR/.aw/identity.yaml" 2>/dev/null; then
+    echo "registry_url: $AWID_URL" >> "$ALICE_DIR/.aw/identity.yaml"
+    echo "  amy reproducer: appended registry_url=$AWID_URL to identity.yaml"
+  fi
+
+  # Spawn the channel-capture process subscribed to bob's events. The
+  # channel runs in bob's workspace dir and connects to the test aweb
+  # server like a normal plugin would. Notifications/claude/channel
+  # notifications stream to the capture file.
+  local capture_file
+  capture_file="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture.XXXXXX.jsonl")"
+  local capture_log
+  capture_log="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture.XXXXXX.log")"
+  HOME="$E2E_HOME" \
+  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_REGISTRY_URL="$AWID_URL" \
+  AWID_SKIP_DNS_VERIFY=1 \
+    bash -c 'cd "$1" && shift && exec "$@"' _ "$BOB_DIR" \
+    node "$REPO_ROOT/scripts/lib/capture-channel-events.mjs" "$channel_dist" "$capture_seconds" \
+    >"$capture_file" 2>"$capture_log" &
+  local capture_pid=$!
+  echo "  amy reproducer: spawned channel-capture pid=$capture_pid (file=$capture_file)"
+  # Give the channel a moment to perform its handshake + initial fetch
+  # before we send messages, otherwise the events race the subscription.
+  sleep 5
+
+  # Send mail and chat from alice (aako-pattern sender, AWID_REGISTRY_URL stripped)
+  # to bob via the configured sender binary.
+  local mail_subject="amy-symptom mail $(date +%s)"
+  local mail_body="amy reproducer mail body"
+  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" mail send \
+    --to bob \
+    --subject "$mail_subject" \
+    --body "$mail_body" >/dev/null 2>&1
+  local mail_exit=$?
+  assert_eq "amy reproducer: mail send exit" "0" "$mail_exit"
+
+  run_aw_bin_no_env_registry_in "$sender_bin" "$ALICE_DIR" chat send-and-leave bob \
+    "amy reproducer chat" >/dev/null 2>&1
+  local chat_exit=$?
+  assert_eq "amy reproducer: chat send exit" "0" "$chat_exit"
+
+  # Wait for the channel-capture to complete.
+  wait "$capture_pid" 2>/dev/null || true
+
+  # Server-side: verification_status from bob's mail inbox + chat history
+  # for messages from alice in this phase.
+  local bob_inbox_json
+  bob_inbox_json="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+  local server_mail_vs
+  server_mail_vs="$(echo "$bob_inbox_json" | python3 -c "
+import sys, json
+subject = sys.argv[1]
+data = json.load(sys.stdin)
+msgs = data.get('messages', [])
+msg = next((m for m in msgs if m.get('subject') == subject), None)
+print(msg.get('verification_status', '') if msg else '')
+" "$mail_subject")"
+  echo "  amy reproducer: server_mail_verification_status=$server_mail_vs"
+
+  local bob_pending_json
+  bob_pending_json="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
+  local server_chat_vs
+  server_chat_vs="$(echo "$bob_pending_json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+pending = data.get('pending', [])
+target = next((p for p in pending if p.get('last_message') == 'amy reproducer chat'), None)
+print(target.get('last_verification_status', '') if target else '')
+")"
+  echo "  amy reproducer: server_chat_verification_status=$server_chat_vs"
+
+  # Channel-side: parse the capture file for mail and chat events; extract
+  # meta.verified.
+  local channel_mail_verified
+  channel_mail_verified="$(python3 -c "
+import sys, json
+subject = sys.argv[1]
+with open(sys.argv[2], 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            params = json.loads(line)
+        except Exception:
+            continue
+        meta = params.get('meta', {}) or {}
+        if meta.get('type') == 'mail' and meta.get('subject') == subject:
+            print(meta.get('verified', ''))
+            break
+    else:
+        print('')
+" "$mail_subject" "$capture_file")"
+  echo "  amy reproducer: channel_mail_verified=$channel_mail_verified"
+
+  local channel_chat_verified
+  channel_chat_verified="$(python3 -c "
+import sys, json
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            params = json.loads(line)
+        except Exception:
+            continue
+        meta = params.get('meta', {}) or {}
+        if meta.get('type') == 'chat' and params.get('content') == 'amy reproducer chat':
+            print(meta.get('verified', ''))
+            break
+    else:
+        print('')
+" "$capture_file")"
+  echo "  amy reproducer: channel_chat_verified=$channel_chat_verified"
+
+  # Mode-specific assertions.
+  case "$mode" in
+    baseline)
+      assert_eq "amy reproducer baseline: server mail vs=identity_mismatch" "identity_mismatch" "$server_mail_vs"
+      assert_eq "amy reproducer baseline: server chat vs=identity_mismatch" "identity_mismatch" "$server_chat_vs"
+      assert_eq "amy reproducer baseline: channel mail header verified=false" "false" "$channel_mail_verified"
+      assert_eq "amy reproducer baseline: channel chat header verified=true" "true" "$channel_chat_verified"
+      ;;
+    intermediate)
+      assert_eq "amy reproducer intermediate: server mail vs=verified" "verified" "$server_mail_vs"
+      assert_eq "amy reproducer intermediate: server chat vs=verified" "verified" "$server_chat_vs"
+      assert_eq "amy reproducer intermediate: channel mail header verified=false (renderer asymmetry)" "false" "$channel_mail_verified"
+      assert_eq "amy reproducer intermediate: channel chat header verified=true" "true" "$channel_chat_verified"
+      ;;
+    post)
+      assert_eq "amy reproducer post: server mail vs=verified" "verified" "$server_mail_vs"
+      assert_eq "amy reproducer post: server chat vs=verified" "verified" "$server_chat_vs"
+      assert_eq "amy reproducer post: channel mail header verified=true (asymmetry fixed)" "true" "$channel_mail_verified"
+      assert_eq "amy reproducer post: channel chat header verified=true" "true" "$channel_chat_verified"
+      ;;
+  esac
+
+  # Restore alice's primary team for any subsequent phases.
+  run_aw_in "$ALICE_DIR" id team switch devteam:test.local >/dev/null 2>&1 || true
+
+  echo "  amy reproducer: capture file preserved at $capture_file (log: $capture_log)"
+  echo ""
+}
+
+if [[ -n "${AMY_REPRODUCER_RUN:-}" ]]; then
+  phase_amy_symptom_reproducer
+fi
 
 echo "=== Done ==="
