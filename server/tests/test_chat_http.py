@@ -809,6 +809,51 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_to_did_and_address_uses_local_persistent_when_registry_unconfigured(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, None)
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    payload = {
+        "to_dids": ["did:aw:bob"],
+        "to_addresses": ["otherco.com/bob"],
+        "message": "local bound",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    rows = await aweb_cloud_db.aweb_db.fetch_all(
+        "SELECT did, alias FROM {{tables.chat_participants}} WHERE alias = 'bob'"
+    )
+    assert len(rows) == 1
+    assert rows[0]["did"] == "did:aw:bob"
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_to_private_address_uses_client_recipient_binding(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

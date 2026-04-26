@@ -314,18 +314,19 @@ async def _bound_recipient_from_address(
     expected_recipient: dict | None = None,
     signed_payload: str | None = None,
 ) -> dict | None:
-    if registry_client is None:
-        raise HTTPException(status_code=503, detail="AWID registry unavailable")
     if "/" not in address:
         raise HTTPException(status_code=422, detail="to_address must be domain/name")
     domain, name = address.split("/", 1)
-    resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-    if resolved is not None and resolved.did_aw:
-        bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
-        if bound_recipient is not None:
-            return bound_recipient
+    if registry_client is not None:
+        resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        if resolved is not None and resolved.did_aw:
+            bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
+            if bound_recipient is not None:
+                return bound_recipient
     local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
     if _requires_registry_address_binding(local_recipient):
+        if registry_client is None:
+            return local_recipient
         if (
             expected_recipient is not None
             and _recipient_identity_matches(local_recipient, expected_recipient)
