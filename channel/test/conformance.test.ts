@@ -35,6 +35,27 @@ interface CryptoSignatureVector {
   expected_status: VerificationStatus;
 }
 
+interface RegistryVectorFile {
+  schema: string;
+  vectors: RegistryVector[];
+}
+
+interface RegistryVector {
+  name: string;
+  initial_status: VerificationStatus;
+  trust_address: string;
+  from_did: string;
+  from_stable_id: string;
+  registry_state: Record<string, RegistryStateVerification>;
+  expected_status: VerificationStatus;
+  expected_confirmed_current_key: boolean;
+}
+
+interface RegistryStateVerification {
+  outcome: "verified" | "hard_error" | "ok_degraded";
+  current_did_key: string;
+}
+
 const testDir = dirname(fileURLToPath(import.meta.url));
 
 function loadCryptoSignatureVectors(): CryptoSignatureVectorFile {
@@ -47,6 +68,12 @@ function loadRecipientBindingVectors(): RecipientBindingVectorFile {
   return JSON.parse(
     readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "recipient-binding-v1.json"), "utf-8"),
   ) as RecipientBindingVectorFile;
+}
+
+function loadRegistryVectors(): RegistryVectorFile {
+  return JSON.parse(
+    readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "registry-v1.json"), "utf-8"),
+  ) as RegistryVectorFile;
 }
 
 describe("trust conformance vectors", () => {
@@ -63,6 +90,50 @@ describe("trust conformance vectors", () => {
       );
 
       expect(result, vector.name).toBe(vector.expected_status);
+    }
+  });
+
+  test("sender registry checks match the shared contract", async () => {
+    const vectorFile = loadRegistryVectors();
+    expect(vectorFile.schema).toBe("aweb.trust.registry.v1");
+
+    for (const vector of vectorFile.vectors) {
+      const trust = new SenderTrustManager(
+        { get: async () => ({}) } as never,
+        {
+          verifyStableIdentity: async (_address: string, stableID: string) => {
+            const entry = vector.registry_state[stableID];
+            if (!entry) return { outcome: "HARD_ERROR" };
+            switch (entry.outcome) {
+              case "verified":
+                return { outcome: "OK_VERIFIED", currentDidKey: entry.current_did_key };
+              case "hard_error":
+                return { outcome: "HARD_ERROR" };
+              case "ok_degraded":
+                return { outcome: "OK_DEGRADED" };
+            }
+          },
+        } as never,
+        "",
+        "",
+      ) as SenderTrustManager & {
+        checkStableIdentityRegistry(
+          status: VerificationStatus | undefined,
+          trustAddress: string,
+          fromDID: string | undefined,
+          fromStableID: string | undefined,
+        ): Promise<{ status: VerificationStatus | undefined; confirmedCurrentKey: boolean }>;
+      };
+
+      const result = await trust.checkStableIdentityRegistry(
+        vector.initial_status,
+        vector.trust_address,
+        vector.from_did,
+        vector.from_stable_id,
+      );
+
+      expect(result.status, vector.name).toBe(vector.expected_status);
+      expect(result.confirmedCurrentKey, vector.name).toBe(vector.expected_confirmed_current_key);
     }
   });
 

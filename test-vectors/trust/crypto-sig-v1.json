@@ -35,7 +35,7 @@
       "expected_status": "failed"
     },
     {
-      "name": "invalid-signature-bytes",
+      "name": "wrong-signature-crypto-mismatch",
       "signed_payload": "{\"body\":\"world\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"message_id\":\"msg-001\",\"subject\":\"hello\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"mail\"}",
       "signature": "37ZbXgoIMkmO4dsFhe720VQQojGuG6UmB5jfbctiNZOC9+ibj23Bbx8GxIlfLBJ75xGkeuJOUjrbm0BAlAFvCA",
       "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",

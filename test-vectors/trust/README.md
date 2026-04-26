@@ -3,9 +3,9 @@
 These vectors define shared trust-verification contract cases that must pass in
 both the Go CLI verifier and the channel TypeScript verifier.
 
-The first vector files cover crypto signatures and recipient binding. Later
-files should extend the same pattern for sender registry verification and TOFU
-pin continuity.
+The first vector files cover crypto signatures, sender registry verification,
+and recipient binding. Later files should extend the same pattern for TOFU pin
+continuity.
 
 ## `crypto-sig-v1.json`
 
@@ -32,6 +32,34 @@ Vector fields:
 `signing_key_id` does not select an alternate public key. A non-empty value
 must equal `from_did`; otherwise the status is `failed`. Verification uses the
 public key extracted from `from_did`.
+
+## `registry-v1.json`
+
+Sender registry vectors cover Pass C. They start after crypto has already
+produced an upstream status and before local TOFU pinning. The registry can
+confirm that the sender's stable `did:aw` currently maps to the presented
+`did:key`, reject a hard mismatch, or degrade without changing the upstream
+status.
+
+Top-level fields:
+
+- `schema`: must be `aweb.trust.registry.v1`.
+- `description`: human-readable summary.
+- `vectors`: ordered list of sender registry cases.
+
+Vector fields:
+
+- `name`: stable test case identifier.
+- `initial_status`: input status from the upstream crypto pass.
+- `trust_address`: canonical sender address passed to the registry resolver.
+- `from_did`: sender `did:key` from the verified envelope.
+- `from_stable_id`: sender stable `did:aw` from the verified envelope or server metadata.
+- `registry_state`: stub resolver map keyed by `from_stable_id`; each entry has:
+  - `outcome`: `verified`, `hard_error`, or `ok_degraded`.
+  - `current_did_key`: registry current key for `verified` results, or empty.
+- `expected_status`: canonical status after sender registry verification.
+- `expected_confirmed_current_key`: whether the registry proved that the
+  current key exactly matches `from_did`, for downstream pin disambiguation.
 
 ## `recipient-binding-v1.json`
 

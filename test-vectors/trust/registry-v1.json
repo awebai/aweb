@@ -1,0 +1,116 @@
+{
+  "schema": "aweb.trust.registry.v1",
+  "description": "Shared sender stable-identity registry conformance vectors for Go CLI and channel TypeScript verifiers.",
+  "vectors": [
+    {
+      "name": "registry-verified-current-key-match-confirms",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "verified",
+          "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+        }
+      },
+      "expected_status": "verified",
+      "expected_confirmed_current_key": true
+    },
+    {
+      "name": "registry-verified-empty-current-key-keeps-verified",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "verified",
+          "current_did_key": ""
+        }
+      },
+      "expected_status": "verified",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "registry-verified-current-key-mismatch-rejects",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "verified",
+          "current_did_key": "did:key:z6MkqWjZ1v1wK9oKqJksn1t9hmPpxj2rW4W7mSE6uXPd4k9h"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "registry-hard-error-rejects",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "hard_error",
+          "current_did_key": ""
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "registry-ok-degraded-passes-through",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "ok_degraded",
+          "current_did_key": ""
+        }
+      },
+      "expected_status": "verified",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "empty-stable-id-skips-registry",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "",
+      "registry_state": {},
+      "expected_status": "verified",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "non-did-aw-stable-id-skips-registry",
+      "initial_status": "verified",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:web:not-aw",
+      "registry_state": {},
+      "expected_status": "verified",
+      "expected_confirmed_current_key": false
+    },
+    {
+      "name": "non-verified-status-passes-through",
+      "initial_status": "failed",
+      "trust_address": "alice.example.com/alice",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "from_stable_id": "did:aw:alice",
+      "registry_state": {
+        "did:aw:alice": {
+          "outcome": "verified",
+          "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+        }
+      },
+      "expected_status": "failed",
+      "expected_confirmed_current_key": false
+    }
+  ]
+}
