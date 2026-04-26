@@ -258,6 +258,21 @@ def _with_requested_address(row: dict, address: str) -> dict:
     return copied
 
 
+def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
+    if left is None or right is None:
+        return False
+    left_agent_id = str(left.get("agent_id") or "").strip()
+    right_agent_id = str(right.get("agent_id") or "").strip()
+    if left_agent_id and left_agent_id == right_agent_id:
+        return True
+    for field in ("did_aw", "did_key"):
+        left_value = str(left.get(field) or "").strip()
+        right_value = str(right.get(field) or "").strip()
+        if left_value and right_value and left_value == right_value:
+            return True
+    return False
+
+
 async def _bound_recipient_from_address(
     db,
     *,
@@ -315,7 +330,7 @@ async def send_message(
                 auth=auth,
                 address=address,
             )
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
             recipient = _with_requested_address(recipient, address)
         to_agent_id = str(recipient["agent_id"])
@@ -340,7 +355,7 @@ async def send_message(
                 auth=auth,
                 address=address,
             )
-            if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
+            if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
             recipient = _with_requested_address(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()

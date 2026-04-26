@@ -975,6 +975,67 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_to_stable_id_address_binding_with_duplicate_local_identity_rows(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:team-stable'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-address')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy, created_at
+        )
+        VALUES
+            ('ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob', 'bob',
+             'persistent', 'developer', 'everyone', '2026-04-25T00:00:00Z'),
+            ('stable:identity.local', $1, 'did:aw:bob', NULL, 'bob-stable',
+             'persistent', 'developer', 'everyone', '2026-04-26T00:00:00Z')
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(return_value=None)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_address": "otherco.com/bob",
+        "to_stable_id": "did:aw:bob",
+        "subject": "duplicate local identity rows",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key="did:key:z6MkAliceCurrent")
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'duplicate local identity rows'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "bob-stable"
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     _, _, carol_did_key = _make_keypair()
