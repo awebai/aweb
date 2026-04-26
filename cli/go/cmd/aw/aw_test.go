@@ -1254,11 +1254,138 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	if registryHits.Load() == 0 {
 		t.Fatal("identity registry_url was not used for messaging recipient resolution")
 	}
-	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, "aweb.ai/amy")
-	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, "")
+	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
+	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
 }
 
-func requireSignedPayloadBindingForTest(t *testing.T, raw any, messageType, recipientDID, senderAddress string) {
+func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+
+	recipientDID := "did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm"
+	recipientStableID := "did:aw:2TdFnyW1MyzkH5x8Q3hM7Pgx98Mn"
+	recipientAddress := "example.invalid/randy"
+
+	var registryHits atomic.Int64
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryHits.Add(1)
+		http.NotFound(w, r)
+	}))
+
+	var mailBody map[string]any
+	var chatBody map[string]any
+	var mailTeamCert string
+	var chatTeamCert string
+	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages":
+			mailTeamCert = r.Header.Get("X-AWID-Team-Certificate")
+			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
+				t.Fatalf("decode mail body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":   "mail-1",
+				"status":       "delivered",
+				"delivered_at": "2026-04-26T00:00:00Z",
+			})
+		case "/v1/chat/sessions":
+			chatTeamCert = r.Header.Get("X-AWID-Team-Certificate")
+			if err := json.NewDecoder(r.Body).Decode(&chatBody); err != nil {
+				t.Fatalf("decode chat body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{
+				SessionID: "session-1",
+				MessageID: "chat-1",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected api path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     apiServer.URL,
+		TeamID:      "aweb:aweb.ai",
+		Alias:       "amy",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "aweb.ai/amy",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:         did,
+		StableID:    stableID,
+		Address:     "juan.aweb.ai/amy",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
+		CreatedAt:   "2026-04-26T00:00:00Z",
+	})
+	pins := awid.NewPinStore()
+	pins.Pins[recipientStableID] = &awid.Pin{
+		Address:  recipientAddress,
+		StableID: recipientStableID,
+		DIDKey:   recipientDID,
+		Server:   registryServer.URL,
+	}
+	pins.Addresses[recipientAddress] = recipientStableID
+	if err := pins.Save(filepath.Join(tmp, ".config", "aw", "known_agents.yaml")); err != nil {
+		t.Fatalf("write known_agents: %v", err)
+	}
+
+	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", recipientAddress, "--body", "mail repro")
+	runMail.Env = env
+	runMail.Dir = tmp
+	if out, err := runMail.CombinedOutput(); err != nil {
+		t.Fatalf("mail failed: %v\n%s", err, string(out))
+	}
+
+	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", recipientAddress, "chat repro")
+	runChat.Env = env
+	runChat.Dir = tmp
+	if out, err := runChat.CombinedOutput(); err != nil {
+		t.Fatalf("chat failed: %v\n%s", err, string(out))
+	}
+
+	if registryHits.Load() == 0 {
+		t.Fatal("registry was not attempted before known-agent fallback")
+	}
+	if mailTeamCert != "" {
+		t.Fatalf("mail --to-address should use identity auth, got cert header")
+	}
+	if chatTeamCert == "" {
+		t.Fatal("chat send-and-leave should use certificate auth")
+	}
+	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
+	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
+}
+
+func requireSignedPayloadBindingForTest(t *testing.T, raw any, messageType, recipientDID, recipientStableID, senderAddress string) {
 	t.Helper()
 	signedPayload, ok := raw.(string)
 	if !ok || signedPayload == "" {
@@ -1271,13 +1398,13 @@ func requireSignedPayloadBindingForTest(t *testing.T, raw any, messageType, reci
 	if got := strings.TrimSpace(payload["to_did"].(string)); got != recipientDID {
 		t.Fatalf("%s signed_payload to_did=%q, want %s", messageType, got, recipientDID)
 	}
+	if got := strings.TrimSpace(payload["to_stable_id"].(string)); got != recipientStableID {
+		t.Fatalf("%s signed_payload to_stable_id=%q, want %s", messageType, got, recipientStableID)
+	}
 	if senderAddress != "" {
 		if got := strings.TrimSpace(payload["from"].(string)); got != senderAddress {
 			t.Fatalf("%s signed_payload from=%q, want %s", messageType, got, senderAddress)
 		}
-	}
-	if _, ok := payload["to_stable_id"]; ok {
-		t.Fatalf("%s signed_payload unexpectedly included to_stable_id", messageType)
 	}
 }
 

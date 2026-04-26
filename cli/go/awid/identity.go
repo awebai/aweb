@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -70,16 +71,12 @@ type PinResolver struct {
 }
 
 func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+	if r == nil || r.Store == nil {
+		return nil, fmt.Errorf("PinResolver: no pin store")
+	}
 	// Try direct DID lookup.
 	if pin, ok := r.Store.Pins[identifier]; ok {
-		return &ResolvedIdentity{
-			DID:         identifier,
-			Address:     pin.Address,
-			Handle:      pin.Handle,
-			RegistryURL: pin.Server,
-			ResolvedAt:  time.Now().UTC(),
-			ResolvedVia: "pin",
-		}, nil
+		return resolvedIdentityFromPin(identifier, pin), nil
 	}
 	// Try reverse lookup by address.
 	if did, ok := r.Store.Addresses[identifier]; ok {
@@ -87,16 +84,29 @@ func (r *PinResolver) Resolve(_ context.Context, identifier string) (*ResolvedId
 		if !exists {
 			return nil, fmt.Errorf("PinResolver: address %q maps to DID %q not in pins", identifier, did)
 		}
-		return &ResolvedIdentity{
-			DID:         did,
-			Address:     pin.Address,
-			Handle:      pin.Handle,
-			RegistryURL: pin.Server,
-			ResolvedAt:  time.Now().UTC(),
-			ResolvedVia: "pin",
-		}, nil
+		return resolvedIdentityFromPin(did, pin), nil
 	}
 	return nil, fmt.Errorf("PinResolver: no pin for %q", identifier)
+}
+
+func resolvedIdentityFromPin(pinKey string, pin *Pin) *ResolvedIdentity {
+	stableID := strings.TrimSpace(pin.StableID)
+	did := strings.TrimSpace(pinKey)
+	if strings.HasPrefix(did, "did:aw:") {
+		stableID = did
+		if key := strings.TrimSpace(pin.DIDKey); key != "" {
+			did = key
+		}
+	}
+	return &ResolvedIdentity{
+		DID:         did,
+		StableID:    stableID,
+		Address:     pin.Address,
+		Handle:      pin.Handle,
+		RegistryURL: pin.Server,
+		ResolvedAt:  time.Now().UTC(),
+		ResolvedVia: "pin",
+	}
 }
 
 // ChainResolver dispatches resolution by identifier format.
@@ -125,10 +135,22 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 	}
 
 	if strings.Contains(identifier, "/") {
-		if r.Registry == nil {
-			return nil, fmt.Errorf("ChainResolver: no registry resolver for address %q", identifier)
+		if r.Registry != nil {
+			identity, err := r.Registry.Resolve(ctx, identifier)
+			if err == nil {
+				return identity, nil
+			}
+			if r.Pin != nil && registryMissAllowsPinFallback(err) {
+				if pinIdentity, pinErr := r.Pin.Resolve(ctx, identifier); pinErr == nil {
+					return pinIdentity, nil
+				}
+			}
+			return nil, err
 		}
-		return r.Registry.Resolve(ctx, identifier)
+		if r.Pin != nil {
+			return r.Pin.Resolve(ctx, identifier)
+		}
+		return nil, fmt.Errorf("ChainResolver: no registry resolver for address %q", identifier)
 	}
 
 	if r.Registry == nil {
@@ -146,6 +168,11 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 		identity.PublicKey = pub
 	}
 	return identity, nil
+}
+
+func registryMissAllowsPinFallback(err error) bool {
+	apiErr, ok := err.(*APIError)
+	return ok && apiErr.StatusCode == http.StatusNotFound
 }
 
 func (r *ChainResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *StableIdentityVerification {

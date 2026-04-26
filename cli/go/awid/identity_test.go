@@ -114,6 +114,33 @@ func TestPinResolverByAddress(t *testing.T) {
 	}
 }
 
+func TestPinResolverByStableAddressReturnsCurrentDIDKey(t *testing.T) {
+	t.Parallel()
+
+	ps := NewPinStore()
+	stableID := "did:aw:2TdFnyW1MyzkH5x8Q3hM7Pgx98Mn"
+	did := "did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm"
+	ps.Pins[stableID] = &Pin{
+		Address:  "juan.aweb.ai/randy",
+		StableID: stableID,
+		DIDKey:   did,
+		Server:   "https://api.awid.ai",
+	}
+	ps.Addresses["juan.aweb.ai/randy"] = stableID
+
+	r := &PinResolver{Store: ps}
+	identity, err := r.Resolve(context.Background(), "juan.aweb.ai/randy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q, want %q", identity.DID, did)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("StableID=%q, want %q", identity.StableID, stableID)
+	}
+}
+
 func TestPinResolverNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -172,6 +199,88 @@ func TestChainResolverNoRegistry(t *testing.T) {
 	_, err := cr.Resolve(context.Background(), "researcher")
 	if err == nil {
 		t.Fatal("expected error when no registry resolver for address")
+	}
+}
+
+func TestChainResolverFallsBackToPinWhenRegistryAddressMissing(t *testing.T) {
+	t.Parallel()
+
+	stableID := "did:aw:2TdFnyW1MyzkH5x8Q3hM7Pgx98Mn"
+	did := "did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm"
+	address := "juan.aweb.ai/randy"
+
+	var registryHits atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryHits.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	ps := NewPinStore()
+	ps.Pins[stableID] = &Pin{
+		Address:  address,
+		StableID: stableID,
+		DIDKey:   did,
+		Server:   server.URL,
+	}
+	ps.Addresses[address] = stableID
+
+	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	cr := &ChainResolver{
+		DIDKey:   &DIDKeyResolver{},
+		Registry: registry,
+		Pin:      &PinResolver{Store: ps},
+	}
+
+	identity, err := cr.Resolve(context.Background(), address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registryHits.Load() == 0 {
+		t.Fatal("registry was not tried before pin fallback")
+	}
+	if identity.ResolvedVia != "pin" {
+		t.Fatalf("ResolvedVia=%q, want pin", identity.ResolvedVia)
+	}
+	if identity.DID != did {
+		t.Fatalf("DID=%q, want %q", identity.DID, did)
+	}
+	if identity.StableID != stableID {
+		t.Fatalf("StableID=%q, want %q", identity.StableID, stableID)
+	}
+}
+
+func TestChainResolverDoesNotFallBackToPinOnRegistryHardError(t *testing.T) {
+	t.Parallel()
+
+	address := "juan.aweb.ai/randy"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "registry unavailable", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	ps := NewPinStore()
+	ps.StorePin("did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm", address, "randy", server.URL)
+	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	cr := &ChainResolver{
+		DIDKey:   &DIDKeyResolver{},
+		Registry: registry,
+		Pin:      &PinResolver{Store: ps},
+	}
+
+	_, err := cr.Resolve(context.Background(), address)
+	if err == nil {
+		t.Fatal("expected registry hard error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("err=%T %v, want registry 500", err, err)
 	}
 }
 

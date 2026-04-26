@@ -75,6 +75,9 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 		if target != "" {
 			if identity, err := c.resolver.Resolve(ctx, target); err == nil && identity.DID != "" {
 				env.ToDID = identity.DID
+				if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
+					env.ToStableID = strings.TrimSpace(identity.StableID)
+				}
 			}
 		}
 	}
