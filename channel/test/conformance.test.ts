@@ -414,6 +414,8 @@ function b64(bytes: Uint8Array): string {
 }
 
 function corruptBase64Signature(signature: string): string {
-  if (!signature) return "A";
-  return `${signature.slice(0, -1)}${signature.endsWith("A") ? "B" : "A"}`;
+  const decoded = Buffer.from(signature, "base64");
+  if (decoded.length === 0) return signature;
+  decoded[0] ^= 0x01;
+  return decoded.toString("base64").replace(/=+$/, "");
 }

@@ -364,13 +364,12 @@ func buildRotationAnnouncement(t *testing.T, vector *rotationAnnouncementVector)
 }
 
 func corruptBase64Signature(signature string) string {
-	if signature == "" {
-		return "A"
+	decoded, err := base64.RawStdEncoding.DecodeString(signature)
+	if err != nil || len(decoded) == 0 {
+		return signature
 	}
-	if signature[len(signature)-1] == 'A' {
-		return signature[:len(signature)-1] + "B"
-	}
-	return signature[:len(signature)-1] + "A"
+	decoded[0] ^= 0x01
+	return base64.RawStdEncoding.EncodeToString(decoded)
 }
 
 func buildReplacementAnnouncement(t *testing.T, vector *replacementAnnouncementVector) *ReplacementAnnouncement {
