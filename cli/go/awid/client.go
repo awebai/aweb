@@ -33,6 +33,43 @@ type signedFields struct {
 	SignedPayload string
 }
 
+// RecipientResolutionError means a signed message could not bind its direct
+// recipient to a current did:key, so sending must stop before posting.
+type RecipientResolutionError struct {
+	Target      string
+	MessageType string
+	Err         error
+}
+
+func (e *RecipientResolutionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	msgType := strings.TrimSpace(e.MessageType)
+	if msgType == "" {
+		msgType = "message"
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("resolve recipient %q for signed %s", e.Target, msgType)
+	}
+	return fmt.Sprintf("resolve recipient %q for signed %s: %v", e.Target, msgType, e.Err)
+}
+
+func (e *RecipientResolutionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func isRegistryAddressNotFound(err error) bool {
+	if code, ok := HTTPStatusCode(err); ok && code == http.StatusNotFound {
+		body, _ := HTTPErrorBody(err)
+		return strings.Contains(body, "Address not found")
+	}
+	return false
+}
+
 // signEnvelope signs a MessageEnvelope and returns the fields to embed
 // in the request. When the client has no signing key (legacy/custodial),
 // returns a zero signedFields. Callers stamp the returned fields onto
@@ -73,8 +110,18 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 			target = c.canonicalTrustAddress(env.To)
 		}
 		if target != "" {
-			if identity, err := c.resolver.Resolve(ctx, target); err == nil && identity.DID != "" {
-				env.ToDID = identity.DID
+			identity, err := c.resolver.Resolve(ctx, target)
+			if err != nil {
+				if env.RequireRecipientBinding && isRegistryAddressNotFound(err) {
+					return signedFields{}, &RecipientResolutionError{Target: target, MessageType: env.Type, Err: err}
+				}
+				identity = nil
+			}
+			if identity != nil {
+				if strings.TrimSpace(identity.DID) == "" {
+					return signedFields{}, &RecipientResolutionError{Target: target, MessageType: env.Type, Err: errors.New("missing current did:key")}
+				}
+				env.ToDID = strings.TrimSpace(identity.DID)
 				if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
 					env.ToStableID = strings.TrimSpace(identity.StableID)
 				}

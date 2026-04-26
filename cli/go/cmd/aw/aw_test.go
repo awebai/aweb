@@ -1285,7 +1285,8 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	var registryHits atomic.Int64
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registryHits.Add(1)
-		http.NotFound(w, r)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
 	}))
 
 	var mailBody map[string]any
@@ -1395,6 +1396,92 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	}
 	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
 	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
+}
+
+func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	recipientAddress := "example.invalid/randy"
+
+	var registryHits atomic.Int64
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryHits.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
+	}))
+
+	var chatPosts atomic.Int64
+	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			chatPosts.Add(1)
+			http.Error(w, "unexpected chat send", http.StatusInternalServerError)
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected api path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, string(out))
+	}
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     apiServer.URL,
+		TeamID:      "aweb:aweb.ai",
+		Alias:       "amy",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "aweb.ai/amy",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		SigningKey:  priv,
+	})
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:         did,
+		StableID:    stableID,
+		Address:     "juan.aweb.ai/amy",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
+		CreatedAt:   "2026-04-26T00:00:00Z",
+	})
+
+	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	runChat := exec.CommandContext(ctx, bin, "chat", "send-and-leave", recipientAddress, "chat repro")
+	runChat.Env = env
+	runChat.Dir = tmp
+	out, err := runChat.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected chat to fail closed when recipient binding cannot resolve:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `resolve recipient "example.invalid/randy" for signed chat`) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if registryHits.Load() == 0 {
+		t.Fatal("registry was not attempted before failing closed")
+	}
+	if chatPosts.Load() != 0 {
+		t.Fatalf("chat posts=%d, want 0", chatPosts.Load())
+	}
 }
 
 func requireSignedPayloadBindingForTest(t *testing.T, raw any, messageType, recipientDID, recipientStableID, senderAddress string) {

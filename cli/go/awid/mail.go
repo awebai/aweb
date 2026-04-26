@@ -70,14 +70,15 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:       from,
-		To:         to,
-		ToDID:      toDID,
-		ToStableID: toStableID,
-		Type:       "mail",
-		Priority:   signedMailPriority(payload.Priority),
-		Subject:    payload.Subject,
-		Body:       payload.Body,
+		From:                    from,
+		To:                      to,
+		ToDID:                   toDID,
+		ToStableID:              toStableID,
+		Type:                    "mail",
+		Priority:                signedMailPriority(payload.Priority),
+		Subject:                 payload.Subject,
+		Body:                    payload.Body,
+		RequireRecipientBinding: strings.TrimSpace(payload.ToAddress) != "" && strings.TrimSpace(c.stableID) != "",
 	})
 	if err != nil {
 		return nil, err

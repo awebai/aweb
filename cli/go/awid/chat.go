@@ -179,13 +179,14 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		from = c.signedPayloadFrom(false, !directIdentityTargets)
 	}
 	env := &MessageEnvelope{
-		From:          from,
-		To:            to,
-		Type:          "chat",
-		Body:          payload.Message,
-		WaitSeconds:   payload.WaitSeconds,
-		ReplyTo:       payload.ReplyTo,
-		SenderLeaving: payload.Leaving,
+		From:                    from,
+		To:                      to,
+		Type:                    "chat",
+		Body:                    payload.Message,
+		WaitSeconds:             payload.WaitSeconds,
+		ReplyTo:                 payload.ReplyTo,
+		SenderLeaving:           payload.Leaving,
+		RequireRecipientBinding: len(payload.ToAddresses) == 1 && strings.TrimSpace(c.stableID) != "",
 	}
 	if len(payload.ToDIDs) == 1 {
 		env.ToDID = strings.TrimSpace(payload.ToDIDs[0])
