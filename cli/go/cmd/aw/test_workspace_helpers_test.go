@@ -167,6 +167,7 @@ type testSelectionFixture struct {
 	Address     string
 	Custody     string
 	Lifetime    string
+	RegistryURL string
 	SigningKey  ed25519.PrivateKey
 	CreatedAt   string
 }
@@ -200,12 +201,13 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 		createdAt = "2026-04-04T00:00:00Z"
 	}
 	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
-		DID:       fixture.DID,
-		StableID:  fixture.StableID,
-		Address:   fixture.Address,
-		Custody:   fixture.Custody,
-		Lifetime:  fixture.Lifetime,
-		CreatedAt: createdAt,
+		DID:         fixture.DID,
+		StableID:    fixture.StableID,
+		Address:     fixture.Address,
+		Custody:     fixture.Custody,
+		Lifetime:    fixture.Lifetime,
+		RegistryURL: fixture.RegistryURL,
+		CreatedAt:   createdAt,
 	})
 
 }
@@ -321,6 +323,28 @@ func requireCertificateAuthForTest(t *testing.T, r *http.Request) *awid.TeamCert
 		t.Fatalf("decode team certificate header: %v", err)
 	}
 	return cert
+}
+
+func writeKnownAgentPinForTest(t *testing.T, workingDir, address, registryURL string) (string, string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate recipient key: %v", err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	pins := awid.NewPinStore()
+	pins.Pins[stableID] = &awid.Pin{
+		Address:  address,
+		StableID: stableID,
+		DIDKey:   did,
+		Server:   registryURL,
+	}
+	pins.Addresses[address] = stableID
+	if err := pins.Save(filepath.Join(workingDir, ".config", "aw", "known_agents.yaml")); err != nil {
+		t.Fatalf("write known_agents: %v", err)
+	}
+	return did, stableID
 }
 
 func mirrorLegacyKnownAgentsFixture(workingDir string) {

@@ -165,6 +165,10 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}
 	}))
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
+	}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -190,8 +194,10 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 		Address:     "demo/eve",
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
 		SigningKey:  priv,
 	})
+	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", "acme/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -249,6 +255,10 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}
 	}))
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
+	}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -274,8 +284,10 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 		Address:     "demo/eve",
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
 		SigningKey:  priv,
 	})
+	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
 
 	// Use --to with a full address (contains /). Should auto-detect as address
 	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.

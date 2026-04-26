@@ -1066,6 +1066,10 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}
 	}))
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
+	}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1096,8 +1100,10 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 		Address:     address,
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: registryServer.URL,
 		SigningKey:  priv,
 	})
+	writeKnownAgentPinForTest(t, tmp, "test.local/monitor", registryServer.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send",
 		"--to-address", "test.local/monitor",
