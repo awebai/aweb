@@ -258,6 +258,26 @@ def _with_requested_address(row: dict, address: str) -> dict:
     return copied
 
 
+async def _bound_recipient_from_address(
+    db,
+    *,
+    registry_client,
+    auth: MessagingAuth,
+    address: str,
+) -> dict | None:
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="AWID registry unavailable")
+    if "/" not in address:
+        raise HTTPException(status_code=422, detail="to_address must be domain/name")
+    domain, name = address.split("/", 1)
+    resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+    if resolved is not None and resolved.did_aw:
+        bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
+        if bound_recipient is not None:
+            return bound_recipient
+    return await _local_recipient_from_address(db, domain=domain, name=name)
+
+
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -288,16 +308,13 @@ async def send_message(
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_stable_id recipient")
         if payload.to_address is not None and payload.to_address.strip():
-            if registry_client is None:
-                raise HTTPException(status_code=503, detail="AWID registry unavailable")
             address = payload.to_address.strip()
-            if "/" not in address:
-                raise HTTPException(status_code=422, detail="to_address must be domain/name")
-            domain, name = address.split("/", 1)
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            if resolved is None:
-                raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
-            bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
+            bound_recipient = await _bound_recipient_from_address(
+                db,
+                registry_client=registry_client,
+                auth=auth,
+                address=address,
+            )
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
         to_agent_id = str(recipient["agent_id"])
@@ -315,16 +332,13 @@ async def send_message(
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_did recipient")
         if payload.to_address is not None and payload.to_address.strip():
-            if registry_client is None:
-                raise HTTPException(status_code=503, detail="AWID registry unavailable")
             address = payload.to_address.strip()
-            if "/" not in address:
-                raise HTTPException(status_code=422, detail="to_address must be domain/name")
-            domain, name = address.split("/", 1)
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            if resolved is None:
-                raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
-            bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
+            bound_recipient = await _bound_recipient_from_address(
+                db,
+                registry_client=registry_client,
+                auth=auth,
+                address=address,
+            )
             if bound_recipient is None or str(bound_recipient["agent_id"]) != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()

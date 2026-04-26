@@ -1136,6 +1136,116 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
 
 
 @pytest.mark.asyncio
+async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk',
+            'ephemeral', 'developer', 'everyone'
+        )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(return_value=None)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": "did:aw:bob",
+        "to_address": "test.local/gsk",
+        "subject": "local address binding",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("test.local", "gsk", did_key="did:key:z6MkAliceCurrent")
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'local address binding'
+        """
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_agent_id"] is not None
+    assert row["to_alias"] == "gsk"
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_mismatched_local_to_address_binding_when_awid_misses(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    _, _, carol_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('ops:test.local', $1, 'did:aw:bob', 'test.local/gsk', 'gsk',
+             'ephemeral', 'developer', 'everyone'),
+            ('ops:test.local', $2, 'did:aw:carol', 'test.local/carol', 'carol',
+             'ephemeral', 'developer', 'everyone')
+        """,
+        bob_did_key,
+        carol_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(return_value=None)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _send_auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _send_auth_override
+
+    payload = {
+        "to_did": "did:aw:carol",
+        "to_address": "test.local/gsk",
+        "subject": "local address mismatch",
+        "body": "hi",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 422
+    assert "to_address" in resp.text
+    registry.resolve_address.assert_awaited_once_with("test.local", "gsk", did_key="did:key:z6MkAliceCurrent")
+
+
+@pytest.mark.asyncio
 async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     _, _, carol_did_key = _make_keypair()
