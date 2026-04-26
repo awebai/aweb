@@ -44,6 +44,41 @@ func TestVerifyDidKeyResolutionVerified(t *testing.T) {
 	}
 }
 
+func TestVerifyDidKeyResolutionVerifiedRegisterDIDCreate(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	res := signedDidKeyResolution(t, priv, &DidKeyResolution{
+		DIDAW:         stableID,
+		CurrentDIDKey: did,
+		LogHead: &DidKeyEvidence{
+			Seq:          1,
+			Operation:    "register_did",
+			NewDIDKey:    did,
+			StateHash:    "5d00a7ffa63b444a8515c2cbd9fd6ca0ab12fd97ac49cc359316833cf5c71976",
+			AuthorizedBy: did,
+			Timestamp:    "2026-02-22T10:00:00Z",
+		},
+	})
+
+	outcome, head, err := VerifyDidKeyResolution(res, nil, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != StableIdentityVerified {
+		t.Fatalf("Outcome=%q", outcome)
+	}
+	if head == nil || head.Seq != 1 {
+		t.Fatalf("head=%+v", head)
+	}
+}
+
 func TestVerifyDidKeyResolutionDegradedWithoutLogHead(t *testing.T) {
 	t.Parallel()
 

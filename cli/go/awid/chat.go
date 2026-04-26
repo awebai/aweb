@@ -186,7 +186,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		WaitSeconds:             payload.WaitSeconds,
 		ReplyTo:                 payload.ReplyTo,
 		SenderLeaving:           payload.Leaving,
-		RequireRecipientBinding: len(payload.ToAddresses) == 1 && strings.TrimSpace(c.stableID) != "",
+		RequireRecipientBinding: len(payload.ToAddresses) == 1 && c.requireRecipientBinding,
 	}
 	if len(payload.ToDIDs) == 1 {
 		env.ToDID = strings.TrimSpace(payload.ToDIDs[0])

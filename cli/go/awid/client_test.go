@@ -2095,6 +2095,100 @@ func TestSendMessageByIdentityAddressTargetFailsWhenRecipientResolveFails(t *tes
 	}
 }
 
+func TestSendMessageByIdentityAddressTargetFailsWhenRegistryResolveFails(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientAddress := "otherco/monitor"
+
+	var apiHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHit = true
+		http.Error(w, "unexpected send", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+	c.SetStableID(ComputeStableID(pub))
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != recipientAddress {
+				t.Fatalf("resolve identifier=%q", identifier)
+			}
+			return nil, &RegistryError{StatusCode: http.StatusNotFound, Detail: `{"detail":"Address not found"}`}
+		},
+	})
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToAddress: recipientAddress,
+		Body:      "hello address",
+	})
+	if err == nil {
+		t.Fatal("expected recipient resolution failure")
+	}
+	if !strings.Contains(err.Error(), `resolve recipient "otherco/monitor" for signed mail`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiHit {
+		t.Fatal("mail API should not be called after recipient resolution failure")
+	}
+}
+
+func TestSendMessageByIdentityAddressTargetFailsClosedWhenRequiredWithoutStableID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientAddress := "otherco/monitor"
+
+	var apiHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHit = true
+		http.Error(w, "unexpected send", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+	c.SetRequireRecipientBindingForDirectAddresses(true)
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != recipientAddress {
+				t.Fatalf("resolve identifier=%q", identifier)
+			}
+			return nil, &APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Address not found"}`}
+		},
+	})
+
+	_, err = c.SendMessageByIdentity(context.Background(), &SendMessageRequest{
+		ToAddress: recipientAddress,
+		Body:      "hello address",
+	})
+	if err == nil {
+		t.Fatal("expected recipient resolution failure")
+	}
+	if !strings.Contains(err.Error(), `resolve recipient "otherco/monitor" for signed mail`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiHit {
+		t.Fatal("mail API should not be called after recipient resolution failure")
+	}
+}
+
 func TestSendMessageByIdentityAddressTargetFailsWhenRecipientResolveHasNoCurrentDID(t *testing.T) {
 	t.Parallel()
 
@@ -2620,6 +2714,53 @@ func TestChatCreateSessionSingleAddressTargetFailsWhenRecipientResolveFails(t *t
 	}
 	c.SetAddress("myco/agent")
 	c.SetStableID(ComputeStableID(pub))
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			if identifier != recipientAddress {
+				t.Fatalf("resolve identifier=%q", identifier)
+			}
+			return nil, &APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Address not found"}`}
+		},
+	})
+
+	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
+		ToAddresses: []string{recipientAddress},
+		Message:     "hello direct chat",
+	})
+	if err == nil {
+		t.Fatal("expected recipient resolution failure")
+	}
+	if !strings.Contains(err.Error(), `resolve recipient "otherco/monitor" for signed chat`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiHit {
+		t.Fatal("chat API should not be called after recipient resolution failure")
+	}
+}
+
+func TestChatCreateSessionSingleAddressTargetFailsClosedWhenRequiredWithoutStableID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	recipientAddress := "otherco/monitor"
+
+	var apiHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHit = true
+		http.Error(w, "unexpected send", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+	c.SetRequireRecipientBindingForDirectAddresses(true)
 	c.SetResolver(stubIdentityResolver{
 		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
 			if identifier != recipientAddress {

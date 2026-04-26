@@ -73,8 +73,8 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		return StableIdentityHardError, nil, fmt.Errorf("log_head seq must be >= 1")
 	}
 	if head.Seq == 1 {
-		if head.Operation != "create" {
-			return StableIdentityHardError, nil, fmt.Errorf("seq=1 requires create operation")
+		if head.Operation != "create" && head.Operation != "register_did" {
+			return StableIdentityHardError, nil, fmt.Errorf("seq=1 requires create/register_did operation")
 		}
 		if head.PrevEntryHash != nil {
 			return StableIdentityHardError, nil, fmt.Errorf("seq=1 requires null prev_entry_hash")

@@ -332,6 +332,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 	if sel.StableID != "" {
 		c.SetStableID(sel.StableID)
 	}
+	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.Lifetime) == awid.LifetimePersistent || strings.TrimSpace(sel.StableID) != "")
 
 	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {

@@ -78,7 +78,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		Priority:                signedMailPriority(payload.Priority),
 		Subject:                 payload.Subject,
 		Body:                    payload.Body,
-		RequireRecipientBinding: strings.TrimSpace(payload.ToAddress) != "" && strings.TrimSpace(c.stableID) != "",
+		RequireRecipientBinding: strings.TrimSpace(payload.ToAddress) != "" && c.requireRecipientBinding,
 	})
 	if err != nil {
 		return nil, err

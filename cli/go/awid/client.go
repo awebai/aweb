@@ -112,7 +112,7 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 		if target != "" {
 			identity, err := c.resolver.Resolve(ctx, target)
 			if err != nil {
-				if env.RequireRecipientBinding && isRegistryAddressNotFound(err) {
+				if env.RequireRecipientBinding {
 					return signedFields{}, &RecipientResolutionError{Target: target, MessageType: env.Type, Err: err}
 				}
 				identity = nil
@@ -166,21 +166,22 @@ type agentMeta struct {
 // - the `aw` CLI
 // - higher-level coordination products built on the same transport
 type Client struct {
-	baseURL             string
-	httpClient          *http.Client
-	sseClient           *http.Client       // No response timeout; SSE connections are long-lived.
-	signingKey          ed25519.PrivateKey // nil for legacy/custodial
-	did                 string             // empty for legacy/custodial
-	teamCertHeader      string             // base64-encoded team certificate for X-AWID-Team-Certificate
-	teamID              string             // team identifier from certificate, used in auth signature
-	certAlias           string             // certificate alias, used for signed payloads in cert-auth mode
-	address             string             // namespace/alias, used in signed envelopes
-	stableID            string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
-	resolver            IdentityResolver   // optional; resolves recipient DID for to_did binding
-	pinStore            *PinStore          // optional; TOFU pin store for sender identity verification
-	pinStorePath        string             // disk path for persisting pin store
-	metaCache           sync.Map           // address → *agentMeta; cached resolver results
-	latestClientVersion atomic.Value       // last seen X-Latest-Client-Version header (string)
+	baseURL                 string
+	httpClient              *http.Client
+	sseClient               *http.Client       // No response timeout; SSE connections are long-lived.
+	signingKey              ed25519.PrivateKey // nil for legacy/custodial
+	did                     string             // empty for legacy/custodial
+	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
+	teamID                  string             // team identifier from certificate, used in auth signature
+	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
+	address                 string             // namespace/alias, used in signed envelopes
+	stableID                string             // did:aw:..., set on outgoing signed envelopes as from_stable_id
+	requireRecipientBinding bool
+	resolver                IdentityResolver // optional; resolves recipient DID for to_did binding
+	pinStore                *PinStore        // optional; TOFU pin store for sender identity verification
+	pinStorePath            string           // disk path for persisting pin store
+	metaCache               sync.Map         // address → *agentMeta; cached resolver results
+	latestClientVersion     atomic.Value     // last seen X-Latest-Client-Version header (string)
 }
 
 // New creates a new client.
@@ -318,10 +319,23 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 
 // SetStableID sets the client's stable identifier (did:aw:...) for use
 // as from_stable_id in outgoing signed envelopes.
-func (c *Client) SetStableID(id string) { c.stableID = id }
+func (c *Client) SetStableID(id string) {
+	c.stableID = id
+	if strings.TrimSpace(id) != "" {
+		c.requireRecipientBinding = true
+	}
+}
 
 // StableID returns the client's stable identifier, if configured.
 func (c *Client) StableID() string { return c.stableID }
+
+// SetRequireRecipientBindingForDirectAddresses controls whether signed direct
+// address sends must bind the recipient address to a current did:key before
+// posting. Persistent identity clients should enable this so private or hidden
+// registry addresses fail closed instead of falling through to local routing.
+func (c *Client) SetRequireRecipientBindingForDirectAddresses(required bool) {
+	c.requireRecipientBinding = required
+}
 
 // SetResolver sets the identity resolver used to resolve recipient DIDs
 // for to_did binding in signed envelopes.
@@ -720,19 +734,27 @@ func (e *APIError) Error() string {
 // HTTPStatusCode returns the HTTP status code for API errors.
 func HTTPStatusCode(err error) (int, bool) {
 	var e *APIError
-	if !errors.As(err, &e) {
-		return 0, false
+	if errors.As(err, &e) {
+		return e.StatusCode, true
 	}
-	return e.StatusCode, true
+	var registryErr *RegistryError
+	if errors.As(err, &registryErr) {
+		return registryErr.StatusCode, true
+	}
+	return 0, false
 }
 
 // HTTPErrorBody returns the response body for API errors.
 func HTTPErrorBody(err error) (string, bool) {
 	var e *APIError
-	if !errors.As(err, &e) {
-		return "", false
+	if errors.As(err, &e) {
+		return e.Body, true
 	}
-	return e.Body, true
+	var registryErr *RegistryError
+	if errors.As(err, &registryErr) {
+		return registryErr.Detail, true
+	}
+	return "", false
 }
 
 // Get performs an HTTP GET request and decodes the JSON response.
