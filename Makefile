@@ -8,7 +8,8 @@
 	release-channel-check release-channel-tag release-channel-push \
 	release-cli-tag release-cli-push \
 	release-awid-site \
-	release-all-check release-all-tag release-all-push
+	release-all-check release-all-tag release-all-push \
+	ship
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -226,6 +227,38 @@ release-all-check:
 	$(MAKE) release-channel-check
 	@echo ""
 	@echo "=== All checks passed ==="
+
+# `make ship` is the canonical pre-tag-push gate. ALWAYS use this before
+# pushing any release tag (server-v*, aw-v*, awid-v*, awid-service-v*,
+# channel-v*). Do NOT substitute `make test` alone — it is a strict
+# subset and will not catch packaging/build failures or e2e regressions.
+#
+# This target adds awid build-check + the e2e user journey on top of
+# release-all-check. Both are load-bearing for releases:
+#  - awid build-check (uv build + Docker image) catches awid packaging
+#    issues before the GHCR/PyPI workflows do.
+#  - test-e2e catches integration regressions across CLI + server +
+#    awid that unit/integration tests miss in isolation.
+#
+# Banked discipline: releases 1.18.3 / 1.18.4 / 1.18.5 / 1.18.6 each
+# ran `make test` instead of the canonical comprehensive gate. Even
+# though GHA caught build failures downstream, the local gate should
+# be the source of truth before tag-push.
+ship: release-all-check
+	@echo ""
+	@echo "=== Running awid release check ==="
+	$(MAKE) release-awid-check
+	@echo ""
+	@echo "=== Running e2e user journey ==="
+	$(MAKE) test-e2e
+	@echo ""
+	@echo "=== ship: ALL pre-release checks passed ==="
+	@echo "    server:  $(SERVER_VERSION)"
+	@echo "    awid:    $(AWID_VERSION)"
+	@echo "    channel: $(CHANNEL_VERSION)"
+	@echo "    cli:     $(CLI_VERSION)"
+	@echo ""
+	@echo "    Ready for tag-push."
 
 release-all-tag:
 	@echo "=== Tagging all products ==="
