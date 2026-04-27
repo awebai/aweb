@@ -386,6 +386,19 @@ func TestRegistryResolverSignsAddressLookupWhenKeyConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	callerDID := ComputeDIDKey(callerPub)
+	_, teamPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
+		Team:         "backend:acme.com",
+		MemberDIDKey: callerDID,
+		Alias:        "caller",
+		Lifetime:     "persistent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	recipientPub, _, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -427,6 +440,9 @@ func TestRegistryResolverSignsAddressLookupWhenKeyConfigured(t *testing.T) {
 			if !ed25519.Verify(pub, []byte(canonical), sig) {
 				t.Fatal("address lookup signature did not verify")
 			}
+			if got := r.Header.Get("X-AWID-Team-Certificate"); got == "" {
+				t.Fatal("missing X-AWID-Team-Certificate")
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-randy",
 				"domain":          "acme.com",
@@ -440,6 +456,77 @@ func TestRegistryResolverSignsAddressLookupWhenKeyConfigured(t *testing.T) {
 			if got := r.Header.Get("Authorization"); got != "" {
 				t.Fatalf("key lookup Authorization=%q, want unsigned", got)
 			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          recipientStableID,
+				"current_did_key": recipientDID,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	lookupTime, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Now = func() time.Time { return lookupTime }
+	resolver.SetLookupSigningKey(callerPriv)
+	resolver.SetLookupTeamCertificate(cert)
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	identity, err := resolver.Resolve(context.Background(), "acme.com/randy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.DID != recipientDID {
+		t.Fatalf("DID=%q, want %q", identity.DID, recipientDID)
+	}
+	if identity.StableID != recipientStableID {
+		t.Fatalf("StableID=%q, want %q", identity.StableID, recipientStableID)
+	}
+}
+
+func TestRegistryResolverSignedAddressLookupOmitsTeamCertificateByDefault(t *testing.T) {
+	t.Parallel()
+
+	callerPub, callerPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerDID := ComputeDIDKey(callerPub)
+	recipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := ComputeDIDKey(recipientPub)
+	recipientStableID := ComputeStableID(recipientPub)
+	timestamp := "2026-04-26T10:30:00Z"
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/randy":
+			if got := r.Header.Get("X-AWID-Team-Certificate"); got != "" {
+				t.Fatalf("X-AWID-Team-Certificate=%q, want absent", got)
+			}
+			parts := strings.Fields(r.Header.Get("Authorization"))
+			if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != callerDID {
+				t.Fatalf("Authorization=%q", r.Header.Get("Authorization"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-randy",
+				"domain":          "acme.com",
+				"name":            "randy",
+				"did_aw":          recipientStableID,
+				"current_did_key": recipientDID,
+				"reachability":    "public",
+				"created_at":      "2026-04-26T00:00:00Z",
+			})
+		case "/v1/did/" + recipientStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"did_aw":          recipientStableID,
 				"current_did_key": recipientDID,

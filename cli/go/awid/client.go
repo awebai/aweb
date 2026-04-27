@@ -295,16 +295,16 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 	if c.signingKey == nil {
 		return from
 	}
-	if c.teamCertHeader != "" {
-		if alias := c.certAlias; alias != "" {
-			return alias
-		}
-	}
 	if identityTarget {
 		if from == "" {
 			return strings.TrimSpace(c.did)
 		}
 		return from
+	}
+	if c.teamCertHeader != "" {
+		if alias := c.certAlias; alias != "" {
+			return alias
+		}
 	}
 	if preferAlias {
 		if alias := c.addressAlias(); alias != "" {

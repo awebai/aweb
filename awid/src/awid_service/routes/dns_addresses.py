@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import base64
+import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from awid.did import public_key_from_did
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.did import stable_id_from_did_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
@@ -16,12 +20,25 @@ from awid.dns_auth import validate_did_key as _validate_dns_did_key
 from awid.dns_auth import verify_signed_json_request
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import rate_limit_dep
+from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_REACHABILITY_VALUES = {"nobody", "org_only", "team_members_only", "public"}
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
+_TEAM_CERTIFICATE_HEADER = "X-AWID-Team-Certificate"
+
+
+@dataclass(frozen=True)
+class PresentedTeamCertificate:
+    team_id: str
+    team_domain: str
+    team_name: str
+    certificate_id: str
+    member_did_key: str
+    member_did_aw: str | None
+    lifetime: str
 
 
 def normalize_address_reachability(value: str | None, *, default: str = "nobody") -> str:
@@ -70,8 +87,11 @@ def _maybe_verify_address_lookup_signature(
 ) -> str | None:
     auth = request.headers.get("Authorization")
     timestamp = request.headers.get("X-AWEB-Timestamp")
-    if auth is None and timestamp is None:
+    certificate = request.headers.get(_TEAM_CERTIFICATE_HEADER)
+    if auth is None and timestamp is None and certificate is None:
         return None
+    if auth is None or timestamp is None:
+        raise HTTPException(status_code=401, detail="Signed address lookup requires Authorization and X-AWEB-Timestamp")
     payload_dict = {
         "domain": domain,
         "operation": operation,
@@ -322,6 +342,105 @@ async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
     return row["did_aw"]
 
 
+def _parse_presented_certificate_header(request: Request) -> dict | None:
+    encoded = (request.headers.get(_TEAM_CERTIFICATE_HEADER) or "").strip()
+    if not encoded:
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        cert = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Address not found") from exc
+    if not isinstance(cert, dict):
+        raise HTTPException(status_code=404, detail="Address not found")
+    return cert
+
+
+def _raise_private_address_not_found(detail: str = "Address not found") -> None:
+    raise HTTPException(status_code=404, detail=detail)
+
+
+async def _verify_presented_team_certificate(
+    db,
+    request: Request,
+    *,
+    caller_did_key: str | None,
+    caller_did_aw: str | None,
+) -> PresentedTeamCertificate | None:
+    cert = _parse_presented_certificate_header(request)
+    if cert is None:
+        return None
+    if not caller_did_key:
+        _raise_private_address_not_found()
+
+    version = cert.get("version")
+    team_id = str(cert.get("team_id") or "").strip()
+    certificate_id = str(cert.get("certificate_id") or "").strip()
+    member_did_key = str(cert.get("member_did_key") or "").strip()
+    member_did_aw = str(cert.get("member_did_aw") or "").strip() or None
+    lifetime = str(cert.get("lifetime") or "").strip()
+    signature = str(cert.get("signature") or "").strip()
+    if version != 1 or not team_id or not certificate_id or not member_did_key or not lifetime or not signature:
+        _raise_private_address_not_found()
+    if member_did_key != caller_did_key:
+        _raise_private_address_not_found()
+    if member_did_aw is not None and caller_did_aw is not None and member_did_aw != caller_did_aw:
+        _raise_private_address_not_found()
+
+    try:
+        team_domain, team_name = parse_team_id(team_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Address not found") from exc
+
+    team_row = await db.fetch_one(
+        """
+        SELECT team_uuid, team_did_key
+        FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        """,
+        team_domain,
+        team_name,
+    )
+    if team_row is None:
+        _raise_private_address_not_found()
+
+    registry_team_did_key = str(team_row["team_did_key"] or "").strip()
+    cert_team_did_key = str(cert.get("team_did_key") or "").strip()
+    if cert_team_did_key and cert_team_did_key != registry_team_did_key:
+        _raise_private_address_not_found()
+
+    payload = {k: v for k, v in cert.items() if k != "signature"}
+    try:
+        public_key = public_key_from_did(registry_team_did_key)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Address not found") from exc
+    if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
+        _raise_private_address_not_found()
+
+    revoked = await db.fetch_one(
+        """
+        SELECT 1
+        FROM {{tables.team_certificates}}
+        WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NOT NULL
+        LIMIT 1
+        """,
+        team_row["team_uuid"],
+        certificate_id,
+    )
+    if revoked is not None:
+        _raise_private_address_not_found()
+
+    return PresentedTeamCertificate(
+        team_id=build_team_id(team_domain, team_name),
+        team_domain=team_domain,
+        team_name=team_name,
+        certificate_id=certificate_id,
+        member_did_key=member_did_key,
+        member_did_aw=member_did_aw,
+        lifetime=lifetime,
+    )
+
+
 async def _require_visible_to_team(db, visible_to_team_id: str) -> str:
     canonical_team_id = normalize_visible_to_team_id(visible_to_team_id)
     if canonical_team_id is None:
@@ -378,47 +497,34 @@ async def _resolve_address_visibility(
 def _address_visibility_sql(
     *,
     caller_did_aw_param: int | None,
+    presented_team_domain_param: int | None = None,
+    presented_team_id_param: int | None = None,
     address_alias: str = "pa",
     namespace_alias: str = "ns",
 ) -> str:
-    team_certificates_table = "{{tables.team_certificates}}"
-    teams_table = "{{tables.teams}}"
     if caller_did_aw_param is None:
         return f"{address_alias}.reachability = 'public'"
 
     caller_ref = f"${caller_did_aw_param}"
-    return f"""(
-        {address_alias}.reachability = 'public'
-        OR {address_alias}.did_aw = {caller_ref}
-        OR (
-            {address_alias}.reachability = 'org_only'
-            AND EXISTS (
-                SELECT 1
-                FROM {team_certificates_table} tc
-                JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
-                WHERE tc.member_did_aw = {caller_ref}
-                  AND tc.revoked_at IS NULL
-                  AND tc.lifetime = 'persistent'
-                  AND t.domain = {namespace_alias}.domain
-                  AND t.deleted_at IS NULL
-                LIMIT 1
-            )
+    clauses = [
+        f"{address_alias}.reachability = 'public'",
+        f"{address_alias}.did_aw = {caller_ref}",
+    ]
+    if presented_team_domain_param is not None:
+        clauses.append(
+            f"""(
+                {address_alias}.reachability = 'org_only'
+                AND {namespace_alias}.domain = ${presented_team_domain_param}
+            )"""
         )
-        OR (
-            {address_alias}.reachability = 'team_members_only'
-            AND EXISTS (
-                SELECT 1
-                FROM {team_certificates_table} tc
-                JOIN {teams_table} t ON t.team_uuid = tc.team_uuid
-                WHERE tc.member_did_aw = {caller_ref}
-                  AND tc.revoked_at IS NULL
-                  AND tc.lifetime = 'persistent'
-                  AND (t.name || ':' || t.domain) = {address_alias}.visible_to_team_id
-                  AND t.deleted_at IS NULL
-                LIMIT 1
-            )
+    if presented_team_id_param is not None:
+        clauses.append(
+            f"""(
+                {address_alias}.reachability = 'team_members_only'
+                AND {address_alias}.visible_to_team_id = ${presented_team_id_param}
+            )"""
         )
-    )"""
+    return "(\n        " + "\n        OR ".join(clauses) + "\n    )"
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +662,23 @@ async def get_address(
         operation="get_address",
     )
     caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
+    presented_cert = await _verify_presented_team_certificate(
+        db,
+        request,
+        caller_did_key=caller_did_key,
+        caller_did_aw=caller_did_aw,
+    )
+
+    params: list[object] = [ns_row["namespace_id"], name, caller_did_aw]
+    presented_team_domain_param = None
+    presented_team_id_param = None
+    # Ephemeral certificates verify, but only persistent membership expands
+    # private address visibility.
+    if presented_cert is not None and presented_cert.lifetime == "persistent":
+        params.append(presented_cert.team_domain)
+        presented_team_domain_param = len(params)
+        params.append(presented_cert.team_id)
+        presented_team_id_param = len(params)
 
     query = """
         SELECT pa.address_id, pa.name, pa.did_aw, m.current_did_key, pa.reachability,
@@ -567,12 +690,14 @@ async def get_address(
           AND pa.name = $2
           AND pa.deleted_at IS NULL
           AND ns.deleted_at IS NULL
-          AND """ + _address_visibility_sql(caller_did_aw_param=3)
+          AND """ + _address_visibility_sql(
+              caller_did_aw_param=3,
+              presented_team_domain_param=presented_team_domain_param,
+              presented_team_id_param=presented_team_id_param,
+          )
     row = await db.fetch_one(
         query,
-        ns_row["namespace_id"],
-        name,
-        caller_did_aw,
+        *params,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Address not found")
@@ -602,6 +727,12 @@ async def list_addresses(
         operation="list_addresses",
     )
     caller_did_aw = await _resolve_caller_did_aw(db, caller_did_key)
+    presented_cert = await _verify_presented_team_certificate(
+        db,
+        request,
+        caller_did_key=caller_did_key,
+        caller_did_aw=caller_did_aw,
+    )
 
     try:
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
@@ -614,7 +745,23 @@ async def list_addresses(
     if not is_namespace_controller:
         if caller_did_aw:
             params.append(caller_did_aw)
-            where_clauses.append(_address_visibility_sql(caller_did_aw_param=len(params)))
+            caller_did_aw_param = len(params)
+            presented_team_domain_param = None
+            presented_team_id_param = None
+            # Ephemeral certificates verify, but only persistent membership expands
+            # private address visibility.
+            if presented_cert is not None and presented_cert.lifetime == "persistent":
+                params.append(presented_cert.team_domain)
+                presented_team_domain_param = len(params)
+                params.append(presented_cert.team_id)
+                presented_team_id_param = len(params)
+            where_clauses.append(
+                _address_visibility_sql(
+                    caller_did_aw_param=caller_did_aw_param,
+                    presented_team_domain_param=presented_team_domain_param,
+                    presented_team_id_param=presented_team_id_param,
+                )
+            )
         else:
             where_clauses.append(_address_visibility_sql(caller_did_aw_param=None))
     if decoded_cursor is not None:

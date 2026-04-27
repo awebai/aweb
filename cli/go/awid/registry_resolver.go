@@ -80,6 +80,7 @@ type RegistryResolver struct {
 	Now                 func() time.Time
 	fallbackRegistryURL string
 	lookupSigningKey    ed25519.PrivateKey
+	lookupCertificate   *TeamCertificate
 
 	mu            sync.Mutex
 	registryCache map[string]cachedValue[DomainAuthority]
@@ -121,6 +122,25 @@ func (r *RegistryResolver) SetLookupSigningKey(key ed25519.PrivateKey) {
 		return
 	}
 	r.lookupSigningKey = append(ed25519.PrivateKey(nil), key...)
+	if r.addressCache != nil {
+		r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
+	}
+}
+
+// SetLookupTeamCertificate configures the optional team certificate presented
+// alongside signed namespace address reads.
+func (r *RegistryResolver) SetLookupTeamCertificate(cert *TeamCertificate) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cert == nil {
+		r.lookupCertificate = nil
+		if r.addressCache != nil {
+			r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
+		}
+		return
+	}
+	copyCert := *cert
+	r.lookupCertificate = &copyCert
 	if r.addressCache != nil {
 		r.addressCache = make(map[string]cachedValue[*registryAddressCacheValue])
 	}
@@ -475,6 +495,11 @@ func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, 
 func (r *RegistryResolver) addressLookupAuthHeaders(domain, name string) (map[string]string, error) {
 	r.mu.Lock()
 	key := append(ed25519.PrivateKey(nil), r.lookupSigningKey...)
+	var cert *TeamCertificate
+	if r.lookupCertificate != nil {
+		copyCert := *r.lookupCertificate
+		cert = &copyCert
+	}
 	r.mu.Unlock()
 	if key == nil {
 		return nil, nil
@@ -491,10 +516,18 @@ func (r *RegistryResolver) addressLookupAuthHeaders(domain, name string) (map[st
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{
+	headers := map[string]string{
 		"Authorization":    "DIDKey " + didKey + " " + signature,
 		"X-AWEB-Timestamp": timestamp,
-	}, nil
+	}
+	if cert != nil {
+		encoded, err := EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			return nil, fmt.Errorf("encode lookup team certificate: %w", err)
+		}
+		headers["X-AWID-Team-Certificate"] = encoded
+	}
+	return headers, nil
 }
 
 func (r *RegistryResolver) getJSON(ctx context.Context, baseURL, path string, out any) error {

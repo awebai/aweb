@@ -1395,7 +1395,7 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 		t.Fatal("registry was not attempted before known-agent fallback")
 	}
 	if mailTeamCert != "" {
-		t.Fatalf("mail --to-address should use identity auth, got cert header")
+		t.Fatalf("mail --to-address should use identity auth without --team, got cert header")
 	}
 	if chatTeamCert == "" {
 		t.Fatal("chat send-and-leave should use certificate auth")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -215,6 +217,43 @@ async def _active_address_count(awid_db_infra, domain: str, name: str) -> int:
     return row["count"]
 
 
+def _signed_certificate_header(
+    team_key,
+    team_did,
+    domain,
+    team_name,
+    certificate_id,
+    *,
+    member_did_key: str,
+    member_did_aw: str | None = None,
+    member_address: str | None = None,
+    alias: str = "alice",
+    lifetime: str = "persistent",
+) -> str:
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    certificate = {
+        "version": 1,
+        "certificate_id": certificate_id,
+        "team_id": f"{team_name}:{domain}",
+        "team_did_key": team_did,
+        "member_did_key": member_did_key,
+        "alias": alias,
+        "lifetime": lifetime,
+        "issued_at": issued_at,
+    }
+    if member_did_aw is not None:
+        certificate["member_did_aw"] = member_did_aw
+    if member_address is not None:
+        certificate["member_address"] = member_address
+    certificate["signature"] = sign_message(
+        team_key,
+        canonical_json_bytes(certificate),
+    )
+    return base64.b64encode(
+        json.dumps(certificate, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+
+
 async def _register_certificate(
     client,
     team_key,
@@ -232,6 +271,18 @@ async def _register_certificate(
     if member_did_key is None:
         _, member_pub = generate_keypair()
         member_did_key = did_from_public_key(member_pub)
+    encoded_certificate = _signed_certificate_header(
+        team_key,
+        team_did,
+        domain,
+        team_name,
+        certificate_id,
+        member_did_key=member_did_key,
+        member_did_aw=member_did_aw,
+        member_address=member_address,
+        alias=alias,
+        lifetime=lifetime,
+    )
     headers = _sign(
         team_key, team_did,
         domain=domain, operation="register_certificate",
@@ -242,6 +293,7 @@ async def _register_certificate(
         "member_did_key": member_did_key,
         "alias": alias,
         "lifetime": lifetime,
+        "certificate": encoded_certificate,
     }
     if member_did_aw is not None:
         payload["member_did_aw"] = member_did_aw
@@ -260,6 +312,7 @@ async def _register_certificate(
         "member_address": member_address,
         "alias": alias,
         "lifetime": lifetime,
+        "certificate_header": encoded_certificate,
     }
 
 
@@ -1284,7 +1337,7 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
         member_did_key=owner_did_key,
         reachability="org_only",
     )
-    await _register_certificate(
+    member_cert = await _register_certificate(
         client,
         team_key,
         team_did,
@@ -1295,7 +1348,7 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
         member_did_aw=stable_id_from_did_key(member_did_key),
         alias="member",
     )
-    await _register_certificate(
+    ephemeral_cert = await _register_certificate(
         client,
         team_key,
         team_did,
@@ -1316,16 +1369,92 @@ async def test_org_only_address_get_allows_same_org_persistent_members_only(clie
     assert owner_resp.json()["reachability"] == "org_only"
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
     member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
     assert member_resp.status_code == 200, member_resp.text
+
+    member_without_cert_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_without_cert_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice",
+        headers=member_without_cert_headers,
+    )
+    assert member_without_cert_resp.status_code == 404
 
     other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
     other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
     assert other_resp.status_code == 404
 
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
     assert ephemeral_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_org_only_address_get_accepts_unpublished_valid_certificate(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    domain = "org-only-unpublished.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_signing_key=owner_key,
+        member_did_key=owner_did_key,
+        reachability="org_only",
+    )
+
+    headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    headers["X-AWID-Team-Certificate"] = _signed_certificate_header(
+        team_key,
+        team_did,
+        domain,
+        "backend",
+        str(uuid4()),
+        member_did_key=member_did_key,
+        member_did_aw=stable_id_from_did_key(member_did_key),
+        alias="unpublished-member",
+    )
+    resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reachability"] == "org_only"
+
+
+@pytest.mark.asyncio
+async def test_private_address_get_hides_invalid_presented_certificate(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    owner_key, owner_pub = generate_keypair()
+    owner_did_key = did_from_public_key(owner_pub)
+    member_key, member_pub = generate_keypair()
+    member_did_key = did_from_public_key(member_pub)
+    domain = "org-only-invalid-cert.example"
+    await _register_namespace(client, ns_key, ns_did, domain)
+    await _create_team(client, ns_key, ns_did, domain, "backend")
+    await _register_address_for_identity(
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        member_signing_key=owner_key,
+        member_did_key=owner_did_key,
+        reachability="org_only",
+    )
+
+    headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    headers["X-AWID-Team-Certificate"] = base64.b64encode(b'{"version": 1}').decode()
+    resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "Address not found"
 
 
 @pytest.mark.asyncio
@@ -1348,7 +1477,7 @@ async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(cl
         member_did_key=owner_did_key,
         reachability="org_only",
     )
-    await _register_certificate(
+    ephemeral_cert = await _register_certificate(
         client,
         team_key,
         team_did,
@@ -1362,6 +1491,7 @@ async def test_org_only_rejects_ephemeral_certificate_even_with_member_did_aw(cl
     )
 
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
     assert ephemeral_resp.status_code == 404
 
@@ -1392,7 +1522,7 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
         "public-alice",
         reachability="public",
     )
-    await _register_certificate(
+    member_cert = await _register_certificate(
         client,
         team_key,
         team_did,
@@ -1414,6 +1544,7 @@ async def test_list_addresses_filters_org_only_to_same_org_persistent_members(cl
     assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["public-alice"]
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="list_addresses")
+    member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
     member_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=member_headers)
     assert member_resp.status_code == 200, member_resp.text
     assert [item["name"] for item in member_resp.json()["addresses"]] == ["org-alice", "public-alice"]
@@ -1447,7 +1578,7 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
     )
     assert address["visible_to_team_id"] == f"backend:{domain}"
 
-    await _register_certificate(
+    backend_cert = await _register_certificate(
         client,
         backend_key,
         backend_did,
@@ -1458,7 +1589,7 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
         member_did_aw=stable_id_from_did_key(member_did_key),
         alias="backend-member",
     )
-    await _register_certificate(
+    frontend_cert = await _register_certificate(
         client,
         frontend_key,
         frontend_did,
@@ -1469,7 +1600,7 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
         member_did_aw=stable_id_from_did_key(other_team_did_key),
         alias="frontend-member",
     )
-    await _register_certificate(
+    ephemeral_cert = await _register_certificate(
         client,
         backend_key,
         backend_did,
@@ -1489,14 +1620,17 @@ async def test_team_members_only_address_get_allows_target_team_persistent_membe
     assert owner_resp.status_code == 200, owner_resp.text
 
     member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_headers["X-AWID-Team-Certificate"] = backend_cert["certificate_header"]
     member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
     assert member_resp.status_code == 200, member_resp.text
 
     other_team_headers = _sign(other_team_key, other_team_did_key, domain=domain, operation="get_address", name="alice")
+    other_team_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
     other_team_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_team_headers)
     assert other_team_resp.status_code == 404
 
     ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
     ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
     assert ephemeral_resp.status_code == 404
 
@@ -1529,7 +1663,7 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
         "public-alice",
         reachability="public",
     )
-    await _register_certificate(
+    backend_cert = await _register_certificate(
         client,
         backend_key,
         backend_did,
@@ -1540,7 +1674,7 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
         member_did_aw=stable_id_from_did_key(backend_member_did_key),
         alias="backend-member",
     )
-    await _register_certificate(
+    frontend_cert = await _register_certificate(
         client,
         frontend_key,
         frontend_did,
@@ -1557,11 +1691,13 @@ async def test_list_addresses_filters_team_members_only_to_target_team(client, c
     assert [item["name"] for item in anon_resp.json()["addresses"]] == ["public-alice"]
 
     frontend_headers = _sign(frontend_member_key, frontend_member_did_key, domain=domain, operation="list_addresses")
+    frontend_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
     frontend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=frontend_headers)
     assert frontend_resp.status_code == 200, frontend_resp.text
     assert [item["name"] for item in frontend_resp.json()["addresses"]] == ["public-alice"]
 
     backend_headers = _sign(backend_member_key, backend_member_did_key, domain=domain, operation="list_addresses")
+    backend_headers["X-AWID-Team-Certificate"] = backend_cert["certificate_header"]
     backend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=backend_headers)
     assert backend_resp.status_code == 200, backend_resp.text
     assert [item["name"] for item in backend_resp.json()["addresses"]] == ["backend-alice", "public-alice"]

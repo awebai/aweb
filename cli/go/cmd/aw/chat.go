@@ -22,7 +22,7 @@ func chatStderrCallback(kind, message string) {
 }
 
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {
-	c, sel, err := resolveClientSelection()
+	c, sel, err := resolveClientSelectionForAliasTarget(ctx, toAlias)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -56,19 +56,27 @@ var mailSendCmd = &cobra.Command{
 		}
 		switch targetKind {
 		case "alias":
-			c, sel, err = resolveClientSelection()
+			c, sel, err = resolveClientSelectionForAliasTarget(ctx, targetValue)
 			if err != nil {
 				return err
 			}
 			req.ToAlias = targetValue
 		case "did":
-			c, sel, err = resolveIdentityMessagingClientSelection()
+			if strings.TrimSpace(teamFlag) != "" {
+				c, sel, err = resolveClientSelection()
+			} else {
+				c, sel, err = resolveIdentityMessagingClientSelection()
+			}
 			if err != nil {
 				return err
 			}
 			req.ToDID = targetValue
 		case "address":
-			c, sel, err = resolveIdentityMessagingClientSelection()
+			if strings.TrimSpace(teamFlag) != "" {
+				c, sel, err = resolveClientSelection()
+			} else {
+				c, sel, err = resolveIdentityMessagingClientSelection()
+			}
 			if err != nil {
 				return err
 			}

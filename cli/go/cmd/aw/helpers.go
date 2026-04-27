@@ -70,9 +70,13 @@ func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 }
 
 func resolveSelectionForDir(workingDir string) (*awconfig.Selection, error) {
+	return resolveSelectionForDirWithTeamOverride(workingDir, strings.TrimSpace(teamFlag))
+}
+
+func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*awconfig.Selection, error) {
 	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
 		ServerName:        serverFlag,
-		TeamIDOverride:    strings.TrimSpace(teamFlag),
+		TeamIDOverride:    strings.TrimSpace(teamIDOverride),
 		WorkingDir:        workingDir,
 		AllowEnvOverrides: true,
 	})
@@ -191,7 +195,11 @@ func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {
 }
 
 func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionForDir(workingDir)
+	return resolveClientSelectionForDirWithTeamOverride(workingDir, strings.TrimSpace(teamFlag))
+}
+
+func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
+	sel, err := resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -206,7 +214,7 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 	}
 	sel.BaseURL = baseURL
 
-	c, err := resolveCertificateClient(workingDir, baseURL, strings.TrimSpace(sel.TeamID))
+	c, err := resolveCertificateClient(sel.WorkingDir, baseURL, strings.TrimSpace(sel.TeamID))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -296,6 +304,105 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	return c, sel, nil
 }
 
+func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias string) (*aweb.Client, *awconfig.Selection, error) {
+	wd, _ := os.Getwd()
+	c, sel, err := resolveClientSelectionForDir(wd)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !shouldSearchOtherLocalTeamsForAlias(sel, targetAlias) {
+		return c, sel, nil
+	}
+
+	found, err := clientHasAgentAlias(ctx, c, targetAlias)
+	if err != nil {
+		debugLog("list agents for %s: %v", strings.TrimSpace(sel.TeamID), err)
+		return c, sel, nil
+	}
+	if found {
+		return c, sel, nil
+	}
+
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(sel.WorkingDir)
+	if err != nil || workspace == nil {
+		if err != nil {
+			debugLog("load workspace for alias fallback: %v", err)
+		}
+		return c, sel, nil
+	}
+
+	type aliasCandidate struct {
+		client    *aweb.Client
+		selection *awconfig.Selection
+	}
+	var candidates []aliasCandidate
+	for _, membership := range workspace.Memberships {
+		teamID := strings.TrimSpace(membership.TeamID)
+		if teamID == "" || teamID == strings.TrimSpace(sel.TeamID) {
+			continue
+		}
+		candidateClient, candidateSel, err := resolveClientSelectionForDirWithTeamOverride(sel.WorkingDir, teamID)
+		if err != nil {
+			debugLog("resolve alias fallback team %s: %v", teamID, err)
+			continue
+		}
+		found, err := clientHasAgentAlias(ctx, candidateClient, targetAlias)
+		if err != nil {
+			debugLog("list agents for fallback team %s: %v", teamID, err)
+			continue
+		}
+		if found {
+			candidates = append(candidates, aliasCandidate{client: candidateClient, selection: candidateSel})
+		}
+	}
+	if len(candidates) == 1 {
+		lastClient = candidates[0].client
+		return candidates[0].client, candidates[0].selection, nil
+	}
+	if len(candidates) > 1 {
+		lastClient = c
+		teamIDs := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			teamIDs = append(teamIDs, strings.TrimSpace(candidate.selection.TeamID))
+		}
+		return nil, nil, usageError("alias %q exists in multiple local team memberships (%s); pass --team to choose one", strings.TrimSpace(targetAlias), strings.Join(teamIDs, ", "))
+	}
+	lastClient = c
+	return c, sel, nil
+}
+
+func shouldSearchOtherLocalTeamsForAlias(sel *awconfig.Selection, targetAlias string) bool {
+	targetAlias = strings.TrimSpace(targetAlias)
+	if sel == nil || strings.TrimSpace(teamFlag) != "" || targetAlias == "" {
+		return false
+	}
+	if strings.Contains(targetAlias, "/") || strings.Contains(targetAlias, "~") || strings.HasPrefix(targetAlias, "did:") {
+		return false
+	}
+	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(sel.WorkingDir)
+	if err != nil || workspace == nil {
+		return false
+	}
+	return len(workspace.Memberships) > 1
+}
+
+func clientHasAgentAlias(ctx context.Context, c *aweb.Client, targetAlias string) (bool, error) {
+	if c == nil || c.Client == nil {
+		return false, nil
+	}
+	resp, err := c.Client.ListAgents(ctx)
+	if err != nil {
+		return false, err
+	}
+	targetAlias = strings.TrimSpace(targetAlias)
+	for _, agent := range resp.Agents {
+		if strings.TrimSpace(agent.Alias) == targetAlias {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
@@ -349,6 +456,13 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		return err
 	}
 	registry.SetLookupSigningKey(c.Client.SigningKey())
+	if strings.TrimSpace(sel.WorkingDir) != "" && strings.TrimSpace(sel.TeamID) != "" {
+		if cert, err := awconfig.LoadTeamCertificateForTeam(sel.WorkingDir, sel.TeamID); err == nil {
+			registry.SetLookupTeamCertificate(cert)
+		} else {
+			debugLog("load registry lookup team certificate: %v", err)
+		}
+	}
 	c.SetResolver(&awid.ChainResolver{
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
