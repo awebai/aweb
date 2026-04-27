@@ -32,8 +32,12 @@ For supporting reference material that does not redefine the contract:
 
 ## Principles
 
-1. **awid owns identity and team membership.** aweb never creates,
-   stores, or manages identities. It never decides who is in a team.
+1. **awid owns identity and serves verification primitives for team
+   membership** (team public keys and revocation list). Cert holders
+   carry their own certificates and present them to any verifier. aweb
+   never creates, stores, or manages identities. It never decides who
+   is in a team — it verifies presented certs against the team's public
+   key + revocation list.
 2. **aweb owns coordination.** Mail, chat, tasks, roles, locks,
    workspaces, events. This is the only thing aweb does.
 3. **Team certificates are the single credential for coordination

@@ -18,13 +18,20 @@ hosted deployment codebase, not in this SOT.
 2. **Teams are named groups within namespaces.** A team has a name,
    display name, and public key. awid stores these and the certificate
    issuance log.
-3. **Certificates are signed externally.** The team controller (CLI
-   for BYOD, hosted deployment for managed namespaces) signs certificates
-   and registers them at awid. awid records the issuance but does not
-   perform the signing.
-4. **Revocation is a column update.** Revoking a certificate sets
-   `revoked_at` on the certificate record. Services cache the revoked
-   entries.
+3. **Certificates are signed externally and self-contained.** The team
+   controller (CLI for BYOD, hosted deployment for managed namespaces)
+   signs certificates. The agent carries the cert and presents it to any
+   service that needs to verify team membership. awid optionally publishes
+   the cert blob for cross-machine fetch and recovery, but membership
+   proof comes from the presented cert + signature against the team's
+   stored public key + non-revocation — NOT from row existence in awid's
+   `team_certificates` table.
+4. **Revocation is registry state.** Revoking a certificate sets
+   `revoked_at` on the certificate record. Services (including awid's
+   own private address-read path) check revocation as part of cert
+   verification. Active membership is not determined by an awid member
+   row; it is determined by a valid presented certificate that has not
+   been revoked.
 5. **Identity and address are separate facts, separately authorized.**
    `register_did` binds `did_aw ↔ did_key` and is authorized by the
    identity holder alone. Binding that `did_aw` to a `(domain, name)`
@@ -144,8 +151,14 @@ accepted the address).
 **Reachability enforcement:**
 - `public` — any caller, anonymous or authenticated
 - `nobody` — owner only; the caller's `did:aw` must match the address `did_aw`
-- `org_only` — owner, or any caller holding an active persistent team certificate for a team in the same namespace domain
-- `team_members_only` — owner, or any caller holding an active persistent team certificate for the specific team in `visible_to_team_id`
+- `org_only` — owner, or any caller PRESENTING a valid non-revoked persistent team certificate for a team in the same namespace domain
+- `team_members_only` — owner, or any caller PRESENTING a valid non-revoked persistent team certificate for the specific team in `visible_to_team_id`
+
+Authorization is from cert presentation + signature verification against
+the team's stored `team_did_key` + non-revocation check, NOT from row
+existence in `team_certificates`. A correctly signed, non-revoked
+certificate authorizes its holder regardless of whether the cert was
+ever published to awid's publication directory.
 
 Ephemeral team certificates (`lifetime='ephemeral'`) do not satisfy
 `org_only` or `team_members_only` checks. Anonymous callers see only
@@ -157,18 +170,33 @@ accepts an optional signed-request envelope to elevate visibility:
 
 - `Authorization: DIDKey <did:key> <base64-signature>`
 - `X-AWEB-Timestamp: <RFC3339>`
+- Optional `X-AWID-Team-Certificate: <base64-certificate-json>`
 - Canonical signed payload: `{domain, name, operation: "get_address", timestamp}`
 - Skew window: 300 seconds
 - Signature scheme: Ed25519 over `canonical_json(payload)`
 
-When valid, the caller's `did:key` is resolved to a `did:aw` and team-cert
-membership is evaluated against the row's reachability tier. If authorized,
-the row is returned; otherwise `404` (same response as anonymous to avoid
-leaking existence).
+When the DIDKey signature is valid, the caller's `did:key` is resolved to a
+`did:aw`. If a team certificate is presented, awid verifies it using the
+same procedure as any other service (see
+[Verification by a service](#verification-by-a-service)): decode the cert
+blob, verify Ed25519 signature against the team's stored `team_did_key`,
+verify cert's `member_did_key` matches the request's `Authorization` header,
+check `certificate_id` is not in the team's revocation list. If verification
+passes AND the cert's team_id satisfies the row's reachability rule (same
+namespace for `org_only`, exact team for `team_members_only`), the row is
+returned. Otherwise `404` (same response as anonymous to avoid leaking
+existence).
+
+awid does not query `team_certificates` row existence to authorize private
+reads. Authorization is presentation-based: the cert content + its signature
++ revocation state are the source of truth. Publication of the cert at awid
+(via `POST /v1/namespaces/{domain}/teams/{name}/certificates`) is for cross-
+machine fetch and recovery, not for authorization.
 
 This is caller-private-key authority. A service that only knows the caller's
 `did:key` string cannot elevate an address read on the caller's behalf; it must
-either receive a valid signed lookup from the client or treat the read as
+either receive a valid signed lookup from the client (with team certificate
+presented when team membership is the authority) or treat the read as
 unauthorized. See
 [`identity-messaging-contract.md`](identity-messaging-contract.md) for the
 mail/chat recipient-binding contract that relies on this rule.
@@ -797,16 +825,21 @@ the CLI (BYOD) or the hosted deployment (managed namespaces).
 
 **Does:**
 - Store team name, display name, and public key
-- Record certificate issuance (who, when, revocation status)
-- Serve team public keys for certificate verification
+- Serve team public keys so verifiers can validate presented certs
+- Record certificate revocation events (`revoked_at` on the cert row)
 - Serve revocation lists for services to cache
-- Serve active certificate lists for dashboard member enumeration
+- Optionally publish cert blobs (per aala) for cross-machine fetch and
+  recovery — not load-bearing for authorization
+- Serve cert listings for optional dashboard / audit / discovery
 
 **Does not:**
 - Hold private keys (no escrow, no custody keys)
 - Sign certificates (signing is external)
 - Sign on behalf of agents (custody is a hosted deployment concern)
-- Store certificate content (agents hold their own)
+- Use `team_certificates` row existence as the authorization oracle — auth
+  is presentation-based: cert signature against team public key + non-
+  revocation. A correctly signed, non-revoked cert authorizes its holder
+  whether or not the cert was published to awid
 - Track certificate expiry (certificates are long-lived)
 - Coordinate agents (aweb does this)
 - Manage billing (the hosted deployment does this)

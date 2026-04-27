@@ -10,7 +10,7 @@ contract.
 
 | Component | Authority | Not authority |
 |-----------|-----------|---------------|
-| awid | Global truth for `did:aw`, current `did:key`, DID logs, namespace address rows, address reachability, teams, and certificate records. | Message delivery, local aliases, mailbox state, or private key custody. |
+| awid | Global truth for `did:aw`, current `did:key`, DID logs, namespace address rows, address reachability, team public keys, and certificate revocation events. Optional cert publication directory for cross-machine fetch. | Message delivery, local aliases, mailbox state, private key custody, or active membership oracle (membership is cert-carried, not row-based). |
 | Self-custodial client | Holds the identity private key, signs private address lookups, signs message envelopes, and can bind a recipient address to the resolved `did:aw` and current `did:key`. | Namespace address assignment unless it also holds the namespace controller key. |
 | Hosted signer | Holds the private key for a custodial identity and signs the same lookups and envelopes as a self-custodial client. | A separate trust model; hosted identities must satisfy this same contract. |
 | aweb server | Authenticates transport requests, routes and stores mail/chat, evaluates messaging policy, and validates signed recipient bindings supplied by the client. | Registry authority, caller private-key authority, or address reachability authority. |
@@ -38,11 +38,14 @@ team membership. It is not a global canonical address for the identity.
 For a send to a persistent address (`domain/name`), the expected path is:
 
 1. The client classifies the target as a registry address, not a local alias.
-2. The client signs an awid `get_address` lookup with the caller identity key
-   or a valid persistent team certificate key.
-3. awid resolves the caller `did:key` to `did:aw`, evaluates the target
-   address reachability, and returns the target `did:aw` and current `did:key`
-   if authorized.
+2. The client signs an awid `get_address` lookup with the caller identity key.
+   When team membership is needed to satisfy address reachability, the client
+   also presents the team certificate as `X-AWID-Team-Certificate`.
+3. awid resolves the caller `did:key` to `did:aw`, verifies any presented
+   team certificate against the team's stored public key + revocation list,
+   evaluates the target address reachability, and returns the target `did:aw`
+   and current `did:key` if authorized. Authorization is cert-presentation-
+   based; awid does not query `team_certificates` row existence.
 4. The client signs the mail or chat envelope, including the target address and
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 5. The aweb server authenticates the request sender and validates that any
@@ -79,8 +82,8 @@ local row exists.
 | Reachability | Who may discover the address at awid |
 |--------------|--------------------------------------|
 | `public` | Anonymous callers and signed callers. |
-| `org_only` | The owner, or a caller with an active persistent team certificate in the same namespace domain. |
-| `team_members_only` | The owner, or a caller with an active persistent team certificate for `visible_to_team_id`. |
+| `org_only` | The owner, or a caller PRESENTING a valid non-revoked persistent team certificate for any team in the same namespace domain. |
+| `team_members_only` | The owner, or a caller PRESENTING a valid non-revoked persistent team certificate for `visible_to_team_id`. |
 | `nobody` | The owner only. A known-agent pin may support a local send to an already-known peer after registry miss, but it is not registry authorization. |
 
 Messaging policy is a separate aweb decision after discoverability. awid answers
