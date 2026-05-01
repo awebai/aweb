@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -63,6 +64,37 @@ func writeTeamInviteForTest(t *testing.T, home string, invite *awconfig.TeamInvi
 	}
 	if err := os.WriteFile(filepath.Join(dir, invite.InviteID+".json"), append(data, '\n'), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTeamKeyLoadErrorHostedNamespacePointsToDashboard(t *testing.T) {
+	err := teamKeyLoadError("aweb:juan.aweb.ai", "juan.aweb.ai", errors.New("open missing: no such file or directory"))
+	got := err.Error()
+	for _, want := range []string{
+		"aweb.ai hosted namespace",
+		"hosted dashboard Add existing agent",
+		"cannot sign the add-member operation locally",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q missing %q", got, want)
+		}
+	}
+}
+
+func TestTeamKeyLoadErrorByoidtNamespacePointsToLocalControllerKey(t *testing.T) {
+	err := teamKeyLoadError("backend:example.com", "example.com", errors.New("open missing: no such file or directory"))
+	got := err.Error()
+	for _, want := range []string{
+		"BYOIDT/BYOD teams",
+		"~/.config/aw/team-keys/<namespace>/<team>.key",
+		"hosted aweb.ai teams should use the dashboard Add existing agent action",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "This looks like an aweb.ai hosted namespace") {
+		t.Fatalf("non-hosted namespace used hosted-specific message: %q", got)
 	}
 }
 

@@ -273,6 +273,29 @@ file layout.
   lifecycle), see
   [identity-guide.md](https://awid.ai/identity-guide.md).
 
+### Hosted Add Existing Identity
+
+Use the dashboard Add existing identity action when a hosted team owner/admin
+wants to add an identity that already has a `did:key`, optional `did:aw`, and
+optional address. Hosted aweb holds the hosted team controller key, signs and
+registers the AWID team certificate, then creates the aweb runtime projection.
+
+Do not use `aw id team add-member` for hosted aweb.ai teams unless you hold the
+team controller key locally. That command is intentionally limited to
+BYOD/BYOIDT local-controller signing.
+
+### BYOIDT Import/Sync
+
+BYOIDT means you created the AWID namespace, team, and memberships outside
+aweb. The sound path is to import or sync the AWID team into aweb without
+giving aweb the team controller private key. Aweb treats AWID team certificates
+as membership facts and stores local runtime rows as projections.
+
+Members can also be projected lazily when they run `aw init` with a valid team
+certificate. Spawn and invites are still useful for creating new aweb-managed
+operational workspaces; they are not the product path for importing an existing
+AWID team.
+
 ## Coordination tools
 
 Once you are connected to a team, these are the tools you use to
@@ -498,9 +521,10 @@ setup that does not have the local team controller key. Start a
 separate AI agent (via `aw run` or directly) in each worktree
 directory.
 
-### Cross-machine team joins
+### Cross-machine BYOIDT/BYOD team joins
 
-The planned long-term BYOIT flow is:
+For a member identity on a different machine, the joining machine can print
+the controller-side command:
 
 ```bash
 aw id team request --team backend:acme.com --alias alice
@@ -508,15 +532,22 @@ aw id team request --team backend:acme.com --alias alice
 
 This reads `.aw/signing.key`, computes the local `did:key`, and
 prints the exact `aw id team add-member ...` command the team
-owner needs to run. The last mile fetch/install step for that
-flow is not implemented yet, so do not rely on it for current
-onboarding.
+owner needs to run. The team controller then signs and registers
+the AWID certificate:
 
-For now, cross-machine joins use the invite flow, and the team
-key must be available on the machine that runs `aw id team
-accept-invite` (for example by running the command on the
-controller machine or by copying the team key to the joining
-machine first):
+```bash
+aw id team add-member --team backend --namespace acme.com --did did:key:z6Mk... --alias alice
+```
+
+The joining machine installs the registered certificate:
+
+```bash
+aw id team fetch-cert --team backend --namespace acme.com --cert-id <certificate-id>
+aw init
+```
+
+Same-machine local-controller joins can still use the invite helper. The team
+key must be available on the machine that runs `aw id team accept-invite`:
 
 ```bash
 aw id team invite --team <team> --namespace <namespace>

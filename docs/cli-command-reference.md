@@ -372,6 +372,15 @@ Flags:
 
 Add a member directly to a team (controller signs certificate)
 
+This is a raw AWID/local-controller command. It requires the local team
+controller key at `~/.config/aw/team-keys/<namespace>/<team>.key`, signs and
+registers an AWID team certificate, and does not create a cloud/aweb runtime
+projection by itself. For hosted aweb.ai teams where the controller key is
+cloud-held, use the hosted dashboard Add existing identity action. For
+cross-machine BYOIDT/BYOD joins, use `aw id team request`, have the controller
+run `aw id team add-member`, then install the certificate with
+`aw id team fetch-cert`.
+
 Flags:
 - `--address string Persistent member address when using --did; must resolve to --did-aw`
 - `--alias string Alias to use with --did`

@@ -726,6 +726,26 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	return nil
 }
 
+func isAwebHostedNamespace(domain string) bool {
+	normalized := awconfig.NormalizeDomain(domain)
+	return normalized == "aweb.ai" || strings.HasSuffix(normalized, ".aweb.ai")
+}
+
+func teamKeyLoadError(teamID, domain string, err error) error {
+	if isAwebHostedNamespace(domain) {
+		return fmt.Errorf(
+			"local team controller key for %s was not found: %w\n\nThis looks like an aweb.ai hosted namespace. Hosted teams keep the team controller key in cloud, so this raw AWID command cannot sign the add-member operation locally. Use the hosted dashboard Add existing agent action for hosted teams. Use `aw id team add-member` only for BYOIDT/BYOD teams where you hold ~/.config/aw/team-keys/<namespace>/<team>.key",
+			teamID,
+			err,
+		)
+	}
+	return fmt.Errorf(
+		"local team controller key for %s was not found: %w (this command is for BYOIDT/BYOD teams where you hold ~/.config/aw/team-keys/<namespace>/<team>.key; hosted aweb.ai teams should use the dashboard Add existing agent action)",
+		teamID,
+		err,
+	)
+}
+
 func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamAddTeam))
 	domain := awconfig.NormalizeDomain(teamAddNamespace)
@@ -769,7 +789,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	// Load team key
 	teamKey, err := awconfig.LoadTeamKey(domain, team)
 	if err != nil {
-		return fmt.Errorf("load team key for %s: %w", teamID, err)
+		return teamKeyLoadError(teamID, domain, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

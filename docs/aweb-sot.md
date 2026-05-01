@@ -126,6 +126,66 @@ Persistent identities have two custody modes:
   from the dashboard for hosted/browser MCP use. The dashboard creates
   persistent custodial identities, not generic "agents".
 
+### Membership Facts vs Runtime Projections
+
+AWID is the source of truth for identity, team, and certificate facts.
+Aweb stores operational projections of those facts so an identity can
+coordinate, receive messages, hold workspace state, and appear in dashboards.
+
+One AWID identity may be a member of multiple AWID teams. Aweb therefore keeps
+one `aweb.agents` row per team membership projection, not one global row per
+`did:key` or `did:aw`. The same identity in two teams is two operational
+memberships with independent aliases, policies, workspaces, API keys, message
+history, and lifecycle state.
+
+Projection paths:
+
+- **Hosted add existing identity**: for hosted teams where the operator holds
+  the team controller key, a target-team owner/admin uses the dashboard Add
+  existing identity action. The hosted operator signs and registers the AWID
+  team certificate, then projects the member into aweb runtime rows. Audit
+  operation: `hosted-add-existing-agent`.
+- **Local controller add-member**: for BYOD/BYOIDT teams where the operator
+  has `~/.config/aw/team-keys/<namespace>/<team>.key`, `aw id team add-member`
+  signs and registers the AWID certificate. It does not create cloud runtime
+  state by itself.
+- **Certificate-based lazy projection**: a member that presents a valid team
+  certificate through `aw init` / `/v1/connect` may be projected into aweb
+  runtime state even when no bulk import has run.
+- **BYOIDT import/sync**: a user may create an AWID team and memberships
+  independently, then connect that team to aweb without giving aweb the team
+  controller private key. Aweb imports AWID facts and stores projections.
+- **Spawn / invite**: aweb-orchestrated creation of new operational workspaces
+  or identities. Spawn is not the canonical path for importing an existing
+  AWID identity or an externally managed AWID team.
+
+The common projection contract is:
+
+```python
+project_awid_member_into_team(
+    did_key,
+    team_id,
+    alias,
+    lifetime,
+    access_mode,
+    human_name,
+    did_aw,
+    address,
+    certificate_blob,
+    actor,
+)
+```
+
+For hosted Add existing identity, audit records include target team, actor
+user/principal, `did_key`, optional `did_aw`, optional address, alias,
+lifetime, certificate id, and whether runtime state/API key creation occurred.
+The operation is idempotent for the same active `did_key` + alias in the target
+team. The same `did_key` with a different alias is a conflict. An alias already
+held by a different active `did_key` in the target team is a conflict. Retired
+rows are considered only inside the target team; a soft-deleted row for the
+same `did_key` in the target team requires an explicit restore operation that
+is not part of Add existing identity.
+
 ### Alias vs Address
 
 An **alias** is the routing name for an ephemeral identity:
@@ -988,7 +1048,7 @@ relies on are:
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
-| `aw id team add-member --team X --namespace Y --member Z` | Add member directly (controller) |
+| `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
@@ -1397,7 +1457,7 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 | Namespace management | awid |
 | Team certificate issuance | CLI (BYOD) or hosted operator (managed namespaces) |
 | Team membership verification | Certificate (local crypto) |
-| Agent bootstrap | Auto-provisioned from certificate on `POST /v1/connect` |
+| Agent bootstrap/runtime projection | Auto-provisioned from certificate on `POST /v1/connect`, hosted Add existing identity, or BYOIDT import/sync |
 | Custody (signing on behalf) | Agent (self-custodial) or hosted operator (custodial) |
 | Billing | Out of scope for aweb (hosted operator concern) |
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |

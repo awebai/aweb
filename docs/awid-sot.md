@@ -555,6 +555,10 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
   private key (encrypted). It signs certificates and registers
   them at awid. awid never sees the private key.
 
+AWID records the certificate fact. It does not create or mutate aweb runtime
+rows. Hosted operators and self-hosted aweb deployments project active,
+non-revoked AWID certificates into their own local runtime state.
+
 ### Issuance flow
 
 For cross-machine BYOIT membership, the controller machine owns the
@@ -572,6 +576,20 @@ Those keys must not move between machines.
    (`aw id team fetch-cert --namespace <domain> --team <team> --cert-id <id>`).
 6. CLI verifies that the fetched certificate matches the local signing key
    and requested team, then stores it under `.aw/team-certs/`.
+
+For hosted managed teams, the same certificate record is signed by the hosted
+operator because the team controller key is cloud-held. The raw
+`aw id team add-member` command intentionally remains a local-controller
+command and cannot operate on a hosted team unless the operator exports the
+team key, which hosted aweb.ai does not do. Hosted aweb exposes Add existing
+identity as a separate dashboard/cloud operation so the cloud signing authority
+and the aweb runtime projection side effect are explicit.
+
+For BYOIDT, a team may be created and populated in AWID without aweb. Aweb
+import/sync consumes AWID team metadata and active certificate facts, verifies
+the import authority chosen by the hosted/self-hosted deployment, and creates
+runtime projections. It must not require or store the BYOIDT team controller
+private key.
 
 Registration is atomic from the registry contract's point of view: awid
 validates the signed blob against the team record and request metadata, then

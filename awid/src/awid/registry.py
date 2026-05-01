@@ -645,15 +645,84 @@ class RegistryClient:
         *,
         active_only: bool = True,
     ) -> list[TeamCertificate]:
-        path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
-        if active_only:
-            path += "?active_only=true"
+        active_only_value = "true" if active_only else "false"
+        path = f"/v1/namespaces/{domain}/teams/{name}/certificates?active_only={active_only_value}"
         data = await self._request_json(
             "GET",
             path,
             registry_url=await self._registry_url_for_domain(domain),
         )
         return [_team_certificate_from_json(item) for item in data.get("certificates", [])]
+
+    async def register_team_certificate(
+        self,
+        domain: str,
+        name: str,
+        *,
+        team_controller_signing_key: bytes,
+        certificate_id: str,
+        member_did_key: str,
+        member_did_aw: str | None,
+        member_address: str | None,
+        alias: str,
+        lifetime: str,
+        certificate: str | None = None,
+    ) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
+        payload: dict[str, Any] = {
+            "certificate_id": certificate_id,
+            "member_did_key": member_did_key,
+            "member_did_aw": member_did_aw,
+            "member_address": member_address,
+            "alias": alias,
+            "lifetime": lifetime,
+        }
+        if certificate is not None:
+            payload["certificate"] = certificate
+        await self._request_json(
+            "POST",
+            f"/v1/namespaces/{domain}/teams/{name}/certificates",
+            headers=self._signed_namespace_headers(
+                domain=domain,
+                operation="register_certificate",
+                signing_key=team_controller_signing_key,
+                extra_payload={
+                    "team_name": name,
+                    "certificate_id": certificate_id,
+                },
+            ),
+            json=payload,
+            registry_url=registry_url,
+        )
+
+    async def revoke_team_certificate(
+        self,
+        domain: str,
+        name: str,
+        *,
+        team_controller_signing_key: bytes,
+        certificate_id: str,
+    ) -> None:
+        registry_url = await self._registry_url_for_domain(domain)
+        await self._request_json(
+            "POST",
+            f"/v1/namespaces/{domain}/teams/{name}/certificates/revoke",
+            headers=self._signed_namespace_headers(
+                domain=domain,
+                operation="revoke_certificate",
+                signing_key=team_controller_signing_key,
+                extra_payload={
+                    "team_name": name,
+                    "certificate_id": certificate_id,
+                },
+            ),
+            json={"certificate_id": certificate_id},
+            registry_url=registry_url,
+        )
+
+    async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
+        """Drop cached certificate/revocation reads for a team, if this client caches them."""
+        return None
 
     async def update_address(
         self,
@@ -1025,6 +1094,73 @@ class CachedRegistryClient(RegistryClient):
             ),
             encode=lambda value: [_team_certificate_to_json(item) for item in value],
             decode=lambda payload: [_team_certificate_from_json(item) for item in payload],
+        )
+
+    async def register_team_certificate(
+        self,
+        domain: str,
+        name: str,
+        *,
+        team_controller_signing_key: bytes,
+        certificate_id: str,
+        member_did_key: str,
+        member_did_aw: str | None,
+        member_address: str | None,
+        alias: str,
+        lifetime: str,
+        certificate: str | None = None,
+    ) -> None:
+        await self._invalidate_keys(
+            self._team_certificates_cache_key(domain, name, active_only=True),
+            self._team_certificates_cache_key(domain, name, active_only=False),
+        )
+        await super().register_team_certificate(
+            domain,
+            name,
+            team_controller_signing_key=team_controller_signing_key,
+            certificate_id=certificate_id,
+            member_did_key=member_did_key,
+            member_did_aw=member_did_aw,
+            member_address=member_address,
+            alias=alias,
+            lifetime=lifetime,
+            certificate=certificate,
+        )
+        await self._invalidate_keys(
+            self._team_certificates_cache_key(domain, name, active_only=True),
+            self._team_certificates_cache_key(domain, name, active_only=False),
+        )
+
+    async def revoke_team_certificate(
+        self,
+        domain: str,
+        name: str,
+        *,
+        team_controller_signing_key: bytes,
+        certificate_id: str,
+    ) -> None:
+        await self._invalidate_keys(
+            self._team_certificates_cache_key(domain, name, active_only=True),
+            self._team_certificates_cache_key(domain, name, active_only=False),
+            self._team_revocations_cache_key(domain, name),
+        )
+        await super().revoke_team_certificate(
+            domain,
+            name,
+            team_controller_signing_key=team_controller_signing_key,
+            certificate_id=certificate_id,
+        )
+        await self._invalidate_keys(
+            self._team_certificates_cache_key(domain, name, active_only=True),
+            self._team_certificates_cache_key(domain, name, active_only=False),
+            self._team_revocations_cache_key(domain, name),
+        )
+
+    async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
+        await self._invalidate_keys(
+            self._team_certificates_cache_key(domain, name, active_only=True),
+            self._team_certificates_cache_key(domain, name, active_only=False),
+            self._team_revocations_cache_key(domain, name),
         )
 
     async def register_did(
