@@ -169,6 +169,48 @@ async def find_session_between(
     return None if not row else row["session_id"]
 
 
+async def _ensure_chat_conversation(
+    executor,
+    *,
+    session_id: UUID,
+    team_id: str | None,
+    created_by_did: str,
+    participants: list[dict[str, Any]],
+) -> None:
+    await executor.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did
+        )
+        VALUES ($1, 'chat', $2, $3)
+        ON CONFLICT (conversation_id) DO NOTHING
+        """,
+        session_id,
+        team_id,
+        created_by_did,
+    )
+    for participant in participants:
+        await executor.execute(
+            """
+            INSERT INTO {{tables.conversation_participants}} (
+                conversation_id, did, agent_id, alias, address, transport_hint, role
+            )
+            VALUES ($1, $2, $3, $4, $5, 'chat', $6)
+            ON CONFLICT (conversation_id, did) DO UPDATE
+            SET agent_id = EXCLUDED.agent_id,
+                alias = EXCLUDED.alias,
+                address = EXCLUDED.address,
+                transport_hint = EXCLUDED.transport_hint
+            """,
+            session_id,
+            participant["did"],
+            participant["agent_id"],
+            participant["alias"],
+            participant["address"],
+            "initiator" if participant["did"] == created_by_did else "participant",
+        )
+
+
 async def ensure_session(
     db,
     *,
@@ -205,6 +247,14 @@ async def ensure_session(
             did_key_b=normalized_participants[1].get("did_key"),
         )
         if existing is not None:
+            created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+            await _ensure_chat_conversation(
+                aweb_db,
+                session_id=UUID(str(existing)),
+                team_id=team_id,
+                created_by_did=created_by_did,
+                participants=normalized_participants,
+            )
             return existing
 
     async with aweb_db.transaction() as tx:
@@ -220,6 +270,7 @@ async def ensure_session(
         if not row:
             raise ServiceError("Failed to create chat session")
         session_id = row["session_id"]
+        created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
 
         for participant in normalized_participants:
             await tx.execute(
@@ -237,6 +288,13 @@ async def ensure_session(
                 participant["alias"],
                 participant["address"],
             )
+        await _ensure_chat_conversation(
+            tx,
+            session_id=UUID(str(session_id)),
+            team_id=team_id,
+            created_by_did=created_by_did,
+            participants=normalized_participants,
+        )
 
     return UUID(str(session_id))
 

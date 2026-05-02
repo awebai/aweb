@@ -92,6 +92,29 @@ async def test_ensure_session_creates_session(aweb_cloud_db):
     )
 
     assert isinstance(session_id, UUID)
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT conversation_id, conversation_type, team_id, created_by_did, status
+        FROM {{tables.conversations}}
+        WHERE conversation_id = $1
+        """,
+        session_id,
+    )
+    participants = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT did, agent_id, alias, transport_hint
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1
+        ORDER BY alias
+        """,
+        session_id,
+    )
+    assert conversation["conversation_type"] == "chat"
+    assert conversation["team_id"] == "backend:acme.com"
+    assert conversation["created_by_did"] == "did:aw:alice"
+    assert conversation["status"] == "active"
+    assert {row["did"] for row in participants} == {"did:aw:alice", "did:aw:bob"}
+    assert {row["transport_hint"] for row in participants} == {"chat"}
 
 
 @pytest.mark.asyncio
@@ -109,6 +132,68 @@ async def test_ensure_session_idempotent(aweb_cloud_db):
     )
 
     assert s1 == s2
+    count = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT COUNT(*) AS count
+        FROM {{tables.conversations}}
+        WHERE conversation_id = $1
+        """,
+        s1,
+    )
+    assert count["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_backfills_conversation_for_existing_chat_session(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+
+    session = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ('backend:acme.com', 'alice')
+        RETURNING session_id
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', NULL),
+            ($1, 'did:aw:bob', $3, 'bob', NULL)
+        """,
+        session["session_id"],
+        alice["agent_id"],
+        bob["agent_id"],
+    )
+
+    reused = await ensure_session(
+        db_shim,
+        team_id="backend:acme.com",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+
+    assert reused == session["session_id"]
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT conversation_id, conversation_type
+        FROM {{tables.conversations}}
+        WHERE conversation_id = $1
+        """,
+        reused,
+    )
+    participants = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT did, transport_hint
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1
+        """,
+        reused,
+    )
+    assert conversation["conversation_type"] == "chat"
+    assert {row["did"] for row in participants} == {"did:aw:alice", "did:aw:bob"}
+    assert {row["transport_hint"] for row in participants} == {"chat"}
 
 
 @pytest.mark.asyncio
