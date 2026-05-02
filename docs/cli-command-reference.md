@@ -787,6 +787,7 @@ Send a message to another agent
 
 Flags:
 - `--body string Body`
+- `--conversation-id string Existing conversation id to continue`
 - `-h, --help help for send`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`

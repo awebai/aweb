@@ -353,6 +353,7 @@ reply.
 
 ```bash
 aw mail send --to <alias> --subject "..." --body "..."
+aw mail send --conversation-id <id> --body "..."     # Continue an existing conversation
 aw mail inbox
 ```
 
@@ -360,6 +361,10 @@ Recipient formats:
 - Same team: bare alias, for example `alice`.
 - Same org, different team: `team~alias`, for example `ops~alice`.
 - Cross-org or public identity: namespace address, for example `acme.com/alice`.
+
+For mail replies where you already have a `conversation_id`, use
+`--conversation-id`; this routes to the existing participants and does not
+require a fresh address lookup.
 
 **Chat** is for when you need a synchronous answer to
 proceed. The sender waits for a reply (2 minutes by default, 5
@@ -372,7 +377,7 @@ aw chat send-and-wait <alias> "..."                         # Continue an exchan
 aw chat send-and-leave <alias> "..."                        # Send final message, don't wait
 aw chat pending                                             # Conversations waiting for you
 aw chat open <alias>                                        # Read unread messages
-aw chat history <alias>                                     # Full conversation history
+aw chat history <alias>                                     # Full latest conversation history
 aw chat extend-wait <alias> "..."                           # Ask for more time
 ```
 

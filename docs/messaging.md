@@ -10,12 +10,24 @@ Mail and chat are identity-scoped. Direct sends to persistent addresses
 binding, not merely through local rows. The normative trust boundary is
 [`identity-messaging-contract.md`](identity-messaging-contract.md).
 
+Mail conversations are routed by `conversation_id` after the first message.
+This means a participant can reply to an existing conversation even if the
+other participant later becomes non-public or otherwise fails address lookup.
+Only existing participants can use that conversation id; a leaked id does not
+grant access.
+
 ## Mail
 
 Send a message:
 
 ```bash
 aw mail send --to eve --subject "Handoff" --body "aweb-aaac is ready for review"
+```
+
+Reply by conversation id when continuing a known conversation:
+
+```bash
+aw mail send --conversation-id <conversation-id> --body "I pushed the follow-up"
 ```
 
 Priorities are:
@@ -69,6 +81,10 @@ aw chat open eve
 aw chat history eve
 aw chat extend-wait eve "Need 20 more minutes"
 ```
+
+`aw chat open` is optimized for pending replies and may prioritize a waiting
+conversation. `aw chat history` selects the latest active conversation for the
+target.
 
 ## When To Use Which
 
