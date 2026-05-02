@@ -202,7 +202,7 @@ func TestClaimHumanCommandFallsBackWithoutIdentityFile(t *testing.T) {
 	}
 }
 
-func TestClaimHumanCommandUsesFullDomainForBYODIdentity(t *testing.T) {
+func TestClaimHumanCommandUsesExplicitUsernameForBYODIdentity(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := awid.GenerateKeypair()
@@ -245,7 +245,7 @@ func TestClaimHumanCommandUsesFullDomainForBYODIdentity(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice-laptop", didKey, stableID, "https://api.awid.ai", priv)
 
-	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--mock-url", server.URL)
+	run := exec.CommandContext(ctx, bin, "claim-human", "--email", "alice@example.com", "--username", "alice", "--mock-url", server.URL)
 	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -253,7 +253,7 @@ func TestClaimHumanCommandUsesFullDomainForBYODIdentity(t *testing.T) {
 		t.Fatalf("claim-human failed: %v\n%s", err, string(out))
 	}
 
-	if gotBody["username"] != "acme.com" {
+	if gotBody["username"] != "alice" {
 		t.Fatalf("username=%v", gotBody["username"])
 	}
 }
@@ -463,15 +463,15 @@ func TestClaimHumanCommandMapsConflictVerbatim(t *testing.T) {
 	}
 }
 
-func TestUsernameFromMemberAddressUsesFullDomainForBYOD(t *testing.T) {
+func TestUsernameFromMemberAddressRequiresExplicitUsernameForBYOD(t *testing.T) {
 	t.Parallel()
 
-	username, err := usernameFromMemberAddress("acme.com/alice")
-	if err != nil {
-		t.Fatalf("usernameFromMemberAddress: %v", err)
+	_, err := usernameFromMemberAddress("acme.com/alice")
+	if err == nil {
+		t.Fatal("expected BYOD member address to require --username")
 	}
-	if username != "acme.com" {
-		t.Fatalf("username=%q", username)
+	if !strings.Contains(err.Error(), "pass --username") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

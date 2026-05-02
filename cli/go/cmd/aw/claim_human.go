@@ -209,7 +209,7 @@ func usernameFromManagedDomain(domain string) (string, error) {
 	}
 	const managedSuffix = ".aweb.ai"
 	if !strings.HasSuffix(domain, managedSuffix) {
-		return domain, nil
+		return "", usageError("cannot infer dashboard username from a BYOD domain; pass --username")
 	}
 	username := strings.TrimSuffix(domain, managedSuffix)
 	if strings.TrimSpace(username) == "" {
