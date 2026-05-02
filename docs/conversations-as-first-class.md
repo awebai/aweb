@@ -78,28 +78,56 @@ team-bridge today emulates manually via Athena-relay.
 
 ## Prerequisite: mail threading
 
-Mail today (per `aweb/server/src/aweb/migrations/aweb/001_initial.sql:111`)
-has only a `reply_to UUID` column on messages — a single FK to a
-parent message. Reply chains can be derived by walking the FK, but
-there is no stable thread-id concept and no participant-set object.
+Empirical state of the schema as of 2026-05-02 (corrected by Grace
+2026-05-02 — earlier draft of this doc had this wrong):
 
-Chat is more advanced: `session_id` with explicit lifecycle (open,
-participants tracked at session creation, close).
+- **Mail** (`{{tables.messages}}`, line 56 of
+  `aweb/server/src/aweb/migrations/aweb/001_initial.sql`) has
+  **zero thread state**. No `reply_to`, no `thread_id`, no
+  `conversation_id`, no FK back to any session. Each mail is an
+  isolated row keyed by `message_id` with from/to addressing and
+  signed-payload fields. There's nothing to walk.
+- **Chat** is structurally already conversation-shaped:
+  `chat_sessions` (line 83) holds session_id + lifecycle fields;
+  `chat_participants` (line 93) holds the participant set with
+  did + agent_id + alias + cached address per session;
+  `chat_messages.session_id` (line 104) ties messages to a
+  session, plus `reply_to UUID` (line 111) for in-session reply
+  threading.
 
-Before conversations-as-first-class can land in the protocol, mail
-needs first-class threading. The shape:
+So the asymmetry is sharper than "chat is more advanced": chat has
+the entire `(sessions, participants, messages-by-session)` shape
+already; mail has none of it.
 
-- New table: `conversations` (id, created_at, closed_at,
-  expires_at, conversation_type ∈ {mail, chat}).
-- New table: `conversation_participants` (conversation_id,
-  participant_did, role, joined_at, transport_hint).
-- Mail messages gain `conversation_id` foreign key alongside the
-  existing `reply_to`.
-- Chat sessions migrate to share the conversation table OR map
-  cleanly onto it.
+Minimum useful additive shape (refined by Grace's bonus read —
+participant-set is mandatory for routing/auth, not just optional
+grouping; without it, conversation_id is a thread label, not a
+delivery oracle):
+
+- New table: `conversations` (id, type ∈ {mail, chat}, created_at,
+  closed_at, expires_at, lifecycle status).
+- New table: `conversation_participants` (conversation_id, did,
+  agent_id, alias snapshot, cached address/transport hint,
+  joined_at, role).
+- `messages.conversation_id` FK on the mail table (additive
+  column).
+- Chat path: map `chat_sessions.session_id` → `conversations.id`
+  (initially as a view/alias, full migration later). Existing
+  chat_participants either lifts to conversation_participants or
+  remains alongside with a join.
+- Mail path: needs all three primitives from scratch since mail
+  has no participant-set object today. This is the load-bearing
+  work; chat's pre-existing shape is a cheap migration.
 
 The migration is additive. Existing mail and chat semantics keep
 working. Conversation-id-based routing layers on top.
+
+The participant-set is what makes `conversation_id` a delivery
+oracle rather than a label. Routing decision: "is the sender an
+authenticated participant of this conversation?" requires the
+participants table; without it, `conversation_id` is just metadata
+on a message that doesn't help the cloud decide whether to
+deliver.
 
 ## Verification anchor: cert-presentation auth
 
