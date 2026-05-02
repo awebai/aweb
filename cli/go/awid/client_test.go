@@ -246,14 +246,15 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "agent",
-		FromDID:   did,
-		To:        "ann,bob",
-		Type:      "chat",
-		Body:      "hello",
-		Timestamp: gotBody.Timestamp,
-		MessageID: gotBody.MessageID,
-		Signature: gotBody.Signature,
+		From:           "agent",
+		FromDID:        did,
+		To:             "ann,bob",
+		Type:           "chat",
+		Body:           "hello",
+		ConversationID: gotBody.SessionID,
+		Timestamp:      gotBody.Timestamp,
+		MessageID:      gotBody.MessageID,
+		Signature:      gotBody.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -297,14 +298,15 @@ func TestChatCreateSessionSignsLocalAliases(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "agent",
-		FromDID:   did,
-		To:        "ann,bob",
-		Type:      "chat",
-		Body:      "hello",
-		Timestamp: gotBody.Timestamp,
-		MessageID: gotBody.MessageID,
-		Signature: gotBody.Signature,
+		From:           "agent",
+		FromDID:        did,
+		To:             "ann,bob",
+		Type:           "chat",
+		Body:           "hello",
+		ConversationID: gotBody.SessionID,
+		Timestamp:      gotBody.Timestamp,
+		MessageID:      gotBody.MessageID,
+		Signature:      gotBody.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -458,14 +460,15 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "agent",
-		FromDID:   did,
-		To:        "ann,bob",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:           "agent",
+		FromDID:        did,
+		To:             "ann,bob",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -520,14 +523,15 @@ func TestChatSendMessageSignsLocalAliases(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "agent",
-		FromDID:   did,
-		To:        "ann,bob",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:           "agent",
+		FromDID:        did,
+		To:             "ann,bob",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -588,14 +592,15 @@ func TestChatSendMessagePrefersParticipantAddressesForDeterministicTo(t *testing
 	}
 
 	env := &MessageEnvelope{
-		From:      "rose",
-		FromDID:   did,
-		To:        "otherco/monitor",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		To:             "otherco/monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -656,15 +661,16 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 
 	env := &MessageEnvelope{
-		From:       "rose",
-		FromDID:    did,
-		To:         "did:aw:monitor",
-		ToStableID: "did:aw:monitor",
-		Type:       "chat",
-		Body:       "ping",
-		Timestamp:  gotSend.Timestamp,
-		MessageID:  gotSend.MessageID,
-		Signature:  gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		To:             "did:aw:monitor",
+		ToStableID:     "did:aw:monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -727,16 +733,17 @@ func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T)
 	}
 
 	env := &MessageEnvelope{
-		From:         "rose",
-		FromDID:      did,
-		FromStableID: stableID,
-		To:           "did:aw:monitor",
-		ToStableID:   "did:aw:monitor",
-		Type:         "chat",
-		Body:         "ping",
-		Timestamp:    gotSend.Timestamp,
-		MessageID:    gotSend.MessageID,
-		Signature:    gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		FromStableID:   stableID,
+		To:             "did:aw:monitor",
+		ToStableID:     "did:aw:monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -799,16 +806,17 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 	}
 
 	env := &MessageEnvelope{
-		From:         "rose",
-		FromDID:      did,
-		FromStableID: stableID,
-		To:           "did:aw:monitor",
-		ToStableID:   "did:aw:monitor",
-		Type:         "chat",
-		Body:         "ping",
-		Timestamp:    gotSend.Timestamp,
-		MessageID:    gotSend.MessageID,
-		Signature:    gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		FromStableID:   stableID,
+		To:             "did:aw:monitor",
+		ToStableID:     "did:aw:monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -869,14 +877,15 @@ func TestChatSendMessageRemovesOneSelfAddressFromDeterministicTo(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:      "rose",
-		FromDID:   did,
-		To:        "otherco/monitor",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		To:             "otherco/monitor",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -935,14 +944,15 @@ func TestChatSendMessageRetainsForeignParticipantWithSameAliasAsSelf(t *testing.
 	}
 
 	env := &MessageEnvelope{
-		From:      "rose",
-		FromDID:   did,
-		To:        "rose",
-		Type:      "chat",
-		Body:      "ping",
-		Timestamp: gotSend.Timestamp,
-		MessageID: gotSend.MessageID,
-		Signature: gotSend.Signature,
+		From:           "rose",
+		FromDID:        did,
+		To:             "rose",
+		Type:           "chat",
+		Body:           "ping",
+		ConversationID: "sess-1",
+		Timestamp:      gotSend.Timestamp,
+		MessageID:      gotSend.MessageID,
+		Signature:      gotSend.Signature,
 	}
 	status, verifyErr := VerifyMessage(env)
 	if verifyErr != nil {
@@ -1047,6 +1057,65 @@ func TestChatSendMessageUnsignedPreservesCallerSignatureFields(t *testing.T) {
 	}
 	if gotBody["signed_payload"] != "{\"type\":\"chat\"}" {
 		t.Fatalf("signed_payload=%v, want caller value", gotBody["signed_payload"])
+	}
+}
+
+func TestChatSendMessageSignedPayloadIncludesLeaving(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/sessions":
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
+				Sessions: []ChatSessionItem{
+					{
+						SessionID:            "sess-1",
+						Participants:         []string{"agent", "bob"},
+						ParticipantAddresses: []string{"myco/agent", "myco/bob"},
+					},
+				},
+			})
+		case "/v1/chat/sessions/sess-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatSendMessageResponse{MessageID: "msg-2", Delivered: true})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/agent")
+
+	_, err = c.ChatSendMessage(context.Background(), "sess-1", &ChatSendMessageRequest{
+		Body:    "done",
+		Leaving: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["leaving"] != true {
+		t.Fatalf("leaving=%v, want true", gotBody["leaving"])
+	}
+	env := signedPayloadMap(t, gotBody)
+	if env["conversation_id"] != "sess-1" {
+		t.Fatalf("signed payload conversation_id=%v, want sess-1", env["conversation_id"])
+	}
+	if env["sender_leaving"] != true {
+		t.Fatalf("signed payload sender_leaving=%v, want true", env["sender_leaving"])
 	}
 }
 
@@ -3618,14 +3687,27 @@ func TestSendMessageIncludesMessageID(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 	// message_id should be a valid UUID v4 generated by signEnvelope.
 	msgID := gotBody["message_id"]
 	if msgID == "" {
 		t.Fatal("message_id is empty")
 	}
-	uuidRE := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	if !uuidRE.MatchString(msgID) {
 		t.Fatalf("message_id=%q is not a valid UUID v4", msgID)
+	}
+
+	conversationID := gotBody["conversation_id"]
+	if !uuidRE.MatchString(conversationID) {
+		t.Fatalf("conversation_id=%q is not a valid UUID v4", conversationID)
+	}
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(gotBody["signed_payload"]), &signed); err != nil {
+		t.Fatalf("decode signed_payload: %v", err)
+	}
+	if signed["conversation_id"] != conversationID {
+		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
 }
 

@@ -104,6 +104,7 @@ def _validate_signed_chat_payload(
     timestamp: str,
     wait_seconds: int | None = None,
     reply_to: str | None = None,
+    conversation_id: str | None = None,
     sender_leaving: bool = False,
     hang_on: bool = False,
 ) -> None:
@@ -188,6 +189,14 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload message_id must match the chat message")
     if payload.get("timestamp") != timestamp:
         raise HTTPException(status_code=422, detail="signed_payload timestamp must match the chat message")
+    signed_conversation_id = str(payload.get("conversation_id") or "").strip()
+    if conversation_id is not None:
+        if not signed_conversation_id:
+            raise HTTPException(status_code=422, detail="signed_payload conversation_id is required")
+        if signed_conversation_id != conversation_id:
+            raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
+    elif signed_conversation_id:
+        raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
     if payload.get("wait_seconds") != wait_seconds:
         raise HTTPException(status_code=422, detail="signed_payload wait_seconds must match the chat message")
     if (payload.get("reply_to") or None) != ((reply_to or "").strip() or None):
@@ -544,6 +553,7 @@ async def _resolve_session_recipient_rows(
 class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    session_id: str | None = None
     to_aliases: list[str] = Field(default_factory=list)
     to_dids: list[str] = Field(default_factory=list)
     to_addresses: list[str] = Field(default_factory=list)
@@ -584,7 +594,7 @@ class CreateSessionRequest(BaseModel):
             raise ValueError("to_addresses contains duplicates")
         return self
 
-    @field_validator("message_id", "reply_to")
+    @field_validator("session_id", "message_id", "reply_to")
     @classmethod
     def _validate_message_id(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
@@ -657,11 +667,13 @@ async def create_or_send(
         for row in target_rows
     ]
 
+    requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
     session_id = await ensure_session(
         db,
         team_id=auth.team_id,
         participant_rows=participant_rows,
         created_by=actor_alias,
+        session_id=requested_session_id,
     )
 
     aweb_db = db.get_manager("aweb")
@@ -692,6 +704,7 @@ async def create_or_send(
             timestamp=payload.timestamp,
             wait_seconds=payload.wait_seconds,
             reply_to=payload.reply_to,
+            conversation_id=str(session_id) if payload.session_id is not None else None,
             sender_leaving=payload.leaving,
         )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
@@ -1417,6 +1430,7 @@ class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     body: str = Field(..., min_length=1)
+    leaving: bool = False
     hang_on: bool = False
     reply_to: str | None = None
     message_id: str | None = None
@@ -1495,6 +1509,8 @@ async def send_message(
             message_id=payload.message_id,
             timestamp=payload.timestamp,
             reply_to=payload.reply_to,
+            conversation_id=str(session_uuid),
+            sender_leaving=payload.leaving,
             hang_on=payload.hang_on,
         )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)
@@ -1509,6 +1525,7 @@ async def send_message(
             sender_address=sender_address,
             body=payload.body,
             reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+            leaving=payload.leaving,
             hang_on=payload.hang_on,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
@@ -1554,6 +1571,7 @@ class SessionListItem(BaseModel):
     participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
     created_at: str
+    last_activity: str
     sender_waiting: bool = False
 
 
@@ -1580,22 +1598,25 @@ async def list_sessions(
         rows = await aweb_db.fetch_all(
             """
             SELECT s.session_id, s.created_at,
-                   array_agg(p2.alias ORDER BY p2.alias) AS participants,
-                   array_agg(p2.did ORDER BY p2.alias) AS participant_dids
+                   COALESCE(MAX(m.created_at), s.created_at) AS last_activity,
+                   array_agg(DISTINCT p2.alias ORDER BY p2.alias) AS participants,
+                   array_agg(DISTINCT p2.did ORDER BY p2.did) AS participant_dids
             FROM {{tables.chat_sessions}} s
             JOIN {{tables.chat_participants}} p
               ON p.session_id = s.session_id AND p.did = $1
             JOIN {{tables.chat_participants}} p2
               ON p2.session_id = s.session_id
+            LEFT JOIN {{tables.chat_messages}} m
+              ON m.session_id = s.session_id
             GROUP BY s.session_id, s.created_at
-            ORDER BY s.created_at DESC
+            ORDER BY last_activity DESC, s.created_at DESC
             """,
             participant_did,
         )
         for row in rows:
             rows_by_session.setdefault(str(row["session_id"]), row)
     rows = list(rows_by_session.values())
-    rows.sort(key=lambda row: row["created_at"], reverse=True)
+    rows.sort(key=lambda row: (row["last_activity"], row["created_at"]), reverse=True)
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
@@ -1650,6 +1671,7 @@ async def list_sessions(
                     if (participant.get("did") or "").strip() not in set(actor_dids)
                 ],
                 created_at=_utc_iso(row["created_at"]),
+                last_activity=_utc_iso(row["last_activity"]),
                 sender_waiting=len(waiting) > 0,
             )
         )

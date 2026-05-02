@@ -275,7 +275,7 @@ func VerifyReplacementSignature(controllerPub ed25519.PublicKey, address, contro
 
 // CanonicalJSON builds the canonical JSON payload for message signing.
 // Fields are sorted lexicographically, no whitespace, minimal escaping.
-// Optional fields (from_stable_id, message_id, to_stable_id) are omitted when empty.
+// Optional fields (conversation_id, from_stable_id, message_id, to_stable_id) are omitted when empty.
 // See also LogEntry.CanonicalJSON which always includes all fields with null for absent values.
 func CanonicalJSON(env *MessageEnvelope) string {
 	type field struct {

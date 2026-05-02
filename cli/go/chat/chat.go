@@ -637,6 +637,13 @@ func normalizeSessionTarget(ctx context.Context, client *awid.Client, target str
 	return target
 }
 
+func sessionActivity(session awid.ChatSessionItem) string {
+	if strings.TrimSpace(session.LastActivity) != "" {
+		return session.LastActivity
+	}
+	return session.CreatedAt
+}
+
 // findSession finds the session ID for a conversation with targetAlias.
 // Checks pending first (captures sender_waiting), falls back to listing sessions.
 //
@@ -647,8 +654,16 @@ func normalizeSessionTarget(ctx context.Context, client *awid.Client, target str
 //
 // Selection priority for fallback (all sessions):
 //  1. smallest participant count
-//  2. most recent CreatedAt (tiebreaker)
+//  2. most recent LastActivity, falling back to CreatedAt (tiebreaker)
 func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
+	return findSessionWithOptions(ctx, client, targetAlias, true)
+}
+
+func findLatestSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
+	return findSessionWithOptions(ctx, client, targetAlias, false)
+}
+
+func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	requireUniqueExact := strings.HasPrefix(rawTarget, "did:") &&
@@ -694,13 +709,19 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			}
 			size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
 			better := bestPendingSize < 0
-			if !better {
+			if !better && preferWaiting {
 				// Prefer sender_waiting over non-waiting.
 				if p.SenderWaiting && !bestPendingWaiting {
 					better = true
 				} else if !p.SenderWaiting && bestPendingWaiting {
 					better = false
 				} else if size < bestPendingSize {
+					better = true
+				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
+					better = true
+				}
+			} else if !better {
+				if size < bestPendingSize {
 					better = true
 				} else if size == bestPendingSize && p.LastActivity > bestPendingActivity {
 					better = true
@@ -754,7 +775,7 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 	}
 	selectSession := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, error) {
 		var bestSessionID string
-		var bestSessionCreated string
+		var bestSessionActivity string
 		bestSessionSize := -1
 		matchCount := 0
 		identityKeys := []string{}
@@ -785,14 +806,14 @@ func findSession(ctx context.Context, client *awid.Client, targetAlias string) (
 			if !better {
 				if size < bestSessionSize {
 					better = true
-				} else if size == bestSessionSize && s.CreatedAt > bestSessionCreated {
+				} else if size == bestSessionSize && sessionActivity(s) > bestSessionActivity {
 					better = true
 				}
 			}
 			if better {
 				bestSessionID = s.SessionID
 				bestSessionSize = size
-				bestSessionCreated = s.CreatedAt
+				bestSessionActivity = sessionActivity(s)
 			}
 		}
 		if requireUnique && matchCount > 1 {
@@ -1091,6 +1112,24 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
+	if len(targets) == 1 && !opts.StartConversation && waitSeconds == 0 && shouldProbeExistingSession(targets[0]) {
+		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
+			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
+				Body:    message,
+				Leaving: opts.Leaving,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("sending message: %w", err)
+			}
+			return sendCommon(ctx, client, client.ChatStream, sendResponse{
+				SessionID: sessionID,
+				MessageID: msgResp.MessageID,
+			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
+		} else if findErr != nil &&
+			strings.Contains(findErr.Error(), "multiple conversations match") {
+			return nil, findErr
+		}
+	}
 	createResp, err := client.ChatCreateSession(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("sending message: %w", err)
@@ -1103,6 +1142,11 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		TargetsConnected: createResp.TargetsConnected,
 		TargetsLeft:      createResp.TargetsLeft,
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
+}
+
+func shouldProbeExistingSession(target string) bool {
+	target = strings.TrimSpace(target)
+	return strings.HasPrefix(target, "did:") || strings.Contains(target, "/")
 }
 
 // sendCommon handles the post-send wait logic after a message has been created.
@@ -1272,7 +1316,7 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 
 // History fetches all messages in a conversation.
 func History(ctx context.Context, client *awid.Client, targetAlias string) (*HistoryResult, error) {
-	sessionID, _, err := findSession(ctx, client, targetAlias)
+	sessionID, _, err := findLatestSession(ctx, client, targetAlias)
 	if err != nil {
 		return nil, err
 	}

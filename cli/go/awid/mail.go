@@ -52,6 +52,18 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
+	hasRecipient := strings.TrimSpace(payload.ToAlias) != "" ||
+		strings.TrimSpace(payload.ToAgentID) != "" ||
+		strings.TrimSpace(payload.ToDID) != "" ||
+		strings.TrimSpace(payload.ToStableID) != "" ||
+		strings.TrimSpace(payload.ToAddress) != ""
+	if c.signingKey != nil && strings.TrimSpace(payload.ConversationID) == "" && hasRecipient {
+		conversationID, err := GenerateUUID4()
+		if err != nil {
+			return nil, err
+		}
+		payload.ConversationID = conversationID
+	}
 
 	to := payload.ToAlias
 	if to == "" {

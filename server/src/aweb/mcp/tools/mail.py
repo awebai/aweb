@@ -87,6 +87,8 @@ async def send_mail(
         return json.dumps(
             {"error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"}
         )
+    if not body.strip():
+        return json.dumps({"error": "body is required"})
 
     recipient_ref = (to or "").strip()
     conversation_ref = (conversation_id or "").strip()
@@ -117,9 +119,12 @@ async def send_mail(
                 participant for participant in participants
                 if participant["did"] != sender_participant_did
             ]
-            if len(recipients) != 1:
+            if len(recipients) == 0 and len(participants) == 1:
+                recipient_participant = auth_context["participant"]
+            elif len(recipients) == 1:
+                recipient_participant = recipients[0]
+            else:
                 raise ValidationError("Mail conversation continuation requires exactly one recipient")
-            recipient_participant = recipients[0]
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             return json.dumps({"error": exc.detail})
 
@@ -246,6 +251,7 @@ async def send_mail(
         recipient_alias = recipient.get("alias") or recipient_ref
 
     message_id = uuid_mod.uuid4()
+    initial_conversation_id = uuid_mod.uuid4()
     created_at = datetime.now(timezone.utc).replace(microsecond=0)
     sender_did = primary_auth_did(auth)
     signature: str | None = None
@@ -255,6 +261,7 @@ async def send_mail(
     signed_to = recipient_ref if recipient_ref.startswith("did:") or "/" in recipient_ref else recipient_alias
     signed_fields = {
         "body": body,
+        "conversation_id": str(initial_conversation_id),
         "from": (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
         "from_did": (auth.did_key or "").strip(),
         "message_id": str(message_id),
@@ -298,6 +305,7 @@ async def send_mail(
             db_infra,
             conversation_type="mail",
             created_by_did=sender_did,
+            conversation_id=initial_conversation_id,
             initiator={
                 "did": sender_did,
                 "agent_id": auth.agent_id,

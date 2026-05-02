@@ -1393,6 +1393,79 @@ else
 fi
 
 set_awid_address_reachability "test.local" "bob" "nobody"
+
+if carol_hidden_nobody_mail_out="$(run_aw_with_home_in "$CAROL_NO_PIN_HOME" "$CAROL_DIR" mail send \
+  --to-address test.local/bob \
+  --subject "Conversation hidden first-contact should not send" \
+  --body "Conversation unauthorized hidden direct address mail" 2>&1)"; then
+  carol_hidden_nobody_mail_exit=0
+else
+  carol_hidden_nobody_mail_exit=$?
+fi
+if [[ "$carol_hidden_nobody_mail_exit" != "0" ]] && echo "$carol_hidden_nobody_mail_out" | grep -qi "resolve recipient\|Address not found\|404"; then
+  echo "  PASS: conversation gate hidden direct-address first contact fails closed"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: conversation gate hidden direct-address first contact should fail closed (exit=$carol_hidden_nobody_mail_exit output=${carol_hidden_nobody_mail_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+if bob_hidden_start_out="$(run_aw_in "$BOB_DIR" mail send \
+  --to-did "$ALICE_DID_AW" \
+  --subject "Conversation hidden bob starts" \
+  --body "Hidden bob starts a conversation" \
+  --json 2>&1)"; then
+  bob_hidden_start_exit=0
+else
+  bob_hidden_start_exit=$?
+fi
+assert_eq "conversation gate hidden bob initiates outbound mail" "0" "$bob_hidden_start_exit"
+if [[ "$bob_hidden_start_exit" != "0" ]]; then
+  echo "  hidden bob start output: ${bob_hidden_start_out:0:240}"
+fi
+bob_hidden_conversation_id="$(echo "$bob_hidden_start_out" | jq_field conversation_id)"
+assert_not_empty "conversation gate initial mail returns conversation_id" "$bob_hidden_conversation_id"
+
+alice_hidden_start_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_hidden_start_body="$(echo "$alice_hidden_start_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id'), ''))" 2>/dev/null || echo "")"
+assert_eq "conversation gate alice receives hidden bob initiation" "Hidden bob starts a conversation" "$alice_hidden_start_body"
+
+if alice_hidden_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --conversation-id "$bob_hidden_conversation_id" \
+  --subject "Conversation hidden reply" \
+  --body "Reply by conversation_id to hidden bob" \
+  --json 2>&1)"; then
+  alice_hidden_reply_exit=0
+else
+  alice_hidden_reply_exit=$?
+fi
+assert_eq "conversation gate alice replies by conversation_id while bob hidden" "0" "$alice_hidden_reply_exit"
+if [[ "$alice_hidden_reply_exit" != "0" ]]; then
+  echo "  hidden reply output: ${alice_hidden_reply_out:0:240}"
+fi
+alice_hidden_reply_conversation_id="$(echo "$alice_hidden_reply_out" | jq_field conversation_id)"
+assert_eq "conversation gate reply stays in same conversation" "$bob_hidden_conversation_id" "$alice_hidden_reply_conversation_id"
+
+bob_hidden_reply_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
+bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Conversation hidden reply'), ''))" 2>/dev/null || echo "")"
+assert_eq "conversation gate hidden bob receives conversation reply" "Reply by conversation_id to hidden bob" "$bob_hidden_reply_body"
+
+if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send \
+  --conversation-id "$bob_hidden_conversation_id" \
+  --subject "Conversation leaked id" \
+  --body "Carol should not enter this conversation" 2>&1)"; then
+  carol_leaked_conversation_exit=0
+else
+  carol_leaked_conversation_exit=$?
+fi
+if [[ "$carol_leaked_conversation_exit" != "0" ]] && echo "$carol_leaked_conversation_out" | grep -qi "not a participant\|403"; then
+  echo "  PASS: conversation gate leaked conversation_id rejected as non-participant"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: conversation gate leaked conversation_id should return participant rejection (exit=$carol_leaked_conversation_exit output=${carol_leaked_conversation_out:0:180})"
+  fail=$((fail + 1))
+fi
+
 if alice_pin_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-address test.local/bob \
   --subject "Matrix known pin fallback" \
@@ -1583,9 +1656,15 @@ phase_aw_init_reconnect() {
   assert_eq "reconnect workspace alias" "alice" "$reconnect_alias"
   assert_eq "reconnect workspace role empty" "" "$reconnect_role"
 
-  reconnect_mail_out="$(run_aw_in "$RECONNECT_DIR" mail send --to alice --subject "Reconnect e2e" --body "Reconnect path works" 2>&1)"
-  reconnect_mail_exit=$?
+  if reconnect_mail_out="$(run_aw_in "$RECONNECT_DIR" mail send --to alice --subject "Reconnect e2e" --body "Reconnect path works" 2>&1)"; then
+    reconnect_mail_exit=0
+  else
+    reconnect_mail_exit=$?
+  fi
   assert_eq "reconnect mail send exit" "0" "$reconnect_mail_exit"
+  if [[ "$reconnect_mail_exit" != "0" ]]; then
+    echo "  reconnect mail output: ${reconnect_mail_out:0:480}"
+  fi
   echo ""
 }
 
@@ -1648,9 +1727,15 @@ phase_aw_init_local_quickstart() {
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
 
-  wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"
-  wizard_mail_exit=$?
+  if wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"; then
+    wizard_mail_exit=0
+  else
+    wizard_mail_exit=$?
+  fi
   assert_eq "wizard mail send exit" "0" "$wizard_mail_exit"
+  if [[ "$wizard_mail_exit" != "0" ]]; then
+    echo "  wizard mail output: ${wizard_mail_out:0:480}"
+  fi
   assert_contains "wizard output shows local team" "$wizard_out" "default:local"
   echo ""
 }

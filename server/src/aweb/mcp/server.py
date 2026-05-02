@@ -159,7 +159,7 @@ def register_tools(
 
     @mcp.tool(
         name="send_mail",
-        description="Send async mail by recipient, or continue an existing mail conversation by conversation_id.",
+        description="Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id.",
     )
     async def send_mail(
         body: str,

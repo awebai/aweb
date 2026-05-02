@@ -84,6 +84,24 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
   }
 }
 
+function signedPayloadConversationStatus(
+  signedPayload: string,
+  conversationID: string | undefined,
+): VerificationStatus {
+  const expected = (conversationID || "").trim();
+  if (!expected) return "verified";
+  try {
+    const payload = JSON.parse(signedPayload) as { conversation_id?: unknown };
+    if (payload.conversation_id === expected) return "verified";
+    if (payload.conversation_id === undefined || payload.conversation_id === "") {
+      return "verified_legacy";
+    }
+    return "failed";
+  } catch {
+    return "failed";
+  }
+}
+
 export async function markRead(
   client: APIClient,
   sessionId: string,
@@ -97,12 +115,14 @@ export async function markRead(
 
 async function verifyChatMessage(msg: ChatMessage): Promise<VerificationStatus> {
   if (msg.signed_payload && msg.signature && msg.from_did) {
-    return verifySignedPayload(
+    const status = await verifySignedPayload(
       msg.signed_payload,
       msg.signature,
       msg.from_did,
       msg.signing_key_id || "",
     );
+    if (status !== "verified") return status;
+    return signedPayloadConversationStatus(msg.signed_payload, msg.conversation_id);
   }
 
   const from = msg.from_address || msg.from_agent;
@@ -126,7 +146,8 @@ async function verifyChatMessage(msg: ChatMessage): Promise<VerificationStatus> 
 
   const status = await verifyMessage(env);
   if (status === "failed" && msg.conversation_id) {
-    return verifyMessage({ ...env, conversation_id: undefined });
+    const legacyStatus = await verifyMessage({ ...env, conversation_id: undefined });
+    return legacyStatus === "verified" ? "verified_legacy" : legacyStatus;
   }
   return status;
 }

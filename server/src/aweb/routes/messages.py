@@ -538,22 +538,18 @@ async def send_message(
     if not sender_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    if payload.conversation_id is not None:
-        if any(
-            value is not None
-            for value in (
-                payload.to_agent_id,
-                payload.to_alias,
-                payload.to_did,
-                payload.to_stable_id,
-                payload.to_address,
-            )
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="conversation_id continuation must not include a separate recipient",
-            )
+    has_explicit_recipient = any(
+        value is not None
+        for value in (
+            payload.to_agent_id,
+            payload.to_alias,
+            payload.to_did,
+            payload.to_stable_id,
+            payload.to_address,
+        )
+    )
 
+    if payload.conversation_id is not None and not has_explicit_recipient:
         msg_uuid = UUID(payload.message_id) if payload.message_id else None
         created_at = None
         if payload.signature is not None:
@@ -603,9 +599,12 @@ async def send_message(
                 for participant in participants
                 if participant["did"] != sender_participant_did
             ]
-            if len(recipients) != 1:
+            if len(recipients) == 0 and len(participants) == 1:
+                recipient_participant = auth_context["participant"]
+            elif len(recipients) == 1:
+                recipient_participant = recipients[0]
+            else:
                 raise ValidationError("Mail conversation continuation requires exactly one recipient")
-            recipient_participant = recipients[0]
             recipient = _participant_recipient(recipient_participant)
             message_id, created_at = await deliver_message(
                 db,
@@ -808,12 +807,12 @@ async def send_message(
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
-            body=payload.body,
-            from_did=from_did,
-            message_id=payload.message_id,
-            timestamp=payload.timestamp,
-            conversation_id=None,
-        )
+                body=payload.body,
+                from_did=from_did,
+                message_id=payload.message_id,
+                timestamp=payload.timestamp,
+                conversation_id=payload.conversation_id,
+            )
         created_at = _parse_signed_timestamp(payload.timestamp)
 
     try:
@@ -829,6 +828,7 @@ async def send_message(
             db,
             conversation_type="mail",
             created_by_did=sender_did,
+            conversation_id=payload.conversation_id,
             initiator={
                 "did": sender_did,
                 "agent_id": auth.agent_id,

@@ -201,11 +201,13 @@ async def create_conversation(
     created_by_did: str,
     initiator: ConversationParticipant | dict[str, Any],
     recipients: Sequence[ConversationParticipant | dict[str, Any]],
+    conversation_id: str | UUID | None = None,
     team_id: str | None = None,
     ttl: timedelta | None = DEFAULT_CONVERSATION_TTL,
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Create a conversation and its initial participant set in one transaction."""
+    conversation_uuid = _uuid_or_none(conversation_id, field_name="conversation_id")
     normalized_type = _normalize_type(conversation_type)
     creator_did = _normalize_did(created_by_did, field_name="created_by_did")
     initiator_record = _participant_record(initiator, role="initiator")
@@ -215,8 +217,8 @@ async def create_conversation(
     participant_records = _dedupe_participants(
         [initiator_record, *[_participant_record(item, role="participant") for item in recipients]]
     )
-    if len(participant_records) < 2:
-        raise ValidationError("Conversation requires at least two participants")
+    if len(participant_records) < 1:
+        raise ValidationError("Conversation requires at least one participant")
 
     now = _now_utc()
     effective_expires_at = _expires_at(now, ttl, expires_at)
@@ -225,12 +227,14 @@ async def create_conversation(
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.conversations}} (
-                conversation_type, team_id, created_by_did, created_at, updated_at, expires_at
+                conversation_id, conversation_type, team_id, created_by_did,
+                created_at, updated_at, expires_at
             )
-            VALUES ($1, $2, $3, $4, $4, $5)
+            VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $5, $6)
             RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
                       created_at, updated_at, closed_at, expires_at
             """,
+            conversation_uuid,
             normalized_type,
             team_id,
             creator_did,

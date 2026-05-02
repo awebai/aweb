@@ -429,7 +429,13 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 				})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": cert.Team, "agents": agents})
+		case "/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
 		case "/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
 			postedCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
 			if err := json.NewDecoder(r.Body).Decode(&postedBody); err != nil {
 				t.Fatalf("decode chat body: %v", err)
@@ -512,7 +518,13 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 				})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": cert.Team, "agents": agents})
+		case "/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
 		case "/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
 			chatPosts++
 			http.Error(w, "unexpected chat post", http.StatusInternalServerError)
 		case "/v1/agents/heartbeat":

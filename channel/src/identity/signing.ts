@@ -24,6 +24,7 @@ export interface MessageEnvelope {
 
 export type VerificationStatus =
   | "verified"
+  | "verified_legacy"
   | "verified_custodial"
   | "unverified"
   | "failed"

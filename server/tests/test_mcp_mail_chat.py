@@ -74,6 +74,31 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
 
 
 @pytest.mark.asyncio
+async def test_mcp_send_mail_requires_nonempty_body(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(uuid4()),
+            alias="alice",
+            did_key="did:key:z6MkAlice",
+        ),
+    )
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            to="bob",
+            body="   ",
+        )
+    )
+
+    assert result == {"error": "body is required"}
+
+
+@pytest.mark.asyncio
 async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     agent_id = uuid4()
@@ -515,6 +540,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["from"] == "alice"
     assert seen[0]["payload"]["from_did"] == alice_did
     assert seen[0]["payload"]["from_stable_id"] == "did:aw:alice"
+    assert seen[0]["payload"]["conversation_id"] == result["conversation_id"]
     assert seen[0]["payload"]["to"] == "bob"
     assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"

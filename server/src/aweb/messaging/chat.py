@@ -217,6 +217,7 @@ async def ensure_session(
     team_id: str | None,
     participant_rows: list[dict[str, Any]],
     created_by: str,
+    session_id: UUID | None = None,
 ) -> UUID:
     aweb_db = db.get_manager("aweb")
     normalized_participants: list[dict[str, Any]] = []
@@ -238,7 +239,7 @@ async def ensure_session(
     if len(normalized_participants) < 2:
         raise ServiceError("Chat session requires at least two participants")
 
-    if len(normalized_participants) == 2:
+    if session_id is None and len(normalized_participants) == 2:
         existing = await find_session_between(
             db,
             did_a=normalized_participants[0]["did"],
@@ -260,10 +261,11 @@ async def ensure_session(
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
             """
-            INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
-            VALUES ($1, $2)
+            INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+            VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3)
             RETURNING session_id
             """,
+            session_id,
             team_id,
             created_by,
         )

@@ -1089,6 +1089,79 @@ func TestSendWithLeaving(t *testing.T) {
 	}
 }
 
+func TestSendWithLeavingReusesExistingSession(t *testing.T) {
+	t.Parallel()
+
+	var gotBody awid.ChatSendMessageRequest
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "bob"},
+						ParticipantAddresses: []string{"test.local/alice", "test.local/bob"},
+						CreatedAt:            "2026-01-01T00:00:01Z",
+					},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			jsonResponse(w, awid.ChatSendMessageResponse{MessageID: "m1", Delivered: true})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"test.local/bob"}, "goodbye", SendOptions{Leaving: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%s, want s1", result.SessionID)
+	}
+	if !gotBody.Leaving {
+		t.Fatal("leaving=false, want true")
+	}
+	if gotBody.Body != "goodbye" {
+		t.Fatalf("body=%q, want goodbye", gotBody.Body)
+	}
+}
+
+func TestSendWithLeavingDoesNotReuseBareAliasSession(t *testing.T) {
+	t.Parallel()
+
+	var gotBody awid.ChatCreateSessionRequest
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "new-session", MessageID: "m1"})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "goodbye", SendOptions{Leaving: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "new-session" {
+		t.Fatalf("session_id=%s, want new-session", result.SessionID)
+	}
+	if len(gotBody.ToAliases) != 1 || gotBody.ToAliases[0] != "bob" {
+		t.Fatalf("to_aliases=%v, want [bob]", gotBody.ToAliases)
+	}
+	if !gotBody.Leaving {
+		t.Fatal("leaving=false, want true")
+	}
+}
+
 func TestSendNoWait(t *testing.T) {
 	t.Parallel()
 
@@ -4245,6 +4318,33 @@ func TestFindSessionPendingPrefersWaiting(t *testing.T) {
 	}
 }
 
+func TestFindLatestSessionPendingPrefersActivity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s-waiting", Participants: []string{"alice", "bob"}, SenderWaiting: true, LastActivity: "2026-01-01T00:00:01Z"},
+					{SessionID: "s-recent", Participants: []string{"alice", "bob"}, SenderWaiting: false, LastActivity: "2026-01-01T00:00:05Z"},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, senderWaiting, err := findLatestSession(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-recent" {
+		t.Fatalf("session_id=%s, want s-recent (latest selection should prefer activity)", sessionID)
+	}
+	if senderWaiting {
+		t.Fatal("sender_waiting=true, want false from latest active session")
+	}
+}
+
 func TestFindSessionPendingTiebreaksOnActivity(t *testing.T) {
 	t.Parallel()
 
@@ -4295,6 +4395,43 @@ func TestFindSessionFallbackTiebreaksOnCreatedAt(t *testing.T) {
 	}
 	if sessionID != "s-recent" {
 		t.Fatalf("session_id=%s, want s-recent (most recent created_at wins tiebreak)", sessionID)
+	}
+}
+
+func TestFindSessionFallbackTiebreaksOnLastActivity(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:    "s-newer-created",
+						Participants: []string{"alice", "bob"},
+						CreatedAt:    "2026-01-01T00:00:05Z",
+						LastActivity: "2026-01-01T00:00:05Z",
+					},
+					{
+						SessionID:    "s-active",
+						Participants: []string{"alice", "bob"},
+						CreatedAt:    "2026-01-01T00:00:01Z",
+						LastActivity: "2026-01-01T00:00:10Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "s-active" {
+		t.Fatalf("session_id=%s, want s-active (most recent activity wins tiebreak)", sessionID)
 	}
 }
 

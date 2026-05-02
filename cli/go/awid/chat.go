@@ -120,6 +120,7 @@ func (c *Client) toAddressForSession(ctx context.Context, sessionID string) (str
 }
 
 type ChatCreateSessionRequest struct {
+	SessionID     string   `json:"session_id,omitempty"`
 	ToAliases     []string `json:"to_aliases,omitempty"`
 	ToDIDs        []string `json:"to_dids,omitempty"`
 	ToAddresses   []string `json:"to_addresses,omitempty"`
@@ -155,6 +156,13 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
+	if c.signingKey != nil && strings.TrimSpace(payload.SessionID) == "" {
+		sessionID, err := GenerateUUID4()
+		if err != nil {
+			return nil, err
+		}
+		payload.SessionID = sessionID
+	}
 
 	to := strings.Join(payload.ToAliases, ",")
 	directIdentityTargets := len(payload.ToDIDs) > 0 || len(payload.ToAddresses) > 0
@@ -183,6 +191,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		To:                      to,
 		Type:                    "chat",
 		Body:                    payload.Message,
+		ConversationID:          strings.TrimSpace(payload.SessionID),
 		WaitSeconds:             payload.WaitSeconds,
 		ReplyTo:                 payload.ReplyTo,
 		SenderLeaving:           payload.Leaving,
@@ -419,6 +428,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 // ChatSendMessage sends a message in an existing chat session.
 type ChatSendMessageRequest struct {
 	Body          string `json:"body"`
+	Leaving       bool   `json:"leaving,omitempty"`
 	ExtendWait    bool   `json:"hang_on,omitempty"`
 	ReplyTo       string `json:"reply_to,omitempty"`
 	FromDID       string `json:"from_did,omitempty"`
@@ -451,12 +461,14 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		from = c.signedPayloadFrom(false, true)
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:    from,
-		To:      to,
-		Type:    "chat",
-		Body:    payload.Body,
-		ReplyTo: payload.ReplyTo,
-		HangOn:  payload.ExtendWait,
+		From:           from,
+		To:             to,
+		Type:           "chat",
+		Body:           payload.Body,
+		ConversationID: strings.TrimSpace(sessionID),
+		ReplyTo:        payload.ReplyTo,
+		SenderLeaving:  payload.Leaving,
+		HangOn:         payload.ExtendWait,
 	})
 	if err != nil {
 		return nil, err
@@ -483,6 +495,7 @@ type ChatSessionItem struct {
 	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	CreatedAt            string   `json:"created_at"`
+	LastActivity         string   `json:"last_activity,omitempty"`
 	SenderWaiting        bool     `json:"sender_waiting,omitempty"`
 }
 

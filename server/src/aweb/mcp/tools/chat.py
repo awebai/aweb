@@ -392,6 +392,7 @@ async def chat_send(
         to_value, to_current_did, to_stable_id = _recipient_signed_fields([target])
         signed_fields = {
             "body": message,
+            "conversation_id": str(sid),
             "from": _signed_from(auth, actor_alias),
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),
@@ -460,6 +461,7 @@ async def chat_send(
         to_value, to_current_did, to_stable_id = _recipient_signed_fields(recipient_rows)
         signed_fields = {
             "body": message,
+            "conversation_id": str(sid),
             "from": _signed_from(auth, actor_alias),
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),

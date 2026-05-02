@@ -255,18 +255,24 @@ async def test_touch_conversation_activity_slides_expiry(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_create_conversation_validates_participant_set(aweb_cloud_db):
+async def test_create_conversation_allows_self_conversation(aweb_cloud_db):
     await _insert_team(aweb_cloud_db.aweb_db)
 
-    with pytest.raises(ValidationError, match="at least two participants"):
-        await create_conversation(
-            _DbShim(aweb_cloud_db.aweb_db),
-            conversation_type="mail",
-            created_by_did="did:aw:alice",
-            initiator={"did": "did:aw:alice", "alias": "alice"},
-            recipients=[],
-            team_id="backend:acme.com",
-        )
+    conversation = await create_conversation(
+        _DbShim(aweb_cloud_db.aweb_db),
+        conversation_type="mail",
+        created_by_did="did:aw:alice",
+        initiator={"did": "did:aw:alice", "alias": "alice", "address": "acme.com/alice"},
+        recipients=[{"did": "did:aw:alice", "alias": "alice", "address": "acme.com/alice"}],
+        team_id="backend:acme.com",
+    )
+    participants = await list_conversation_participants(
+        _DbShim(aweb_cloud_db.aweb_db),
+        conversation_id=conversation["conversation_id"],
+    )
+
+    assert len(participants) == 1
+    assert participants[0]["did"] == "did:aw:alice"
 
 
 @pytest.mark.asyncio
