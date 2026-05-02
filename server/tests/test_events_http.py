@@ -435,6 +435,7 @@ async def test_events_stream_matches_pending_chat_across_viewer_dids(aweb_cloud_
 
     assert resp.status_code == 200
     assert "event: actionable_chat" in resp.text
+    assert f'"conversation_id": "{session["session_id"]}"' in resp.text
     assert '"from_alias": "alice"' in resp.text
     assert '"from_did": "did:aw:alice"' in resp.text
     assert '"from_address": "acme.com/alice"' in resp.text
@@ -519,6 +520,10 @@ async def test_current_actionable_chat_uses_per_session_participant_lists(aweb_c
         "11111111-1111-4111-8111-111111111111",
         "22222222-2222-4222-8222-222222222222",
     }
+    assert {item["conversation_id"] for item in actionable} == {
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    }
     assert all(item["sender_waiting"] is True for item in actionable)
     by_session = {item["session_id"]: item for item in actionable}
     assert by_session["11111111-1111-4111-8111-111111111111"]["from_address"] == "acme.com/alice"
@@ -590,6 +595,7 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
 
     assert len(actionable) == 1
     assert actionable[0]["from_did"] == "did:key:z6MkAliceCurrent"
+    assert actionable[0]["conversation_id"] == "33333333-3333-4333-8333-333333333333"
     assert actionable[0]["from_stable_id"] == "did:aw:alice"
     assert actionable[0]["from_address"] == "acme.com/alice"
 
@@ -628,15 +634,28 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
         inbox_dids=["did:aw:bob"],
     )
     assert len(previous) == 50
+    assert all(item["conversation_id"] == item["message_id"] for item in previous)
 
     newest_message_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    newest_conversation_id = "99999999-9999-4999-8999-999999999999"
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', 'did:aw:alice', $2, $2)
+        """,
+        newest_conversation_id,
+        created_at + timedelta(hours=2),
+    )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.messages}}
-            (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
-        VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'newest', 'newest-body', $2)
+            (message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+        VALUES ($1, $2, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'newest', 'newest-body', $3)
         """,
         newest_message_id,
+        newest_conversation_id,
         created_at + timedelta(hours=2),
     )
 
@@ -652,3 +671,5 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
 
     assert newest_message_id in {item["message_id"] for item in current}
     assert newest_message_id in {item["message_id"] for item in changed}
+    newest = next(item for item in current if item["message_id"] == newest_message_id)
+    assert newest["conversation_id"] == newest_conversation_id

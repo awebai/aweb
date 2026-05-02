@@ -65,50 +65,58 @@ async def list_conversations(
             raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     # --- Mail conversations ---
-    # Mail is one conversation per stored message. message_id is unique per row.
+    # New mail rows share conversation_id across a thread. Legacy rows without
+    # conversation_id degrade to one conversation per stored message.
     mail_rows = await aweb_db.fetch_all(
         """
         SELECT
-            m.message_id::text AS conversation_id,
-            m.created_at AS last_message_at,
-            m.body AS last_body,
-            m.from_alias AS last_from,
-            m.from_did AS last_from_did,
-            m.subject AS subject,
+            m.message_id,
+            m.conversation_id,
+            m.created_at,
+            m.body,
+            m.from_alias,
+            m.from_did,
+            m.subject,
             m.to_alias AS to_alias,
             m.to_did AS to_did,
-            CASE
-                WHEN m.to_did = ANY($1::text[]) AND m.read_at IS NULL THEN 1
-                ELSE 0
-            END::int AS unread_count
+            m.read_at
         FROM {{tables.messages}} m
         WHERE m.from_did = ANY($1::text[])
            OR m.to_did = ANY($1::text[])
-        ORDER BY m.created_at DESC
+        ORDER BY m.created_at DESC, m.message_id DESC
         """,
         actor_dids,
     )
 
-    mail_items: list[dict] = []
+    actor_did_set = set(actor_dids)
+    mail_by_conversation: dict[str, dict] = {}
     for row in mail_rows:
-        preview = (row["last_body"] or "")[:100]
-        mail_items.append(
-            {
+        conversation_id = str(row["conversation_id"] or row["message_id"])
+        item = mail_by_conversation.get(conversation_id)
+        if item is None:
+            preview = (row["body"] or "")[:100]
+            item = {
                 "conversation_type": "mail",
-                "conversation_id": row["conversation_id"],
-                "participants": _dedupe_labels(
-                    [
-                        _conversation_label(row["last_from"], row["last_from_did"]),
-                        _conversation_label(row["to_alias"], row["to_did"]),
-                    ]
-                ),
+                "conversation_id": conversation_id,
+                "participants": [],
                 "subject": row["subject"] or "",
-                "last_message_at": row["last_message_at"],
-                "last_message_from": _conversation_label(row["last_from"], row["last_from_did"]),
+                "last_message_at": row["created_at"],
+                "last_message_from": _conversation_label(row["from_alias"], row["from_did"]),
                 "last_message_preview": preview,
-                "unread_count": row["unread_count"],
+                "unread_count": 0,
             }
+            mail_by_conversation[conversation_id] = item
+        item["participants"] = _dedupe_labels(
+            item["participants"]
+            + [
+                _conversation_label(row["from_alias"], row["from_did"]),
+                _conversation_label(row["to_alias"], row["to_did"]),
+            ]
         )
+        if (row["to_did"] or "").strip() in actor_did_set and row["read_at"] is None:
+            item["unread_count"] += 1
+
+    mail_items = list(mail_by_conversation.values())
 
     # --- Chat conversations ---
     rows_by_session: dict[str, dict] = {}

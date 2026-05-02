@@ -50,19 +50,20 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
     rows = await aweb_db.fetch_all(
         """
         WITH unread AS (
-            SELECT message_id, from_did, from_alias, from_address, subject, priority, created_at
+            SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority, created_at
             FROM {{tables.messages}}
             WHERE to_did = ANY($1::text[])
               AND read_at IS NULL
         ),
         windowed AS (
-            SELECT message_id, from_did, from_alias, from_address, subject, priority, created_at
+            SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority, created_at
             FROM unread
             ORDER BY created_at DESC, message_id DESC
             LIMIT 50
         )
         SELECT
             message_id,
+            COALESCE(conversation_id, message_id)::text AS conversation_id,
             from_did,
             from_alias,
             from_address,
@@ -83,6 +84,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         {
             "type": "actionable_mail",
             "message_id": str(r["message_id"]),
+            "conversation_id": str(r["conversation_id"]),
             "from_alias": r["from_alias"],
             "from_did": (r.get("from_did") or "").strip(),
             "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get("stable_id", ""),
@@ -156,6 +158,7 @@ async def _current_actionable_chat(
             {
                 "type": "actionable_chat",
                 "session_id": item["session_id"],
+                "conversation_id": item["session_id"],
                 "participants": list(item.get("participants") or []),
                 "participant_addresses": [
                     (address or "").strip() or routable_chat_address(

@@ -601,6 +601,7 @@ class CreateSessionParticipant(BaseModel):
 
 class CreateSessionResponse(BaseModel):
     session_id: str
+    conversation_id: str
     message_id: str
     participants: list[CreateSessionParticipant]
     sse_url: str
@@ -774,6 +775,7 @@ async def create_or_send(
         {
             "team_id": auth.team_id,
             "session_id": str(session_id),
+            "conversation_id": str(session_id),
             "message_id": str(msg_row["message_id"]),
             "from_agent_id": actor_agent_id,
             "from_alias": auth.alias or "",
@@ -790,6 +792,7 @@ async def create_or_send(
 
     return CreateSessionResponse(
         session_id=str(session_id),
+        conversation_id=str(session_id),
         message_id=str(msg_row["message_id"]),
         participants=[
             {
@@ -916,6 +919,7 @@ async def pending(
         pending_items.append(
             {
                 "session_id": item["session_id"],
+                "conversation_id": item["session_id"],
                 "participants": participants,
                 "participant_dids": [
                     (row.get("did") or "").strip()
@@ -1012,6 +1016,7 @@ async def history(
         )
         history_items.append(
             {
+                "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
@@ -1189,6 +1194,7 @@ async def _sse_events(
                 payload = {
                     "type": "message",
                     "session_id": session_id_str,
+                    "conversation_id": session_id_str,
                     "message_id": str(row["message_id"]),
                     "from_agent": row["from_alias"],
                     "from_address": from_address,
@@ -1283,6 +1289,7 @@ async def _sse_events(
                     payload = {
                         "type": "message",
                         "session_id": session_id_str,
+                        "conversation_id": session_id_str,
                         "message_id": str(row["message_id"]),
                         "from_agent": row["from_alias"],
                         "from_address": from_address,
@@ -1323,6 +1330,7 @@ async def _sse_events(
                     payload = {
                         "type": "read_receipt",
                         "session_id": session_id_str,
+                        "conversation_id": session_id_str,
                         "reader_alias": row["alias"],
                         "up_to_message_id": str(row["last_read_message_id"]) if row["last_read_message_id"] else "",
                         "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
@@ -1427,6 +1435,7 @@ class SendMessageRequest(BaseModel):
 
 class SendMessageResponse(BaseModel):
     message_id: str
+    conversation_id: str
     delivered: bool
     extends_wait_seconds: int = 0
 
@@ -1519,6 +1528,7 @@ async def send_message(
         {
             "team_id": auth.team_id,
             "session_id": str(session_uuid),
+            "conversation_id": str(session_uuid),
             "message_id": str(msg_row["message_id"]),
             "from_agent_id": actor_agent_id,
             "from_alias": auth.alias or "",
@@ -1531,6 +1541,7 @@ async def send_message(
 
     return SendMessageResponse(
         message_id=str(msg_row["message_id"]),
+        conversation_id=str(session_uuid),
         delivered=True,
         extends_wait_seconds=HANG_ON_EXTENSION_SECONDS if payload.hang_on else 0,
     )
@@ -1538,6 +1549,7 @@ async def send_message(
 
 class SessionListItem(BaseModel):
     session_id: str
+    conversation_id: str
     participants: list[str]
     participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
@@ -1617,6 +1629,7 @@ async def list_sessions(
         sessions.append(
             SessionListItem(
                 session_id=str(row["session_id"]),
+                conversation_id=str(row["session_id"]),
                 participants=[
                     participant["alias"]
                     for participant in session_participants

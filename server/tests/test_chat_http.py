@@ -2430,6 +2430,7 @@ async def test_chat_history_and_read_accept_alternate_session_participant_did(aw
         )
 
     assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["conversation_id"] == str(session_id)
     assert [item["body"] for item in history.json()["messages"]] == ["hello"]
     assert read.status_code == 200, read.text
     assert read.json()["messages_marked"] == 1
@@ -2497,6 +2498,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
 
     assert history.status_code == 200, history.text
     body = history.json()
+    assert body["messages"][0]["conversation_id"] == str(session_id)
     assert body["messages"][0]["from_did"] == "did:key:z6MkAliceCurrent"
     assert body["messages"][0]["from_stable_id"] == "did:aw:alice"
     assert body["messages"][0]["from_address"] == "acme.com/alice"
@@ -2559,6 +2561,7 @@ async def test_chat_history_filters_by_message_id(aweb_cloud_db):
     assert history.status_code == 200, history.text
     body = history.json()
     assert [item["message_id"] for item in body["messages"]] == [str(second_message_id)]
+    assert [item["conversation_id"] for item in body["messages"]] == [str(session_id)]
     assert [item["body"] for item in body["messages"]] == ["second"]
 
 
@@ -2758,6 +2761,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
     assert resp.json()["sessions"] == [
         {
             "session_id": str(session_id),
+            "conversation_id": str(session_id),
             "participants": ["bob"],
             "participant_dids": ["did:aw:bob"],
             "participant_addresses": ["acme.com/bob"],

@@ -139,7 +139,101 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_conversations_lists_each_mail_message_as_its_own_conversation(aweb_cloud_db):
+async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        VALUES (
+            '55555555-5555-4555-8555-555555555555',
+            'mail',
+            'did:aw:alice',
+            NOW() - INTERVAL '2 minutes',
+            NOW()
+        )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, alias, address, transport_hint, role
+        )
+        VALUES
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator'),
+            ('55555555-5555-4555-8555-555555555555', $1, 'bob', 'acme.com/bob', 'mail', 'participant')
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES
+            (
+                '11111111-1111-1111-1111-111111111111',
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:alice',
+                $1,
+                'alice',
+                'bob',
+                'first',
+                'one',
+                'normal',
+                NOW() - INTERVAL '1 minute'
+            ),
+            (
+                '44444444-4444-4444-4444-444444444444',
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:alice',
+                $1,
+                'alice',
+                'bob',
+                'second',
+                'two',
+                'normal',
+                NOW()
+            )
+        """,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="bob",
+                did_aw="did:aw:bob",
+                current_did_key=bob_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/conversations", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    conversations = resp.json()["conversations"]
+    assert len(conversations) == 1
+    assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
+    assert conversations[0]["subject"] == "second"
+    assert conversations[0]["last_message_preview"] == "two"
+    assert conversations[0]["unread_count"] == 2
+    assert conversations[0]["participants"] == ["alice", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_conversations_lists_legacy_mail_messages_without_conversation_id_separately(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
