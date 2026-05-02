@@ -175,8 +175,10 @@ These are the questions Mia surfaced in mail `3114bd33`. Answers
 are best-current — revisit when work resumes since the protocol
 context may have moved.
 
-1. **Mail threading state**: confirmed as `reply_to UUID` chains
-   only. Mail threading is the prerequisite (above).
+1. **Mail threading state**: confirmed as zero thread state on the
+   mail side; chat is structurally already conversation-shaped.
+   See the "Prerequisite: mail threading" section above for the
+   corrected empirical reading.
 
 2. **Authentication vs. delivery routing**: conversation
    membership is a delivery oracle, not an auth shortcut. Inbound
