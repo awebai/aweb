@@ -22,11 +22,18 @@ from aweb.messaging.alias_targets import (
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
+    evaluate_messaging_policy,
     get_agent_by_alias,
     resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
-from aweb.service_errors import ServiceError
+from aweb.messaging.conversations import (
+    create_conversation,
+    list_conversation_participants,
+    require_active_conversation_participant,
+    touch_conversation_activity,
+)
+from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
@@ -67,9 +74,10 @@ async def send_mail(
     *,
     registry_client,
     hosted_signer: HostedMessageSigner | None = None,
-    to: str,
+    to: str = "",
+    conversation_id: str = "",
     subject: str = "",
-    body: str,
+    body: str = "",
     priority: str = "normal",
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
@@ -81,8 +89,116 @@ async def send_mail(
         )
 
     recipient_ref = (to or "").strip()
-    if not recipient_ref:
-        return json.dumps({"error": "Recipient is required"})
+    conversation_ref = (conversation_id or "").strip()
+    if conversation_ref and recipient_ref:
+        return json.dumps({"error": "Provide to or conversation_id, not both"})
+    if not recipient_ref and not conversation_ref:
+        return json.dumps({"error": "Recipient or conversation_id is required"})
+
+    if conversation_ref:
+        message_id = uuid_mod.uuid4()
+        created_at = datetime.now(timezone.utc).replace(microsecond=0)
+        sender_did = primary_auth_did(auth)
+        signature: str | None = None
+        signed_payload: str | None = None
+        try:
+            auth_context = await require_active_conversation_participant(
+                db_infra,
+                conversation_id=conversation_ref,
+                authenticated_did=sender_did,
+                equivalent_dids=auth_dids(auth),
+            )
+            participants = await list_conversation_participants(
+                db_infra,
+                conversation_id=conversation_ref,
+            )
+            sender_participant_did = auth_context["participant"]["did"]
+            recipients = [
+                participant for participant in participants
+                if participant["did"] != sender_participant_did
+            ]
+            if len(recipients) != 1:
+                raise ValidationError("Mail conversation continuation requires exactly one recipient")
+            recipient_participant = recipients[0]
+        except (ValidationError, NotFoundError, ForbiddenError) as exc:
+            return json.dumps({"error": exc.detail})
+
+        signed_fields = {
+            "body": body,
+            "conversation_id": conversation_ref,
+            "from": (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
+            "from_did": (auth.did_key or "").strip(),
+            "message_id": str(message_id),
+            "subject": subject,
+            "timestamp": _utc_iso(created_at),
+            "to": "",
+            "to_did": "",
+            "type": "mail",
+        }
+        if auth.did_aw:
+            signed_fields["from_stable_id"] = auth.did_aw
+        if priority != "normal":
+            signed_fields["priority"] = priority
+        try:
+            signed = await sign_hosted_message(
+                auth=auth,
+                signer=hosted_signer,
+                message_type="mail",
+                payload=signed_fields,
+            )
+        except HostedMessageSigningError as exc:
+            return json.dumps({"error": str(exc)})
+        if signed is not None:
+            sender_did = signed.from_did
+            signature = signed.signature
+            signed_payload = signed.signed_payload
+
+        recipient_did = recipient_participant["did"]
+        recipient = {
+            "agent_id": recipient_participant.get("agent_id"),
+            "alias": recipient_participant.get("alias") or recipient_did,
+            "address": recipient_participant.get("address"),
+            "did_aw": recipient_did if str(recipient_did).startswith("did:aw:") else "",
+            "did_key": recipient_did if str(recipient_did).startswith("did:key:") else "",
+            "messaging_policy": None,
+        }
+        try:
+            message_id, created_at = await deliver_message(
+                db_infra,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                from_did=sender_did,
+                to_did=recipient_did,
+                team_id=auth_context["conversation"].get("team_id") or auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                sender_address=sender_address,
+                to_agent_id=recipient_participant.get("agent_id"),
+                to_alias=recipient_participant.get("alias"),
+                subject=subject,
+                body=body,
+                priority=cast(MessagePriority, priority),
+                signature=signature,
+                signed_payload=signed_payload,
+                created_at=created_at,
+                message_id=message_id,
+                conversation_id=conversation_ref,
+                skip_policy_check=True,
+            )
+            await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
+        except Exception as exc:
+            detail = getattr(exc, "detail", None)
+            return json.dumps({"error": detail or str(exc)})
+
+        return json.dumps(
+            {
+                "message_id": str(message_id),
+                "conversation_id": conversation_ref,
+                "status": "delivered",
+                "delivered_at": _utc_iso(created_at),
+                "to": recipient_participant.get("alias") or recipient_did,
+            }
+        )
 
     recipient = None
     recipient_did = ""
@@ -170,6 +286,36 @@ async def send_mail(
         signed_payload = signed.signed_payload
 
     try:
+        if not (recipient or {}).get("external"):
+            await evaluate_messaging_policy(
+                db_infra,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                sender_did=sender_did,
+                sender_address=sender_address,
+            )
+        conversation = await create_conversation(
+            db_infra,
+            conversation_type="mail",
+            created_by_did=sender_did,
+            initiator={
+                "did": sender_did,
+                "agent_id": auth.agent_id,
+                "alias": auth.alias or sender_address or sender_did,
+                "address": sender_address,
+                "transport_hint": "sender",
+            },
+            recipients=[
+                {
+                    "did": recipient_did,
+                    "agent_id": str(recipient["agent_id"]) if recipient.get("agent_id") else None,
+                    "alias": recipient_alias,
+                    "address": recipient.get("address") or (recipient_ref if "/" in recipient_ref else None),
+                    "transport_hint": "to_address" if "/" in recipient_ref else "to_alias",
+                }
+            ],
+            team_id=auth.team_id,
+        )
         message_id, created_at = await deliver_message(
             db_infra,
             registry_client=registry_client,
@@ -189,6 +335,8 @@ async def send_mail(
             signed_payload=signed_payload,
             created_at=created_at,
             message_id=message_id,
+            conversation_id=conversation["conversation_id"],
+            skip_policy_check=True,
         )
     except Exception as exc:
         detail = getattr(exc, "detail", None)
@@ -197,6 +345,7 @@ async def send_mail(
     return json.dumps(
         {
             "message_id": str(message_id),
+            "conversation_id": conversation["conversation_id"],
             "status": "delivered",
             "delivered_at": _utc_iso(created_at),
             "to": recipient_alias,
@@ -225,7 +374,7 @@ async def check_inbox(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT message_id, from_agent_id, from_alias, from_address, to_alias,
+        SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload
         FROM {{tables.messages}}
@@ -258,6 +407,7 @@ async def check_inbox(
         read_at = _utc_iso(r["read_at"]) if r["read_at"] is not None else None
         msg: dict = {
             "message_id": str(r["message_id"]),
+            "conversation_id": str(r["conversation_id"]) if r.get("conversation_id") else None,
             "from_agent_id": (str(r["from_agent_id"]) if r.get("from_agent_id") else None),
             "from_alias": r["from_alias"],
             "from_address": r["from_address"] or "",

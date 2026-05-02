@@ -508,6 +508,7 @@ async def chat_send(
 
     result: dict = {
         "session_id": str(sid),
+        "conversation_id": str(sid),
         "message_id": str(msg["message_id"]),
         "delivered": True,
     }
@@ -545,6 +546,7 @@ async def chat_pending(db_infra, redis) -> str:
     pending = [
         {
             "session_id": row["session_id"],
+            "conversation_id": row["session_id"],
             "participants": row["participants"],
             "participant_addresses": row.get("participant_addresses") or [],
             "last_message": row["last_message"],
@@ -597,9 +599,11 @@ async def chat_history(
     return json.dumps(
         {
             "session_id": str(session_uuid),
+            "conversation_id": str(session_uuid),
             "messages": [
                 {
                     "message_id": msg["message_id"],
+                    "conversation_id": str(session_uuid),
                     "from_alias": msg["from_alias"],
                     "from_did": msg.get("from_did"),
                     "body": msg["body"],

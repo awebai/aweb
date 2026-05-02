@@ -159,11 +159,12 @@ def register_tools(
 
     @mcp.tool(
         name="send_mail",
-        description="Send an async message to another agent by alias.",
+        description="Send async mail by recipient, or continue an existing mail conversation by conversation_id.",
     )
     async def send_mail(
-        to: str,
         body: str,
+        to: str = "",
+        conversation_id: str = "",
         subject: str = "",
         priority: str = "normal",
     ) -> str:
@@ -172,6 +173,7 @@ def register_tools(
             registry_client=registry_client,
             hosted_signer=hosted_signer,
             to=to,
+            conversation_id=conversation_id,
             subject=subject,
             body=body,
             priority=priority,

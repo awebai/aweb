@@ -370,6 +370,73 @@ describe("dispatchEvent", () => {
     expect(notification).toHaveBeenCalledTimes(1);
   });
 
+  test("includes mail conversation_id and keeps duplicate suppression message-specific", async () => {
+    const notification = vi.fn();
+    const mcp = { notification } as unknown as { notification: typeof notification };
+    const pinStore = new PinStore();
+    const first = { ...(await signedInboxMail("msg-conv-1")), conversation_id: "conv-mail-1" };
+    const second = { ...(await signedInboxMail("msg-conv-2")), conversation_id: "conv-mail-1" };
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [first, second] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = {
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+    const dispatched = new Set<string>();
+
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      dispatched,
+      {
+        type: "mail_message",
+        message_id: "msg-conv-2",
+        conversation_id: "conv-mail-1",
+      } satisfies AgentEvent,
+    );
+    await dispatchEvent(
+      mcp as never,
+      client as never,
+      pinStore,
+      trust,
+      self,
+      dispatched,
+      {
+        type: "mail_message",
+        message_id: "msg-conv-2",
+        conversation_id: "conv-mail-1",
+      } satisfies AgentEvent,
+    );
+
+    expect(notification).toHaveBeenCalledTimes(2);
+    expect(notification).toHaveBeenNthCalledWith(1, {
+      method: "notifications/claude/channel",
+      params: {
+        content: "world",
+        meta: expect.objectContaining({
+          type: "mail",
+          message_id: "msg-conv-1",
+          conversation_id: "conv-mail-1",
+        }),
+      },
+    });
+    expect(notification).toHaveBeenNthCalledWith(2, {
+      method: "notifications/claude/channel",
+      params: {
+        content: "world",
+        meta: expect.objectContaining({
+          type: "mail",
+          message_id: "msg-conv-2",
+          conversation_id: "conv-mail-1",
+        }),
+      },
+    });
+  });
+
   test("fetches chat by triggering message_id instead of a latest-10 window", async () => {
     const notification = vi.fn();
     const mcp = { notification } as unknown as { notification: typeof notification };
@@ -379,6 +446,7 @@ describe("dispatchEvent", () => {
         messages: [
           {
             message_id: "chat-msg-windowed",
+            conversation_id: "sess-1",
             from_agent: "alice",
             from_address: "acme.com/alice",
             body: "hello",
@@ -403,13 +471,30 @@ describe("dispatchEvent", () => {
       trust,
       self,
       new Set(),
-      { type: "chat_message", session_id: "sess-1", message_id: "chat-msg-windowed" } satisfies AgentEvent,
+      {
+        type: "chat_message",
+        session_id: "sess-1",
+        conversation_id: "sess-1",
+        message_id: "chat-msg-windowed",
+      } satisfies AgentEvent,
     );
 
     expect(client.get).toHaveBeenCalledWith(
       "/v1/chat/sessions/sess-1/messages?unread_only=true&limit=2000&message_id=chat-msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
+    expect(notification).toHaveBeenCalledWith({
+      method: "notifications/claude/channel",
+      params: {
+        content: "hello",
+        meta: expect.objectContaining({
+          type: "chat",
+          session_id: "sess-1",
+          conversation_id: "sess-1",
+          message_id: "chat-msg-windowed",
+        }),
+      },
+    });
   });
 
   test("skips self-authored mail by concrete address", async () => {

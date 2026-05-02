@@ -1210,6 +1210,39 @@ func networkError(err error, target string) error {
 	return err
 }
 
+func httpErrorDetail(err error) string {
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return ""
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var envelope struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &envelope) == nil && strings.TrimSpace(envelope.Detail) != "" {
+		return strings.TrimSpace(envelope.Detail)
+	}
+	return body
+}
+
+func mailShowConversationError(err error, conversationID string) error {
+	code, ok := awid.HTTPStatusCode(err)
+	if !ok || code != 404 {
+		return err
+	}
+	detail := httpErrorDetail(err)
+	if strings.Contains(strings.ToLower(detail), "legacy mail without a conversation") {
+		return fmt.Errorf("%s. Show it with: aw mail show --message-id %s", detail, conversationID)
+	}
+	if detail != "" && !strings.EqualFold(detail, "Conversation not found") {
+		return fmt.Errorf("%s: %s", detail, conversationID)
+	}
+	return fmt.Errorf("mail conversation not found: %s", conversationID)
+}
+
 // checkIdentityMismatch verifies that the resolved account matches
 // the local workspace identity. Prevents silently running as the
 // wrong agent when .aw/context resolves to a different account than

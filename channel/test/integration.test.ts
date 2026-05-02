@@ -45,6 +45,7 @@ interface InitInfo {
 
 interface MailSendInfo {
   message_id: string;
+  conversation_id?: string;
 }
 
 interface ServerHandle {
@@ -161,7 +162,8 @@ describe.sequential("channel integration", () => {
       (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
     );
     expect(mailNotification.content).toBe(mailBody);
-    expect(mailNotification.meta.from).toBe("alice");
+    expect(mailNotification.meta.from).toBe(alice.address);
+    expect(mailNotification.meta.conversation_id).toBe(mail.conversation_id);
     expect(mailNotification.meta.verified).toBe("true");
 
     const chatBody = `channel verified chat ${Date.now()}`;
@@ -170,6 +172,7 @@ describe.sequential("channel integration", () => {
       (item) => item.meta.type === "chat" && item.content === chatBody,
     );
     expect(chatNotification.meta.from).toBe(alice.address);
+    expect(chatNotification.meta.conversation_id).toBeTruthy();
     expect(chatNotification.meta.verified).toBe("true");
 
     expect(channelStderr).not.toContain("fatal:");
@@ -189,6 +192,7 @@ describe.sequential("channel integration", () => {
         ...stringEnv(process.env),
         HOME: homeDir,
         AWID_REGISTRY_URL: server.awidURL,
+        AWID_SKIP_DNS_VERIFY: "1",
       },
       stderr: "pipe",
     });

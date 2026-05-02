@@ -564,6 +564,43 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
 
 
 @pytest.mark.asyncio
+async def test_mail_conversation_history_distinguishes_missing_and_legacy_message(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    legacy_message_id = "11111111-1111-1111-1111-111111111111"
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES ($1, $2, 'did:aw:bob', 'alice', 'bob', 'legacy', 'old mail', 'normal', NOW())
+        """,
+        UUID(legacy_message_id),
+        alice_did_key,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        legacy = await client.get(f"/v1/messages/conversations/{legacy_message_id}")
+        missing = await client.get("/v1/messages/conversations/99999999-9999-4999-8999-999999999999")
+
+    assert legacy.status_code == 404
+    assert "legacy mail without a conversation" in legacy.json()["detail"]
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Conversation not found"
+
+
+@pytest.mark.asyncio
 async def test_send_message_continuation_rejects_non_participant_and_closed(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()

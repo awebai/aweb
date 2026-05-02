@@ -134,7 +134,8 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
     conversations = resp.json()["conversations"]
     assert len(conversations) == 1
     assert conversations[0]["conversation_type"] == "mail"
-    assert conversations[0]["conversation_id"] == "11111111-1111-1111-1111-111111111111"
+    assert conversations[0]["conversation_id"] is None
+    assert conversations[0]["legacy_message_id"] == "11111111-1111-1111-1111-111111111111"
     assert conversations[0]["last_message_from"] == "alice"
 
 
@@ -291,11 +292,92 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
 
     assert resp.status_code == 200, resp.text
     conversations = resp.json()["conversations"]
-    assert [item["conversation_id"] for item in conversations] == [
+    assert [item["legacy_message_id"] for item in conversations] == [
         "44444444-4444-4444-4444-444444444444",
         "11111111-1111-1111-1111-111111111111",
     ]
+    assert [item.get("conversation_id") for item in conversations] == [None, None]
     assert [item["subject"] for item in conversations] == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        VALUES (
+            '55555555-5555-4555-8555-555555555555',
+            'mail',
+            $1,
+            NOW() - INTERVAL '2 minutes',
+            NOW()
+        )
+        """,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, alias, address, transport_hint, role
+        )
+        VALUES
+            ('55555555-5555-4555-8555-555555555555', $1, 'alice', 'acme.com/alice', 'mail', 'initiator'),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant')
+        """,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES (
+            '11111111-1111-1111-1111-111111111111',
+            '55555555-5555-4555-8555-555555555555',
+            $1,
+            'did:aw:bob',
+            'alice',
+            'bob',
+            'sender-visible',
+            'hello from alice',
+            'normal',
+            NOW()
+        )
+        """,
+        alice_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-1",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    headers = _signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/conversations", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    conversations = resp.json()["conversations"]
+    assert len(conversations) == 1
+    assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
+    assert "legacy_message_id" not in conversations[0] or conversations[0]["legacy_message_id"] is None
+    assert conversations[0]["subject"] == "sender-visible"
 
 
 @pytest.mark.asyncio

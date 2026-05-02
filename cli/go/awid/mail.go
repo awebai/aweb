@@ -137,6 +137,7 @@ type InboxResponse struct {
 type InboxParams struct {
 	UnreadOnly bool
 	Limit      int
+	MessageID  string
 }
 
 func (c *Client) MailConversation(ctx context.Context, conversationID string, limit int) (*InboxResponse, error) {
@@ -164,6 +165,10 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 	}
 	if p.Limit > 0 {
 		path += sep + "limit=" + itoa(p.Limit)
+		sep = "&"
+	}
+	if strings.TrimSpace(p.MessageID) != "" {
+		path += sep + "message_id=" + urlQueryEscape(strings.TrimSpace(p.MessageID))
 		sep = "&"
 	}
 	var out InboxResponse

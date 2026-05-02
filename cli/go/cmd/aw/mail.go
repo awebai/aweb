@@ -299,6 +299,7 @@ var mailInboxCmd = &cobra.Command{
 
 var (
 	mailShowConversationID string
+	mailShowMessageID      string
 	mailShowLimit          int
 )
 
@@ -307,8 +308,12 @@ var mailShowCmd = &cobra.Command{
 	Short: "Show a mail conversation",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversationID := strings.TrimSpace(mailShowConversationID)
-		if conversationID == "" {
-			return usageError("missing required flag: --conversation-id")
+		messageID := strings.TrimSpace(mailShowMessageID)
+		if conversationID == "" && messageID == "" {
+			return usageError("missing required flag: --conversation-id or --message-id")
+		}
+		if conversationID != "" && messageID != "" {
+			return usageError("--conversation-id and --message-id are mutually exclusive")
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -324,9 +329,21 @@ var mailShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.MailConversation(ctx, conversationID, mailShowLimit)
+		var resp *awid.InboxResponse
+		if messageID != "" {
+			resp, err = c.Inbox(ctx, awid.InboxParams{
+				UnreadOnly: false,
+				Limit:      mailShowLimit,
+				MessageID:  messageID,
+			})
+		} else {
+			resp, err = c.MailConversation(ctx, conversationID, mailShowLimit)
+		}
 		if err != nil {
-			return networkError(err, conversationID)
+			if conversationID != "" {
+				return mailShowConversationError(err, conversationID)
+			}
+			return networkError(err, messageID)
 		}
 		printOutput(resp, formatMailConversation)
 		return nil
@@ -346,6 +363,7 @@ func init() {
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
+	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
 	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages")
 
 	mailCmd.AddCommand(mailSendCmd, mailInboxCmd, mailShowCmd)

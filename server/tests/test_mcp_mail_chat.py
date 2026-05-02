@@ -506,6 +506,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     )
 
     assert result["status"] == "delivered"
+    assert result["conversation_id"]
     assert len(seen) == 1
     assert seen[0]["message_type"] == "mail"
     assert seen[0]["agent_id"] == str(alice_agent_id)
@@ -521,7 +522,120 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.messages}}")
     assert row["from_did"] == alice_did
+    assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["signature"]
+    assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_continues_conversation_without_recipient_rediscovery(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    conversation_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did_key = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', $2, 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        conversation_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', 'to_alias', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did_key,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did_key,
+        )
+
+    class _NoRediscoveryRegistry:
+        async def resolve_address(self, *_args, **_kwargs):
+            raise AssertionError("continuation must not rediscover the recipient address")
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_NoRediscoveryRegistry(),
+            hosted_signer=_signer,
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="conversation reply",
+        )
+    )
+
+    assert result["status"] == "delivered"
+    assert result["conversation_id"] == str(conversation_id)
+    assert result["to"] == "bob"
+    assert len(seen) == 1
+    assert seen[0]["payload"]["conversation_id"] == str(conversation_id)
+    assert seen[0]["payload"]["to"] == ""
+    assert seen[0]["payload"]["to_did"] == ""
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT conversation_id, from_did, to_did, signed_payload FROM {{tables.messages}}"
+    )
+    assert str(row["conversation_id"]) == str(conversation_id)
+    assert row["from_did"] == alice_did_key
+    assert row["to_did"] == "did:aw:bob"
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
 
@@ -775,6 +889,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     )
 
     assert result["delivered"] is True
+    assert result["conversation_id"] == result["session_id"]
     assert len(seen) == 1
     assert seen[0]["message_type"] == "chat"
     assert seen[0]["workspace_id"] == str(workspace_id)
@@ -1120,6 +1235,7 @@ async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monk
 
     assert len(data["pending"]) == 1
     assert data["pending"][0]["session_id"] == str(session_id)
+    assert data["pending"][0]["conversation_id"] == str(session_id)
     assert data["pending"][0]["last_message"] == "ping"
 
 
@@ -1179,6 +1295,8 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
         )
     )
     assert [item["body"] for item in history["messages"]] == ["hello"]
+    assert history["conversation_id"] == str(session_id)
+    assert history["messages"][0]["conversation_id"] == str(session_id)
 
     read = json.loads(
         await chat_tools.chat_read(

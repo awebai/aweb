@@ -240,7 +240,7 @@ async def get_mail_conversation(
         )
         return await _inbox_response_from_rows(db, rows)
 
-    rows = await aweb_db.fetch_all(
+    legacy_rows = await aweb_db.fetch_all(
         """
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
@@ -255,9 +255,12 @@ async def get_mail_conversation(
         actor_dids,
         limit,
     )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return await _inbox_response_from_rows(db, rows)
+    if legacy_rows:
+        raise HTTPException(
+            status_code=404,
+            detail="This is a legacy mail without a conversation; use --message-id",
+        )
+    raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 def _parse_signed_timestamp(value: str) -> datetime:

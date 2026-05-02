@@ -5,6 +5,7 @@ import { verifyMessage, verifySignedPayload } from "../identity/signing.js";
 
 export interface ChatMessage {
   message_id: string;
+  conversation_id?: string;
   from_agent: string;
   from_address?: string;
   to_address?: string;
@@ -18,6 +19,7 @@ export interface ChatMessage {
   signature?: string;
   signing_key_id?: string;
   signed_payload?: string;
+  signed_from?: string;
   rotation_announcement?: RotationAnnouncement;
   replacement_announcement?: ReplacementAnnouncement;
   is_contact?: boolean;
@@ -53,14 +55,17 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
   try {
     const payload = JSON.parse(msg.signed_payload) as {
       from?: string;
-      to?: string;
       from_did?: string;
       to_did?: string;
       from_stable_id?: string;
       to_stable_id?: string;
+      conversation_id?: string;
     };
     if (typeof payload.from_did === "string" && payload.from_did.trim()) {
       msg.from_did = payload.from_did;
+    }
+    if (typeof payload.from === "string" && payload.from.trim()) {
+      msg.signed_from = payload.from;
     }
     if (typeof payload.to_did === "string" && payload.to_did.trim()) {
       msg.to_did = payload.to_did;
@@ -71,11 +76,8 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
     if (!msg.to_stable_id && typeof payload.to_stable_id === "string") {
       msg.to_stable_id = payload.to_stable_id;
     }
-    if (!msg.from_address && typeof payload.from === "string") {
-      msg.from_address = payload.from;
-    }
-    if (!msg.to_address && typeof payload.to === "string") {
-      msg.to_address = payload.to;
+    if (!msg.conversation_id && typeof payload.conversation_id === "string") {
+      msg.conversation_id = payload.conversation_id;
     }
   } catch {
     // Signature verification will fail if the payload is malformed.
@@ -117,9 +119,14 @@ async function verifyChatMessage(msg: ChatMessage): Promise<VerificationStatus> 
     from_stable_id: msg.from_stable_id,
     to_stable_id: msg.to_stable_id,
     message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
     signature: msg.signature,
     signing_key_id: msg.signing_key_id,
   };
 
-  return verifyMessage(env);
+  const status = await verifyMessage(env);
+  if (status === "failed" && msg.conversation_id) {
+    return verifyMessage({ ...env, conversation_id: undefined });
+  }
+  return status;
 }

@@ -121,12 +121,12 @@ func formatMailInbox(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("MAILS: %d\n\n", len(resp.Messages)))
-	lastConversationID := ""
+	seenConversations := map[string]bool{}
 	for _, msg := range resp.Messages {
 		conversationID := strings.TrimSpace(msg.ConversationID)
-		if conversationID != "" && conversationID != lastConversationID {
+		if conversationID != "" && !seenConversations[conversationID] {
 			sb.WriteString(fmt.Sprintf("Conversation %s:\n", conversationID))
-			lastConversationID = conversationID
+			seenConversations[conversationID] = true
 		}
 		subj := strings.TrimSpace(msg.Subject)
 		if subj != "" {

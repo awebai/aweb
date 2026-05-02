@@ -17,6 +17,7 @@ export interface MessageEnvelope {
   from_stable_id?: string;
   to_stable_id?: string;
   message_id?: string;
+  conversation_id?: string;
   signature?: string;
   signing_key_id?: string;
 }
@@ -31,7 +32,7 @@ export type VerificationStatus =
 /**
  * Build the canonical JSON payload for message signing.
  * Fields are sorted lexicographically, no whitespace, minimal escaping.
- * Optional fields (from_stable_id, message_id, to_stable_id) are omitted when empty.
+ * Optional fields (conversation_id, from_stable_id, message_id, to_stable_id) are omitted when empty.
  */
 export function canonicalJSON(env: MessageEnvelope): string {
   const fields: [string, string][] = [
@@ -46,6 +47,7 @@ export function canonicalJSON(env: MessageEnvelope): string {
   ];
 
   if (env.from_stable_id) fields.push(["from_stable_id", env.from_stable_id]);
+  if (env.conversation_id) fields.push(["conversation_id", env.conversation_id]);
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
 

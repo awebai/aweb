@@ -17,6 +17,7 @@ export interface AgentEvent {
   agent_id?: string;
   team_id?: string;
   message_id?: string;
+  conversation_id?: string;
   from_alias?: string;
   session_id?: string;
   subject?: string;

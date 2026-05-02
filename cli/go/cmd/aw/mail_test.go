@@ -500,6 +500,90 @@ func TestAwMailShowFetchesConversation(t *testing.T) {
 	}
 }
 
+func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	messageID := "88888888-8888-4888-8888-888888888888"
+	var sawMessageIDQuery bool
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/conversations/" + messageID:
+			http.Error(w, `{"detail":"This is a legacy mail without a conversation; use --message-id"}`, http.StatusNotFound)
+		case "/v1/messages/inbox":
+			if r.URL.Query().Get("message_id") != messageID {
+				t.Fatalf("message_id query=%q, want %q", r.URL.Query().Get("message_id"), messageID)
+			}
+			sawMessageIDQuery = true
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{
+					{
+						MessageID: messageID,
+						FromAlias: "athena",
+						ToAlias:   "grace",
+						Subject:   "legacy",
+						Body:      "old mail",
+						Priority:  awid.PriorityNormal,
+						CreatedAt: "2026-05-02T00:00:00Z",
+					},
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	showConversation := exec.CommandContext(ctx, bin, "mail", "show", "--conversation-id", messageID)
+	showConversation.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	showConversation.Dir = tmp
+	out, err := showConversation.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected legacy hint failure, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "aw mail show --message-id "+messageID) {
+		t.Fatalf("missing legacy message-id hint:\n%s", string(out))
+	}
+
+	showMessage := exec.CommandContext(ctx, bin, "mail", "show", "--message-id", messageID)
+	showMessage.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	showMessage.Dir = tmp
+	out, err = showMessage.CombinedOutput()
+	if err != nil {
+		t.Fatalf("message-id show failed: %v\n%s", err, string(out))
+	}
+	if !sawMessageIDQuery {
+		t.Fatal("mail show --message-id did not query inbox by message_id")
+	}
+	if !strings.Contains(string(out), "old mail") {
+		t.Fatalf("message-id output missing mail body:\n%s", string(out))
+	}
+}
+
 func TestAwMailSendRejectsBothBodyAndBodyFile(t *testing.T) {
 	t.Parallel()
 

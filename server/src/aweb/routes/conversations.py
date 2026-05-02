@@ -13,7 +13,8 @@ router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
 
 class ConversationItem(BaseModel):
     conversation_type: str  # "mail" or "chat"
-    conversation_id: str
+    conversation_id: str | None = None
+    legacy_message_id: str | None = None
     participants: list[str]
     subject: str
     last_message_at: str
@@ -66,7 +67,8 @@ async def list_conversations(
 
     # --- Mail conversations ---
     # New mail rows share conversation_id across a thread. Legacy rows without
-    # conversation_id degrade to one conversation per stored message.
+    # conversation_id are listed by legacy_message_id so clients do not mistake
+    # a historical message id for a continuation-capable conversation id.
     mail_rows = await aweb_db.fetch_all(
         """
         SELECT
@@ -91,13 +93,16 @@ async def list_conversations(
     actor_did_set = set(actor_dids)
     mail_by_conversation: dict[str, dict] = {}
     for row in mail_rows:
-        conversation_id = str(row["conversation_id"] or row["message_id"])
-        item = mail_by_conversation.get(conversation_id)
+        real_conversation_id = str(row["conversation_id"]) if row["conversation_id"] else None
+        legacy_message_id = None if real_conversation_id else str(row["message_id"])
+        group_key = real_conversation_id or f"legacy:{legacy_message_id}"
+        item = mail_by_conversation.get(group_key)
         if item is None:
             preview = (row["body"] or "")[:100]
             item = {
                 "conversation_type": "mail",
-                "conversation_id": conversation_id,
+                "conversation_id": real_conversation_id,
+                "legacy_message_id": legacy_message_id,
                 "participants": [],
                 "subject": row["subject"] or "",
                 "last_message_at": row["created_at"],
@@ -105,7 +110,7 @@ async def list_conversations(
                 "last_message_preview": preview,
                 "unread_count": 0,
             }
-            mail_by_conversation[conversation_id] = item
+            mail_by_conversation[group_key] = item
         item["participants"] = _dedupe_labels(
             item["participants"]
             + [
@@ -211,6 +216,7 @@ async def list_conversations(
             ConversationItem(
                 conversation_type=item["conversation_type"],
                 conversation_id=item["conversation_id"],
+                legacy_message_id=item.get("legacy_message_id"),
                 participants=item["participants"],
                 subject=item["subject"],
                 last_message_at=ts.isoformat() if hasattr(ts, "isoformat") else str(ts),

@@ -48,6 +48,11 @@ function pruneDispatched(dispatched: Set<string>): void {
   }
 }
 
+function dispatchKey(channel: "mail" | "chat", conversationID: string | undefined, messageID: string): string {
+  const conversation = (conversationID || "").trim();
+  return `${channel}:${conversation}:${messageID}`;
+}
+
 async function main() {
   const workdir = process.cwd();
   const config = await resolveConfig(workdir);
@@ -159,8 +164,10 @@ export async function dispatchEvent(
       let pinsDirty = false;
       for (const msg of messages) {
         if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, self)) continue;
-        if (dispatched.has(msg.message_id)) continue;
-        dispatched.add(msg.message_id);
+        const conversationID = msg.conversation_id || event.conversation_id;
+        const key = dispatchKey("mail", conversationID, msg.message_id);
+        if (dispatched.has(key)) continue;
+        dispatched.add(key);
 
         const from = senderDisplayAddress(msg.from_alias, msg.from_address);
         const tofu = await trust.normalizeTrust(
@@ -173,7 +180,7 @@ export async function dispatchEvent(
           msg.to_stable_id,
           msg.rotation_announcement,
           msg.replacement_announcement,
-          msg.from_address || msg.from_alias || "",
+          msg.signed_from || msg.from_address || msg.from_alias || "",
         );
         msg.verification_status = tofu.status as InboxMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
@@ -183,6 +190,7 @@ export async function dispatchEvent(
           from,
           message_id: msg.message_id,
         };
+        if (conversationID) meta.conversation_id = conversationID;
         if (msg.subject) meta.subject = msg.subject;
         if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
         if (msg.verification_status) meta.verified = String(msg.verification_status === "verified" || msg.verification_status === "verified_custodial");
@@ -208,8 +216,10 @@ export async function dispatchEvent(
       let lastMessageId: string | undefined;
       for (const msg of messages) {
         if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, self)) continue;
-        if (dispatched.has(msg.message_id)) continue;
-        dispatched.add(msg.message_id);
+        const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
+        const key = dispatchKey("chat", conversationID, msg.message_id);
+        if (dispatched.has(key)) continue;
+        dispatched.add(key);
 
         const from = senderDisplayAddress(msg.from_agent, msg.from_address);
         const tofu = await trust.normalizeTrust(
@@ -222,7 +232,7 @@ export async function dispatchEvent(
           msg.to_stable_id,
           msg.rotation_announcement,
           msg.replacement_announcement,
-          msg.from_address || msg.from_agent || "",
+          msg.signed_from || msg.from_address || msg.from_agent || "",
         );
         msg.verification_status = tofu.status as ChatMessage["verification_status"];
         if (tofu.stored) pinsDirty = true;
@@ -233,6 +243,7 @@ export async function dispatchEvent(
           session_id: event.session_id,
           message_id: msg.message_id,
         };
+        if (conversationID) meta.conversation_id = conversationID;
         if (event.sender_waiting) meta.sender_waiting = "true";
         if (msg.sender_leaving) meta.sender_leaving = "true";
         if (msg.verification_status) meta.verified = String(msg.verification_status === "verified" || msg.verification_status === "verified_custodial");
