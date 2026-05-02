@@ -16,25 +16,27 @@ const (
 )
 
 type SendMessageRequest struct {
-	ToAgentID     string          `json:"to_agent_id,omitempty"`
-	ToAlias       string          `json:"to_alias,omitempty"`
-	ToDID         string          `json:"to_did,omitempty"`
-	ToStableID    string          `json:"to_stable_id,omitempty"`
-	ToAddress     string          `json:"to_address,omitempty"`
-	Subject       string          `json:"subject,omitempty"`
-	Body          string          `json:"body"`
-	Priority      MessagePriority `json:"priority,omitempty"`
-	MessageID     string          `json:"message_id,omitempty"`
-	Timestamp     string          `json:"timestamp,omitempty"`
-	FromDID       string          `json:"from_did,omitempty"`
-	Signature     string          `json:"signature,omitempty"`
-	SignedPayload string          `json:"signed_payload,omitempty"`
+	ToAgentID      string          `json:"to_agent_id,omitempty"`
+	ToAlias        string          `json:"to_alias,omitempty"`
+	ToDID          string          `json:"to_did,omitempty"`
+	ToStableID     string          `json:"to_stable_id,omitempty"`
+	ToAddress      string          `json:"to_address,omitempty"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	Subject        string          `json:"subject,omitempty"`
+	Body           string          `json:"body"`
+	Priority       MessagePriority `json:"priority,omitempty"`
+	MessageID      string          `json:"message_id,omitempty"`
+	Timestamp      string          `json:"timestamp,omitempty"`
+	FromDID        string          `json:"from_did,omitempty"`
+	Signature      string          `json:"signature,omitempty"`
+	SignedPayload  string          `json:"signed_payload,omitempty"`
 }
 
 type SendMessageResponse struct {
-	MessageID   string `json:"message_id"`
-	Status      string `json:"status"`
-	DeliveredAt string `json:"delivered_at"`
+	MessageID      string `json:"message_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Status         string `json:"status"`
+	DeliveredAt    string `json:"delivered_at"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
@@ -78,6 +80,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		Priority:                signedMailPriority(payload.Priority),
 		Subject:                 payload.Subject,
 		Body:                    payload.Body,
+		ConversationID:          strings.TrimSpace(payload.ConversationID),
 		RequireRecipientBinding: strings.TrimSpace(payload.ToAddress) != "" && c.requireRecipientBinding,
 	})
 	if err != nil {
@@ -102,6 +105,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 
 type InboxMessage struct {
 	MessageID               string                   `json:"message_id"`
+	ConversationID          string                   `json:"conversation_id,omitempty"`
 	FromAgentID             string                   `json:"from_agent_id"`
 	FromAlias               string                   `json:"from_alias"`
 	ToAlias                 string                   `json:"to_alias,omitempty"`
@@ -135,6 +139,22 @@ type InboxParams struct {
 	Limit      int
 }
 
+func (c *Client) MailConversation(ctx context.Context, conversationID string, limit int) (*InboxResponse, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil, errors.New("aweb: conversation_id is required")
+	}
+	path := "/v1/messages/conversations/" + urlPathEscape(conversationID)
+	if limit > 0 {
+		path += "?limit=" + itoa(limit)
+	}
+	var out InboxResponse
+	if err := c.Get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return c.normalizeInboxResponse(ctx, &out)
+}
+
 func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, error) {
 	path := "/v1/messages/inbox"
 	sep := "?"
@@ -149,6 +169,13 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 	var out InboxResponse
 	if err := c.Get(ctx, path, &out); err != nil {
 		return nil, err
+	}
+	return c.normalizeInboxResponse(ctx, &out)
+}
+
+func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
+	if out == nil {
+		return out, nil
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
@@ -184,27 +211,28 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 				to = m.ToAddress
 			}
 			env := &MessageEnvelope{
-				From:         from,
-				FromDID:      m.FromDID,
-				To:           to,
-				ToDID:        m.ToDID,
-				Type:         "mail",
-				Priority:     signedMailPriority(m.Priority),
-				Subject:      m.Subject,
-				Body:         m.Body,
-				Timestamp:    m.CreatedAt,
-				FromStableID: m.FromStableID,
-				ToStableID:   m.ToStableID,
-				MessageID:    m.MessageID,
-				Signature:    m.Signature,
-				SigningKeyID: m.SigningKeyID,
+				From:           from,
+				FromDID:        m.FromDID,
+				To:             to,
+				ToDID:          m.ToDID,
+				Type:           "mail",
+				Priority:       signedMailPriority(m.Priority),
+				Subject:        m.Subject,
+				Body:           m.Body,
+				Timestamp:      m.CreatedAt,
+				FromStableID:   m.FromStableID,
+				ToStableID:     m.ToStableID,
+				MessageID:      m.MessageID,
+				ConversationID: m.ConversationID,
+				Signature:      m.Signature,
+				SigningKeyID:   m.SigningKeyID,
 			}
 			m.VerificationStatus, _ = VerifyMessage(env)
 		}
 		m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
-	return &out, nil
+	return out, nil
 }
 
 // signedMailPriority normalizes "" and "normal" to the same empty signed value.

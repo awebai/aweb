@@ -64,22 +64,23 @@ type ReplacementAnnouncement struct {
 // Transport-only fields (Signature, SigningKeyID) are not part of the
 // signed payload but are carried here for convenience.
 type MessageEnvelope struct {
-	From          string `json:"from"`
-	FromDID       string `json:"from_did"`
-	To            string `json:"to"`
-	ToDID         string `json:"to_did"`
-	Type          string `json:"type"`
-	Priority      string `json:"priority,omitempty"`
-	WaitSeconds   *int   `json:"wait_seconds,omitempty"`
-	Subject       string `json:"subject"`
-	Body          string `json:"body"`
-	Timestamp     string `json:"timestamp"`
-	FromStableID  string `json:"from_stable_id,omitempty"`
-	ToStableID    string `json:"to_stable_id,omitempty"`
-	MessageID     string `json:"message_id,omitempty"`
-	ReplyTo       string `json:"reply_to,omitempty"`
-	SenderLeaving bool   `json:"sender_leaving,omitempty"`
-	HangOn        bool   `json:"hang_on,omitempty"`
+	From           string `json:"from"`
+	FromDID        string `json:"from_did"`
+	To             string `json:"to"`
+	ToDID          string `json:"to_did"`
+	Type           string `json:"type"`
+	Priority       string `json:"priority,omitempty"`
+	WaitSeconds    *int   `json:"wait_seconds,omitempty"`
+	Subject        string `json:"subject"`
+	Body           string `json:"body"`
+	Timestamp      string `json:"timestamp"`
+	FromStableID   string `json:"from_stable_id,omitempty"`
+	ToStableID     string `json:"to_stable_id,omitempty"`
+	MessageID      string `json:"message_id,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	ReplyTo        string `json:"reply_to,omitempty"`
+	SenderLeaving  bool   `json:"sender_leaving,omitempty"`
+	HangOn         bool   `json:"hang_on,omitempty"`
 
 	RequireRecipientBinding bool `json:"-"`
 
@@ -303,6 +304,9 @@ func CanonicalJSON(env *MessageEnvelope) string {
 	}
 	if env.MessageID != "" {
 		fields = append(fields, field{"message_id", jsonStringValue(env.MessageID)})
+	}
+	if env.ConversationID != "" {
+		fields = append(fields, field{"conversation_id", jsonStringValue(env.ConversationID)})
 	}
 	if env.Priority != "" {
 		fields = append(fields, field{"priority", jsonStringValue(env.Priority)})

@@ -11,22 +11,23 @@ import (
 
 // CommLogEntry is one line in the per-account communication log (JSONL).
 type CommLogEntry struct {
-	Timestamp    string `json:"ts"`
-	Dir          string `json:"dir"` // "send" or "recv"
-	Channel      string `json:"ch"`  // "mail", "chat", "dm"
-	MessageID    string `json:"msg_id,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	From         string `json:"from,omitempty"`
-	To           string `json:"to,omitempty"`
-	Subject      string `json:"subject,omitempty"`
-	Body         string `json:"body,omitempty"`
-	FromDID      string `json:"from_did,omitempty"`
-	ToDID        string `json:"to_did,omitempty"`
-	FromStableID string `json:"from_stable_id,omitempty"`
-	ToStableID   string `json:"to_stable_id,omitempty"`
-	Signature    string `json:"signature,omitempty"`
-	SigningKeyID string `json:"signing_key_id,omitempty"`
-	Verification string `json:"verification,omitempty"`
+	Timestamp      string `json:"ts"`
+	Dir            string `json:"dir"` // "send" or "recv"
+	Channel        string `json:"ch"`  // "mail", "chat", "dm"
+	MessageID      string `json:"msg_id,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
+	Subject        string `json:"subject,omitempty"`
+	Body           string `json:"body,omitempty"`
+	FromDID        string `json:"from_did,omitempty"`
+	ToDID          string `json:"to_did,omitempty"`
+	FromStableID   string `json:"from_stable_id,omitempty"`
+	ToStableID     string `json:"to_stable_id,omitempty"`
+	Signature      string `json:"signature,omitempty"`
+	SigningKeyID   string `json:"signing_key_id,omitempty"`
+	Verification   string `json:"verification,omitempty"`
 }
 
 // commLogPath returns the JSONL log file path for an account.

@@ -26,14 +26,15 @@ const (
 )
 
 type InteractionEntry struct {
-	Timestamp string `json:"ts"`
-	Kind      string `json:"kind"`
-	MessageID string `json:"message_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Subject   string `json:"subject,omitempty"`
-	Text      string `json:"text,omitempty"`
+	Timestamp      string `json:"ts"`
+	Kind           string `json:"kind"`
+	MessageID      string `json:"message_id,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
+	Subject        string `json:"subject,omitempty"`
+	Text           string `json:"text,omitempty"`
 }
 
 func interactionLogRoot(startDir string) string {

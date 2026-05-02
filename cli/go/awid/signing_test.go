@@ -335,6 +335,30 @@ func TestCanonicalJSONWithMessageID(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONWithConversationID(t *testing.T) {
+	t.Parallel()
+
+	env := &MessageEnvelope{
+		From:           "a/b",
+		FromDID:        "did:key:z6Mk...",
+		To:             "",
+		ToDID:          "",
+		Type:           "mail",
+		Subject:        "reply",
+		Body:           "hi",
+		Timestamp:      "2026-01-01T00:00:00Z",
+		MessageID:      "test-uuid-1234",
+		ConversationID: "55555555-5555-4555-8555-555555555555",
+	}
+
+	got := CanonicalJSON(env)
+	want := `{"body":"hi","conversation_id":"55555555-5555-4555-8555-555555555555","from":"a/b","from_did":"did:key:z6Mk...","message_id":"test-uuid-1234","subject":"reply","timestamp":"2026-01-01T00:00:00Z","to":"","to_did":"","type":"mail"}`
+
+	if got != want {
+		t.Fatalf("canonicalJSON:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
 func TestCanonicalJSONWithoutMessageID(t *testing.T) {
 	t.Parallel()
 

@@ -141,6 +141,55 @@ func TestFormatMailInboxPrefersStableIDOverAliasWhenAddressMissing(t *testing.T)
 	}
 }
 
+func TestFormatMailInboxGroupsByConversationIDWithoutHidingMessages(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{
+				MessageID:      "msg-1",
+				ConversationID: "55555555-5555-4555-8555-555555555555",
+				FromAlias:      "carol",
+				Subject:        "first",
+				Body:           "one",
+			},
+			{
+				MessageID:      "msg-2",
+				ConversationID: "55555555-5555-4555-8555-555555555555",
+				FromAlias:      "carol",
+				Subject:        "second",
+				Body:           "two",
+			},
+		},
+	}
+
+	out := formatMailInbox(resp)
+	if strings.Count(out, "Conversation 55555555-5555-4555-8555-555555555555:") != 1 {
+		t.Fatalf("mail inbox should show one conversation header:\n%s", out)
+	}
+	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
+		t.Fatalf("mail inbox should keep individual messages visible:\n%s", out)
+	}
+}
+
+func TestFormatMailConversationShowsConversationID(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{
+				MessageID:      "msg-1",
+				ConversationID: "66666666-6666-4666-8666-666666666666",
+				FromAlias:      "carol",
+				Subject:        "hello",
+				Body:           "world",
+			},
+		},
+	}
+
+	out := formatMailConversation(resp)
+	if !strings.Contains(out, "Mail conversation 66666666-6666-4666-8666-666666666666") ||
+		!strings.Contains(out, "world") {
+		t.Fatalf("mail conversation output missing expected content:\n%s", out)
+	}
+}
+
 func TestFormatChatPendingPrefersLastFromAddress(t *testing.T) {
 	result := &chat.PendingResult{
 		Pending: []chat.PendingConversation{

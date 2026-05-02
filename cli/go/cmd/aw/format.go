@@ -121,6 +121,35 @@ func formatMailInbox(v any) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("MAILS: %d\n\n", len(resp.Messages)))
+	lastConversationID := ""
+	for _, msg := range resp.Messages {
+		conversationID := strings.TrimSpace(msg.ConversationID)
+		if conversationID != "" && conversationID != lastConversationID {
+			sb.WriteString(fmt.Sprintf("Conversation %s:\n", conversationID))
+			lastConversationID = conversationID
+		}
+		subj := strings.TrimSpace(msg.Subject)
+		if subj != "" {
+			subj = " — " + subj
+		}
+		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, ""), subj, tags, msg.Body))
+	}
+	return sb.String()
+}
+
+func formatMailConversation(v any) string {
+	resp := v.(*awid.InboxResponse)
+	if len(resp.Messages) == 0 {
+		return "No messages.\n"
+	}
+	var sb strings.Builder
+	conversationID := strings.TrimSpace(resp.Messages[0].ConversationID)
+	if conversationID != "" {
+		sb.WriteString(fmt.Sprintf("Mail conversation %s (%d messages):\n\n", conversationID, len(resp.Messages)))
+	} else {
+		sb.WriteString(fmt.Sprintf("Mail conversation (%d messages):\n\n", len(resp.Messages)))
+	}
 	for _, msg := range resp.Messages {
 		subj := strings.TrimSpace(msg.Subject)
 		if subj != "" {

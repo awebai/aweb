@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -100,21 +101,31 @@ func printEventText(ev *awid.AgentEvent) {
 	case awid.AgentEventConnected:
 		fmt.Printf("[connected] agent_id=%s team_id=%s\n", ev.AgentID, ev.TeamID)
 	case awid.AgentEventActionableMail:
+		conversation := ""
+		if strings.TrimSpace(ev.ConversationID) != "" {
+			conversation = fmt.Sprintf(" conversation_id=%s", ev.ConversationID)
+		}
 		fmt.Printf(
-			"[actionable_mail] from=%s wake_mode=%s unread=%d message_id=%s subject=%q\n",
+			"[actionable_mail] from=%s wake_mode=%s unread=%d%s message_id=%s subject=%q\n",
 			preferredIdentityDisplayLabel(ev.FromAlias, ev.FromAddress, ev.FromStableID, ev.FromDID, ""),
 			eventTextValue(ev.WakeMode),
 			ev.UnreadCount,
+			conversation,
 			ev.MessageID,
 			ev.Subject,
 		)
 	case awid.AgentEventActionableChat:
+		conversation := ""
+		if strings.TrimSpace(ev.ConversationID) != "" {
+			conversation = fmt.Sprintf(" conversation_id=%s", ev.ConversationID)
+		}
 		fmt.Printf(
-			"[actionable_chat] from=%s wake_mode=%s unread=%d sender_waiting=%t session_id=%s message_id=%s\n",
+			"[actionable_chat] from=%s wake_mode=%s unread=%d sender_waiting=%t%s session_id=%s message_id=%s\n",
 			preferredIdentityDisplayLabel(ev.FromAlias, ev.FromAddress, ev.FromStableID, ev.FromDID, ""),
 			eventTextValue(ev.WakeMode),
 			ev.UnreadCount,
 			ev.SenderWaiting,
+			conversation,
 			ev.SessionID,
 			ev.MessageID,
 		)

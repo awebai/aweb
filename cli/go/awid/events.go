@@ -31,26 +31,27 @@ const (
 
 // AgentEvent is a typed event emitted by GET /v1/events/stream.
 type AgentEvent struct {
-	Type          AgentEventType  `json:"type"`
-	Raw           json.RawMessage `json:"raw,omitempty"`
-	AgentID       string          `json:"agent_id,omitempty"`
-	TeamID        string          `json:"team_id,omitempty"`
-	WakeMode      string          `json:"wake_mode,omitempty"`
-	Channel       string          `json:"channel,omitempty"`
-	MessageID     string          `json:"message_id,omitempty"`
-	FromAlias     string          `json:"from_alias,omitempty"`
-	FromStableID  string          `json:"from_stable_id,omitempty"`
-	FromDID       string          `json:"from_did,omitempty"`
-	FromAddress   string          `json:"from_address,omitempty"`
-	SessionID     string          `json:"session_id,omitempty"`
-	Subject       string          `json:"subject,omitempty"`
-	UnreadCount   int             `json:"unread_count,omitempty"`
-	SenderWaiting bool            `json:"sender_waiting,omitempty"`
-	TaskID        string          `json:"task_id,omitempty"`
-	Title         string          `json:"title,omitempty"`
-	Status        string          `json:"status,omitempty"`
-	SignalID      string          `json:"signal_id,omitempty"`
-	Text          string          `json:"text,omitempty"`
+	Type           AgentEventType  `json:"type"`
+	Raw            json.RawMessage `json:"raw,omitempty"`
+	AgentID        string          `json:"agent_id,omitempty"`
+	TeamID         string          `json:"team_id,omitempty"`
+	WakeMode       string          `json:"wake_mode,omitempty"`
+	Channel        string          `json:"channel,omitempty"`
+	MessageID      string          `json:"message_id,omitempty"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	FromAlias      string          `json:"from_alias,omitempty"`
+	FromStableID   string          `json:"from_stable_id,omitempty"`
+	FromDID        string          `json:"from_did,omitempty"`
+	FromAddress    string          `json:"from_address,omitempty"`
+	SessionID      string          `json:"session_id,omitempty"`
+	Subject        string          `json:"subject,omitempty"`
+	UnreadCount    int             `json:"unread_count,omitempty"`
+	SenderWaiting  bool            `json:"sender_waiting,omitempty"`
+	TaskID         string          `json:"task_id,omitempty"`
+	Title          string          `json:"title,omitempty"`
+	Status         string          `json:"status,omitempty"`
+	SignalID       string          `json:"signal_id,omitempty"`
+	Text           string          `json:"text,omitempty"`
 }
 
 func (e AgentEvent) IsActionableCoordination() bool {
@@ -177,62 +178,66 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 
 	case AgentEventActionableMail:
 		var payload struct {
-			MessageID    string `json:"message_id"`
-			FromAlias    string `json:"from_alias"`
-			FromStableID string `json:"from_stable_id"`
-			FromDID      string `json:"from_did"`
-			FromAddress  string `json:"from_address"`
-			Subject      string `json:"subject"`
-			WakeMode     string `json:"wake_mode"`
-			Channel      string `json:"channel"`
-			UnreadCount  int    `json:"unread_count"`
+			MessageID      string `json:"message_id"`
+			ConversationID string `json:"conversation_id"`
+			FromAlias      string `json:"from_alias"`
+			FromStableID   string `json:"from_stable_id"`
+			FromDID        string `json:"from_did"`
+			FromAddress    string `json:"from_address"`
+			Subject        string `json:"subject"`
+			WakeMode       string `json:"wake_mode"`
+			Channel        string `json:"channel"`
+			UnreadCount    int    `json:"unread_count"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return AgentEvent{}, false, fmt.Errorf("parse actionable_mail event: %w", err)
 		}
 		return AgentEvent{
-			Type:         AgentEventActionableMail,
-			Raw:          raw,
-			WakeMode:     payload.WakeMode,
-			Channel:      coalesceChannel(payload.Channel, AgentEventActionableMail),
-			MessageID:    payload.MessageID,
-			FromAlias:    payload.FromAlias,
-			FromStableID: payload.FromStableID,
-			FromDID:      payload.FromDID,
-			FromAddress:  payload.FromAddress,
-			Subject:      payload.Subject,
-			UnreadCount:  payload.UnreadCount,
+			Type:           AgentEventActionableMail,
+			Raw:            raw,
+			WakeMode:       payload.WakeMode,
+			Channel:        coalesceChannel(payload.Channel, AgentEventActionableMail),
+			MessageID:      payload.MessageID,
+			ConversationID: payload.ConversationID,
+			FromAlias:      payload.FromAlias,
+			FromStableID:   payload.FromStableID,
+			FromDID:        payload.FromDID,
+			FromAddress:    payload.FromAddress,
+			Subject:        payload.Subject,
+			UnreadCount:    payload.UnreadCount,
 		}, true, nil
 
 	case AgentEventActionableChat:
 		var payload struct {
-			MessageID     string `json:"message_id"`
-			FromAlias     string `json:"from_alias"`
-			FromStableID  string `json:"from_stable_id"`
-			FromDID       string `json:"from_did"`
-			FromAddress   string `json:"from_address"`
-			SessionID     string `json:"session_id"`
-			WakeMode      string `json:"wake_mode"`
-			Channel       string `json:"channel"`
-			UnreadCount   int    `json:"unread_count"`
-			SenderWaiting bool   `json:"sender_waiting"`
+			MessageID      string `json:"message_id"`
+			ConversationID string `json:"conversation_id"`
+			FromAlias      string `json:"from_alias"`
+			FromStableID   string `json:"from_stable_id"`
+			FromDID        string `json:"from_did"`
+			FromAddress    string `json:"from_address"`
+			SessionID      string `json:"session_id"`
+			WakeMode       string `json:"wake_mode"`
+			Channel        string `json:"channel"`
+			UnreadCount    int    `json:"unread_count"`
+			SenderWaiting  bool   `json:"sender_waiting"`
 		}
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return AgentEvent{}, false, fmt.Errorf("parse actionable_chat event: %w", err)
 		}
 		return AgentEvent{
-			Type:          AgentEventActionableChat,
-			Raw:           raw,
-			WakeMode:      payload.WakeMode,
-			Channel:       coalesceChannel(payload.Channel, AgentEventActionableChat),
-			MessageID:     payload.MessageID,
-			FromAlias:     payload.FromAlias,
-			FromStableID:  payload.FromStableID,
-			FromDID:       payload.FromDID,
-			FromAddress:   payload.FromAddress,
-			SessionID:     payload.SessionID,
-			UnreadCount:   payload.UnreadCount,
-			SenderWaiting: payload.SenderWaiting,
+			Type:           AgentEventActionableChat,
+			Raw:            raw,
+			WakeMode:       payload.WakeMode,
+			Channel:        coalesceChannel(payload.Channel, AgentEventActionableChat),
+			MessageID:      payload.MessageID,
+			ConversationID: payload.ConversationID,
+			FromAlias:      payload.FromAlias,
+			FromStableID:   payload.FromStableID,
+			FromDID:        payload.FromDID,
+			FromAddress:    payload.FromAddress,
+			SessionID:      payload.SessionID,
+			UnreadCount:    payload.UnreadCount,
+			SenderWaiting:  payload.SenderWaiting,
 		}, true, nil
 
 	case AgentEventWorkAvailable:

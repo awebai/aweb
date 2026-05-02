@@ -141,6 +141,125 @@ class AckResponse(BaseModel):
     acknowledged_at: str
 
 
+async def _inbox_response_from_rows(db, rows) -> InboxResponse:
+    identity_map = await lookup_identity_metadata_by_did(
+        db,
+        [
+            str(value).strip()
+            for row in rows
+            for value in (row.get("from_did"), row.get("to_did"))
+            if value
+        ],
+    )
+
+    messages = []
+    for r in rows:
+        from_did = (r.get("from_did") or "").strip()
+        to_did = (r.get("to_did") or "").strip()
+        messages.append(
+            InboxMessage(
+                message_id=str(r["message_id"]),
+                conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
+                from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
+                from_alias=r["from_alias"],
+                to_alias=r["to_alias"],
+                subject=r["subject"],
+                body=r["body"],
+                priority=r["priority"],
+                read_at=r["read_at"].isoformat() if r.get("read_at") else None,
+                created_at=r["created_at"].isoformat(),
+                from_did=from_did or None,
+                to_did=to_did or None,
+                from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
+                to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
+                from_address=(r.get("from_address") or identity_map.get(from_did, {}).get("address") or None),
+                to_address=(identity_map.get(to_did, {}).get("address") or None),
+                signature=r.get("signature"),
+                signed_payload=r.get("signed_payload"),
+            )
+        )
+
+    return InboxResponse(messages=messages)
+
+
+@router.get("/conversations/{conversation_id}", response_model=InboxResponse)
+async def get_mail_conversation(
+    request: Request,
+    conversation_id: str,
+    db=Depends(get_db),
+    limit: int = Query(default=200, ge=1, le=500),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxResponse:
+    del request
+    aweb_db = db.get_manager("aweb")
+    actor_dids = auth_dids(auth)
+    if not actor_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+
+    try:
+        conv_uuid = UUID(conversation_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid conversation_id format")
+
+    conversation = await aweb_db.fetch_one(
+        """
+        SELECT conversation_id, conversation_type
+        FROM {{tables.conversations}}
+        WHERE conversation_id = $1
+        """,
+        conv_uuid,
+    )
+    if conversation:
+        if conversation["conversation_type"] != "mail":
+            raise HTTPException(status_code=422, detail="Conversation is not a mail conversation")
+        participant = await aweb_db.fetch_one(
+            """
+            SELECT 1
+            FROM {{tables.conversation_participants}}
+            WHERE conversation_id = $1
+              AND did = ANY($2::text[])
+            LIMIT 1
+            """,
+            conv_uuid,
+            actor_dids,
+        )
+        if not participant:
+            raise HTTPException(status_code=403, detail="Authenticated identity is not a participant in this conversation")
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+                   m.subject, m.body, m.priority, m.read_at, m.created_at,
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
+            FROM {{tables.messages}} m
+            WHERE m.conversation_id = $1
+            ORDER BY m.created_at ASC, m.message_id ASC
+            LIMIT $2
+            """,
+            conv_uuid,
+            limit,
+        )
+        return await _inbox_response_from_rows(db, rows)
+
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+               m.subject, m.body, m.priority, m.read_at, m.created_at,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
+        FROM {{tables.messages}} m
+        WHERE m.message_id = $1
+          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+        ORDER BY m.created_at ASC, m.message_id ASC
+        LIMIT $3
+        """,
+        conv_uuid,
+        actor_dids,
+        limit,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return await _inbox_response_from_rows(db, rows)
+
+
 def _parse_signed_timestamp(value: str) -> datetime:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -816,42 +935,7 @@ async def get_inbox(
         limit,
     )
 
-    identity_map = await lookup_identity_metadata_by_did(
-        db,
-        [
-            str(value).strip()
-            for row in rows
-            for value in (row.get("from_did"), row.get("to_did"))
-            if value
-        ],
-    )
-
-    messages = []
-    for r in rows:
-        from_did = (r.get("from_did") or "").strip()
-        to_did = (r.get("to_did") or "").strip()
-        messages.append(InboxMessage(
-            message_id=str(r["message_id"]),
-            conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
-            from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
-            from_alias=r["from_alias"],
-            to_alias=r["to_alias"],
-            subject=r["subject"],
-            body=r["body"],
-            priority=r["priority"],
-            read_at=r["read_at"].isoformat() if r.get("read_at") else None,
-            created_at=r["created_at"].isoformat(),
-            from_did=from_did or None,
-            to_did=to_did or None,
-            from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
-            to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
-            from_address=(r.get("from_address") or identity_map.get(from_did, {}).get("address") or None),
-            to_address=(identity_map.get(to_did, {}).get("address") or None),
-            signature=r.get("signature"),
-            signed_payload=r.get("signed_payload"),
-        ))
-
-    return InboxResponse(messages=messages)
+    return await _inbox_response_from_rows(db, rows)
 
 
 @router.post("/{message_id}/ack", response_model=AckResponse)

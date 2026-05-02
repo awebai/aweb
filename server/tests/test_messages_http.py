@@ -477,6 +477,93 @@ async def test_send_message_continues_conversation_without_address_discovery(awe
 
 
 @pytest.mark.asyncio
+async def test_mail_conversation_history_requires_participant_and_includes_sent_messages(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    _, _, mallory_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_did": "did:aw:bob", "subject": "initial history", "body": "hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={"conversation_id": conversation_id, "subject": "reply history", "body": "hi"},
+        )
+    assert reply.status_code == 200, reply.text
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/messages/conversations/{conversation_id}")
+
+    assert history.status_code == 200, history.text
+    messages = history.json()["messages"]
+    assert [item["body"] for item in messages] == ["hello", "hi"]
+    assert [item["conversation_id"] for item in messages] == [conversation_id, conversation_id]
+    assert [item["from_did"] for item in messages] == ["did:aw:alice", "did:aw:bob"]
+
+    async def _mallory_auth():
+        return MessagingAuth(
+            did_key=mallory_did_key,
+            did_aw="did:aw:mallory",
+            address="evil.example/mallory",
+            team_id="backend:acme.com",
+            alias="mallory",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _mallory_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        forbidden = await client.get(f"/v1/messages/conversations/{conversation_id}")
+    assert forbidden.status_code == 403
+    assert "not a participant" in forbidden.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_send_message_continuation_rejects_non_participant_and_closed(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
