@@ -21,9 +21,16 @@ from aweb.messaging.alias_targets import (
     team_exists,
     validate_alias_selector,
 )
+from aweb.messaging.conversations import (
+    create_conversation,
+    list_conversation_participants,
+    require_active_conversation_participant,
+    touch_conversation_activity,
+)
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
+    evaluate_messaging_policy,
     get_agent_by_alias,
     get_agent_by_id,
     resolve_agent_by_did,
@@ -49,6 +56,7 @@ class SendMessageRequest(BaseModel):
     to_did: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    conversation_id: Optional[str] = None
     subject: str = ""
     body: str
     priority: MessagePriority = "normal"
@@ -85,15 +93,27 @@ class SendMessageRequest(BaseModel):
         except Exception:
             raise ValueError("Invalid message_id format")
 
+    @field_validator("conversation_id")
+    @classmethod
+    def _validate_conversation_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        try:
+            return str(UUID(str(v).strip()))
+        except Exception:
+            raise ValueError("Invalid conversation_id format")
+
 
 class SendMessageResponse(BaseModel):
     message_id: str
+    conversation_id: Optional[str] = None
     status: str
     delivered_at: str
 
 
 class InboxMessage(BaseModel):
     message_id: str
+    conversation_id: Optional[str] = None
     from_agent_id: Optional[str] = None
     from_alias: str
     to_alias: str
@@ -150,6 +170,7 @@ def _validate_signed_mail_payload(
     from_did: str,
     message_id: str,
     timestamp: str,
+    conversation_id: str | None = None,
 ) -> None:
     if signed_payload is None:
         return
@@ -225,6 +246,14 @@ def _validate_signed_mail_payload(
         raise HTTPException(status_code=422, detail="signed_payload message_id must match the mail message")
     if payload.get("timestamp") != timestamp:
         raise HTTPException(status_code=422, detail="signed_payload timestamp must match the mail message")
+    signed_conversation_id = str(payload.get("conversation_id") or "").strip()
+    if conversation_id is not None:
+        if not signed_conversation_id:
+            raise HTTPException(status_code=422, detail="signed_payload conversation_id is required")
+        if signed_conversation_id != conversation_id:
+            raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
+    elif signed_conversation_id:
+        raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
 
 
 def _external_recipient_from_address(address: str, resolution) -> dict:
@@ -243,6 +272,41 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
 
 def _sender_address(auth: MessagingAuth) -> str | None:
     return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
+
+
+def _recipient_transport_hint(payload: SendMessageRequest) -> str:
+    if payload.to_address is not None:
+        return "to_address"
+    if payload.to_stable_id is not None:
+        return "to_stable_id"
+    if payload.to_did is not None:
+        return "to_did"
+    if payload.to_agent_id is not None:
+        return "to_agent_id"
+    if payload.to_alias is not None:
+        return "to_alias"
+    return "mail"
+
+
+def _recipient_conversation_address(recipient: dict | None, payload: SendMessageRequest) -> str | None:
+    address = str((recipient or {}).get("address") or "").strip()
+    if address:
+        return address
+    return str(payload.to_address or "").strip() or None
+
+
+def _participant_recipient(participant: dict) -> dict:
+    did = str(participant.get("did") or "").strip()
+    return {
+        "agent_id": participant.get("agent_id"),
+        "team_id": None,
+        "alias": participant.get("alias") or did,
+        "address": participant.get("address"),
+        "did_aw": did if did.startswith("did:aw:") else None,
+        "did_key": did if not did.startswith("did:aw:") else None,
+        "messaging_policy": None,
+        "external": True,
+    }
 
 
 async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict | None:
@@ -348,6 +412,129 @@ async def send_message(
 ) -> SendMessageResponse:
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     sender_address = _sender_address(auth)
+    sender_did = (auth.did_aw or auth.did_key or "").strip()
+    if not sender_did:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+
+    if payload.conversation_id is not None:
+        if any(
+            value is not None
+            for value in (
+                payload.to_agent_id,
+                payload.to_alias,
+                payload.to_did,
+                payload.to_stable_id,
+                payload.to_address,
+            )
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="conversation_id continuation must not include a separate recipient",
+            )
+
+        msg_uuid = UUID(payload.message_id) if payload.message_id else None
+        created_at = None
+        if payload.signature is not None:
+            if payload.from_did is None or not payload.from_did.strip():
+                raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
+            from_did = payload.from_did.strip()
+            if from_did not in set(auth_dids(auth)):
+                raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
+            if payload.message_id is None or payload.timestamp is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="message_id and timestamp are required when signature is provided",
+                )
+            _validate_signed_mail_payload(
+                signed_payload=payload.signed_payload,
+                recipient=None,
+                to_agent_id=None,
+                to_alias=None,
+                requested_to_alias=None,
+                from_alias=auth.alias,
+                from_address=sender_address,
+                from_stable_id=auth.did_aw,
+                priority=payload.priority,
+                subject=payload.subject,
+                body=payload.body,
+                from_did=from_did,
+                message_id=payload.message_id,
+                timestamp=payload.timestamp,
+                conversation_id=payload.conversation_id,
+            )
+            created_at = _parse_signed_timestamp(payload.timestamp)
+
+        try:
+            auth_context = await require_active_conversation_participant(
+                db,
+                conversation_id=payload.conversation_id,
+                authenticated_did=sender_did,
+                equivalent_dids=auth_dids(auth),
+            )
+            participants = await list_conversation_participants(
+                db,
+                conversation_id=payload.conversation_id,
+            )
+            sender_participant_did = auth_context["participant"]["did"]
+            recipients = [
+                participant
+                for participant in participants
+                if participant["did"] != sender_participant_did
+            ]
+            if len(recipients) != 1:
+                raise ValidationError("Mail conversation continuation requires exactly one recipient")
+            recipient_participant = recipients[0]
+            recipient = _participant_recipient(recipient_participant)
+            message_id, created_at = await deliver_message(
+                db,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                team_id=auth_context["conversation"].get("team_id") or auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                to_agent_id=recipient_participant.get("agent_id"),
+                to_alias=recipient_participant.get("alias"),
+                from_did=sender_did,
+                to_did=recipient_participant["did"],
+                sender_address=sender_address,
+                subject=payload.subject,
+                body=payload.body,
+                priority=payload.priority,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                created_at=created_at,
+                message_id=msg_uuid,
+                conversation_id=payload.conversation_id,
+                skip_policy_check=True,
+            )
+            await touch_conversation_activity(db, conversation_id=payload.conversation_id)
+        except (ValidationError, NotFoundError, ForbiddenError) as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+        await fire_mutation_hook(
+            request,
+            "message.sent",
+            {
+                "team_id": auth.team_id,
+                "from_agent_id": auth.agent_id,
+                "from_did": sender_did,
+                "from_did_aw": (auth.did_aw or "").strip() or None,
+                "to_agent_id": recipient_participant.get("agent_id"),
+                "from_alias": auth.alias or sender_did,
+                "message_id": str(message_id),
+                "conversation_id": payload.conversation_id,
+                "to_alias": recipient_participant.get("alias"),
+                "subject": payload.subject,
+                "priority": payload.priority,
+            },
+        )
+
+        return SendMessageResponse(
+            message_id=str(message_id),
+            conversation_id=payload.conversation_id,
+            status="delivered",
+            delivered_at=_utc_iso(created_at),
+        )
 
     recipient = None
     recipient_did: str | None = None
@@ -475,10 +662,6 @@ async def send_message(
     else:
         raise HTTPException(status_code=422, detail="Must provide to_did, to_address, to_agent_id, or to_alias")
 
-    sender_did = (auth.did_aw or auth.did_key or "").strip()
-    if not sender_did:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
     created_at = None
     if payload.signature is not None:
@@ -507,10 +690,41 @@ async def send_message(
             from_did=from_did,
             message_id=payload.message_id,
             timestamp=payload.timestamp,
+            conversation_id=None,
         )
         created_at = _parse_signed_timestamp(payload.timestamp)
 
     try:
+        if not (recipient or {}).get("external"):
+            await evaluate_messaging_policy(
+                db,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                sender_did=sender_did,
+                sender_address=sender_address,
+            )
+        conversation = await create_conversation(
+            db,
+            conversation_type="mail",
+            created_by_did=sender_did,
+            initiator={
+                "did": sender_did,
+                "agent_id": auth.agent_id,
+                "alias": auth.alias or sender_address or sender_did,
+                "address": sender_address,
+                "transport_hint": "sender",
+            },
+            recipients=[
+                {
+                    "did": recipient_did or "",
+                    "agent_id": to_agent_id,
+                    "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
+                    "address": _recipient_conversation_address(recipient, payload),
+                    "transport_hint": _recipient_transport_hint(payload),
+                }
+            ],
+            team_id=auth.team_id,
+        )
         message_id, created_at = await deliver_message(
             db,
             registry_client=registry_client,
@@ -530,6 +744,8 @@ async def send_message(
             signed_payload=payload.signed_payload,
             created_at=created_at,
             message_id=msg_uuid,
+            conversation_id=conversation["conversation_id"],
+            skip_policy_check=True,
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -545,6 +761,7 @@ async def send_message(
             "to_agent_id": to_agent_id,
             "from_alias": auth.alias or sender_did,
             "message_id": str(message_id),
+            "conversation_id": conversation["conversation_id"],
             "to_alias": to_alias,
             "subject": payload.subject,
             "priority": payload.priority,
@@ -553,6 +770,7 @@ async def send_message(
 
     return SendMessageResponse(
         message_id=str(message_id),
+        conversation_id=conversation["conversation_id"],
         status="delivered",
         delivered_at=_utc_iso(created_at),
     )
@@ -588,7 +806,7 @@ async def get_inbox(
         f"""
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id
         FROM {{{{tables.messages}}}} m
         {where_clause}
         ORDER BY m.created_at DESC
@@ -614,6 +832,7 @@ async def get_inbox(
         to_did = (r.get("to_did") or "").strip()
         messages.append(InboxMessage(
             message_id=str(r["message_id"]),
+            conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
             from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
             from_alias=r["from_alias"],
             to_alias=r["to_alias"],

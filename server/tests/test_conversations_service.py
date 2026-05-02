@@ -350,7 +350,7 @@ async def test_touch_conversation_activity_rejects_none_ttl(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_expiry_marks_conversation_once(aweb_cloud_db):
+async def test_already_expired_conversation_is_handled_idempotently(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(
         aweb_cloud_db,

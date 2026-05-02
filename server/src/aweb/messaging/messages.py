@@ -188,6 +188,8 @@ async def deliver_message(
     signed_payload: str | None = None,
     created_at: datetime | None = None,
     message_id: UUID | None = None,
+    conversation_id: str | UUID | None = None,
+    skip_policy_check: bool = False,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -201,7 +203,7 @@ async def deliver_message(
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not recipient.get("external"):
+    if not skip_policy_check and not recipient.get("external"):
         await evaluate_messaging_policy(
             db,
             registry_client=registry_client,
@@ -215,6 +217,7 @@ async def deliver_message(
     if message_id is None:
         message_id = uuid_mod.uuid4()
 
+    conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None
     to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id") if to_agent_id else (
         UUID(str(recipient["agent_id"])) if recipient.get("agent_id") else None
@@ -228,8 +231,9 @@ async def deliver_message(
         """
         INSERT INTO {{tables.messages}}
             (message_id, from_did, to_did, from_alias, from_address, to_alias, subject, body,
-             priority, team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             priority, team_id, from_agent_id, to_agent_id, signature, signed_payload, created_at,
+             conversation_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -247,6 +251,7 @@ async def deliver_message(
         signature,
         signed_payload,
         created_at,
+        conversation_uuid,
     )
     if not row:
         raise ServiceError("Failed to create message")

@@ -296,6 +296,14 @@ async def test_conversation_schema_enforces_identity_defaults_and_reachability(a
             """
         )
     assert isinstance(blank_creator.value.__cause__, asyncpg.CheckViolationError)
+    with pytest.raises(QueryError) as whitespace_creator:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversations}} (conversation_type, team_id, created_by_did)
+            VALUES ('mail', 'backend:acme.com', '   ')
+            """
+        )
+    assert isinstance(whitespace_creator.value.__cause__, asyncpg.CheckViolationError)
 
     conversation = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -314,6 +322,18 @@ async def test_conversation_schema_enforces_identity_defaults_and_reachability(a
             conversation["conversation_id"],
         )
     assert isinstance(missing_alias.value.__cause__, asyncpg.NotNullViolationError)
+
+    with pytest.raises(QueryError) as whitespace_alias:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversation_participants}} (
+                conversation_id, did, alias, transport_hint
+            )
+            VALUES ($1, 'did:aw:alice', '   ', 'mail')
+            """,
+            conversation["conversation_id"],
+        )
+    assert isinstance(whitespace_alias.value.__cause__, asyncpg.CheckViolationError)
 
     with pytest.raises(QueryError) as unreachable:
         await aweb_cloud_db.aweb_db.execute(
@@ -355,3 +375,35 @@ async def test_conversation_updated_at_trigger_runs_when_update_omits_updated_at
     )
 
     assert updated["updated_at"] > conversation["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_conversation_updated_at_trigger_preserves_explicit_updated_at(aweb_cloud_db):
+    await _insert_team(aweb_cloud_db.aweb_db)
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_type, team_id, created_by_did, updated_at
+        )
+        VALUES (
+            'mail',
+            'backend:acme.com',
+            'did:aw:alice',
+            NOW() - INTERVAL '1 day'
+        )
+        RETURNING conversation_id
+        """
+    )
+
+    updated = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        UPDATE {{tables.conversations}}
+        SET status = 'closed',
+            updated_at = NOW() - INTERVAL '2 days'
+        WHERE conversation_id = $1
+        RETURNING updated_at, updated_at <= NOW() - INTERVAL '1 day' AS preserved
+        """,
+        conversation["conversation_id"],
+    )
+
+    assert updated["preserved"] is True
