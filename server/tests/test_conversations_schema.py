@@ -63,6 +63,21 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
     assert columns[("conversation_participants", "role")] == "NO"
     assert columns[("messages", "conversation_id")] == "YES"
 
+    default_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT table_name, column_name, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'aweb'
+          AND (
+            (table_name = 'conversations' AND column_name = 'created_by_did')
+            OR (table_name = 'conversation_participants' AND column_name = 'alias')
+          )
+        """
+    )
+    defaults = {(row["table_name"], row["column_name"]): row["column_default"] for row in default_rows}
+    assert defaults[("conversations", "created_by_did")] is None
+    assert defaults[("conversation_participants", "alias")] is None
+
     index_rows = await aweb_cloud_db.aweb_db.fetch_all(
         """
         SELECT indexname
@@ -77,6 +92,29 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
     assert "idx_conversation_participants_did" in index_names
     assert "idx_conversation_participants_agent" in index_names
     assert "idx_messages_conversation" in index_names
+
+    constraint_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE connamespace = 'aweb'::regnamespace
+        """
+    )
+    constraint_names = {row["conname"] for row in constraint_rows}
+    assert "conversations_created_by_did_not_blank" in constraint_names
+    assert "conversation_participants_alias_not_blank" in constraint_names
+    assert "conversation_participants_reachable" in constraint_names
+
+    trigger = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT tgname
+        FROM pg_trigger
+        WHERE tgrelid = 'aweb.conversations'::regclass
+          AND tgname = 'trg_conversations_updated_at'
+          AND NOT tgisinternal
+        """
+    )
+    assert trigger is not None
 
 
 @pytest.mark.asyncio
@@ -205,8 +243,8 @@ async def test_conversation_schema_enforces_lifecycle_and_participant_invariants
     with pytest.raises(QueryError) as fk_error:
         await aweb_cloud_db.aweb_db.execute(
             """
-            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias)
-            VALUES ('11111111-1111-1111-1111-111111111111', 'did:aw:alice', 'alice')
+            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias, transport_hint)
+            VALUES ('11111111-1111-1111-1111-111111111111', 'did:aw:alice', 'alice', 'mail')
             """
         )
     assert isinstance(fk_error.value.__cause__, asyncpg.ForeignKeyViolationError)
@@ -221,17 +259,99 @@ async def test_conversation_schema_enforces_lifecycle_and_participant_invariants
 
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias)
-        VALUES ($1, 'did:aw:alice', 'alice')
+        INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias, transport_hint)
+        VALUES ($1, 'did:aw:alice', 'alice', 'mail')
         """,
         conversation["conversation_id"],
     )
     with pytest.raises(QueryError) as unique_error:
         await aweb_cloud_db.aweb_db.execute(
             """
-            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias)
-            VALUES ($1, 'did:aw:alice', 'alice-alt')
+            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias, transport_hint)
+            VALUES ($1, 'did:aw:alice', 'alice-alt', 'mail')
             """,
             conversation["conversation_id"],
         )
     assert isinstance(unique_error.value.__cause__, asyncpg.UniqueViolationError)
+
+
+@pytest.mark.asyncio
+async def test_conversation_schema_enforces_identity_defaults_and_reachability(aweb_cloud_db):
+    await _insert_team(aweb_cloud_db.aweb_db)
+
+    with pytest.raises(QueryError) as missing_creator:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversations}} (conversation_type, team_id)
+            VALUES ('mail', 'backend:acme.com')
+            """
+        )
+    assert isinstance(missing_creator.value.__cause__, asyncpg.NotNullViolationError)
+
+    with pytest.raises(QueryError) as blank_creator:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversations}} (conversation_type, team_id, created_by_did)
+            VALUES ('mail', 'backend:acme.com', '')
+            """
+        )
+    assert isinstance(blank_creator.value.__cause__, asyncpg.CheckViolationError)
+
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_type, team_id, created_by_did)
+        VALUES ('mail', 'backend:acme.com', 'did:aw:alice')
+        RETURNING conversation_id
+        """
+    )
+
+    with pytest.raises(QueryError) as missing_alias:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, transport_hint)
+            VALUES ($1, 'did:aw:alice', 'mail')
+            """,
+            conversation["conversation_id"],
+        )
+    assert isinstance(missing_alias.value.__cause__, asyncpg.NotNullViolationError)
+
+    with pytest.raises(QueryError) as unreachable:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversation_participants}} (conversation_id, did, alias)
+            VALUES ($1, 'did:aw:alice', 'alice')
+            """,
+            conversation["conversation_id"],
+        )
+    assert isinstance(unreachable.value.__cause__, asyncpg.CheckViolationError)
+
+
+@pytest.mark.asyncio
+async def test_conversation_updated_at_trigger_runs_when_update_omits_updated_at(aweb_cloud_db):
+    await _insert_team(aweb_cloud_db.aweb_db)
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_type, team_id, created_by_did, updated_at
+        )
+        VALUES (
+            'mail',
+            'backend:acme.com',
+            'did:aw:alice',
+            NOW() - INTERVAL '1 day'
+        )
+        RETURNING conversation_id, updated_at
+        """
+    )
+
+    updated = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        UPDATE {{tables.conversations}}
+        SET status = 'closed'
+        WHERE conversation_id = $1
+        RETURNING updated_at
+        """,
+        conversation["conversation_id"],
+    )
+
+    assert updated["updated_at"] > conversation["updated_at"]

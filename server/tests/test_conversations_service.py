@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
 import pytest
 
 from aweb.messaging.conversations import (
@@ -202,6 +204,11 @@ async def test_closed_conversation_rejects_continuation_and_new_participants(awe
             conversation_id=conversation["conversation_id"],
             participant={"did": "did:aw:carol", "alias": "carol"},
         )
+    with pytest.raises(ForbiddenError, match="closed"):
+        await touch_conversation_activity(
+            db,
+            conversation_id=conversation["conversation_id"],
+        )
 
 
 @pytest.mark.asyncio
@@ -222,6 +229,12 @@ async def test_expired_conversation_rejects_continuation_and_marks_status(aweb_c
     expired = await get_conversation(db, conversation_id=conversation["conversation_id"])
     assert expired is not None
     assert expired["status"] == "expired"
+
+    with pytest.raises(ForbiddenError, match="expired"):
+        await touch_conversation_activity(
+            db,
+            conversation_id=conversation["conversation_id"],
+        )
 
 
 @pytest.mark.asyncio
@@ -254,3 +267,124 @@ async def test_create_conversation_validates_participant_set(aweb_cloud_db):
             recipients=[],
             team_id="backend:acme.com",
         )
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_rolls_back_when_participant_insert_fails(aweb_cloud_db):
+    await _insert_team(aweb_cloud_db.aweb_db)
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        await create_conversation(
+            _DbShim(aweb_cloud_db.aweb_db),
+            conversation_type="mail",
+            created_by_did="did:aw:alice",
+            initiator={
+                "did": "did:aw:alice",
+                "agent_id": alice_agent_id,
+                "alias": "alice",
+                "address": "acme.com/alice",
+                "transport_hint": "mail",
+            },
+            recipients=[
+                {
+                    "did": "did:aw:bob",
+                    "agent_id": "11111111-1111-1111-1111-111111111111",
+                    "alias": "bob",
+                    "address": "acme.com/bob",
+                    "transport_hint": "mail",
+                }
+            ],
+            team_id="backend:acme.com",
+        )
+
+    count = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT COUNT(*) AS count
+        FROM {{tables.conversations}}
+        WHERE created_by_did = 'did:aw:alice'
+        """
+    )
+    assert count["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_close_conversation_requires_participant_or_system_close(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    conversation = await _create_two_party_conversation(aweb_cloud_db)
+
+    with pytest.raises(ValidationError, match="closed_by_did"):
+        await close_conversation(db, conversation_id=conversation["conversation_id"])
+    with pytest.raises(ForbiddenError, match="not a participant"):
+        await close_conversation(
+            db,
+            conversation_id=conversation["conversation_id"],
+            closed_by_did="did:aw:mallory",
+        )
+
+    closed = await close_conversation(
+        db,
+        conversation_id=conversation["conversation_id"],
+        system_close=True,
+    )
+    assert closed["status"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_touch_conversation_activity_rejects_none_ttl(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    conversation = await _create_two_party_conversation(aweb_cloud_db)
+
+    with pytest.raises(ValidationError, match="ttl"):
+        await touch_conversation_activity(
+            db,
+            conversation_id=conversation["conversation_id"],
+            ttl=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_expiry_marks_conversation_once(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    conversation = await _create_two_party_conversation(
+        aweb_cloud_db,
+        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+
+    results = await asyncio.gather(
+        require_active_conversation_participant(
+            db,
+            conversation_id=conversation["conversation_id"],
+            authenticated_did="did:aw:alice",
+        ),
+        require_active_conversation_participant(
+            db,
+            conversation_id=conversation["conversation_id"],
+            authenticated_did="did:aw:bob",
+        ),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(result, ForbiddenError) for result in results)
+    expired = await get_conversation(db, conversation_id=conversation["conversation_id"])
+    assert expired is not None
+    assert expired["status"] == "expired"
+    expired_updated_at = expired["updated_at"]
+
+    with pytest.raises(ForbiddenError, match="expired"):
+        await require_active_conversation_participant(
+            db,
+            conversation_id=conversation["conversation_id"],
+            authenticated_did="did:aw:alice",
+        )
+    expired_after_second_check = await get_conversation(
+        db,
+        conversation_id=conversation["conversation_id"],
+    )
+    assert expired_after_second_check["updated_at"] == expired_updated_at

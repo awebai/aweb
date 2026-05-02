@@ -112,24 +112,8 @@ def _expires_at(now: datetime, ttl: timedelta | None, expires_at: datetime | Non
     if expires_at is not None:
         return expires_at
     if ttl is None:
-        return None
+        raise ValidationError("Conversation ttl must not be None")
     return now + ttl
-
-
-def _is_expired(row: dict[str, Any], *, now: datetime | None = None) -> bool:
-    expires_at = row.get("expires_at")
-    if expires_at is None:
-        return False
-    effective_now = now or _now_utc()
-    return expires_at <= effective_now
-
-
-async def _raise_if_not_active(db, conversation: dict[str, Any]) -> None:
-    if conversation["status"] == "closed":
-        raise ForbiddenError("Conversation is closed")
-    if conversation["status"] == "expired" or _is_expired(conversation):
-        await expire_conversation(db, conversation_id=conversation["conversation_id"])
-        raise ForbiddenError("Conversation is expired")
 
 
 def _conversation_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -157,6 +141,57 @@ def _participant_dict(row: dict[str, Any]) -> dict[str, Any]:
         "role": row["role"],
         "joined_at": row["joined_at"],
     }
+
+
+async def _expire_due_conversation(
+    db,
+    *,
+    conversation_id: UUID,
+    now: datetime,
+) -> dict[str, Any] | None:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        UPDATE {{tables.conversations}}
+        SET status = 'expired',
+            updated_at = $2
+        WHERE conversation_id = $1
+          AND status = 'active'
+          AND expires_at IS NOT NULL
+          AND expires_at <= $2
+        RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
+                  created_at, updated_at, closed_at, expires_at
+        """,
+        conversation_id,
+        now,
+    )
+    return None if not row else _conversation_dict(dict(row))
+
+
+async def _get_active_conversation(
+    db,
+    *,
+    conversation_id: str | UUID,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
+    effective_now = now or _now_utc()
+    expired = await _expire_due_conversation(
+        db,
+        conversation_id=conversation_uuid,
+        now=effective_now,
+    )
+    if expired is not None:
+        raise ForbiddenError("Conversation is expired")
+
+    conversation = await get_conversation(db, conversation_id=conversation_uuid)
+    if conversation is None:
+        raise NotFoundError("Conversation not found")
+    if conversation["status"] == "closed":
+        raise ForbiddenError("Conversation is closed")
+    if conversation["status"] == "expired":
+        raise ForbiddenError("Conversation is expired")
+    return conversation
 
 
 async def create_conversation(
@@ -274,7 +309,7 @@ async def add_conversation_participant(
     conversation = await get_conversation(db, conversation_id=conversation_id)
     if conversation is None:
         raise NotFoundError("Conversation not found")
-    await _raise_if_not_active(db, conversation)
+    await _get_active_conversation(db, conversation_id=conversation_id)
 
     record = _participant_record(participant, role=role)
     aweb_db = db.get_manager("aweb")
@@ -322,20 +357,7 @@ async def require_active_conversation_participant(
             candidate_dids.append(normalized)
 
     aweb_db = db.get_manager("aweb")
-    conversation_row = await aweb_db.fetch_one(
-        """
-        SELECT conversation_id, conversation_type, status, team_id, created_by_did,
-               created_at, updated_at, closed_at, expires_at
-        FROM {{tables.conversations}}
-        WHERE conversation_id = $1
-        """,
-        conversation_uuid,
-    )
-    if not conversation_row:
-        raise NotFoundError("Conversation not found")
-
-    conversation = _conversation_dict(dict(conversation_row))
-    await _raise_if_not_active(db, conversation)
+    conversation = await _get_active_conversation(db, conversation_id=conversation_uuid)
 
     participant_row = await aweb_db.fetch_one(
         """
@@ -386,10 +408,11 @@ async def touch_conversation_activity(
         effective_expires_at,
     )
     if not row:
-        conversation = await get_conversation(db, conversation_id=conversation_uuid)
-        if conversation is None:
-            raise NotFoundError("Conversation not found")
-        await _raise_if_not_active(db, conversation)
+        await _get_active_conversation(
+            db,
+            conversation_id=conversation_uuid,
+            now=effective_now,
+        )
         raise ServiceError("Failed to update conversation activity")
     return _conversation_dict(dict(row))
 
@@ -399,7 +422,10 @@ async def close_conversation(
     *,
     conversation_id: str | UUID,
     closed_by_did: str | None = None,
+    system_close: bool = False,
 ) -> dict[str, Any]:
+    if closed_by_did is None and not system_close:
+        raise ValidationError("closed_by_did is required unless system_close is true")
     if closed_by_did is not None:
         await require_active_conversation_participant(
             db,
@@ -438,6 +464,7 @@ async def expire_conversation(db, *, conversation_id: str | UUID) -> dict[str, A
         SET status = 'expired',
             updated_at = $2
         WHERE conversation_id = $1
+          AND status != 'expired'
         RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
                   created_at, updated_at, closed_at, expires_at
         """,
@@ -445,5 +472,8 @@ async def expire_conversation(db, *, conversation_id: str | UUID) -> dict[str, A
         now,
     )
     if not row:
-        raise NotFoundError("Conversation not found")
+        existing = await get_conversation(db, conversation_id=conversation_uuid)
+        if existing is None:
+            raise NotFoundError("Conversation not found")
+        return existing
     return _conversation_dict(dict(row))
