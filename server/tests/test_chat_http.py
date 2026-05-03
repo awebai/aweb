@@ -1492,6 +1492,106 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aw
 
 
 @pytest.mark.asyncio
+async def test_chat_send_message_rejects_legacy_bound_session_continuation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    session_id = uuid4()
+    message_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'alice'"
+    )
+    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'bob'"
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'backend:acme.com', 'alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        session_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "legacy chat",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": str(message_id),
+            "subject": "",
+            "timestamp": timestamp,
+            "to": "bob",
+            "to_did": "did:aw:bob",
+            "type": "chat",
+        }
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, signature, signed_payload, created_at)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'legacy chat', $3, $4, NOW())
+        """,
+        message_id,
+        session_id,
+        sign_message(alice_sk, signed_payload),
+        signed_payload.decode(),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _bob_auth_override():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/v1/chat/sessions/{session_id}/messages", json={"body": "blocked"})
+        create_or_send_resp = await client.post(
+            "/v1/chat/sessions",
+            json={"to_aliases": ["alice"], "message": "also blocked"},
+        )
+
+    assert resp.status_code == 403, resp.text
+    assert "conversation_id" in resp.json()["detail"]
+    assert create_or_send_resp.status_code == 403, create_or_send_resp.text
+    assert "conversation_id" in create_or_send_resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

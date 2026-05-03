@@ -598,6 +598,7 @@ async def send_message(
             await require_conversation_not_legacy_bound(
                 db,
                 conversation_id=payload.conversation_id,
+                conversation_type="mail",
             )
             participants = await list_conversation_participants(
                 db,

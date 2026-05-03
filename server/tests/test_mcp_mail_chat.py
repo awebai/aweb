@@ -984,6 +984,97 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
 
 
 @pytest.mark.asyncio
+async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    bob_agent_id = uuid4()
+    session_id = uuid4()
+    message_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        session_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    signed_payload = canonical_signed_payload(
+        {
+            "body": "legacy chat",
+            "from": "alice",
+            "from_did": alice_did,
+            "message_id": str(message_id),
+            "subject": "",
+            "timestamp": "2026-05-03T00:00:00Z",
+            "to": "bob",
+            "to_did": "did:aw:bob",
+            "type": "chat",
+        }
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_agent_id, from_did, from_alias, body,
+             signature, signed_payload, created_at)
+        VALUES ($1, $2, $3, 'did:aw:alice', 'alice', 'legacy chat', $4, $5, NOW())
+        """,
+        message_id,
+        session_id,
+        alice_agent_id,
+        sign_message(alice_sk, signed_payload.encode("utf-8")),
+        signed_payload,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(bob_agent_id),
+            alias="bob",
+            did_key="did:key:z6MkBob",
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+        ),
+    )
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            session_id=str(session_id),
+            message="should not send",
+        )
+    )
+
+    assert "conversation_id" in result["error"]
+    count = await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+    assert count == 1
+
+
+@pytest.mark.asyncio
 async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()

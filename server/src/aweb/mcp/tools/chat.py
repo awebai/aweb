@@ -26,7 +26,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.messages import evaluate_messaging_policy
-from aweb.messaging.verification import message_verification_status
+from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
@@ -387,6 +387,14 @@ async def chat_send(
             )
         except ServiceError:
             return json.dumps({"error": "Failed to create chat session"})
+        try:
+            await require_conversation_not_legacy_bound(
+                db_infra,
+                conversation_id=str(sid),
+                conversation_type="chat",
+            )
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
 
         msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
@@ -455,6 +463,14 @@ async def chat_send(
         )
         if not session_actor_did:
             return json.dumps({"error": "Not a participant in this session"})
+        try:
+            await require_conversation_not_legacy_bound(
+                db_infra,
+                conversation_id=str(sid),
+                conversation_type="chat",
+            )
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
 
         msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()

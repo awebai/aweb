@@ -89,7 +89,7 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         try:
             resolution = await registry_client.resolve_key_fresh(did_aw)
         except Exception:
-            logger.debug("AWID fresh did:aw resolution failed for %s", did_aw, exc_info=True)
+            logger.warning("AWID fresh did:aw resolution failed for %s", did_aw, exc_info=True)
 
     if not resolution or resolution.current_did_key != did_key:
         raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key")

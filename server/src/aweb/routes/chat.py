@@ -45,6 +45,7 @@ from aweb.messaging.chat import (
 )
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
 from aweb.messaging.messages import evaluate_messaging_policy, utc_iso as _utc_iso
+from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.messaging.waiting import (
     get_waiting_agents,
     get_waiting_agents_by_session,
@@ -675,6 +676,14 @@ async def create_or_send(
         created_by=actor_alias,
         session_id=requested_session_id,
     )
+    try:
+        await require_conversation_not_legacy_bound(
+            db,
+            conversation_id=str(session_id),
+            conversation_type="chat",
+        )
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     aweb_db = db.get_manager("aweb")
     msg_created_at = datetime.now(timezone.utc)
@@ -1484,6 +1493,14 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    try:
+        await require_conversation_not_legacy_bound(
+            db,
+            conversation_id=str(session_uuid),
+            conversation_type="chat",
+        )
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     msg_created_at = datetime.now(timezone.utc)
     pre_message_id = uuid_mod.uuid4()

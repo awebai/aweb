@@ -1274,6 +1274,55 @@ bob_restored_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 
+if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send \
+  --to alice \
+  --subject "SSE continuation initial" \
+  --body "SSE continuation starts here" \
+  --json 2>&1)"; then
+  sse_initial_exit=0
+else
+  sse_initial_exit=$?
+fi
+assert_eq "sse continuation initial mail exit" "0" "$sse_initial_exit"
+sse_conversation_id="$(echo "$sse_initial_out" | jq_field conversation_id)"
+assert_not_empty "sse continuation initial returns conversation_id" "$sse_conversation_id"
+sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-sse-conversation.XXXXXX")"
+run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$sse_capture_file" 2>/dev/null &
+sse_capture_pid=$!
+sleep 2
+if sse_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --conversation-id "$sse_conversation_id" \
+  --subject "SSE continuation reply" \
+  --body "SSE continuation live event" \
+  --json 2>&1)"; then
+  sse_reply_exit=0
+else
+  sse_reply_exit=$?
+fi
+assert_eq "sse continuation reply mail exit" "0" "$sse_reply_exit"
+sse_reply_conversation_id="$(echo "$sse_reply_out" | jq_field conversation_id)"
+assert_eq "sse continuation reply keeps conversation_id" "$sse_conversation_id" "$sse_reply_conversation_id"
+wait "$sse_capture_pid" 2>/dev/null || true
+sse_event_conversation_id="$(python3 -c "
+import sys, json
+capture_path, subject = sys.argv[1], sys.argv[2]
+with open(capture_path, 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if event.get('type') == 'actionable_mail' and event.get('subject') == subject:
+            print(event.get('conversation_id', ''))
+            break
+    else:
+        print('')
+" "$sse_capture_file" "SSE continuation reply")"
+assert_eq "sse live event carries continuation conversation_id" "$sse_conversation_id" "$sse_event_conversation_id"
+
 if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to-address partner.local/bob \
   --subject "Cross namespace conversation" \
@@ -1363,7 +1412,7 @@ assert_eq "matrix public direct-address chat exit" "0" "$alice_public_addr_chat_
 if [[ "$alice_public_addr_chat_exit" != "0" ]]; then
   echo "  matrix public direct-address chat output: ${alice_public_addr_chat_out:0:240}"
 fi
-bob_public_addr_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_public_addr_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
 bob_public_addr_chat_vs="$(echo "$bob_public_addr_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix public direct address chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "matrix public direct-address chat verified" "verified" "$bob_public_addr_chat_vs"
 if [[ "$bob_public_addr_chat_vs" != "verified" ]]; then
@@ -1397,7 +1446,7 @@ assert_eq "matrix org_only direct-address chat exit" "0" "$alice_org_chat_exit"
 if [[ "$alice_org_chat_exit" != "0" ]]; then
   echo "  matrix org_only chat output: ${alice_org_chat_out:0:240}"
 fi
-bob_org_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_org_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
 bob_org_chat_vs="$(echo "$bob_org_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix org-only direct address chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "matrix org_only direct-address chat verified" "verified" "$bob_org_chat_vs"
 
@@ -1428,7 +1477,7 @@ assert_eq "matrix team_members_only direct-address chat exit" "0" "$alice_team_c
 if [[ "$alice_team_chat_exit" != "0" ]]; then
   echo "  matrix team_members_only chat output: ${alice_team_chat_out:0:240}"
 fi
-bob_team_history="$(run_aw_in "$BOB_DIR" chat history alice --json 2>/dev/null)"
+bob_team_history="$(run_aw_in "$BOB_DIR" chat history test.local/alice --json 2>/dev/null)"
 bob_team_chat_vs="$(echo "$bob_team_history" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('verification_status','') for m in msgs if m.get('body')=='Matrix team-only direct address chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "matrix team_members_only direct-address chat verified" "verified" "$bob_team_chat_vs"
 
@@ -1710,6 +1759,36 @@ assert_eq "conversation gate rotated reply stays in conversation" "$rotation_con
 alice_rotation_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "conversation gate rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
+
+if partner_bob_bare_mail_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
+  --to alice \
+  --subject "Bare alias duplicate partner" \
+  --body "Bare alias should stay in partner team" 2>&1)"; then
+  partner_bob_bare_mail_exit=0
+else
+  partner_bob_bare_mail_exit=$?
+fi
+assert_eq "partner bob bare-alias mail exit with duplicate alice" "0" "$partner_bob_bare_mail_exit"
+if [[ "$partner_bob_bare_mail_exit" != "0" ]]; then
+  echo "  partner bob bare-alias mail output: ${partner_bob_bare_mail_out:0:240}"
+fi
+partner_bob_bare_mail_team="$(psql_scalar "SELECT COALESCE(a.team_id, '') FROM aweb.messages m LEFT JOIN aweb.agents a ON a.agent_id = m.to_agent_id WHERE m.subject = 'Bare alias duplicate partner' ORDER BY m.created_at DESC LIMIT 1;")"
+partner_bob_bare_mail_address="$(psql_scalar "SELECT COALESCE(a.address, '') FROM aweb.messages m LEFT JOIN aweb.agents a ON a.agent_id = m.to_agent_id WHERE m.subject = 'Bare alias duplicate partner' ORDER BY m.created_at DESC LIMIT 1;")"
+assert_eq "partner bob bare-alias mail routes to active team alice" "main:partner.local" "$partner_bob_bare_mail_team"
+assert_eq "partner bob bare-alias mail does not route to primary alice" "partner.local/alice" "$partner_bob_bare_mail_address"
+
+if partner_bob_bare_chat_out="$(run_aw_in "$PARTNER_BOB_DIR" chat send-and-leave alice \
+  "Bare alias duplicate partner chat" 2>&1)"; then
+  partner_bob_bare_chat_exit=0
+else
+  partner_bob_bare_chat_exit=$?
+fi
+assert_eq "partner bob bare-alias chat exit with duplicate alice" "0" "$partner_bob_bare_chat_exit"
+if [[ "$partner_bob_bare_chat_exit" != "0" ]]; then
+  echo "  partner bob bare-alias chat output: ${partner_bob_bare_chat_out:0:240}"
+fi
+partner_bob_bare_chat_address="$(psql_scalar "SELECT COALESCE(cp.address, '') FROM aweb.chat_messages cm JOIN aweb.chat_participants cp ON cp.session_id = cm.session_id AND cp.alias = 'alice' WHERE cm.body = 'Bare alias duplicate partner chat' ORDER BY cm.created_at DESC LIMIT 1;")"
+assert_eq "partner bob bare-alias chat routes to active team alice" "partner.local/alice" "$partner_bob_bare_chat_address"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2104,6 +2183,16 @@ msg = next((m for m in msgs if m.get('subject') == subject), None)
 print(msg.get('verification_status', '') if msg else '')
 " "$mail_subject")"
   echo "  amy reproducer: server_mail_verification_status=$server_mail_vs"
+  local server_mail_conversation_id
+  server_mail_conversation_id="$(echo "$bob_inbox_json" | python3 -c "
+import sys, json
+subject = sys.argv[1]
+data = json.load(sys.stdin)
+msgs = data.get('messages', [])
+msg = next((m for m in msgs if m.get('subject') == subject), None)
+print(msg.get('conversation_id', '') if msg else '')
+" "$mail_subject")"
+  echo "  amy reproducer: server_mail_conversation_id=$server_mail_conversation_id"
 
   # `chat pending` returns conversation summaries without per-message
   # verification_status. Use `chat history alice` to pull the message-level
@@ -2119,6 +2208,15 @@ target = next((m for m in messages if m.get('body') == 'amy reproducer chat'), N
 print(target.get('verification_status', '') if target else '')
 ")"
   echo "  amy reproducer: server_chat_verification_status=$server_chat_vs"
+  local server_chat_conversation_id
+  server_chat_conversation_id="$(echo "$bob_history_json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+messages = data.get('messages', [])
+target = next((m for m in messages if m.get('body') == 'amy reproducer chat'), None)
+print(target.get('conversation_id', '') if target else '')
+")"
+  echo "  amy reproducer: server_chat_conversation_id=$server_chat_conversation_id"
 
   # Channel-side: parse the capture file for mail and chat events; extract
   # meta.verified.
@@ -2143,6 +2241,27 @@ with open(sys.argv[2], 'r', encoding='utf-8') as f:
         print('')
 " "$mail_subject" "$capture_file")"
   echo "  amy reproducer: channel_mail_verified=$channel_mail_verified"
+  local channel_mail_conversation_id
+  channel_mail_conversation_id="$(python3 -c "
+import sys, json
+subject = sys.argv[1]
+with open(sys.argv[2], 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            params = json.loads(line)
+        except Exception:
+            continue
+        meta = params.get('meta', {}) or {}
+        if meta.get('type') == 'mail' and meta.get('subject') == subject:
+            print(meta.get('conversation_id', ''))
+            break
+    else:
+        print('')
+" "$mail_subject" "$capture_file")"
+  echo "  amy reproducer: channel_mail_conversation_id=$channel_mail_conversation_id"
 
   local channel_chat_verified
   channel_chat_verified="$(python3 -c "
@@ -2164,6 +2283,26 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
         print('')
 " "$capture_file")"
   echo "  amy reproducer: channel_chat_verified=$channel_chat_verified"
+  local channel_chat_conversation_id
+  channel_chat_conversation_id="$(python3 -c "
+import sys, json
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            params = json.loads(line)
+        except Exception:
+            continue
+        meta = params.get('meta', {}) or {}
+        if meta.get('type') == 'chat' and params.get('content') == 'amy reproducer chat':
+            print(meta.get('conversation_id', ''))
+            break
+    else:
+        print('')
+" "$capture_file")"
+  echo "  amy reproducer: channel_chat_conversation_id=$channel_chat_conversation_id"
 
   # Mode-specific assertions.
   case "$mode" in
@@ -2201,12 +2340,20 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
       assert_eq "amy reproducer intermediate: server chat vs=verified (aalg fix)" "verified" "$server_chat_vs"
       assert_eq "amy reproducer intermediate: channel mail header verified=true (Pass B closes renderer asymmetry)" "true" "$channel_mail_verified"
       assert_eq "amy reproducer intermediate: channel chat header verified=true" "true" "$channel_chat_verified"
+      assert_not_empty "amy reproducer intermediate: server mail conversation_id present" "$server_mail_conversation_id"
+      assert_eq "amy reproducer intermediate: channel mail conversation_id matches SSE payload" "$server_mail_conversation_id" "$channel_mail_conversation_id"
+      assert_not_empty "amy reproducer intermediate: server chat conversation_id present" "$server_chat_conversation_id"
+      assert_eq "amy reproducer intermediate: channel chat conversation_id matches SSE payload" "$server_chat_conversation_id" "$channel_chat_conversation_id"
       ;;
     post)
       assert_eq "amy reproducer post: server mail vs=verified" "verified" "$server_mail_vs"
       assert_eq "amy reproducer post: server chat vs=verified" "verified" "$server_chat_vs"
       assert_eq "amy reproducer post: channel mail header verified=true (asymmetry fixed)" "true" "$channel_mail_verified"
       assert_eq "amy reproducer post: channel chat header verified=true" "true" "$channel_chat_verified"
+      assert_not_empty "amy reproducer post: server mail conversation_id present" "$server_mail_conversation_id"
+      assert_eq "amy reproducer post: channel mail conversation_id matches SSE payload" "$server_mail_conversation_id" "$channel_mail_conversation_id"
+      assert_not_empty "amy reproducer post: server chat conversation_id present" "$server_chat_conversation_id"
+      assert_eq "amy reproducer post: channel chat conversation_id matches SSE payload" "$server_chat_conversation_id" "$channel_chat_conversation_id"
       ;;
   esac
 

@@ -117,6 +117,7 @@ async def send_mail(
             await require_conversation_not_legacy_bound(
                 db_infra,
                 conversation_id=conversation_ref,
+                conversation_type="mail",
             )
             participants = await list_conversation_participants(
                 db_infra,

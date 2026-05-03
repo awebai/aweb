@@ -37,6 +37,8 @@ def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
     if result != VerifyResult.VERIFIED:
         return "failed"
 
+    # Continuation enforcement is row-authoritative: persisted conversation_id
+    # must be populated at write time for signed conversation binding to matter.
     conversation_id = str(row.get("conversation_id") or "").strip()
     if not conversation_id:
         return "verified"
@@ -49,24 +51,56 @@ def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
     return "failed"
 
 
-async def latest_message_verification_status(db, *, conversation_id: str) -> VerificationStatus | None:
+async def latest_message_verification_status(
+    db,
+    *,
+    conversation_id: str,
+    conversation_type: Literal["mail", "chat"] | None = None,
+) -> VerificationStatus | None:
     aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT message_id, conversation_id, from_did, signature, signed_payload
-        FROM {{tables.messages}}
-        WHERE conversation_id = $1::uuid
-        ORDER BY created_at DESC, message_id DESC
-        LIMIT 1
-        """,
-        conversation_id,
-    )
-    if not row:
+    candidates: list[dict[str, Any]] = []
+    if conversation_type in (None, "mail"):
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, conversation_id, from_did, signature, signed_payload, created_at
+            FROM {{tables.messages}}
+            WHERE conversation_id = $1::uuid
+            ORDER BY created_at DESC, message_id DESC
+            LIMIT 1
+            """,
+            conversation_id,
+        )
+        if row:
+            candidates.append(dict(row))
+    if conversation_type in (None, "chat"):
+        row = await aweb_db.fetch_one(
+            """
+            SELECT message_id, session_id AS conversation_id, from_did, signature, signed_payload, created_at
+            FROM {{tables.chat_messages}}
+            WHERE session_id = $1::uuid
+            ORDER BY created_at DESC, message_id DESC
+            LIMIT 1
+            """,
+            conversation_id,
+        )
+        if row:
+            candidates.append(dict(row))
+    if not candidates:
         return None
-    return message_verification_status(dict(row))
+    latest = max(candidates, key=lambda row: (row["created_at"], str(row["message_id"])))
+    return message_verification_status(latest)
 
 
-async def require_conversation_not_legacy_bound(db, *, conversation_id: str) -> None:
-    status = await latest_message_verification_status(db, conversation_id=conversation_id)
+async def require_conversation_not_legacy_bound(
+    db,
+    *,
+    conversation_id: str,
+    conversation_type: Literal["mail", "chat"] | None = None,
+) -> None:
+    status = await latest_message_verification_status(
+        db,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+    )
     if status == "verified_legacy":
         raise ForbiddenError(LEGACY_CONVERSATION_CONTINUATION_DETAIL)
