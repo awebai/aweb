@@ -359,6 +359,9 @@ class RegistryClient:
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return _key_resolution_from_json(await self._request_json("GET", f"/v1/did/{did_aw}/key"))
 
+    async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
+        return await self.resolve_key(did_aw)
+
     async def rotate_key(
         self,
         did_aw: str,
@@ -990,6 +993,18 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: _key_resolution_to_json(value),
             decode=lambda payload: _key_resolution_from_json(payload),
         )
+
+    async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
+        cache_key = self._did_key_cache_key(did_aw)
+        await self._invalidate_keys(cache_key)
+        value = await super().resolve_key(did_aw)
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_DID_KEY_CACHE_TTL_SECONDS,
+            encode=lambda payload: _key_resolution_to_json(payload),
+        )
+        return value
 
     async def get_namespace(self, domain: str) -> Namespace | None:
         registry_url = await self._registry_url_for_domain(domain)

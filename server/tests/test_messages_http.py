@@ -750,6 +750,187 @@ async def test_signed_continuation_requires_matching_conversation_id(aweb_cloud_
 
 
 @pytest.mark.asyncio
+async def test_signed_legacy_conversation_status_is_visible_and_blocks_continuation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "type": "mail",
+            "from": "alice",
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "subject": "legacy signed",
+            "body": "hello",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "timestamp": timestamp,
+        }
+    )
+    payload = {
+        "to_did": "did:aw:bob",
+        "subject": "legacy signed",
+        "body": "hello",
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+    }
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/messages", json=payload)
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/messages/conversations/{conversation_id}")
+        reply = await client.post(
+            "/v1/messages",
+            json={"conversation_id": conversation_id, "subject": "reply", "body": "blocked"},
+        )
+
+    assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["verification_status"] == "verified_legacy"
+    assert reply.status_code == 403
+    assert "conversation_id" in reply.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_signed_conversation_id_binding_status_is_visible_and_allows_continuation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    conversation_id = str(uuid4())
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "type": "mail",
+            "from": "alice",
+            "to": "did:aw:bob",
+            "to_did": "did:aw:bob",
+            "subject": "bound signed",
+            "body": "hello",
+            "from_did": alice_did_key,
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "conversation_id": conversation_id,
+        }
+    )
+    payload = {
+        "to_did": "did:aw:bob",
+        "conversation_id": conversation_id,
+        "subject": "bound signed",
+        "body": "hello",
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload),
+        "signed_payload": signed_payload.decode(),
+    }
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/messages", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["conversation_id"] == conversation_id
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        history = await client.get(f"/v1/messages/conversations/{conversation_id}")
+        reply = await client.post(
+            "/v1/messages",
+            json={"conversation_id": conversation_id, "subject": "reply", "body": "allowed"},
+        )
+
+    assert history.status_code == 200, history.text
+    assert history.json()["messages"][0]["verification_status"] == "verified"
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
+
+
+@pytest.mark.asyncio
 async def test_messages_inbox_accepts_identity_auth(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     registry = AsyncMock()
@@ -1281,7 +1462,8 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
         VALUES
             ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
             ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
-            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+            ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone'),
+            ('dev:acme.com', 'did:key:dev-bob', 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'persistent', 'developer', 'everyone')
         """,
         alice_did_key,
         bob_did_key,
@@ -1328,7 +1510,7 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
     assert send_resp.status_code == 200, send_resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_alias
+        SELECT team_id, from_agent_id, from_alias, from_did, from_address, to_did, to_alias
         FROM {{tables.messages}}
         WHERE subject = 'multi membership team auth'
         """
@@ -1338,6 +1520,7 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
     assert row["from_alias"] == "alice"
     assert row["from_did"] == "did:aw:alice"
     assert row["from_address"] == "acme.com/alice"
+    assert row["to_did"] == "did:aw:bob"
     assert row["to_alias"] == "bob"
 
 

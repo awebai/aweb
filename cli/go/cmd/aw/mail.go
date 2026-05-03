@@ -103,6 +103,9 @@ var mailSendCmd = &cobra.Command{
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 		if err != nil {
+			if targetKind == "conversation" {
+				return err
+			}
 			return networkError(err, targetValue)
 		}
 		logsDir := defaultLogsDir()

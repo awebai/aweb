@@ -222,6 +222,9 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		}
 		if m.SignedPayload != "" {
 			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
+			if m.VerificationStatus == Verified {
+				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
+			}
 		} else {
 			to := m.ToAlias
 			if m.ToAddress != "" {
@@ -245,6 +248,13 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 				SigningKeyID:   m.SigningKeyID,
 			}
 			m.VerificationStatus, _ = VerifyMessage(env)
+			if m.VerificationStatus == Failed && m.ConversationID != "" {
+				env.ConversationID = ""
+				legacyStatus, _ := VerifyMessage(env)
+				if legacyStatus == Verified {
+					m.VerificationStatus = VerifiedLegacy
+				}
+			}
 		}
 		m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)

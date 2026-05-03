@@ -33,6 +33,10 @@ from aweb.messaging.conversations import (
     require_active_conversation_participant,
     touch_conversation_activity,
 )
+from aweb.messaging.verification import (
+    message_verification_status,
+    require_conversation_not_legacy_bound,
+)
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
@@ -110,6 +114,10 @@ async def send_mail(
                 authenticated_did=sender_did,
                 equivalent_dids=auth_dids(auth),
             )
+            await require_conversation_not_legacy_bound(
+                db_infra,
+                conversation_id=conversation_ref,
+            )
             participants = await list_conversation_participants(
                 db_infra,
                 conversation_id=conversation_ref,
@@ -120,6 +128,7 @@ async def send_mail(
                 if participant["did"] != sender_participant_did
             ]
             if len(recipients) == 0 and len(participants) == 1:
+                # Defensive self-loopback for a conversation that only has its creator.
                 recipient_participant = auth_context["participant"]
             elif len(recipients) == 1:
                 recipient_participant = recipients[0]
@@ -435,6 +444,7 @@ async def check_inbox(
             msg["signature"] = r["signature"]
         if r["signed_payload"]:
             msg["signed_payload"] = r["signed_payload"]
+        msg["verification_status"] = message_verification_status(dict(r))
         messages.append(msg)
 
     return json.dumps({"messages": messages})

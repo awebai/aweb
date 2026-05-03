@@ -14,6 +14,7 @@ from awid.did import public_key_from_did
 SIGNED_FIELDS = frozenset(
     {
         "body",
+        "conversation_id",
         "from",
         "from_did",
         "from_stable_id",

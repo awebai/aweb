@@ -285,6 +285,26 @@ set_messaging_policy() {
   )
 }
 
+psql_scalar() {
+  local sql="$1"
+  (
+    cd "$SERVER_DIR"
+    docker compose --env-file .env.e2e exec -T postgres \
+      psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
+      -Atq -v ON_ERROR_STOP=1 -c "$sql" 2>/dev/null | tr -d '\r' | tail -n 1
+  )
+}
+
+psql_exec() {
+  local sql="$1"
+  (
+    cd "$SERVER_DIR"
+    docker compose --env-file .env.e2e exec -T postgres \
+      psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
+      -v ON_ERROR_STOP=1 -c "$sql" >/dev/null
+  )
+}
+
 set_awid_address_reachability() {
   local domain="$1" name="$2" reachability="$3" visible_to_team_id="${4:-}"
   local actual actual_reachability actual_visible_to_team_id expected_visible_to_team_id
@@ -1253,6 +1273,42 @@ assert_eq "alice restored primary-team chat exit" "0" "$alice_restored_chat_exit
 bob_restored_pending="$(run_aw_in "$BOB_DIR" chat pending --json 2>/dev/null)"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
+
+if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to-address partner.local/bob \
+  --subject "Cross namespace conversation" \
+  --body "Cross namespace initial" \
+  --json 2>&1)"; then
+  cross_ns_mail_exit=0
+else
+  cross_ns_mail_exit=$?
+fi
+assert_eq "conversation gate cross-namespace initial mail exit" "0" "$cross_ns_mail_exit"
+if [[ "$cross_ns_mail_exit" != "0" ]]; then
+  echo "  cross namespace mail output: ${cross_ns_mail_out:0:240}"
+fi
+cross_ns_conversation_id="$(echo "$cross_ns_mail_out" | jq_field conversation_id)"
+assert_not_empty "conversation gate cross-namespace initial returns conversation_id" "$cross_ns_conversation_id"
+
+if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
+  --conversation-id "$cross_ns_conversation_id" \
+  --subject "Cross namespace reply" \
+  --body "Cross namespace response" \
+  --json 2>&1)"; then
+  cross_ns_reply_exit=0
+else
+  cross_ns_reply_exit=$?
+fi
+assert_eq "conversation gate cross-namespace reply by conversation_id" "0" "$cross_ns_reply_exit"
+if [[ "$cross_ns_reply_exit" != "0" ]]; then
+  echo "  cross namespace reply output: ${cross_ns_reply_out:0:240}"
+fi
+cross_ns_reply_conversation_id="$(echo "$cross_ns_reply_out" | jq_field conversation_id)"
+assert_eq "conversation gate cross-namespace reply stays in conversation" "$cross_ns_conversation_id" "$cross_ns_reply_conversation_id"
+
+alice_cross_ns_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_cross_ns_reply_body="$(echo "$alice_cross_ns_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$cross_ns_conversation_id' and m.get('subject')=='Cross namespace reply'), ''))" 2>/dev/null || echo "")"
+assert_eq "conversation gate cross-namespace reply delivered" "Cross namespace response" "$alice_cross_ns_reply_body"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1449,6 +1505,7 @@ assert_eq "conversation gate reply stays in same conversation" "$bob_hidden_conv
 bob_hidden_reply_inbox="$(run_aw_in "$BOB_DIR" mail inbox --json --show-all 2>/dev/null)"
 bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Conversation hidden reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "conversation gate hidden bob receives conversation reply" "Reply by conversation_id to hidden bob" "$bob_hidden_reply_body"
+assert_eq "conversation gate old client inbox receives conversation reply" "Reply by conversation_id to hidden bob" "$bob_hidden_reply_body"
 
 if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send \
   --conversation-id "$bob_hidden_conversation_id" \
@@ -1463,6 +1520,116 @@ if [[ "$carol_leaked_conversation_exit" != "0" ]] && echo "$carol_leaked_convers
   pass=$((pass + 1))
 else
   echo "  FAIL: conversation gate leaked conversation_id should return participant rejection (exit=$carol_leaked_conversation_exit output=${carol_leaked_conversation_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+if missing_conversation_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --conversation-id "99999999-9999-4999-8999-999999999999" \
+  --subject "Missing conversation" \
+  --body "Missing conversation should fail" 2>&1)"; then
+  missing_conversation_exit=0
+else
+  missing_conversation_exit=$?
+fi
+if [[ "$missing_conversation_exit" != "0" ]] && echo "$missing_conversation_out" | grep -qi "Conversation not found\|404"; then
+  echo "  PASS: conversation gate missing conversation_id returns not found"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: conversation gate missing conversation_id should return 404 (exit=$missing_conversation_exit output=${missing_conversation_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+psql_exec "UPDATE aweb.conversations SET status = 'closed' WHERE conversation_id = '${bob_hidden_conversation_id}'::uuid;"
+if closed_conversation_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --conversation-id "$bob_hidden_conversation_id" \
+  --subject "Closed conversation" \
+  --body "Closed conversation should fail" 2>&1)"; then
+  closed_conversation_exit=0
+else
+  closed_conversation_exit=$?
+fi
+if [[ "$closed_conversation_exit" != "0" ]] && echo "$closed_conversation_out" | grep -qi "closed\|403"; then
+  echo "  PASS: conversation gate closed conversation rejects continuation"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: conversation gate closed conversation should reject continuation (exit=$closed_conversation_exit output=${closed_conversation_out:0:180})"
+  fail=$((fail + 1))
+fi
+
+if ttl_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Conversation TTL slide" \
+  --body "TTL initial" \
+  --json 2>&1)"; then
+  ttl_start_exit=0
+else
+  ttl_start_exit=$?
+fi
+assert_eq "conversation gate ttl slide initial mail exit" "0" "$ttl_start_exit"
+ttl_conversation_id="$(echo "$ttl_start_out" | jq_field conversation_id)"
+assert_not_empty "conversation gate ttl slide initial returns conversation_id" "$ttl_conversation_id"
+psql_exec "UPDATE aweb.conversations SET expires_at = NOW() + INTERVAL '1 day' WHERE conversation_id = '${ttl_conversation_id}'::uuid;"
+if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+  --conversation-id "$ttl_conversation_id" \
+  --subject "Conversation TTL reply" \
+  --body "TTL reply" \
+  --json 2>&1)"; then
+  ttl_reply_exit=0
+else
+  ttl_reply_exit=$?
+fi
+assert_eq "conversation gate ttl slide continuation exit" "0" "$ttl_reply_exit"
+ttl_slid="$(psql_scalar "SELECT CASE WHEN expires_at > NOW() + INTERVAL '29 days' THEN 'yes' ELSE 'no' END FROM aweb.conversations WHERE conversation_id = '${ttl_conversation_id}'::uuid;")"
+assert_eq "conversation gate continuation slides ttl 30 days" "yes" "$ttl_slid"
+
+if expired_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Conversation concurrent expiry" \
+  --body "Expiry initial" \
+  --json 2>&1)"; then
+  expired_start_exit=0
+else
+  expired_start_exit=$?
+fi
+assert_eq "conversation gate concurrent expiry initial mail exit" "0" "$expired_start_exit"
+expired_conversation_id="$(echo "$expired_start_out" | jq_field conversation_id)"
+assert_not_empty "conversation gate concurrent expiry returns conversation_id" "$expired_conversation_id"
+psql_exec "UPDATE aweb.conversations SET expires_at = NOW() - INTERVAL '1 second' WHERE conversation_id = '${expired_conversation_id}'::uuid;"
+expired_one_out="$E2E_CWD/expired-one.out"
+expired_two_out="$E2E_CWD/expired-two.out"
+expired_one_code="$E2E_CWD/expired-one.code"
+expired_two_code="$E2E_CWD/expired-two.code"
+(
+  set +e
+  run_aw_in "$BOB_DIR" mail send \
+    --conversation-id "$expired_conversation_id" \
+    --subject "Expired one" \
+    --body "Expired one" >"$expired_one_out" 2>&1
+  echo $? >"$expired_one_code"
+) &
+expired_one_pid=$!
+(
+  set +e
+  run_aw_in "$BOB_DIR" mail send \
+    --conversation-id "$expired_conversation_id" \
+    --subject "Expired two" \
+    --body "Expired two" >"$expired_two_out" 2>&1
+  echo $? >"$expired_two_code"
+) &
+expired_two_pid=$!
+wait "$expired_one_pid" 2>/dev/null || true
+wait "$expired_two_pid" 2>/dev/null || true
+expired_one_exit="$(cat "$expired_one_code" 2>/dev/null || echo 0)"
+expired_two_exit="$(cat "$expired_two_code" 2>/dev/null || echo 0)"
+expired_one_text="$(cat "$expired_one_out" 2>/dev/null || true)"
+expired_two_text="$(cat "$expired_two_out" 2>/dev/null || true)"
+expired_status="$(psql_scalar "SELECT status FROM aweb.conversations WHERE conversation_id = '${expired_conversation_id}'::uuid;")"
+if [[ "$expired_one_exit" != "0" && "$expired_two_exit" != "0" && "$expired_status" == "expired" ]] && \
+   echo "$expired_one_text $expired_two_text" | grep -qi "expired\|403"; then
+  echo "  PASS: conversation gate concurrent lazy expiry rejects both continuations"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: conversation gate concurrent lazy expiry should reject both (exit1=$expired_one_exit exit2=$expired_two_exit status=$expired_status output1=${expired_one_text:0:120} output2=${expired_two_text:0:120})"
   fail=$((fail + 1))
 fi
 
@@ -1498,6 +1665,51 @@ bob_pin_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; ms
 bob_stable_body="$(echo "$bob_matrix_final_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Matrix stable did target'), ''))" 2>/dev/null || echo "")"
 assert_eq "matrix known-agent pin fallback delivered" "Matrix known pin fallback mail" "$bob_pin_body"
 assert_eq "matrix stable did:aw delivered" "Matrix stable did target mail" "$bob_stable_body"
+
+if rotation_start_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to bob \
+  --subject "Conversation rotation initial" \
+  --body "Rotation initial" \
+  --json 2>&1)"; then
+  rotation_start_exit=0
+else
+  rotation_start_exit=$?
+fi
+assert_eq "conversation gate rotation initial mail exit" "0" "$rotation_start_exit"
+rotation_conversation_id="$(echo "$rotation_start_out" | jq_field conversation_id)"
+assert_not_empty "conversation gate rotation initial returns conversation_id" "$rotation_conversation_id"
+
+if bob_rotate_out="$(run_aw_in "$BOB_DIR" id rotate-key --json 2>&1)"; then
+  bob_rotate_exit=0
+else
+  bob_rotate_exit=$?
+fi
+assert_eq "conversation gate bob rotates did:key" "0" "$bob_rotate_exit"
+if [[ "$bob_rotate_exit" != "0" ]]; then
+  echo "  bob rotate output: ${bob_rotate_out:0:240}"
+fi
+bob_rotated_new_did="$(echo "$bob_rotate_out" | jq_field new_did)"
+assert_not_empty "conversation gate bob rotation returns new did:key" "$bob_rotated_new_did"
+
+if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send \
+  --conversation-id "$rotation_conversation_id" \
+  --subject "Conversation rotation reply" \
+  --body "Rotation reply after did:key change" \
+  --json 2>&1)"; then
+  rotation_reply_exit=0
+else
+  rotation_reply_exit=$?
+fi
+assert_eq "conversation gate rotated did:key continues did:aw conversation" "0" "$rotation_reply_exit"
+if [[ "$rotation_reply_exit" != "0" ]]; then
+  echo "  rotation reply output: ${rotation_reply_out:0:240}"
+fi
+rotation_reply_conversation_id="$(echo "$rotation_reply_out" | jq_field conversation_id)"
+assert_eq "conversation gate rotated reply stays in conversation" "$rotation_conversation_id" "$rotation_reply_conversation_id"
+
+alice_rotation_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
+alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
+assert_eq "conversation gate rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
 echo ""
 
 # ---------------------------------------------------------------------------

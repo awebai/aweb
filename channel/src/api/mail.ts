@@ -1,7 +1,11 @@
 import type { APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
 import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
-import { verifyMessage, verifySignedPayload } from "../identity/signing.js";
+import {
+  signedPayloadConversationStatus,
+  verifyMessage,
+  verifySignedPayload,
+} from "../identity/signing.js";
 
 export interface InboxMessage {
   message_id: string;
@@ -86,24 +90,6 @@ function hydrateAddressesFromSignedPayload(msg: InboxMessage): void {
     }
   } catch {
     // Signature verification will fail if the payload is malformed.
-  }
-}
-
-function signedPayloadConversationStatus(
-  signedPayload: string,
-  conversationID: string | undefined,
-): VerificationStatus {
-  const expected = (conversationID || "").trim();
-  if (!expected) return "verified";
-  try {
-    const payload = JSON.parse(signedPayload) as { conversation_id?: unknown };
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === undefined || payload.conversation_id === "") {
-      return "verified_legacy";
-    }
-    return "failed";
-  } catch {
-    return "failed";
   }
 }
 

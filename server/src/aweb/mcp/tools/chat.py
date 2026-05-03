@@ -26,6 +26,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.messages import evaluate_messaging_policy
+from aweb.messaging.verification import message_verification_status
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
@@ -611,6 +612,9 @@ async def chat_history(
                     "body": msg["body"],
                     "sender_leaving": msg["sender_leaving"],
                     "timestamp": msg["created_at"].isoformat(),
+                    "verification_status": message_verification_status(
+                        {**msg, "conversation_id": str(session_uuid)}
+                    ),
                 }
                 for msg in messages
             ],

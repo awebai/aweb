@@ -254,6 +254,7 @@ type ChatHistoryResponse struct {
 
 type ChatMessage struct {
 	MessageID               string                   `json:"message_id"`
+	ConversationID          string                   `json:"conversation_id,omitempty"`
 	FromAgent               string                   `json:"from_agent"`
 	FromAddress             string                   `json:"from_address,omitempty"`
 	ToAddress               string                   `json:"to_address,omitempty"`
@@ -323,26 +324,37 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 		}
 		if m.SignedPayload != "" {
 			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
+			if m.VerificationStatus == Verified {
+				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
+			}
 		} else {
 			to := ""
 			if m.ToAddress != "" {
 				to = m.ToAddress
 			}
 			env := &MessageEnvelope{
-				From:         from,
-				FromDID:      m.FromDID,
-				To:           to,
-				ToDID:        m.ToDID,
-				Type:         "chat",
-				Body:         m.Body,
-				Timestamp:    m.Timestamp,
-				FromStableID: m.FromStableID,
-				ToStableID:   m.ToStableID,
-				MessageID:    m.MessageID,
-				Signature:    m.Signature,
-				SigningKeyID: m.SigningKeyID,
+				From:           from,
+				FromDID:        m.FromDID,
+				To:             to,
+				ToDID:          m.ToDID,
+				Type:           "chat",
+				Body:           m.Body,
+				Timestamp:      m.Timestamp,
+				FromStableID:   m.FromStableID,
+				ToStableID:     m.ToStableID,
+				MessageID:      m.MessageID,
+				ConversationID: m.ConversationID,
+				Signature:      m.Signature,
+				SigningKeyID:   m.SigningKeyID,
 			}
 			m.VerificationStatus, _ = VerifyMessage(env)
+			if m.VerificationStatus == Failed && m.ConversationID != "" {
+				env.ConversationID = ""
+				legacyStatus, _ := VerifyMessage(env)
+				if legacyStatus == Verified {
+					m.VerificationStatus = VerifiedLegacy
+				}
+			}
 		}
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}

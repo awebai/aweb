@@ -215,3 +215,21 @@ export async function verifySignedPayload(
 
   return valid ? "verified" : "failed";
 }
+
+export function signedPayloadConversationStatus(
+  signedPayload: string,
+  conversationID: string | undefined,
+): VerificationStatus {
+  const expected = (conversationID || "").trim();
+  if (!expected) return "verified";
+  try {
+    const payload = JSON.parse(signedPayload) as { conversation_id?: unknown };
+    if (payload.conversation_id === expected) return "verified";
+    if (payload.conversation_id === undefined || payload.conversation_id === "") {
+      return "verified_legacy";
+    }
+    return "failed";
+  } catch {
+    return "failed";
+  }
+}

@@ -416,6 +416,63 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 	}
 }
 
+func TestAwMailSendConversationIDSurfacesMissingConversation(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	conversationID := "99999999-9999-4999-8999-999999999999"
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages":
+			http.Error(w, `{"detail":"Conversation not found"}`, http.StatusNotFound)
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--conversation-id", conversationID,
+		"--body", "missing",
+	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected failure, got success:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "Conversation not found") {
+		t.Fatalf("expected missing conversation rejection, got:\n%s", string(out))
+	}
+	if strings.Contains(string(out), "agent not found") {
+		t.Fatalf("missing conversation should not be rewritten as missing agent:\n%s", string(out))
+	}
+}
+
 func TestAwMailShowFetchesConversation(t *testing.T) {
 	t.Parallel()
 

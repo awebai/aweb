@@ -36,6 +36,10 @@ from aweb.messaging.messages import (
     resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
+from aweb.messaging.verification import (
+    message_verification_status,
+    require_conversation_not_legacy_bound,
+)
 from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
@@ -130,6 +134,7 @@ class InboxMessage(BaseModel):
     to_address: Optional[str] = None
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
+    verification_status: Optional[str] = None
 
 
 class InboxResponse(BaseModel):
@@ -176,6 +181,7 @@ async def _inbox_response_from_rows(db, rows) -> InboxResponse:
                 to_address=(identity_map.get(to_did, {}).get("address") or None),
                 signature=r.get("signature"),
                 signed_payload=r.get("signed_payload"),
+                verification_status=message_verification_status(dict(r)),
             )
         )
 
@@ -589,6 +595,10 @@ async def send_message(
                 authenticated_did=sender_did,
                 equivalent_dids=auth_dids(auth),
             )
+            await require_conversation_not_legacy_bound(
+                db,
+                conversation_id=payload.conversation_id,
+            )
             participants = await list_conversation_participants(
                 db,
                 conversation_id=payload.conversation_id,
@@ -600,6 +610,7 @@ async def send_message(
                 if participant["did"] != sender_participant_did
             ]
             if len(recipients) == 0 and len(participants) == 1:
+                # Defensive self-loopback for a conversation that only has its creator.
                 recipient_participant = auth_context["participant"]
             elif len(recipients) == 1:
                 recipient_participant = recipients[0]
@@ -807,12 +818,12 @@ async def send_message(
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
-                body=payload.body,
-                from_did=from_did,
-                message_id=payload.message_id,
-                timestamp=payload.timestamp,
-                conversation_id=payload.conversation_id,
-            )
+            body=payload.body,
+            from_did=from_did,
+            message_id=payload.message_id,
+            timestamp=payload.timestamp,
+            conversation_id=payload.conversation_id,
+        )
         created_at = _parse_signed_timestamp(payload.timestamp)
 
     try:
@@ -824,6 +835,8 @@ async def send_message(
                 sender_did=sender_did,
                 sender_address=sender_address,
             )
+        # If an explicit recipient is present, conversation_id is a caller-chosen
+        # initial id. Continuations use conversation_id without recipient fields.
         conversation = await create_conversation(
             db,
             conversation_type="mail",

@@ -666,6 +666,131 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
 
 
 @pytest.mark.asyncio
+async def test_mcp_send_mail_rejects_legacy_bound_conversation_continuation(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    bob_agent_id = uuid4()
+    conversation_id = uuid4()
+    message_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did_key = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
+            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'active', 'everyone')
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', $2, 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        conversation_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', 'to_alias', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    signed_payload = canonical_signed_payload(
+        {
+            "body": "legacy hello",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": str(message_id),
+            "subject": "Legacy",
+            "timestamp": "2026-05-03T00:00:00Z",
+            "to": "bob",
+            "to_did": "did:aw:bob",
+            "type": "mail",
+        }
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_agent_id, to_agent_id,
+            from_alias, from_address, to_alias, from_did, to_did,
+            subject, body, priority, signature, signed_payload, created_at
+        )
+        VALUES (
+            $1, $2, $3, $4,
+            'alice', 'acme.com/alice', 'bob', 'did:aw:alice', 'did:aw:bob',
+            'Legacy', 'legacy hello', 'normal', $5, $6, NOW()
+        )
+        """,
+        message_id,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+        sign_message(alice_sk, signed_payload.encode("utf-8")),
+        signed_payload,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(bob_agent_id),
+            alias="bob",
+            did_key="did:key:z6MkBob",
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _unexpected_signer(**_kwargs) -> HostedMessageSigningResult:
+        raise AssertionError("legacy-bound continuation must be rejected before signing")
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            hosted_signer=_unexpected_signer,
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="should not send",
+        )
+    )
+    inbox = json.loads(
+        await mail_tools.check_inbox(
+            DBInfra(aweb_cloud_db.aweb_db),
+            unread_only=False,
+        )
+    )
+
+    assert "conversation_id" in result["error"]
+    assert inbox["messages"][0]["verification_status"] == "verified_legacy"
+
+
+@pytest.mark.asyncio
 async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()

@@ -970,6 +970,41 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
+    did_aw = "did:aw:rotated"
+    request_count = {"value": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/v1/did/{did_aw}/key"
+        request_count["value"] += 1
+        did_key = "did:key:old" if request_count["value"] == 1 else "did:key:new"
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": did_key,
+                "log_head": None,
+            },
+        )
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    stale = await client.resolve_key(did_aw)
+    fresh = await client.resolve_key_fresh(did_aw)
+    cached_fresh = await client.resolve_key(did_aw)
+
+    assert stale.current_did_key == "did:key:old"
+    assert fresh.current_did_key == "did:key:new"
+    assert cached_fresh.current_did_key == "did:key:new"
+    assert request_count["value"] == 2
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_reuses_cached_team_metadata():
     request_count = {"value": 0}
 

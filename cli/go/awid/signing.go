@@ -34,11 +34,32 @@ type VerificationStatus string
 
 const (
 	Verified          VerificationStatus = "verified"
+	VerifiedLegacy    VerificationStatus = "verified_legacy"
 	VerifiedCustodial VerificationStatus = "verified_custodial"
 	Unverified        VerificationStatus = "unverified"
 	Failed            VerificationStatus = "failed"
 	IdentityMismatch  VerificationStatus = "identity_mismatch"
 )
+
+func SignedPayloadConversationStatus(signedPayload, conversationID string) VerificationStatus {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return Verified
+	}
+	var payload struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal([]byte(signedPayload), &payload); err != nil {
+		return Failed
+	}
+	if payload.ConversationID == conversationID {
+		return Verified
+	}
+	if strings.TrimSpace(payload.ConversationID) == "" {
+		return VerifiedLegacy
+	}
+	return Failed
+}
 
 // RotationAnnouncement is attached to messages after key rotation.
 // The old key signs the transition to the new key.
