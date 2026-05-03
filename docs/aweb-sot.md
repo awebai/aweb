@@ -369,6 +369,38 @@ The maximum window of stale access after a member is removed is
 
 aweb uses a single PostgreSQL schema: `aweb`.
 
+### Migrations
+
+Migrations live at `server/src/aweb/migrations/aweb/NNN_name.sql`.
+The `pgdbm` migration manager applies them in order against the
+`aweb` schema with `module_name='aweb-aweb'`. Each applied
+migration is recorded in `aweb.schema_migrations` with its
+filename and a checksum of the file contents.
+
+**Deployed migrations are immutable.** Once a migration has been
+applied to any database (staging, prod, or even just landed on a
+branch ahead of you), the checksum is recorded. Editing the file
+trips pgdbm's checksum guard on the next apply attempt — the
+manager refuses to apply, and the only path off that state is a
+destructive schema cutover.
+
+The recovery path for any post-apply adjustment is **always a new
+forward migration**, never editing an existing one. Concrete cases:
+
+- **Constraint addition fails** because pre-existing data violates
+  the constraint: file `NNN+1_repair_then_constrain.sql` that
+  data-repairs offending rows first, then adds the constraint.
+- **Migration partially applied** (e.g., DDL succeeded but a row
+  insert mid-way failed): file a new migration to complete the
+  intended state. Don't try to edit the failed one to "patch up."
+- **Default value needs to change** for an already-applied column:
+  file a new migration with `ALTER COLUMN ... SET DEFAULT`.
+- **Table or column needs renaming**: file a new migration with
+  the rename. Don't edit the original CREATE TABLE.
+
+The principle holds across every repo using pgdbm (aweb-server,
+aweb-cloud, awid-service). Once shipped, immutable.
+
 ### Schema
 
 ```sql
