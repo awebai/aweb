@@ -875,6 +875,120 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
 
 
 @pytest.mark.asyncio
+async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    bob_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
+            return None
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to="acme.com/bob",
+            subject="same team local",
+            body="hello bob",
+        )
+    )
+
+    assert result["status"] == "delivered"
+    assert result["to"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+    alice_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkTeam1'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkTeam2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'active', 'everyone')
+        """,
+        alice_agent_id,
+        alice_did,
+        uuid4(),
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            return None
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to="otherco.com/bob",
+            subject="cross team local",
+            body="hello bob",
+        )
+    )
+
+    assert result["error"] == "Address 'otherco.com/bob' not found"
+
+
+@pytest.mark.asyncio
 async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_signer(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
@@ -1235,6 +1349,119 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     )
     assert message["from_did"] == "did:aw:alice"
     assert message["from_address"] == "acme.com/alice"
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    bob_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
+            return None
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to_address="acme.com/bob",
+            message="hello bob",
+        )
+    )
+
+    assert result["delivered"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_rejects_cross_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+    alice_agent_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    del alice_sk
+    alice_did = did_from_public_key(alice_pub)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkTeam1'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkTeam2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, lifetime, status, messaging_policy)
+        VALUES
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'active', 'everyone'),
+            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'active', 'everyone')
+        """,
+        alice_agent_id,
+        alice_did,
+        uuid4(),
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            return None
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=_Registry(),
+            hosted_signer=None,
+            to_address="otherco.com/bob",
+            message="hello bob",
+        )
+    )
+
+    assert result["error"] == "Recipient address 'otherco.com/bob' not found"
 
 
 @pytest.mark.asyncio

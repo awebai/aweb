@@ -25,6 +25,7 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
+from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
@@ -341,6 +342,12 @@ async def chat_send(
                         return json.dumps({"error": f"Recipient '{to_address}' not connected"})
                     if registry_client is None:
                         return json.dumps({"error": "AWID registry unavailable"})
+                    return json.dumps({"error": f"Recipient address '{to_address}' not found"})
+                if (
+                    registry_client is not None
+                    and requires_registry_address_binding(target)
+                    and not local_recipient_visible_to_auth(target, auth)
+                ):
                     return json.dumps({"error": f"Recipient address '{to_address}' not found"})
                 target = _with_requested_address(target, to_address.strip())
                 if not _target_did(target):

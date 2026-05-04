@@ -19,6 +19,7 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
+from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -240,6 +241,12 @@ async def send_mail(
                     return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
                 if registry_client is None:
                     return json.dumps({"error": "AWID registry unavailable"})
+                return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+            if (
+                registry_client is not None
+                and requires_registry_address_binding(recipient)
+                and not local_recipient_visible_to_auth(recipient, auth)
+            ):
                 return json.dumps({"error": f"Address '{recipient_ref}' not found"})
             recipient = _with_requested_address(recipient, recipient_ref)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()

@@ -32,6 +32,11 @@ from aweb.messaging.alias_targets import (
     team_exists,
     validate_alias_selector,
 )
+from aweb.messaging.address_auth import (
+    local_recipient_visible_to_auth,
+    requires_registry_address_binding,
+    verified_signed_payload_json,
+)
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
@@ -247,47 +252,11 @@ def _with_requested_address(row: dict[str, Any], address: str) -> dict[str, Any]
     return copied
 
 
-def _requires_registry_address_binding(row: dict[str, Any] | None) -> bool:
-    return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
-
-
-def _local_recipient_visible_to_auth(row: dict[str, Any] | None, auth: MessagingAuth) -> bool:
-    if row is None:
-        return False
-    row_team_id = str(row.get("team_id") or "").strip()
-    auth_team_id = str(auth.team_id or "").strip()
-    if row_team_id and auth_team_id and row_team_id == auth_team_id:
-        return True
-    recipient_dids = {
-        value
-        for value in (
-            str(row.get("did_aw") or "").strip(),
-            str(row.get("did_key") or "").strip(),
-        )
-        if value
-    }
-    sender_dids = {
-        value
-        for value in (
-            str(auth.did_aw or "").strip(),
-            str(auth.did_key or "").strip(),
-        )
-        if value
-    }
-    return bool(recipient_dids & sender_dids)
-
-
 def _signed_payload_address_binding(
-    signed_payload: str | None,
+    payload: dict[str, Any] | None,
     *,
     address: str,
 ) -> dict[str, str] | None:
-    if not signed_payload:
-        return None
-    try:
-        payload = json.loads(signed_payload)
-    except Exception:
-        return None
     if not isinstance(payload, dict) or payload.get("type") != "chat":
         return None
     signed_to = str(payload.get("to") or "").strip()
@@ -432,6 +401,7 @@ async def _resolve_chat_targets(
     to_dids: list[str],
     to_addresses: list[str],
     signed_payload: str | None = None,
+    signature: str | None = None,
 ) -> list[dict[str, Any]]:
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -503,10 +473,17 @@ async def _resolve_chat_targets(
             if registry_client is None:
                 raise HTTPException(status_code=503, detail="AWID registry unavailable")
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
-        if registry_client is not None and _requires_registry_address_binding(row):
-            binding = _signed_payload_address_binding(signed_payload, address=address)
+        if registry_client is not None and requires_registry_address_binding(row):
+            binding = _signed_payload_address_binding(
+                verified_signed_payload_json(
+                    signed_payload=signed_payload,
+                    signature=signature,
+                    did_key=auth.did_key,
+                ),
+                address=address,
+            )
             if not (
-                _local_recipient_visible_to_auth(row, auth)
+                local_recipient_visible_to_auth(row, auth)
                 or _row_matches_signed_address_binding(row, binding)
             ):
                 raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
@@ -674,7 +651,8 @@ async def create_or_send(
         to_aliases=payload.to_aliases,
         to_dids=payload.to_dids,
         to_addresses=payload.to_addresses,
-        signed_payload=payload.signed_payload if payload.signature is not None else None,
+        signed_payload=payload.signed_payload,
+        signature=payload.signature,
     )
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
 

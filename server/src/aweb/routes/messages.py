@@ -21,6 +21,11 @@ from aweb.messaging.alias_targets import (
     team_exists,
     validate_alias_selector,
 )
+from aweb.messaging.address_auth import (
+    local_recipient_visible_to_auth,
+    requires_registry_address_binding,
+    verified_signed_payload_json,
+)
 from aweb.messaging.conversations import (
     create_conversation,
     list_conversation_participants,
@@ -466,17 +471,11 @@ def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
 
 
 def _signed_payload_matches_address_binding(
-    signed_payload: str | None,
+    payload: dict | None,
     *,
     address: str,
     recipient: dict,
 ) -> bool:
-    if not signed_payload:
-        return True
-    try:
-        payload = json.loads(signed_payload)
-    except Exception:
-        return False
     if not isinstance(payload, dict) or payload.get("type") != "mail":
         return False
     signed_to = str(payload.get("to") or "").strip()
@@ -485,42 +484,14 @@ def _signed_payload_matches_address_binding(
     recipient_stable_id = str(recipient.get("did_aw") or "").strip()
     recipient_current_did = str(recipient.get("did_key") or "").strip()
     signed_to_did = str(payload.get("to_did") or "").strip()
+    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
+    if not signed_to_did and not signed_to_stable_id:
+        return False
     if signed_to_did and signed_to_did not in {recipient_stable_id, recipient_current_did}:
         return False
-    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
     if signed_to_stable_id and signed_to_stable_id != recipient_stable_id:
         return False
     return bool(recipient_stable_id or recipient_current_did)
-
-
-def _requires_registry_address_binding(row: dict | None) -> bool:
-    return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
-
-
-def _local_recipient_visible_to_auth(row: dict | None, auth: MessagingAuth) -> bool:
-    if row is None:
-        return False
-    row_team_id = str(row.get("team_id") or "").strip()
-    auth_team_id = str(auth.team_id or "").strip()
-    if row_team_id and auth_team_id and row_team_id == auth_team_id:
-        return True
-    recipient_dids = {
-        value
-        for value in (
-            str(row.get("did_aw") or "").strip(),
-            str(row.get("did_key") or "").strip(),
-        )
-        if value
-    }
-    sender_dids = {
-        value
-        for value in (
-            str(auth.did_aw or "").strip(),
-            str(auth.did_key or "").strip(),
-        )
-        if value
-    }
-    return bool(recipient_dids & sender_dids)
 
 
 async def _bound_recipient_from_address(
@@ -531,6 +502,7 @@ async def _bound_recipient_from_address(
     address: str,
     expected_recipient: dict | None = None,
     signed_payload: str | None = None,
+    signature: str | None = None,
 ) -> dict | None:
     if "/" not in address:
         raise HTTPException(status_code=422, detail="to_address must be domain/name")
@@ -542,8 +514,8 @@ async def _bound_recipient_from_address(
             if bound_recipient is not None:
                 return bound_recipient
     local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
-    if _requires_registry_address_binding(local_recipient):
-        if _local_recipient_visible_to_auth(local_recipient, auth):
+    if requires_registry_address_binding(local_recipient):
+        if local_recipient_visible_to_auth(local_recipient, auth):
             return local_recipient
         if registry_client is None:
             return local_recipient
@@ -551,13 +523,17 @@ async def _bound_recipient_from_address(
             expected_recipient is not None
             and _recipient_identity_matches(local_recipient, expected_recipient)
             and _signed_payload_matches_address_binding(
-                signed_payload,
+                verified_signed_payload_json(
+                    signed_payload=signed_payload,
+                    signature=signature,
+                    did_key=auth.did_key,
+                ),
                 address=address,
                 recipient=local_recipient,
             )
         ):
             return local_recipient
-        return None
+        raise HTTPException(status_code=404, detail="Recipient address not found")
     return local_recipient
 
 
@@ -727,6 +703,7 @@ async def send_message(
                 address=address,
                 expected_recipient=recipient,
                 signed_payload=payload.signed_payload,
+                signature=payload.signature,
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
@@ -754,6 +731,7 @@ async def send_message(
                 address=address,
                 expected_recipient=recipient,
                 signed_payload=payload.signed_payload,
+                signature=payload.signature,
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
@@ -782,16 +760,17 @@ async def send_message(
                 if registry_client is None:
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
-            if registry_client is not None and _requires_registry_address_binding(recipient):
+            if registry_client is not None and requires_registry_address_binding(recipient):
                 if not (
-                    _local_recipient_visible_to_auth(recipient, auth)
-                    or (
-                        payload.signed_payload is not None
-                        and _signed_payload_matches_address_binding(
-                            payload.signed_payload,
-                            address=address,
-                            recipient=recipient,
-                        )
+                    local_recipient_visible_to_auth(recipient, auth)
+                    or _signed_payload_matches_address_binding(
+                        verified_signed_payload_json(
+                            signed_payload=payload.signed_payload,
+                            signature=payload.signature,
+                            did_key=auth.did_key,
+                        ),
+                        address=address,
+                        recipient=recipient,
                     )
                 ):
                     raise HTTPException(status_code=404, detail="Recipient address not found")

@@ -1763,7 +1763,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
 
 
 @pytest.mark.asyncio
-async def test_send_message_accepts_to_stable_id_address_binding_with_duplicate_local_identity_rows(aweb_cloud_db):
+async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid_misses(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1809,18 +1809,9 @@ async def test_send_message_accepts_to_stable_id_address_binding_with_duplicate_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", json=payload)
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 404, resp.text
+    assert "Recipient address not found" in resp.text
     registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key="did:key:z6MkAliceCurrent")
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        SELECT to_did, to_agent_id, to_alias
-        FROM {{tables.messages}}
-        WHERE subject = 'duplicate local identity rows'
-        """
-    )
-    assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
-    assert row["to_alias"] == "bob-stable"
 
 
 @pytest.mark.asyncio
@@ -4043,6 +4034,53 @@ async def test_send_message_to_address_uses_same_team_local_persistent_when_awid
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_address_rejects_cross_team_local_persistent_when_awid_misses(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(return_value=None)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    payload = {"to_address": "otherco.com/bob", "subject": "cross team hidden", "body": "hi"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 404, resp.text
+    assert "Recipient address not found" in resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_address_uses_local_persistent_when_registry_unconfigured(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
@@ -4212,3 +4250,72 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(awe
     )
     assert row["to_did"] == "did:aw:bob"
     assert row["to_alias"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_private_address_rejects_unverified_client_recipient_binding(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(return_value=None)
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hi",
+            "from": "did:aw:alice",
+            "from_did": "did:aw:alice",
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "priority": "normal",
+            "subject": "private spoof",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        }
+    )
+    payload = {
+        "to_address": "otherco.com/bob",
+        "to_stable_id": "did:aw:bob",
+        "subject": "private spoof",
+        "body": "hi",
+        "from_did": "did:aw:alice",
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": "not-a-valid-signature",
+        "signed_payload": signed_payload.decode(),
+    }
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 404, resp.text
+    assert "Recipient address not found" in resp.text
