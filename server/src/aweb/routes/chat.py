@@ -251,6 +251,32 @@ def _requires_registry_address_binding(row: dict[str, Any] | None) -> bool:
     return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
 
 
+def _local_recipient_visible_to_auth(row: dict[str, Any] | None, auth: MessagingAuth) -> bool:
+    if row is None:
+        return False
+    row_team_id = str(row.get("team_id") or "").strip()
+    auth_team_id = str(auth.team_id or "").strip()
+    if row_team_id and auth_team_id and row_team_id == auth_team_id:
+        return True
+    recipient_dids = {
+        value
+        for value in (
+            str(row.get("did_aw") or "").strip(),
+            str(row.get("did_key") or "").strip(),
+        )
+        if value
+    }
+    sender_dids = {
+        value
+        for value in (
+            str(auth.did_aw or "").strip(),
+            str(auth.did_key or "").strip(),
+        )
+        if value
+    }
+    return bool(recipient_dids & sender_dids)
+
+
 def _signed_payload_address_binding(
     signed_payload: str | None,
     *,
@@ -479,7 +505,10 @@ async def _resolve_chat_targets(
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
         if registry_client is not None and _requires_registry_address_binding(row):
             binding = _signed_payload_address_binding(signed_payload, address=address)
-            if not _row_matches_signed_address_binding(row, binding):
+            if not (
+                _local_recipient_visible_to_auth(row, auth)
+                or _row_matches_signed_address_binding(row, binding)
+            ):
                 raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
         row = _with_requested_address(row, address)
         target_did = (row.get("did_aw") or row.get("did_key") or "").strip()

@@ -497,6 +497,32 @@ def _requires_registry_address_binding(row: dict | None) -> bool:
     return str((row or {}).get("lifetime") or "").strip().lower() == "persistent"
 
 
+def _local_recipient_visible_to_auth(row: dict | None, auth: MessagingAuth) -> bool:
+    if row is None:
+        return False
+    row_team_id = str(row.get("team_id") or "").strip()
+    auth_team_id = str(auth.team_id or "").strip()
+    if row_team_id and auth_team_id and row_team_id == auth_team_id:
+        return True
+    recipient_dids = {
+        value
+        for value in (
+            str(row.get("did_aw") or "").strip(),
+            str(row.get("did_key") or "").strip(),
+        )
+        if value
+    }
+    sender_dids = {
+        value
+        for value in (
+            str(auth.did_aw or "").strip(),
+            str(auth.did_key or "").strip(),
+        )
+        if value
+    }
+    return bool(recipient_dids & sender_dids)
+
+
 async def _bound_recipient_from_address(
     db,
     *,
@@ -517,6 +543,8 @@ async def _bound_recipient_from_address(
                 return bound_recipient
     local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
     if _requires_registry_address_binding(local_recipient):
+        if _local_recipient_visible_to_auth(local_recipient, auth):
+            return local_recipient
         if registry_client is None:
             return local_recipient
         if (
@@ -755,7 +783,18 @@ async def send_message(
                     raise HTTPException(status_code=503, detail="AWID registry unavailable")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
             if registry_client is not None and _requires_registry_address_binding(recipient):
-                raise HTTPException(status_code=404, detail="Recipient address not found")
+                if not (
+                    _local_recipient_visible_to_auth(recipient, auth)
+                    or (
+                        payload.signed_payload is not None
+                        and _signed_payload_matches_address_binding(
+                            payload.signed_payload,
+                            address=address,
+                            recipient=recipient,
+                        )
+                    )
+                ):
+                    raise HTTPException(status_code=404, detail="Recipient address not found")
             recipient = _with_requested_address(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:

@@ -3994,6 +3994,55 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_address_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES (
+            'ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob',
+            'persistent', 'developer', 'everyone'
+        )
+        """
+    )
+
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(return_value=None)
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="otherco.com/alice",
+            team_id="ops:otherco.com",
+            alias="alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    payload = {"to_address": "otherco.com/bob", "subject": "same team hidden", "body": "hi"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT to_did, to_alias FROM {{tables.messages}} WHERE subject = 'same team hidden'"
+    )
+    assert row["to_did"] == "did:aw:bob"
+    assert row["to_alias"] == "bob"
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_address_uses_local_persistent_when_registry_unconfigured(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
