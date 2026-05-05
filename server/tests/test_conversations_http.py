@@ -13,7 +13,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER
+from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.routes.conversations import router as conversations_router
 
 
@@ -378,6 +378,130 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
     assert "legacy_message_id" not in conversations[0] or conversations[0]["legacy_message_id"] is None
     assert conversations[0]["subject"] == "sender-visible"
+
+
+@pytest.mark.asyncio
+async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            (
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                'ops:acme.com',
+                'did:key:alice-current',
+                'did:aw:alice',
+                'acme.com/alice',
+                'alice',
+                'persistent',
+                'developer',
+                'everyone'
+            ),
+            (
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                'ops:acme.com',
+                'did:key:bob-current',
+                'did:aw:bob',
+                'acme.com/bob',
+                'bob',
+                'persistent',
+                'developer',
+                'everyone'
+            )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        VALUES (
+            '55555555-5555-4555-8555-555555555555',
+            'mail',
+            'did:aw:alice',
+            NOW() - INTERVAL '2 minutes',
+            NOW()
+        )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            (
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:alice',
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                'alice',
+                'acme.com/alice',
+                'sender',
+                'initiator'
+            ),
+            (
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:bob',
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                'bob',
+                'acme.com/bob',
+                'to_alias',
+                'participant'
+            )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES (
+            '11111111-1111-1111-1111-111111111111',
+            '55555555-5555-4555-8555-555555555555',
+            'did:key:alice-current',
+            'did:key:bob-current',
+            'alice',
+            'bob',
+            'participant-visible',
+            'hello from alice',
+            'normal',
+            NOW()
+        )
+        """
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:alice-current",
+            did_aw=None,
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+            agent_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/v1/conversations")
+
+    assert resp.status_code == 200, resp.text
+    conversations = resp.json()["conversations"]
+    assert len(conversations) == 1
+    assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
+    assert conversations[0]["participant_dids"] == ["did:aw:alice", "did:aw:bob"]
+    assert conversations[0]["participant_addresses"] == ["acme.com/alice", "acme.com/bob"]
+    assert conversations[0]["subject"] == "participant-visible"
 
 
 @pytest.mark.asyncio

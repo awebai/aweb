@@ -59,7 +59,9 @@ async def list_conversations(
     del request
     aweb_db = db.get_manager("aweb")
     actor_dids = auth_dids(auth)
-    if not actor_dids:
+    actor_agent_id = str(auth.agent_id).strip() if auth.agent_id else None
+    actor_address = str(auth.address).strip() if auth.address else None
+    if not actor_dids and not actor_agent_id and not actor_address:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     cursor_dt: datetime | None = None
@@ -92,9 +94,24 @@ async def list_conversations(
           ON c.conversation_id = m.conversation_id
         WHERE m.from_did = ANY($1::text[])
            OR m.to_did = ANY($1::text[])
+           OR (
+                m.conversation_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1
+                    FROM {{tables.conversation_participants}} cp
+                    WHERE cp.conversation_id = m.conversation_id
+                      AND (
+                           cp.did = ANY($1::text[])
+                        OR ($2::uuid IS NOT NULL AND cp.agent_id = $2::uuid)
+                        OR ($3::text IS NOT NULL AND cp.address = $3::text)
+                      )
+                )
+           )
         ORDER BY m.created_at DESC, m.message_id DESC
         """,
         actor_dids,
+        actor_agent_id,
+        actor_address,
     )
 
     actor_did_set = set(actor_dids)
