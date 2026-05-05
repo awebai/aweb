@@ -505,6 +505,179 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
 
 
 @pytest.mark.asyncio
+async def test_conversations_filters_mail_by_participant_before_limit(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            (
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                'ops:acme.com',
+                'did:key:alice-current',
+                'did:aw:alice',
+                'acme.com/alice',
+                'alice',
+                'persistent',
+                'developer',
+                'everyone'
+            ),
+            (
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                'ops:acme.com',
+                'did:key:bob-current',
+                'did:aw:bob',
+                'acme.com/bob',
+                'bob',
+                'persistent',
+                'developer',
+                'everyone'
+            )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        VALUES (
+            '55555555-5555-4555-8555-555555555555',
+            'mail',
+            'did:aw:alice',
+            NOW() - INTERVAL '3 hours',
+            NOW() - INTERVAL '3 hours'
+        )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            (
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:alice',
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                'alice',
+                'acme.com/alice',
+                'sender',
+                'initiator'
+            ),
+            (
+                '55555555-5555-4555-8555-555555555555',
+                'did:aw:bob',
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                'bob',
+                'acme.com/bob',
+                'to_alias',
+                'participant'
+            )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES (
+            '11111111-1111-4111-8111-111111111111',
+            '55555555-5555-4555-8555-555555555555',
+            'did:aw:alice',
+            'did:aw:bob',
+            'alice',
+            'bob',
+            'older mail target',
+            'hello',
+            'normal',
+            NOW() - INTERVAL '3 hours'
+        )
+        """
+    )
+    for i in range(101):
+        session_id = f"22222222-2222-4222-8222-{i:012d}"
+        message_id = f"33333333-3333-4333-8333-{i:012d}"
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at)
+            VALUES ($1, 'ops:acme.com', 'alice', NOW() - ($2::int * INTERVAL '1 second'))
+            """,
+            session_id,
+            i,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+            VALUES
+                ($1, 'did:aw:alice', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'alice', 'acme.com/alice'),
+                ($1, 'did:aw:other', NULL, 'other', 'acme.com/other')
+            """,
+            session_id,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_messages}} (
+                message_id, session_id, from_did, from_alias, body, created_at
+            )
+            VALUES ($1, $2, 'did:aw:other', 'other', 'newer chat', NOW() - ($3::int * INTERVAL '1 second'))
+            """,
+            message_id,
+            session_id,
+            i,
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:alice-current",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+            agent_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first_page = await client.get("/v1/conversations?limit=100")
+        by_address = await client.get(
+            "/v1/conversations?conversation_type=mail&participant_address=acme.com/bob"
+        )
+        by_did = await client.get(
+            "/v1/conversations?conversation_type=mail&participant_did=did:aw:bob"
+        )
+        not_visible = await client.get(
+            "/v1/conversations?conversation_type=mail&participant_address=acme.com/mallory"
+        )
+
+    assert first_page.status_code == 200, first_page.text
+    assert all(
+        item.get("conversation_id") != "55555555-5555-4555-8555-555555555555"
+        for item in first_page.json()["conversations"]
+    )
+
+    assert by_address.status_code == 200, by_address.text
+    assert [item["conversation_id"] for item in by_address.json()["conversations"]] == [
+        "55555555-5555-4555-8555-555555555555"
+    ]
+    assert by_did.status_code == 200, by_did.text
+    assert [item["conversation_id"] for item in by_did.json()["conversations"]] == [
+        "55555555-5555-4555-8555-555555555555"
+    ]
+    assert not_visible.status_code == 200, not_visible.text
+    assert not_visible.json()["conversations"] == []
+
+
+@pytest.mark.asyncio
 async def test_conversations_mail_isolation_excludes_other_identities(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
     carol_sk, _, carol_did_key = _make_keypair()

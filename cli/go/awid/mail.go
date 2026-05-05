@@ -166,10 +166,38 @@ type ConversationsResponse struct {
 	NextCursor    string             `json:"next_cursor,omitempty"`
 }
 
+type ConversationListParams struct {
+	Limit              int
+	Cursor             string
+	ConversationType   string
+	ParticipantDID     string
+	ParticipantAddress string
+}
+
 func (c *Client) ListConversations(ctx context.Context, limit int) (*ConversationsResponse, error) {
+	return c.ListConversationsWithParams(ctx, ConversationListParams{Limit: limit})
+}
+
+func (c *Client) ListConversationsWithParams(ctx context.Context, params ConversationListParams) (*ConversationsResponse, error) {
 	path := "/v1/conversations"
-	if limit > 0 {
-		path += "?limit=" + itoa(limit)
+	query := make([]string, 0, 5)
+	if params.Limit > 0 {
+		query = append(query, "limit="+itoa(params.Limit))
+	}
+	if strings.TrimSpace(params.Cursor) != "" {
+		query = append(query, "cursor="+urlQueryEscape(strings.TrimSpace(params.Cursor)))
+	}
+	if strings.TrimSpace(params.ConversationType) != "" {
+		query = append(query, "conversation_type="+urlQueryEscape(strings.TrimSpace(params.ConversationType)))
+	}
+	if strings.TrimSpace(params.ParticipantDID) != "" {
+		query = append(query, "participant_did="+urlQueryEscape(strings.TrimSpace(params.ParticipantDID)))
+	}
+	if strings.TrimSpace(params.ParticipantAddress) != "" {
+		query = append(query, "participant_address="+urlQueryEscape(strings.TrimSpace(params.ParticipantAddress)))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
 	}
 	var out ConversationsResponse
 	if err := c.Get(ctx, path, &out); err != nil {

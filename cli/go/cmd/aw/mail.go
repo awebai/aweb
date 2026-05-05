@@ -145,7 +145,16 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 	if c == nil || (targetKind != "address" && targetKind != "did") {
 		return "", nil
 	}
-	conversationsResp, err := c.ListConversations(ctx, 100)
+	params := awid.ConversationListParams{
+		Limit:            100,
+		ConversationType: "mail",
+	}
+	if targetKind == "did" {
+		params.ParticipantDID = targetValue
+	} else {
+		params.ParticipantAddress = targetValue
+	}
+	conversationsResp, err := c.ListConversationsWithParams(ctx, params)
 	if err == nil {
 		conversations := map[string]bool{}
 		for _, conv := range conversationsResp.Conversations {

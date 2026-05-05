@@ -487,12 +487,14 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 		SignedPayload  string `json:"signed_payload"`
 	}
 	var got captured
+	var conversationQuery string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/conversations":
+			conversationQuery = r.URL.RawQuery
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
 				{
 					ConversationType:     "mail",
@@ -554,6 +556,9 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
+	if got := conversationQuery; !strings.Contains(got, "conversation_type=mail") || !strings.Contains(got, "participant_address=test.local%2Falice") {
+		t.Fatalf("conversation query=%q, want mail participant_address filter", got)
+	}
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
@@ -589,6 +594,7 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 		SignedPayload  string `json:"signed_payload"`
 	}
 	var got captured
+	var conversationQuery string
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -608,6 +614,7 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/conversations":
+			conversationQuery = r.URL.RawQuery
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
 				{
 					ConversationType:     "mail",
@@ -670,6 +677,9 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if got := conversationQuery; !strings.Contains(got, "conversation_type=mail") || !strings.Contains(got, "participant_did=did%3Aaw%3Aalice") {
+		t.Fatalf("conversation query=%q, want mail participant_did filter", got)
 	}
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
