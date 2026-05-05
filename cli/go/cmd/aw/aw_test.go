@@ -973,6 +973,8 @@ func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
 	var gotStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
@@ -1080,6 +1082,8 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
@@ -1218,6 +1222,8 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	var chatBody map[string]any
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
@@ -1340,6 +1346,8 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	var chatTeamCert string
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
@@ -1578,6 +1586,8 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
@@ -1803,6 +1813,8 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-log-1",

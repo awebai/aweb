@@ -1108,6 +1108,10 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 			http.NotFound(w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
 			http.NotFound(w, r)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
@@ -1431,6 +1435,10 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-1",

@@ -149,6 +149,8 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/api/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/api/v1/messages":
@@ -241,6 +243,8 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/api/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/api/v1/messages":
@@ -320,6 +324,8 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	var gotPath string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
 		case "/v1/messages":
 			gotPath = r.URL.Path
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -507,6 +513,8 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/api/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/api/v1/messages":
