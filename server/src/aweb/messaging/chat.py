@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError
+from aweb.messaging.conversations import find_active_one_to_one_conversation_between
 
 logger = logging.getLogger(__name__)
 
@@ -100,40 +101,6 @@ async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
     return None if not row else dict(row)
 
 
-async def _equivalent_identity_refs(
-    db,
-    did: str,
-    *,
-    did_key: str | None = None,
-) -> tuple[list[str], list[UUID]]:
-    normalized = str(did or "").strip()
-    if not normalized:
-        return [], []
-    normalized_did_key = str(did_key or "").strip()
-    if not normalized_did_key:
-        return [normalized], []
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT agent_id, did_aw, did_key
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND did_key = $1
-        """,
-        normalized_did_key,
-    )
-    dids: list[str] = [normalized_did_key]
-    agent_ids: list[UUID] = []
-    for row in rows:
-        agent_id = _uuid_or_none(row.get("agent_id"))
-        if agent_id is not None and agent_id not in agent_ids:
-            agent_ids.append(agent_id)
-        value = (row.get("did_key") or "").strip()
-        if value and value not in dids:
-            dids.append(value)
-    return dids, agent_ids
-
-
 async def find_session_between(
     db,
     *,
@@ -141,34 +108,71 @@ async def find_session_between(
     did_b: str,
     did_key_a: str | None = None,
     did_key_b: str | None = None,
+    agent_id_a: str | UUID | None = None,
+    agent_id_b: str | UUID | None = None,
+    address_a: str | None = None,
+    address_b: str | None = None,
 ) -> UUID | None:
-    aweb_db = db.get_manager("aweb")
-    dids_a, agent_ids_a = await _equivalent_identity_refs(db, did_a, did_key=did_key_a)
-    dids_b, agent_ids_b = await _equivalent_identity_refs(db, did_b, did_key=did_key_b)
-    if not dids_a or not dids_b:
-        return None
-    row = await aweb_db.fetch_one(
-        """
-        SELECT cp1.session_id
-        FROM {{tables.chat_participants}} cp1
-        JOIN {{tables.chat_participants}} cp2
-          ON cp2.session_id = cp1.session_id
-        WHERE (
-                cp1.did = ANY($1::text[])
-                OR ($2::uuid[] <> '{}'::uuid[] AND cp1.agent_id = ANY($2::uuid[]))
-              )
-          AND (
-                cp2.did = ANY($3::text[])
-                OR ($4::uuid[] <> '{}'::uuid[] AND cp2.agent_id = ANY($4::uuid[]))
-              )
-        LIMIT 1
-        """,
-        dids_a,
-        agent_ids_a,
-        dids_b,
-        agent_ids_b,
+    conversation = await find_active_one_to_one_conversation_between(
+        db,
+        conversation_type="chat",
+        did_a=did_a,
+        did_b=did_b,
+        did_key_a=did_key_a,
+        did_key_b=did_key_b,
+        agent_id_a=agent_id_a,
+        agent_id_b=agent_id_b,
+        address_a=address_a,
+        address_b=address_b,
     )
-    return None if not row else row["session_id"]
+    if conversation is None:
+        dids_a = [value for value in (did_a, did_key_a) if str(value or "").strip()]
+        dids_b = [value for value in (did_b, did_key_b) if str(value or "").strip()]
+        agent_uuid_a = _uuid_or_none(agent_id_a)
+        agent_uuid_b = _uuid_or_none(agent_id_b)
+        addresses_a = [value for value in (address_a,) if str(value or "").strip()]
+        addresses_b = [value for value in (address_b,) if str(value or "").strip()]
+        aweb_db = db.get_manager("aweb")
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT s.session_id
+            FROM {{tables.chat_sessions}} s
+            JOIN {{tables.chat_participants}} pa
+              ON pa.session_id = s.session_id
+            JOIN {{tables.chat_participants}} pb
+              ON pb.session_id = s.session_id
+            WHERE (
+                    ($2::uuid IS NOT NULL AND pa.agent_id = $2)
+                 OR ($2::uuid IS NULL AND pa.did = ANY($1::text[]))
+                 OR ($3::text[] <> '{}'::text[] AND pa.address = ANY($3::text[]))
+              )
+              AND (
+                    ($5::uuid IS NOT NULL AND pb.agent_id = $5)
+                 OR ($5::uuid IS NULL AND pb.did = ANY($4::text[]))
+                 OR ($6::text[] <> '{}'::text[] AND pb.address = ANY($6::text[]))
+              )
+              AND pa.did <> pb.did
+              AND (
+                    SELECT COUNT(*)::int
+                    FROM {{tables.chat_participants}} cp
+                    WHERE cp.session_id = s.session_id
+                  ) = 2
+            ORDER BY s.created_at DESC, s.session_id DESC
+            LIMIT 2
+            """,
+            dids_a,
+            agent_uuid_a,
+            addresses_a,
+            dids_b,
+            agent_uuid_b,
+            addresses_b,
+        )
+        if len(rows) > 1:
+            raise ConflictError("Multiple active chat sessions match these participants")
+        if not rows:
+            return None
+        return rows[0]["session_id"]
+    return UUID(conversation["conversation_id"])
 
 
 async def _ensure_chat_conversation(
@@ -241,6 +245,22 @@ async def ensure_session(
     if len(normalized_participants) < 2:
         raise ServiceError("Chat session requires at least two participants")
 
+    if session_id is not None:
+        existing = await aweb_db.fetch_one(
+            "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
+            session_id,
+        )
+        if existing is not None:
+            created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+            await _ensure_chat_conversation(
+                aweb_db,
+                session_id=UUID(str(session_id)),
+                team_id=team_id,
+                created_by_did=created_by_did,
+                participants=normalized_participants,
+            )
+            return UUID(str(session_id))
+
     if session_id is None and len(normalized_participants) == 2:
         existing = await find_session_between(
             db,
@@ -248,6 +268,10 @@ async def ensure_session(
             did_b=normalized_participants[1]["did"],
             did_key_a=normalized_participants[0].get("did_key"),
             did_key_b=normalized_participants[1].get("did_key"),
+            agent_id_a=normalized_participants[0].get("agent_id"),
+            agent_id_b=normalized_participants[1].get("agent_id"),
+            address_a=normalized_participants[0].get("address"),
+            address_b=normalized_participants[1].get("address"),
         )
         if existing is not None:
             created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]

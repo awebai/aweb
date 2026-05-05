@@ -40,6 +40,7 @@ from aweb.messaging.address_auth import (
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     ensure_session,
+    find_session_between,
     get_agent_by_alias,
     get_agents_by_aliases,
     get_message_history,
@@ -57,7 +58,7 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,18 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload sender_leaving must match the chat message")
     if bool(payload.get("hang_on")) != hang_on:
         raise HTTPException(status_code=422, detail="signed_payload hang_on must match the chat message")
+
+
+def _signed_payload_conversation_id(signed_payload: str | None) -> str:
+    if not signed_payload:
+        return ""
+    try:
+        payload = json.loads(signed_payload)
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("conversation_id") or "").strip()
 
 
 def _actor_did(auth: MessagingAuth) -> str:
@@ -676,6 +689,38 @@ async def create_or_send(
     ]
 
     requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
+    validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
+    if len(participant_rows) == 2:
+        try:
+            existing_session_id = await find_session_between(
+                db,
+                did_a=participant_rows[0]["did"],
+                did_b=participant_rows[1]["did"],
+                did_key_a=participant_rows[0].get("did_key"),
+                did_key_b=participant_rows[1].get("did_key"),
+                agent_id_a=participant_rows[0].get("agent_id"),
+                agent_id_b=participant_rows[1].get("agent_id"),
+                address_a=participant_rows[0].get("address"),
+                address_b=participant_rows[1].get("address"),
+            )
+        except ConflictError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        if existing_session_id is not None:
+            if requested_session_id is not None and requested_session_id != existing_session_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Existing active chat session found; continue that session instead",
+                )
+            requested_session_id = existing_session_id
+            validation_conversation_id = str(existing_session_id)
+            if (
+                payload.signature is not None
+                and _signed_payload_conversation_id(payload.signed_payload) != str(existing_session_id)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Signed chat message must bind the existing session_id",
+                )
     session_id = await ensure_session(
         db,
         team_id=auth.team_id,
@@ -720,7 +765,7 @@ async def create_or_send(
             timestamp=payload.timestamp,
             wait_seconds=payload.wait_seconds,
             reply_to=payload.reply_to,
-            conversation_id=str(session_id) if payload.session_id is not None else None,
+            conversation_id=validation_conversation_id,
             sender_leaving=payload.leaving,
         )
         msg_created_at = _parse_signed_timestamp(payload.timestamp)

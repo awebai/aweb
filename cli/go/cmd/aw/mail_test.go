@@ -214,6 +214,8 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode body: %v", err)
@@ -359,6 +361,200 @@ func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
 	}
 	if signed["to"] != "" || signed["to_did"] != "" {
 		t.Fatalf("signed continuation should not bind rediscovered recipient: %+v", signed)
+	}
+}
+
+func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	conversationID := "55555555-5555-4555-8555-555555555555"
+
+	type captured struct {
+		ToAddress      string `json:"to_address"`
+		ConversationID string `json:"conversation_id"`
+		SignedPayload  string `json:"signed_payload"`
+	}
+	var got captured
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{
+				{
+					MessageID:      "msg-in",
+					ConversationID: conversationID,
+					FromAddress:    "otherco.com/bob",
+					FromDID:        "did:aw:bob",
+					ToAddress:      "acme.com/alice",
+					ToDID:          stableID,
+					Subject:        "hello",
+					Body:           "hi",
+					CreatedAt:      "2026-05-02T00:00:00Z",
+				},
+			}})
+		case "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":      "msg-reply",
+				"conversation_id": conversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-05-02T00:00:01Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to-address", "otherco.com/bob",
+		"--subject", "Re",
+		"--body", "reply",
+	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if got.ConversationID != conversationID {
+		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
+	}
+	if got.ToAddress != "" {
+		t.Fatalf("auto-threaded reply leaked to_address=%q", got.ToAddress)
+	}
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
+		t.Fatalf("decode signed_payload: %v", err)
+	}
+	if signed["conversation_id"] != conversationID {
+		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
+	}
+	if signed["to"] != "" || signed["to_did"] != "" {
+		t.Fatalf("signed threaded reply should not bind direct recipient: %+v", signed)
+	}
+}
+
+func TestAwMailReplyUsesMessageConversation(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	conversationID := "66666666-6666-4666-8666-666666666666"
+
+	type captured struct {
+		ConversationID string `json:"conversation_id"`
+		Body           string `json:"body"`
+		SignedPayload  string `json:"signed_payload"`
+	}
+	var got captured
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			if r.URL.Query().Get("message_id") != "msg-in" {
+				t.Fatalf("message_id query=%q, want msg-in", r.URL.Query().Get("message_id"))
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{
+				{
+					MessageID:      "msg-in",
+					ConversationID: conversationID,
+					FromAddress:    "otherco.com/bob",
+					Subject:        "hello",
+					Body:           "hi",
+					CreatedAt:      "2026-05-02T00:00:00Z",
+				},
+			}})
+		case "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":      "msg-reply",
+				"conversation_id": conversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-05-02T00:00:01Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   "acme.com/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "reply", "msg-in", "--body", "reply")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if got.ConversationID != conversationID || got.Body != "reply" {
+		t.Fatalf("unexpected body: %+v", got)
+	}
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
+		t.Fatalf("decode signed_payload: %v", err)
+	}
+	if signed["conversation_id"] != conversationID {
+		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
 }
 

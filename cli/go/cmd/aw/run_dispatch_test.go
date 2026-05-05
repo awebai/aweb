@@ -100,11 +100,12 @@ func TestResolveMailWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
 			json.NewEncoder(w).Encode(awid.InboxResponse{
 				Messages: []awid.InboxMessage{
 					{
-						MessageID:   "msg-1",
-						FromAlias:   "",
-						FromAddress: "otherco/alice",
-						Subject:     "hello",
-						Body:        "world",
+						MessageID:      "msg-1",
+						ConversationID: "conv-1",
+						FromAlias:      "",
+						FromAddress:    "otherco/alice",
+						Subject:        "hello",
+						Body:           "world",
 					},
 				},
 			})
@@ -129,6 +130,9 @@ func TestResolveMailWakeUsesFromAddressWhenAliasMissing(t *testing.T) {
 	}
 	if !strings.Contains(result.CycleContext, "from otherco/alice (mail)") {
 		t.Fatalf("expected wake context to use sender address, got %q", result.CycleContext)
+	}
+	if !strings.Contains(result.CycleContext, `aw mail reply msg-1 --body "..."`) {
+		t.Fatalf("expected wake context to include mail reply hint, got %q", result.CycleContext)
 	}
 }
 

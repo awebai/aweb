@@ -364,25 +364,30 @@ func resolveMailWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias
 		if msg.MessageID != "" {
 			_, _ = client.AckMessage(ctx, msg.MessageID)
 		}
-		return runWakeResolution{
-			CycleContext: formatIncomingMailContext(
+		contextText := formatIncomingMailContext(
+			preferredIdentityDisplayLabel(
+				strings.TrimSpace(msg.FromAlias),
+				strings.TrimSpace(msg.FromAddress),
+				strings.TrimSpace(msg.FromStableID),
+				strings.TrimSpace(msg.FromDID),
 				preferredIdentityDisplayLabel(
-					strings.TrimSpace(msg.FromAlias),
-					strings.TrimSpace(msg.FromAddress),
-					strings.TrimSpace(msg.FromStableID),
-					strings.TrimSpace(msg.FromDID),
-					preferredIdentityDisplayLabel(
-						strings.TrimSpace(evt.FromAlias),
-						strings.TrimSpace(evt.FromAddress),
-						strings.TrimSpace(evt.FromStableID),
-						strings.TrimSpace(evt.FromDID),
-						"",
-					),
+					strings.TrimSpace(evt.FromAlias),
+					strings.TrimSpace(evt.FromAddress),
+					strings.TrimSpace(evt.FromStableID),
+					strings.TrimSpace(evt.FromDID),
+					"",
 				),
-				msg.Subject,
-				msg.Body,
 			),
-		}, nil
+			msg.Subject,
+			msg.Body,
+		)
+		if strings.TrimSpace(msg.MessageID) != "" && strings.TrimSpace(msg.ConversationID) != "" {
+			contextText = joinPromptSections(
+				contextText,
+				fmt.Sprintf("Reply with: aw mail reply %s --body \"...\"", strings.TrimSpace(msg.MessageID)),
+			)
+		}
+		return runWakeResolution{CycleContext: contextText}, nil
 	}
 	if messageID == "" {
 		return runWakeResolution{CycleContext: formatFallbackCommsContext(evt)}, nil

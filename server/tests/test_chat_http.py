@@ -365,6 +365,98 @@ async def test_create_chat_session_accepts_external_to_address_without_local_age
 
 
 @pytest.mark.asyncio
+async def test_create_chat_session_rejects_signed_existing_session_without_binding(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES
+            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone'),
+            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, None)
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+        )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/chat/sessions",
+            json={"to_addresses": ["acme.com/bob"], "message": "first"},
+        )
+    assert first.status_code == 200, first.text
+    session_id = first.json()["session_id"]
+
+    message_id = str(uuid4())
+    timestamp = "2026-04-17T12:00:00Z"
+    signed_payload = json.dumps(
+        {
+            "type": "chat",
+            "from": "bob",
+            "to": "acme.com/alice",
+            "body": "signed reply",
+            "from_did": bob_did_key,
+            "message_id": message_id,
+            "timestamp": timestamp,
+        }
+    )
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/chat/sessions",
+            json={
+                "to_addresses": ["acme.com/alice"],
+                "message": "signed reply",
+                "from_did": bob_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": "test-signature",
+                "signed_payload": signed_payload,
+            },
+        )
+
+    assert reply.status_code == 409, reply.text
+    assert reply.json()["detail"] == "Signed chat message must bind the existing session_id"
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT COUNT(*)::int AS count
+        FROM {{tables.chat_messages}}
+        WHERE session_id = $1
+        """,
+        UUID(session_id),
+    )
+    assert row["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

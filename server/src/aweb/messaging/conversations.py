@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 ConversationType = Literal["mail", "chat"]
 ConversationStatus = Literal["active", "closed", "expired"]
 ParticipantRole = Literal["initiator", "participant"]
 
-DEFAULT_CONVERSATION_TTL = timedelta(days=30)
+DEFAULT_CONVERSATION_TTL: timedelta | None = None
 
 
 @dataclass(frozen=True)
@@ -109,11 +109,10 @@ def _dedupe_participants(participants: Iterable[dict[str, Any]]) -> list[dict[st
 
 
 def _expires_at(now: datetime, ttl: timedelta | None, expires_at: datetime | None) -> datetime | None:
+    del now, ttl
     if expires_at is not None:
         return expires_at
-    if ttl is None:
-        raise ValidationError("Conversation ttl must not be None")
-    return now + ttl
+    return None
 
 
 def _conversation_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -143,47 +142,14 @@ def _participant_dict(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _expire_due_conversation(
-    db,
-    *,
-    conversation_id: UUID,
-    now: datetime,
-) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.conversations}}
-        SET status = 'expired',
-            updated_at = $2
-        WHERE conversation_id = $1
-          AND status = 'active'
-          AND expires_at IS NOT NULL
-          AND expires_at <= $2
-        RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
-                  created_at, updated_at, closed_at, expires_at
-        """,
-        conversation_id,
-        now,
-    )
-    return None if not row else _conversation_dict(dict(row))
-
-
 async def _get_active_conversation(
     db,
     *,
     conversation_id: str | UUID,
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    del now
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
-    effective_now = now or _now_utc()
-    expired = await _expire_due_conversation(
-        db,
-        conversation_id=conversation_uuid,
-        now=effective_now,
-    )
-    if expired is not None:
-        raise ForbiddenError("Conversation is expired")
-
     conversation = await get_conversation(db, conversation_id=conversation_uuid)
     if conversation is None:
         raise NotFoundError("Conversation not found")
@@ -192,6 +158,172 @@ async def _get_active_conversation(
     if conversation["status"] == "expired":
         raise ForbiddenError("Conversation is expired")
     return conversation
+
+
+async def _equivalent_identity_refs(
+    db,
+    did: str,
+    *,
+    did_key: str | None = None,
+    agent_id: str | UUID | None = None,
+) -> tuple[list[str], list[UUID]]:
+    refs: list[str] = []
+    for value in (did, did_key):
+        normalized = str(value or "").strip()
+        if normalized and normalized not in refs:
+            refs.append(normalized)
+
+    agent_ids: list[UUID] = []
+    agent_uuid = _uuid_or_none(agent_id, field_name="agent_id")
+    if agent_uuid is not None:
+        agent_ids.append(agent_uuid)
+
+    if not refs and agent_uuid is None:
+        return [], []
+
+    aweb_db = db.get_manager("aweb")
+    if agent_uuid is not None:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT agent_id, did_aw, did_key
+            FROM {{tables.agents}}
+            WHERE deleted_at IS NULL
+              AND agent_id = $1
+            """,
+            agent_uuid,
+        )
+    else:
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT agent_id, did_aw, did_key
+            FROM {{tables.agents}}
+            WHERE deleted_at IS NULL
+              AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+            """,
+            refs,
+        )
+    for row in rows:
+        row_agent_id = _uuid_or_none(row.get("agent_id"), field_name="agent_id")
+        if row_agent_id is not None and row_agent_id not in agent_ids:
+            agent_ids.append(row_agent_id)
+        for value in (row.get("did_aw"), row.get("did_key")):
+            normalized = str(value or "").strip()
+            if normalized and normalized not in refs:
+                refs.append(normalized)
+    return refs, agent_ids
+
+
+def _identity_address_refs(*values: str | None) -> list[str]:
+    refs: list[str] = []
+    for value in values:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in refs:
+            refs.append(normalized)
+    return refs
+
+
+async def find_active_one_to_one_conversation_between(
+    db,
+    *,
+    conversation_type: ConversationType,
+    did_a: str,
+    did_b: str,
+    did_key_a: str | None = None,
+    did_key_b: str | None = None,
+    agent_id_a: str | UUID | None = None,
+    agent_id_b: str | UUID | None = None,
+    address_a: str | None = None,
+    address_b: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the unique active 1:1 conversation shared by two identities.
+
+    First-contact reachability is enforced before a conversation exists. Once an
+    active 1:1 conversation exists, participant membership is the routing
+    authority. Ambiguous parallel conversations are surfaced rather than guessed.
+    """
+    normalized_type = _normalize_type(conversation_type)
+    dids_a, agent_ids_a = await _equivalent_identity_refs(
+        db,
+        did_a,
+        did_key=did_key_a,
+        agent_id=agent_id_a,
+    )
+    dids_b, agent_ids_b = await _equivalent_identity_refs(
+        db,
+        did_b,
+        did_key=did_key_b,
+        agent_id=agent_id_b,
+    )
+    addresses_a = _identity_address_refs(address_a)
+    addresses_b = _identity_address_refs(address_b)
+    if not (dids_a or agent_ids_a or addresses_a) or not (dids_b or agent_ids_b or addresses_b):
+        return None
+
+    aweb_db = db.get_manager("aweb")
+    # This participation check is intentionally table-authoritative. It must
+    # not go through address resolution or resolver caches: once a 1:1 channel
+    # exists, the recorded participants are the routing authority for replies.
+    rows = await aweb_db.fetch_all(
+        """
+        SELECT c.conversation_id, c.conversation_type, c.status, c.team_id,
+               c.created_by_did, c.created_at, c.updated_at, c.closed_at, c.expires_at
+        FROM {{tables.conversations}} c
+        JOIN {{tables.conversation_participants}} pa
+          ON pa.conversation_id = c.conversation_id
+        JOIN {{tables.conversation_participants}} pb
+          ON pb.conversation_id = c.conversation_id
+        WHERE c.conversation_type = $1
+          AND c.status = 'active'
+          AND (
+                (
+                    $3::uuid[] <> '{}'::uuid[]
+                    AND (
+                        pa.agent_id = ANY($3::uuid[])
+                        OR (pa.agent_id IS NULL AND pa.did = ANY($2::text[]))
+                    )
+                )
+             OR (
+                    $3::uuid[] = '{}'::uuid[]
+                    AND pa.did = ANY($2::text[])
+                )
+             OR ($4::text[] <> '{}'::text[] AND pa.address = ANY($4::text[]))
+          )
+          AND (
+                (
+                    $6::uuid[] <> '{}'::uuid[]
+                    AND (
+                        pb.agent_id = ANY($6::uuid[])
+                        OR (pb.agent_id IS NULL AND pb.did = ANY($5::text[]))
+                    )
+                )
+             OR (
+                    $6::uuid[] = '{}'::uuid[]
+                    AND pb.did = ANY($5::text[])
+                )
+             OR ($7::text[] <> '{}'::text[] AND pb.address = ANY($7::text[]))
+          )
+          AND pa.did <> pb.did
+          AND (
+                SELECT COUNT(*)::int
+                FROM {{tables.conversation_participants}} cp
+                WHERE cp.conversation_id = c.conversation_id
+              ) = 2
+        ORDER BY c.updated_at DESC, c.created_at DESC, c.conversation_id DESC
+        LIMIT 2
+        """,
+        normalized_type,
+        dids_a,
+        agent_ids_a,
+        addresses_a,
+        dids_b,
+        agent_ids_b,
+        addresses_b,
+    )
+    if len(rows) > 1:
+        raise ConflictError("Multiple active conversations match these participants")
+    if not rows:
+        return None
+    return _conversation_dict(dict(rows[0]))
 
 
 async def create_conversation(
@@ -392,24 +524,21 @@ async def touch_conversation_activity(
     ttl: timedelta | None = DEFAULT_CONVERSATION_TTL,
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    del ttl
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
     effective_now = now or _now_utc()
-    effective_expires_at = _expires_at(effective_now, ttl, None)
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
         UPDATE {{tables.conversations}}
-        SET updated_at = $2,
-            expires_at = $3
+        SET updated_at = $2
         WHERE conversation_id = $1
           AND status = 'active'
-          AND (expires_at IS NULL OR expires_at > $2)
         RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
                   created_at, updated_at, closed_at, expires_at
         """,
         conversation_uuid,
         effective_now,
-        effective_expires_at,
     )
     if not row:
         await _get_active_conversation(

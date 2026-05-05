@@ -298,7 +298,7 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
         alias="bob",
         did_key=bob_did_key,
         did_aw="did:aw:bob",
-        address="otherco.com/bob",
+        address="",
     )
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
 
@@ -473,6 +473,83 @@ async def test_send_message_continues_conversation_without_address_discovery(awe
     assert row["from_did"] == "did:aw:bob"
     assert row["to_did"] == "did:aw:alice"
     assert str(row["to_agent_id"]) == alice_agent_id
+
+
+@pytest.mark.asyncio
+async def test_send_message_to_address_reuses_existing_conversation_without_address_discovery(aweb_cloud_db):
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="ops:otherco.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="otherco.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address=None,
+            team_id="ops:otherco.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_did": "did:aw:alice", "subject": "initial address thread", "body": "hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    async def _alice_auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    registry = app.state.awid_registry_client
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("address reply must use conversation"))
+    app.dependency_overrides[get_messaging_auth] = _alice_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post(
+            "/v1/messages",
+            json={"to_address": "otherco.com/bob", "subject": "address reply", "body": "hi"},
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT conversation_id, from_did, to_did, to_agent_id
+        FROM {{tables.messages}}
+        WHERE subject = 'address reply'
+        """
+    )
+    assert str(row["conversation_id"]) == conversation_id
+    assert row["from_did"] == "did:aw:alice"
+    assert row["to_did"] == "did:aw:bob"
+    assert str(row["to_agent_id"]) == bob_agent_id
     registry.resolve_address.assert_not_called()
 
 

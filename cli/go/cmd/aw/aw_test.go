@@ -958,6 +958,8 @@ func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
 	var gotStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			gotAuth = r.Header.Get("Authorization")
 			gotTeamCert = r.Header.Get("X-AWID-Team-Certificate")
@@ -1063,6 +1065,8 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	var gotBody map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatalf("decode request body: %v", err)
@@ -1199,6 +1203,8 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	var chatBody map[string]any
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
 				t.Fatalf("decode mail body: %v", err)
@@ -1319,6 +1325,8 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	var chatTeamCert string
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
 			mailTeamCert = r.Header.Get("X-AWID-Team-Certificate")
 			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
@@ -1555,6 +1563,8 @@ func TestAwMailSendToDIDLogsStableIDForStandaloneIdentityWithoutAddress(t *testi
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":   "msg-standalone-1",

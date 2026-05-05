@@ -343,6 +343,8 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 	var mailBody map[string]any
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/messages":
 			sawCertHeader = strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
 			if err := json.NewDecoder(r.Body).Decode(&mailBody); err != nil {
