@@ -808,8 +808,15 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
     registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
 
 
+@pytest.mark.parametrize("recipient_lifetime", ["persistent", "ephemeral"])
 @pytest.mark.asyncio
-async def test_create_chat_session_to_address_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db):
+async def test_create_chat_session_to_address_uses_same_team_local_recipient_when_awid_misses(
+    aweb_cloud_db,
+    recipient_lifetime,
+):
+    # The persistent branch is guarded by requires_registry_address_binding();
+    # the ephemeral branch bypasses that predicate. Keep these as twins so
+    # address routing cannot be accidentally covered with only one lifetime.
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -822,8 +829,9 @@ async def test_create_chat_session_to_address_uses_same_team_local_persistent_wh
         INSERT INTO {{tables.agents}} (
             team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
         )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
-        """
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'everyone')
+        """,
+        recipient_lifetime,
     )
 
     registry = AsyncMock()
@@ -841,7 +849,7 @@ async def test_create_chat_session_to_address_uses_same_team_local_persistent_wh
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    payload = {"to_addresses": ["otherco.com/bob"], "message": "same team hidden"}
+    payload = {"to_addresses": ["otherco.com/bob"], "message": f"same team hidden {recipient_lifetime}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/chat/sessions", json=payload)
 
@@ -943,8 +951,12 @@ async def test_create_chat_session_to_did_and_address_uses_local_persistent_when
     assert rows[0]["did"] == "did:aw:bob"
 
 
+@pytest.mark.parametrize("recipient_lifetime", ["persistent", "ephemeral"])
 @pytest.mark.asyncio
-async def test_create_chat_session_to_private_address_uses_client_recipient_binding(aweb_cloud_db):
+async def test_create_chat_session_to_private_address_uses_client_recipient_binding(
+    aweb_cloud_db,
+    recipient_lifetime,
+):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -957,8 +969,9 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
         INSERT INTO {{tables.agents}} (
             team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
         )
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'persistent', 'developer', 'everyone')
-        """
+        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'everyone')
+        """,
+        recipient_lifetime,
     )
 
     registry = AsyncMock()
