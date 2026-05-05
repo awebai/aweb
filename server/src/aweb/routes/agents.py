@@ -133,6 +133,7 @@ async def list_agents(
                human_name, agent_type, role, lifetime, status
         FROM {{tables.agents}}
         WHERE team_id = $1 AND deleted_at IS NULL
+          AND COALESCE(agent_type, 'agent') != 'human'
         ORDER BY alias
         """,
         identity.team_id,

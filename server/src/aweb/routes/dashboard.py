@@ -335,6 +335,7 @@ async def list_team_agents(
             LIMIT 1
         ) w ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
+          AND COALESCE(a.agent_type, 'agent') != 'human'
         ORDER BY a.alias
         """,
         team_id,

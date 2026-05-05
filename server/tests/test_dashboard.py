@@ -371,6 +371,43 @@ async def test_list_agents_prefers_active_workspace_over_newer_deleted_workspace
 
 
 @pytest.mark.asyncio
+async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_cloud_db):
+    """Cloud creates aweb.agents rows with agent_type='human' to attribute
+    dashboard actions to a real user (the cowork-<hmac> slug pattern in
+    auth_bridge.py). These records are internal: the user has no useful
+    action to take on them, and seeing the opaque slug labelled as an
+    'agent' alongside their real agents is alarming. list_agents must
+    exclude agent_type='human' rows from every dashboard surface.
+    Mirrors the mcp/tools/agents.py:27 filter discipline.
+    """
+    app = _build_app(aweb_cloud_db.aweb_db)
+    await _seed(aweb_cloud_db.aweb_db)
+    human_attribution_id = uuid.uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, human_name, agent_type
+        )
+        VALUES
+            ($1, 'backend:acme.com', 'did:key:z6Mkjuan', 'did:aw:juan', NULL, 'cowork-gzo3o2loh252', 'persistent', 'developer', 'active', 'Juan', 'human')
+        """,
+        human_attribution_id,
+    )
+    token = _make_jwt(["backend:acme.com"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/v1/teams/backend:acme.com/agents",
+            headers={"X-Dashboard-Token": token},
+        )
+
+    assert resp.status_code == 200
+    aliases = {a["alias"] for a in resp.json()["agents"]}
+    assert aliases == {"alice", "bob"}, f"human-typed cowork-* slug leaked into agent list: {aliases}"
+    assert "cowork-gzo3o2loh252" not in aliases
+
+
+@pytest.mark.asyncio
 async def test_agent_detail(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
