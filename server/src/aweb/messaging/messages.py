@@ -61,6 +61,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
         SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+          AND COALESCE(agent_type, 'agent') != 'human'
         """,
         team_id,
         alias,

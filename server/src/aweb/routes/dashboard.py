@@ -397,6 +397,7 @@ async def get_team_agent(
                human_name, agent_type, created_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+          AND COALESCE(agent_type, 'agent') != 'human'
         """,
         team_id,
         alias,

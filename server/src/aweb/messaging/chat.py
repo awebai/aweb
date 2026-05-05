@@ -59,6 +59,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] 
         SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+          AND COALESCE(agent_type, 'agent') != 'human'
         """,
         team_id,
         alias,
@@ -75,6 +76,7 @@ async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list
         SELECT agent_id, team_id, alias, did_key, did_aw, address, messaging_policy, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
+          AND COALESCE(agent_type, 'agent') != 'human'
         """,
         team_id,
         aliases,
