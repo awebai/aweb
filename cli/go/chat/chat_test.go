@@ -1162,6 +1162,67 @@ func TestSendWithLeavingDoesNotReuseBareAliasSession(t *testing.T) {
 	}
 }
 
+func TestSendProbesExistingSessionEvenWhenWaiting(t *testing.T) {
+	t.Parallel()
+
+	var gotBody awid.ChatSendMessageRequest
+	var createSessionCalls int
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "bob"},
+						ParticipantAddresses: []string{"test.local/alice", "test.local/bob"},
+						CreatedAt:            "2026-01-01T00:00:01Z",
+					},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			jsonResponse(w, awid.ChatSendMessageResponse{MessageID: "m1", Delivered: true})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			// Mirror server-side cross-team-private-address rejection so a regression
+			// of the probe gate surfaces as a 404 from the create path.
+			createSessionCalls++
+			http.Error(w, `{"detail":"address not found"}`, http.StatusNotFound)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	// Wait > 0 must not bypass the probe. Leaving:true keeps sendCommon from
+	// blocking on SSE so the test stays focused on the gate at line 1115.
+	result, err := Send(
+		context.Background(),
+		mustClient(t, server.URL),
+		"alice",
+		[]string{"test.local/bob"},
+		"reply",
+		SendOptions{Wait: 60, Leaving: true},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	if createSessionCalls != 0 {
+		t.Fatalf("expected probe to find existing session and skip ChatCreateSession; create calls=%d", createSessionCalls)
+	}
+	if result.SessionID != "s1" {
+		t.Fatalf("session_id=%s, want s1", result.SessionID)
+	}
+	if gotBody.Body != "reply" {
+		t.Fatalf("body=%q, want reply", gotBody.Body)
+	}
+}
+
 func TestSendNoWait(t *testing.T) {
 	t.Parallel()
 
