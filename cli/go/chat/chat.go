@@ -1145,8 +1145,17 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 }
 
 func shouldProbeExistingSession(target string) bool {
-	target = strings.TrimSpace(target)
-	return strings.HasPrefix(target, "did:") || strings.Contains(target, "/")
+	// Probe for any non-empty target. The previous narrow gate (did:/-prefixed
+	// or address-shaped only) skipped bare aliases, which made the CLI fall
+	// through to ChatCreateSession with a fresh auto-generated session_id
+	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
+	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
+	// conflicts with the existing session and 409s. Probing for bare aliases
+	// lets findLatestSession discover the existing session_id, route via
+	// ChatSendMessage on the per-session endpoint, and bypass the conflict
+	// entirely. Ambiguous targets are surfaced by findLatestSession as
+	// 'multiple conversations match' and propagate up.
+	return strings.TrimSpace(target) != ""
 }
 
 // sendCommon handles the post-send wait logic after a message has been created.
