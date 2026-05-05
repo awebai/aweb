@@ -132,6 +132,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	if err != nil {
 		return nil, err
 	}
+	persistent, err := resolveGuidedHostedPersistent(req)
+	if err != nil {
+		return nil, err
+	}
+	req.Persistent = persistent
 	alias, err := resolveGuidedHostedAlias(req)
 	if err != nil {
 		return nil, err
@@ -333,7 +338,14 @@ func resolveGuidedBYODPersistent(req guidedOnboardingRequest) (bool, error) {
 	if strings.TrimSpace(req.Alias) != "" && strings.TrimSpace(req.Name) == "" {
 		return false, nil
 	}
-	return promptIdentityLifetime(req.PromptIn, req.PromptOut)
+	return promptIdentityLifetime(req.PromptIn, req.PromptOut, false)
+}
+
+func resolveGuidedHostedPersistent(req guidedOnboardingRequest) (bool, error) {
+	if req.Persistent {
+		return true, nil
+	}
+	return promptIdentityLifetime(req.PromptIn, req.PromptOut, true)
 }
 
 func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string, error) {

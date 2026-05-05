@@ -754,9 +754,10 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
+	// stdin: username, lifetime "2" (ephemeral; persistent is the new default), alias, claim-human=y, email.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
+		PromptIn:   strings.NewReader("jack\n2\nlaptop\ny\njack@example.com\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
 		Role:       "developer",
@@ -989,9 +990,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
+	// stdin: first username, lifetime "2" (ephemeral; default is persistent),
+	// alias, retry username after conflict, claim-human=n.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
+		PromptIn:   strings.NewReader("jack\n2\nlaptop\njack-2\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
 	})
@@ -1020,6 +1023,164 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
 		t.Fatalf("expected retry message, got %q", out.String())
+	}
+}
+
+func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USER", "")
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var didRegistrations []map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didRegistrations = append(didRegistrations, body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			for _, req := range didRegistrations {
+				if req["did_aw"] == stableID {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"did_aw":          stableID,
+						"current_did_key": req["new_did_key"],
+						"created_at":      "2026-05-05T00:00:00Z",
+						"updated_at":      "2026-05-05T00:00:00Z",
+					})
+					return
+				}
+			}
+			t.Fatalf("missing did registration for %s", stableID)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	var signupBody map[string]any
+	var onboardingURL string
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:jack.aweb.ai",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       awebServer.URL,
+				"registry_url":   registryServer.URL,
+				"version":        "1.7.0",
+				"features":       []string{"managed_namespaces"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(body["username"].(string))
+			w.Header().Set("Content-Type", "application/json")
+			if username == "Invalid_Probe" {
+				_, _ = w.Write([]byte(`{"available":false,"reason":"invalid_format"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"available":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(signupBody["username"].(string))
+			alias := strings.TrimSpace(signupBody["alias"].(string))
+			didKey := strings.TrimSpace(signupBody["did_key"].(string))
+			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:" + username + ".aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         username,
+				"org_id":           "org-1",
+				"namespace_domain": username + ".aweb.ai",
+				"team_id":          "default:" + username + ".aweb.ai",
+				"certificate":      encodedCert,
+				"did_aw":           didAW,
+				"member_address":   memberAddress,
+				"alias":            alias,
+			})
+		default:
+			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = onboardingServer.URL
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	// stdin: username, lifetime (Enter takes the persistent default), alias, claim-human=no.
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("jack\n\nlaptop\nn\n"),
+		PromptOut:  &out,
+		BaseURL:    onboardingServer.URL + "/api",
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("signup did_aw must be set when persistent default is taken; signup=%v", signupBody)
+	}
+	if got, _ := signupBody["alias"].(string); got != "laptop" {
+		t.Fatalf("signup alias=%v want laptop", got)
+	}
+	if len(didRegistrations) != 1 {
+		t.Fatalf("did registrations=%d want 1 for persistent path", len(didRegistrations))
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+		t.Fatalf("identity.yaml must exist for persistent identity: %v", err)
+	}
+
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "default:jack.aweb.ai"))
+	if err != nil {
+		t.Fatalf("LoadTeamCertificate: %v", err)
+	}
+	if cert.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("cert lifetime=%q want persistent", cert.Lifetime)
+	}
+	if strings.TrimSpace(cert.MemberDIDAW) == "" {
+		t.Fatalf("cert member_did_aw=%q must be set for persistent", cert.MemberDIDAW)
 	}
 }
 
@@ -1552,7 +1713,7 @@ func TestPromptIdentityLifetimeShowsDescriptions(t *testing.T) {
 	t.Parallel()
 	in := strings.NewReader("\n") // accept default (ephemeral)
 	var out bytes.Buffer
-	persistent, err := promptIdentityLifetime(in, &out)
+	persistent, err := promptIdentityLifetime(in, &out, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1560,10 +1721,13 @@ func TestPromptIdentityLifetimeShowsDescriptions(t *testing.T) {
 		t.Fatal("expected ephemeral (default), got persistent")
 	}
 	output := out.String()
-	if !strings.Contains(output, "workspace-bound") {
+	if !strings.Contains(output, "persistent or ephemeral") {
+		t.Fatalf("expected header line naming the choice, got %q", output)
+	}
+	if !strings.Contains(output, "transient") {
 		t.Fatalf("expected ephemeral description, got %q", output)
 	}
-	if !strings.Contains(output, "public addresses") {
+	if !strings.Contains(output, "public address") {
 		t.Fatalf("expected persistent description, got %q", output)
 	}
 	if strings.Contains(output, "number") {
@@ -1575,12 +1739,45 @@ func TestPromptIdentityLifetimePersistent(t *testing.T) {
 	t.Parallel()
 	in := strings.NewReader("2\n")
 	var out bytes.Buffer
-	persistent, err := promptIdentityLifetime(in, &out)
+	persistent, err := promptIdentityLifetime(in, &out, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !persistent {
 		t.Fatal("expected persistent, got ephemeral")
+	}
+}
+
+func TestPromptIdentityLifetimeDefaultPersistentEnter(t *testing.T) {
+	t.Parallel()
+	in := strings.NewReader("\n") // Enter takes the default
+	var out bytes.Buffer
+	persistent, err := promptIdentityLifetime(in, &out, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !persistent {
+		t.Fatal("expected persistent (default), got ephemeral")
+	}
+	output := out.String()
+	if !strings.Contains(output, "1. Persistent") {
+		t.Fatalf("expected option 1 to be Persistent when default=persistent, got %q", output)
+	}
+	if !strings.Contains(output, "2. Ephemeral") {
+		t.Fatalf("expected option 2 to be Ephemeral when default=persistent, got %q", output)
+	}
+}
+
+func TestPromptIdentityLifetimeDefaultPersistentEphemeralChoice(t *testing.T) {
+	t.Parallel()
+	in := strings.NewReader("2\n")
+	var out bytes.Buffer
+	persistent, err := promptIdentityLifetime(in, &out, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if persistent {
+		t.Fatal("expected ephemeral, got persistent")
 	}
 }
 

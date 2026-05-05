@@ -387,15 +387,31 @@ func initWorkspaceMissing(workingDir string) (bool, error) {
 }
 
 func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
-	if result == nil || strings.TrimSpace(result.InitialPrompt) == "" {
+	if result == nil {
 		return
 	}
 	fmt.Println()
 	fmt.Println("Workspace ready.")
-	fmt.Println("Start your agent here with:")
+	fmt.Println()
+	fmt.Println("Run an agent here with:")
 	fmt.Println("  aw run claude")
 	fmt.Println("  aw run codex")
-	fmt.Println("Ask it to read the agent guide at https://aweb.ai/agent-guide.md")
+	fmt.Println("Agent guide: https://aweb.ai/agent-guide.md")
+	fmt.Println()
+	printChannelLaunchInstructions(os.Stdout)
+}
+
+func printChannelLaunchInstructions(out io.Writer) {
+	fmt.Fprintln(out, "To use the channel directly inside Claude Code (real-time coordination):")
+	fmt.Fprintln(out, "  /plugin marketplace add awebai/claude-plugins")
+	fmt.Fprintln(out, "  /plugin install aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Then start Claude Code with the channel enabled:")
+	fmt.Fprintln(out, "  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Note: Claude Code will warn that --dangerously-load-development-channels is a")
+	fmt.Fprintln(out, "security risk and ask you to confirm. That warning is expected — channels are")
+	fmt.Fprintln(out, "still in beta. Confirm to enable.")
 }
 
 func resolveHumanName() string {
@@ -449,9 +465,15 @@ func resolveRequestedRole(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
 }
 
-func promptIdentityLifetime(in io.Reader, out io.Writer) (bool, error) {
-	fmt.Fprintf(out, "  1. Ephemeral — workspace-bound, for internal coordination\n")
-	fmt.Fprintf(out, "  2. Persistent — survives beyond this workspace, can own public addresses\n")
+func promptIdentityLifetime(in io.Reader, out io.Writer, defaultPersistent bool) (bool, error) {
+	fmt.Fprintln(out, "Should this identity be persistent or ephemeral?")
+	if defaultPersistent {
+		fmt.Fprintln(out, "  1. Persistent — recommended; survives restarts, key rotations, and machine moves; has a public address")
+		fmt.Fprintln(out, "  2. Ephemeral — per-workspace, transient; lost if you reset .aw/ or move to another machine")
+	} else {
+		fmt.Fprintln(out, "  1. Ephemeral — per-workspace, transient; lost if you reset .aw/ or move to another machine")
+		fmt.Fprintln(out, "  2. Persistent — durable; survives restarts, key rotations, and machine moves; has a public address")
+	}
 	reader := bufferedPromptReader(in)
 	for {
 		fmt.Fprintf(out, "Identity type [1]: ")
@@ -462,11 +484,11 @@ func promptIdentityLifetime(in io.Reader, out io.Writer) (bool, error) {
 		line = strings.TrimSpace(line)
 		switch line {
 		case "", "1":
-			return false, nil
+			return defaultPersistent, nil
 		case "2":
-			return true, nil
+			return !defaultPersistent, nil
 		default:
-			fmt.Fprintf(out, "Enter 1 or 2.\n")
+			fmt.Fprintln(out, "Enter 1 or 2.")
 		}
 	}
 }
