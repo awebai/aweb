@@ -168,7 +168,7 @@ func TestInitBootstrapsFromAPIKeyEphemeral(t *testing.T) {
 }
 
 func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
-	t.Setenv("AWID_REGISTRY_URL", "")
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_persistent"
 
@@ -293,6 +293,15 @@ func TestInitBootstrapsFromAPIKeyPersistentWritesIdentity(t *testing.T) {
 	}
 	if result.TeamID != "default:alice.aweb.ai" {
 		t.Fatalf("team_id=%q", result.TeamID)
+	}
+	if result.Address != "alice.aweb.ai/alice" {
+		t.Fatalf("address=%q", result.Address)
+	}
+	if result.StableID == "" {
+		t.Fatal("stable_id should be included in connect output")
+	}
+	if result.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("lifetime=%q", result.Lifetime)
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {

@@ -451,7 +451,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		ps = awid.NewPinStore()
 	}
 	c.SetPinStore(ps, pinPath)
-	registry, err := newConfiguredRegistryResolver(c.Client.HTTPClient(), baseURL, sel.RegistryURL)
+	registry, err := newSelectionRegistryResolver(c.Client.HTTPClient(), baseURL, sel.RegistryURL)
 	if err != nil {
 		return err
 	}
@@ -626,6 +626,23 @@ func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL s
 func newConfiguredRegistryResolver(httpClient *http.Client, baseURL, preferredRegistryURL string) (*awid.RegistryResolver, error) {
 	registry := awid.NewRegistryResolver(httpClient, nil)
 	if err := configureEmbeddedRegistryBaseURLWithDefault(baseURL, preferredRegistryURL, registry.SetFallbackRegistryURL); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}
+
+func newSelectionRegistryResolver(httpClient *http.Client, baseURL, selectionRegistryURL string) (*awid.RegistryResolver, error) {
+	registry := awid.NewRegistryResolver(httpClient, nil)
+	if registryURL := strings.TrimSpace(selectionRegistryURL); registryURL != "" {
+		if strings.EqualFold(registryURL, "local") {
+			return nil, fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
+		}
+		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
+			return nil, fmt.Errorf("invalid registry URL: %w", err)
+		}
+		return registry, nil
+	}
+	if err := configureEmbeddedRegistryBaseURL(baseURL, registry.SetFallbackRegistryURL); err != nil {
 		return nil, err
 	}
 	return registry, nil

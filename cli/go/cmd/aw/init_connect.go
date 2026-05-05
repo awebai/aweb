@@ -28,6 +28,9 @@ type connectOutput struct {
 	Alias       string `json:"alias"`
 	AwebURL     string `json:"aweb_url"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
+	StableID    string `json:"stable_id,omitempty"`
+	Address     string `json:"address,omitempty"`
+	Lifetime    string `json:"lifetime,omitempty"`
 }
 
 // connectResponse is the server response from POST /v1/connect.
@@ -168,6 +171,9 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		Alias:       resp.Alias,
 		AwebURL:     awebURL,
 		WorkspaceID: resp.WorkspaceID,
+		StableID:    strings.TrimSpace(cert.MemberDIDAW),
+		Address:     strings.TrimSpace(cert.MemberAddress),
+		Lifetime:    strings.TrimSpace(cert.Lifetime),
 	}, nil
 }
 

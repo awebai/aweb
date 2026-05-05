@@ -532,7 +532,7 @@ func newRegistryClientWithPreferredBaseURL(baseURL string) (*awid.RegistryClient
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) != "" || strings.TrimSpace(baseURL) == "" {
+	if strings.TrimSpace(baseURL) == "" {
 		return registry, nil
 	}
 	if err := registry.SetFallbackRegistryURL(baseURL); err != nil {

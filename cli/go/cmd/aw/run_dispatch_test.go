@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,18 +43,8 @@ func mustIdentityWebClient(t *testing.T, url string, alias string) *aweb.Client 
 func deliveredIDsTestPath(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
-	prev, hadPrev := os.LookupEnv(chat.DeliveredIDsPathEnv)
 	path := filepath.Join(tmp, ".aw", chat.DeliveredIDsFileName)
-	if err := os.Setenv(chat.DeliveredIDsPathEnv, path); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if hadPrev {
-			_ = os.Setenv(chat.DeliveredIDsPathEnv, prev)
-			return
-		}
-		_ = os.Unsetenv(chat.DeliveredIDsPathEnv)
-	})
+	t.Setenv(chat.DeliveredIDsPathEnv, path)
 	return tmp
 }
 
@@ -899,7 +888,6 @@ func TestResolveChatWakeForAliasSkipsSelfAuthoredAddressMessage(t *testing.T) {
 }
 
 func TestResolveChatWakeForAliasDoesNotSkipDifferentIdentityWithSameAlias(t *testing.T) {
-	t.Parallel()
 	_ = deliveredIDsTestPath(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -940,7 +928,6 @@ func TestResolveChatWakeForAliasDoesNotSkipDifferentIdentityWithSameAlias(t *tes
 }
 
 func TestResolveChatWakeForAliasDoesNotSkipPendingFallbackForDifferentIdentitySameAlias(t *testing.T) {
-	t.Parallel()
 	_ = deliveredIDsTestPath(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1269,7 +1269,7 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 		CreatedAt:   "2026-04-25T00:00:00Z",
 	})
 
-	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
+	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--to-address", "example.invalid/randy", "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
