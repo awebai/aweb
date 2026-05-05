@@ -226,6 +226,7 @@ type ChatPendingResponse struct {
 
 type ChatPendingItem struct {
 	SessionID            string   `json:"session_id"`
+	TeamID               string   `json:"team_id,omitempty"`
 	Participants         []string `json:"participants"`
 	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
@@ -503,6 +504,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 // ChatListSessions lists chat sessions the authenticated agent participates in.
 type ChatSessionItem struct {
 	SessionID            string   `json:"session_id"`
+	TeamID               string   `json:"team_id,omitempty"`
 	Participants         []string `json:"participants"`
 	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`

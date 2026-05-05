@@ -394,6 +394,11 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 				"targets_connected": []string{},
 				"targets_left":      []string{},
 			})
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
+				TeamID: "backend:demo",
+				Agents: []awid.AgentView{},
+			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -540,6 +545,11 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 				"sse_url":           "/v1/chat/sessions/sess-1/stream",
 				"targets_connected": []string{},
 				"targets_left":      []string{},
+			})
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
+				TeamID: "backend:demo",
+				Agents: []awid.AgentView{},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -895,6 +905,11 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 				"message_id":   "msg-1",
 				"status":       "delivered",
 				"delivered_at": "2026-03-17T12:00:00Z",
+			})
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
+				TeamID: "backend:demo",
+				Agents: []awid.AgentView{},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)

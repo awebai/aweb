@@ -146,6 +146,38 @@ type InboxResponse struct {
 	Messages []InboxMessage `json:"messages"`
 }
 
+type ConversationItem struct {
+	ConversationType     string   `json:"conversation_type"`
+	ConversationID       string   `json:"conversation_id,omitempty"`
+	LegacyMessageID      string   `json:"legacy_message_id,omitempty"`
+	Status               string   `json:"status,omitempty"`
+	Participants         []string `json:"participants,omitempty"`
+	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
+	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
+	Subject              string   `json:"subject,omitempty"`
+	LastMessageAt        string   `json:"last_message_at,omitempty"`
+	LastMessageFrom      string   `json:"last_message_from,omitempty"`
+	LastMessagePreview   string   `json:"last_message_preview,omitempty"`
+	UnreadCount          int      `json:"unread_count,omitempty"`
+}
+
+type ConversationsResponse struct {
+	Conversations []ConversationItem `json:"conversations"`
+	NextCursor    string             `json:"next_cursor,omitempty"`
+}
+
+func (c *Client) ListConversations(ctx context.Context, limit int) (*ConversationsResponse, error) {
+	path := "/v1/conversations"
+	if limit > 0 {
+		path += "?limit=" + itoa(limit)
+	}
+	var out ConversationsResponse
+	if err := c.Get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 type InboxParams struct {
 	UnreadOnly bool
 	Limit      int

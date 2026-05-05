@@ -248,6 +248,13 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	return c, nil
 }
 
+func (c *Client) TeamID() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.teamID)
+}
+
 // SetHTTPClient replaces the client's HTTP client used for normal API calls.
 // A nil client is ignored.
 func (c *Client) SetHTTPClient(httpClient *http.Client) {

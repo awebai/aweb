@@ -109,7 +109,8 @@ async def test_create_conversation_records_sender_and_recipients(aweb_cloud_db):
     assert conversation["status"] == "active"
     assert conversation["team_id"] == "backend:acme.com"
     assert conversation["created_by_did"] == "did:aw:alice"
-    assert conversation["expires_at"] is None
+    assert conversation["expires_at"] is not None
+    assert conversation["expires_at"] > datetime.now(timezone.utc) + timedelta(days=29)
 
     participants = await list_conversation_participants(
         db,
@@ -213,31 +214,30 @@ async def test_closed_conversation_rejects_continuation_and_new_participants(awe
 
 
 @pytest.mark.asyncio
-async def test_past_expires_at_does_not_lazy_expire_conversation(aweb_cloud_db):
+async def test_past_expires_at_lazily_expires_conversation(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(
         aweb_cloud_db,
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
 
-    auth = await require_active_conversation_participant(
-        db,
-        conversation_id=conversation["conversation_id"],
-        authenticated_did="did:aw:bob",
-    )
-    assert auth["participant"]["did"] == "did:aw:bob"
+    with pytest.raises(ForbiddenError, match="expired"):
+        await require_active_conversation_participant(
+            db,
+            conversation_id=conversation["conversation_id"],
+            authenticated_did="did:aw:bob",
+        )
 
-    active = await get_conversation(db, conversation_id=conversation["conversation_id"])
-    assert active is not None
-    assert active["status"] == "active"
+    expired = await get_conversation(db, conversation_id=conversation["conversation_id"])
+    assert expired is not None
+    assert expired["status"] == "expired"
 
-    touched = await touch_conversation_activity(db, conversation_id=conversation["conversation_id"])
-    assert touched["status"] == "active"
-    assert touched["expires_at"] == conversation["expires_at"]
+    with pytest.raises(ForbiddenError, match="expired"):
+        await touch_conversation_activity(db, conversation_id=conversation["conversation_id"])
 
 
 @pytest.mark.asyncio
-async def test_touch_conversation_activity_updates_activity_without_sliding_expiry(aweb_cloud_db):
+async def test_touch_conversation_activity_updates_activity_and_slides_expiry(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -249,7 +249,7 @@ async def test_touch_conversation_activity_updates_activity_without_sliding_expi
     )
 
     assert touched["updated_at"] == now
-    assert touched["expires_at"] is None
+    assert touched["expires_at"] == now + timedelta(days=30)
 
 
 @pytest.mark.asyncio
@@ -341,7 +341,7 @@ async def test_close_conversation_requires_participant_or_system_close(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_touch_conversation_activity_ignores_ttl_argument(aweb_cloud_db):
+async def test_touch_conversation_activity_preserves_expiry_when_ttl_is_none(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -351,6 +351,7 @@ async def test_touch_conversation_activity_ignores_ttl_argument(aweb_cloud_db):
         ttl=None,
     )
     assert touched["status"] == "active"
+    assert touched["expires_at"] == conversation["expires_at"]
 
 
 @pytest.mark.asyncio

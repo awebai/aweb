@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
@@ -15,7 +16,10 @@ class ConversationItem(BaseModel):
     conversation_type: str  # "mail" or "chat"
     conversation_id: str | None = None
     legacy_message_id: str | None = None
+    status: str = "active"
     participants: list[str]
+    participant_dids: list[str] = Field(default_factory=list)
+    participant_addresses: list[str] = Field(default_factory=list)
     subject: str
     last_message_at: str
     last_message_from: str
@@ -81,8 +85,11 @@ async def list_conversations(
             m.subject,
             m.to_alias AS to_alias,
             m.to_did AS to_did,
-            m.read_at
+            m.read_at,
+            c.status
         FROM {{tables.messages}} m
+        LEFT JOIN {{tables.conversations}} c
+          ON c.conversation_id = m.conversation_id
         WHERE m.from_did = ANY($1::text[])
            OR m.to_did = ANY($1::text[])
         ORDER BY m.created_at DESC, m.message_id DESC
@@ -103,6 +110,7 @@ async def list_conversations(
                 "conversation_type": "mail",
                 "conversation_id": real_conversation_id,
                 "legacy_message_id": legacy_message_id,
+                "status": row["status"] or "legacy",
                 "participants": [],
                 "subject": row["subject"] or "",
                 "last_message_at": row["created_at"],
@@ -122,6 +130,38 @@ async def list_conversations(
             item["unread_count"] += 1
 
     mail_items = list(mail_by_conversation.values())
+    mail_conversation_ids = [
+        UUID(str(item["conversation_id"]))
+        for item in mail_items
+        if item.get("conversation_id")
+    ]
+    mail_participant_rows = []
+    if mail_conversation_ids:
+        mail_participant_rows = await aweb_db.fetch_all(
+            """
+            SELECT conversation_id, did, alias, address
+            FROM {{tables.conversation_participants}}
+            WHERE conversation_id = ANY($1::uuid[])
+            ORDER BY conversation_id, alias
+            """,
+            mail_conversation_ids,
+        )
+    mail_participants_by_conversation: dict[str, list[dict]] = {}
+    for row in mail_participant_rows:
+        mail_participants_by_conversation.setdefault(str(row["conversation_id"]), []).append(dict(row))
+    for item in mail_items:
+        conversation_id = item.get("conversation_id")
+        if not conversation_id:
+            item["participant_dids"] = []
+            item["participant_addresses"] = []
+            continue
+        participant_rows = mail_participants_by_conversation.get(str(conversation_id), [])
+        item["participant_dids"] = _dedupe_labels(
+            [(row.get("did") or "").strip() for row in participant_rows]
+        )
+        item["participant_addresses"] = _dedupe_labels(
+            [(row.get("address") or "").strip() for row in participant_rows]
+        )
 
     # --- Chat conversations ---
     rows_by_session: dict[str, dict] = {}
@@ -184,6 +224,7 @@ async def list_conversations(
             {
                 "conversation_type": "chat",
                 "conversation_id": row["conversation_id"],
+                "status": "active",
                 "participants": participants,
                 "subject": "",
                 "last_message_at": row["last_message_at"],
@@ -217,7 +258,10 @@ async def list_conversations(
                 conversation_type=item["conversation_type"],
                 conversation_id=item["conversation_id"],
                 legacy_message_id=item.get("legacy_message_id"),
+                status=item.get("status", "active"),
                 participants=item["participants"],
+                participant_dids=item.get("participant_dids", []),
+                participant_addresses=item.get("participant_addresses", []),
                 subject=item["subject"],
                 last_message_at=ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                 last_message_from=item["last_message_from"],

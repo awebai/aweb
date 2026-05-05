@@ -77,6 +77,32 @@ func mustIdentityClient(t *testing.T, url string) *awid.Client {
 	return c
 }
 
+func mustTeamClient(t *testing.T, url string, teamID string) *awid.Client {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, teamPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamPriv, awid.TeamCertificateFields{
+		Team:         teamID,
+		MemberDIDKey: awid.ComputeDIDKey(pub),
+		Alias:        "alice",
+		Lifetime:     awid.LifetimePersistent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := awid.NewWithCertificate(url, priv, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 type stubIdentityResolver struct {
 	resolve func(context.Context, string) (*awid.ResolvedIdentity, error)
 	verify  func(context.Context, string, string) *awid.StableIdentityVerification
@@ -332,14 +358,19 @@ func TestOpen(t *testing.T) {
 	}
 }
 
-func TestOpenSupportsAddressTargetViaUniqueHandleMatch(t *testing.T) {
+func TestOpenSupportsExactAddressTarget(t *testing.T) {
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatPendingResponse{
 				Pending: []awid.ChatPendingItem{
-					{SessionID: "s1", Participants: []string{"alice", "monitor"}, SenderWaiting: true},
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "monitor"},
+						ParticipantAddresses: []string{"", "otherco/monitor"},
+						SenderWaiting:        true,
+					},
 				},
 			})
 		},
@@ -370,7 +401,7 @@ func TestOpenSupportsAddressTargetViaUniqueHandleMatch(t *testing.T) {
 	}
 }
 
-func TestOpenAddressTargetFailsWhenHandleMatchesMultiplePendingConversations(t *testing.T) {
+func TestOpenAddressTargetDoesNotMatchHandleOnlyPendingConversation(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -378,18 +409,20 @@ func TestOpenAddressTargetFailsWhenHandleMatchesMultiplePendingConversations(t *
 			jsonResponse(w, awid.ChatPendingResponse{
 				Pending: []awid.ChatPendingItem{
 					{SessionID: "s1", Participants: []string{"alice", "monitor"}, SenderWaiting: true},
-					{SessionID: "s2", Participants: []string{"carol", "monitor"}, SenderWaiting: false},
 				},
 			})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
 		},
 	})
 	t.Cleanup(server.Close)
 
 	_, err := Open(context.Background(), mustClient(t, server.URL), "otherco/monitor")
 	if err == nil {
-		t.Fatal("expected ambiguity error")
+		t.Fatal("expected no conversation found")
 	}
-	if !strings.Contains(err.Error(), "multiple conversations match otherco/monitor") {
+	if !strings.Contains(err.Error(), "no conversation found with otherco/monitor") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -401,7 +434,12 @@ func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatPendingResponse{
 				Pending: []awid.ChatPendingItem{
-					{SessionID: "s1", Participants: []string{"alice", "monitor"}, SenderWaiting: true},
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "monitor"},
+						ParticipantAddresses: []string{"", "otherco/monitor"},
+						SenderWaiting:        true,
+					},
 				},
 			})
 		},
@@ -648,14 +686,21 @@ func TestShowPending(t *testing.T) {
 	}
 }
 
-func TestShowPendingSupportsAddressTargetViaUniqueHandleMatch(t *testing.T) {
+func TestShowPendingSupportsExactAddressTarget(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatPendingResponse{
 				Pending: []awid.ChatPendingItem{
-					{SessionID: "s1", Participants: []string{"alice", "monitor"}, LastMessage: "help!", LastFrom: "monitor", SenderWaiting: true},
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "monitor"},
+						ParticipantAddresses: []string{"", "otherco/monitor"},
+						LastMessage:          "help!",
+						LastFrom:             "monitor",
+						SenderWaiting:        true,
+					},
 				},
 			})
 		},
@@ -679,7 +724,14 @@ func TestShowPendingSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatPendingResponse{
 				Pending: []awid.ChatPendingItem{
-					{SessionID: "s1", Participants: []string{"alice", "monitor"}, LastMessage: "help!", LastFrom: "monitor", SenderWaiting: true},
+					{
+						SessionID:            "s1",
+						Participants:         []string{"alice", "monitor"},
+						ParticipantAddresses: []string{"", "otherco/monitor"},
+						LastMessage:          "help!",
+						LastFrom:             "monitor",
+						SenderWaiting:        true,
+					},
 				},
 			})
 		},
@@ -4493,6 +4545,78 @@ func TestFindSessionFallbackTiebreaksOnLastActivity(t *testing.T) {
 	}
 	if sessionID != "s-active" {
 		t.Fatalf("session_id=%s, want s-active (most recent activity wins tiebreak)", sessionID)
+	}
+}
+
+func TestFindLatestSessionBareAliasScopesToClientTeam(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:    "primary-session",
+						TeamID:       "devteam:test.local",
+						Participants: []string{"bob"},
+						CreatedAt:    "2026-01-01T00:00:05Z",
+						LastActivity: "2026-01-01T00:00:05Z",
+					},
+					{
+						SessionID:    "partner-session",
+						TeamID:       "main:partner.local",
+						Participants: []string{"bob"},
+						CreatedAt:    "2026-01-01T00:00:01Z",
+						LastActivity: "2026-01-01T00:00:01Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "partner-session" {
+		t.Fatalf("session_id=%s, want partner-session", sessionID)
+	}
+}
+
+func TestFindLatestSessionAddressDoesNotFallbackToHandle(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:            "primary-session",
+						TeamID:               "devteam:test.local",
+						Participants:         []string{"bob"},
+						ParticipantAddresses: []string{"test.local/bob"},
+						CreatedAt:            "2026-01-01T00:00:05Z",
+						LastActivity:         "2026-01-01T00:00:05Z",
+					},
+				},
+			})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "partner.local/bob")
+	if err == nil {
+		t.Fatalf("session_id=%s, want no conversation found", sessionID)
+	}
+	if sessionID != "" {
+		t.Fatalf("session_id=%s, want empty", sessionID)
 	}
 }
 

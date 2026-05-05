@@ -417,6 +417,7 @@ async def get_pending_conversations(
         """
         SELECT
             s.session_id,
+            s.team_id,
             array_agg(p2.alias ORDER BY p2.alias) AS participants,
             array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
             array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
@@ -464,6 +465,7 @@ async def get_pending_conversations(
         ) wait_ext ON TRUE
         GROUP BY
             s.session_id,
+            s.team_id,
             lm.body,
             lm.from_alias,
             lm.from_address,
@@ -504,6 +506,7 @@ async def get_pending_conversations(
     return [
         {
             "session_id": str(row["session_id"]),
+            "team_id": row["team_id"] or "",
             "participants": list(row["participants"] or []),
             "participant_dids": list(row["participant_dids"] or []),
             "participant_addresses": list(row["participant_addresses"] or []),

@@ -384,6 +384,8 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			http.NotFound(w, r)
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{
 				{
@@ -463,6 +465,225 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	}
 	if signed["to"] != "" || signed["to_did"] != "" {
 		t.Fatalf("signed threaded reply should not bind direct recipient: %+v", signed)
+	}
+}
+
+func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	conversationID := "66666666-6666-4666-8666-666666666666"
+
+	type captured struct {
+		ToAddress      string `json:"to_address"`
+		ConversationID string `json:"conversation_id"`
+		SignedPayload  string `json:"signed_payload"`
+	}
+	var got captured
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
+				{
+					ConversationType:     "mail",
+					ConversationID:       conversationID,
+					Participants:         []string{"gsk", "alice"},
+					ParticipantDIDs:      []string{stableID, "did:aw:alice"},
+					ParticipantAddresses: []string{"test.local/gsk", "test.local/alice"},
+					Subject:              "Ephemeral sender address",
+					LastMessageAt:        "2026-05-02T00:00:00Z",
+				},
+			}})
+		case "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":      "msg-reply",
+				"conversation_id": conversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-05-02T00:00:01Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableID,
+		Address:   "test.local/gsk",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimeEphemeral,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to-address", "test.local/alice",
+		"--subject", "Re",
+		"--body", "reply",
+	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if got.ConversationID != conversationID {
+		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
+	}
+	if got.ToAddress != "" {
+		t.Fatalf("auto-threaded sent-side reply leaked to_address=%q", got.ToAddress)
+	}
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
+		t.Fatalf("decode signed_payload: %v", err)
+	}
+	if signed["conversation_id"] != conversationID {
+		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
+	}
+	if signed["to"] != "" || signed["to_did"] != "" {
+		t.Fatalf("signed threaded sent-side reply should not bind direct recipient: %+v", signed)
+	}
+}
+
+func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := stableIDFromDidForTest(t, did)
+	conversationID := "77777777-7777-4777-8777-777777777777"
+
+	type captured struct {
+		ToAlias        string `json:"to_alias"`
+		ConversationID string `json:"conversation_id"`
+		SignedPayload  string `json:"signed_payload"`
+	}
+	var got captured
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
+				TeamID: "devteam:test.local",
+				Agents: []awid.AgentView{
+					{
+						AgentID: "alice-agent",
+						Alias:   "alice",
+						DIDKey:  "did:key:alice-current",
+						DIDAW:   "did:aw:alice",
+						Address: "test.local/alice",
+					},
+				},
+			})
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
+				{
+					ConversationType:     "mail",
+					ConversationID:       conversationID,
+					Participants:         []string{"gsk", "alice"},
+					ParticipantDIDs:      []string{stableID, "did:aw:alice"},
+					ParticipantAddresses: []string{"test.local/gsk", "test.local/alice"},
+					Subject:              "Ephemeral sender address",
+					LastMessageAt:        "2026-05-02T00:00:00Z",
+				},
+			}})
+		case "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":      "msg-alias-reply",
+				"conversation_id": conversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-05-02T00:00:01Z",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:     server.URL,
+		TeamID:      "devteam:test.local",
+		Alias:       "gsk",
+		WorkspaceID: "workspace-1",
+		DID:         did,
+		StableID:    stableID,
+		Address:     "test.local/gsk",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimeEphemeral,
+		SigningKey:  priv,
+		CreatedAt:   "2026-05-02T00:00:00Z",
+	})
+
+	run := exec.CommandContext(ctx, bin, "mail", "send",
+		"--to", "alice",
+		"--subject", "Re",
+		"--body", "reply",
+	)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+	if got.ConversationID != conversationID {
+		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
+	}
+	if got.ToAlias != "" {
+		t.Fatalf("auto-threaded alias reply leaked to_alias=%q", got.ToAlias)
+	}
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
+		t.Fatalf("decode signed_payload: %v", err)
+	}
+	if signed["conversation_id"] != conversationID {
+		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
+	}
+	if signed["to"] != "" || signed["to_did"] != "" {
+		t.Fatalf("signed threaded alias reply should not bind direct recipient: %+v", signed)
 	}
 }
 

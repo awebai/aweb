@@ -666,16 +666,28 @@ func findLatestSession(ctx context.Context, client *awid.Client, targetAlias str
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
+	bareAliasTarget := rawTarget != "" &&
+		!strings.HasPrefix(rawTarget, "did:") &&
+		!strings.Contains(rawTarget, "/") &&
+		!strings.Contains(rawTarget, "~")
+	currentTeamID := ""
+	if client != nil {
+		currentTeamID = client.TeamID()
+	}
 	requireUniqueExact := strings.HasPrefix(rawTarget, "did:") &&
 		targetAlias != "" &&
 		targetAlias != rawTarget &&
 		!strings.Contains(targetAlias, "/")
-	requireUniqueConcreteAlias := rawTarget != "" &&
-		!strings.HasPrefix(rawTarget, "did:") &&
-		!strings.Contains(rawTarget, "/")
+	requireUniqueConcreteAlias := bareAliasTarget
 	pendingResp, err := client.ChatPending(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
+	}
+	matchesSelectedTeam := func(itemTeamID string) bool {
+		if !bareAliasTarget || currentTeamID == "" || strings.TrimSpace(itemTeamID) == "" {
+			return true
+		}
+		return strings.EqualFold(strings.TrimSpace(itemTeamID), currentTeamID)
 	}
 
 	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, bool, error) {
@@ -698,6 +710,9 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 			identityKeys = append(identityKeys, value)
 		}
 		for _, p := range pendingResp.Pending {
+			if !matchesSelectedTeam(p.TeamID) {
+				continue
+			}
 			if !match(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses, targetAlias) {
 				continue
 			}
@@ -760,12 +775,14 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	if bestPendingID != "" {
 		return bestPendingID, bestPendingWaiting, nil
 	}
-	bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true, false)
-	if err != nil {
-		return "", false, err
-	}
-	if bestPendingID != "" {
-		return bestPendingID, bestPendingWaiting, nil
+	if bareAliasTarget {
+		bestPendingID, bestPendingWaiting, err = selectPending(uniqueHandleParticipantMatch, true, false)
+		if err != nil {
+			return "", false, err
+		}
+		if bestPendingID != "" {
+			return bestPendingID, bestPendingWaiting, nil
+		}
 	}
 
 	// Fallback to listing all sessions.
@@ -792,6 +809,9 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 			identityKeys = append(identityKeys, value)
 		}
 		for _, s := range sessionsResp.Sessions {
+			if !matchesSelectedTeam(s.TeamID) {
+				continue
+			}
 			if !match(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses, targetAlias) {
 				continue
 			}
@@ -839,12 +859,14 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	if bestSessionID != "" {
 		return bestSessionID, false, nil
 	}
-	bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true, false)
-	if err != nil {
-		return "", false, err
-	}
-	if bestSessionID != "" {
-		return bestSessionID, false, nil
+	if bareAliasTarget {
+		bestSessionID, err = selectSession(uniqueHandleParticipantMatch, true, false)
+		if err != nil {
+			return "", false, err
+		}
+		if bestSessionID != "" {
+			return bestSessionID, false, nil
+		}
 	}
 
 	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)

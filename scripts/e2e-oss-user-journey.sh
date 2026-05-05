@@ -984,23 +984,35 @@ else
   fail=$((fail + 1))
 fi
 
-run_aw_in "$GSK_DIR" mail send \
+if gsk_mail_out="$(run_aw_in "$GSK_DIR" mail send \
   --to alice \
   --subject "Ephemeral sender address" \
-  --body "Ephemeral hello from gsk" >/dev/null 2>&1
-gsk_mail_exit=$?
+  --body "Ephemeral hello from gsk" 2>&1)"; then
+  gsk_mail_exit=0
+else
+  gsk_mail_exit=$?
+fi
 assert_eq "gsk→alice mail exit" "0" "$gsk_mail_exit"
+if [[ "$gsk_mail_exit" != "0" ]]; then
+  echo "  gsk mail output: ${gsk_mail_out:0:240}"
+fi
 
 alice_ephemeral_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_gsk_from_address="$(echo "$alice_ephemeral_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral sender address'), ''))" 2>/dev/null || echo "")"
 assert_eq "alice sees gsk server-local mail address" "test.local/gsk" "$alice_gsk_from_address"
 
-run_aw_in "$GSK_DIR" mail send \
+if gsk_identity_mail_out="$(run_aw_in "$GSK_DIR" mail send \
   --to-address test.local/alice \
   --subject "Ephemeral identity-auth sender address" \
-  --body "Identity-auth hello from gsk" >/dev/null 2>&1
-gsk_identity_mail_exit=$?
+  --body "Identity-auth hello from gsk" 2>&1)"; then
+  gsk_identity_mail_exit=0
+else
+  gsk_identity_mail_exit=$?
+fi
 assert_eq "gsk→test.local/alice identity-auth mail exit" "0" "$gsk_identity_mail_exit"
+if [[ "$gsk_identity_mail_exit" != "0" ]]; then
+  echo "  gsk identity-auth mail output: ${gsk_identity_mail_out:0:240}"
+fi
 
 alice_identity_mail_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json --show-all 2>/dev/null)"
 alice_gsk_identity_from_address="$(echo "$alice_identity_mail_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('from_address','') for m in msgs if m.get('subject')=='Ephemeral identity-auth sender address'), ''))" 2>/dev/null || echo "")"
@@ -1218,6 +1230,9 @@ assert_eq "alice partner-team chat exit" "0" "$alice_partner_chat_exit"
 partner_bob_pending="$(run_aw_in "$PARTNER_BOB_DIR" chat pending --json 2>/dev/null)"
 partner_bob_chat_from_address="$(echo "$partner_bob_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership partner chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "partner bob sees alice partner chat from_address" "partner.local/alice" "$partner_bob_chat_from_address"
+if [[ "$partner_bob_chat_from_address" != "partner.local/alice" ]]; then
+  echo "  partner bob pending output: ${partner_bob_pending:0:400}"
+fi
 
 if partner_bob_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send \
   --to-address partner.local/alice \
@@ -1615,6 +1630,9 @@ else
   ttl_start_exit=$?
 fi
 assert_eq "conversation gate ttl slide initial mail exit" "0" "$ttl_start_exit"
+if [[ "$ttl_start_exit" != "0" ]]; then
+  echo "  ttl slide initial output: ${ttl_start_out:0:240}"
+fi
 ttl_conversation_id="$(echo "$ttl_start_out" | jq_field conversation_id)"
 assert_not_empty "conversation gate ttl slide initial returns conversation_id" "$ttl_conversation_id"
 psql_exec "UPDATE aweb.conversations SET expires_at = NOW() + INTERVAL '1 day' WHERE conversation_id = '${ttl_conversation_id}'::uuid;"

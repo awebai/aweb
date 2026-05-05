@@ -12,7 +12,7 @@ ConversationType = Literal["mail", "chat"]
 ConversationStatus = Literal["active", "closed", "expired"]
 ParticipantRole = Literal["initiator", "participant"]
 
-DEFAULT_CONVERSATION_TTL: timedelta | None = None
+DEFAULT_CONVERSATION_TTL: timedelta | None = timedelta(days=30)
 
 
 @dataclass(frozen=True)
@@ -109,10 +109,11 @@ def _dedupe_participants(participants: Iterable[dict[str, Any]]) -> list[dict[st
 
 
 def _expires_at(now: datetime, ttl: timedelta | None, expires_at: datetime | None) -> datetime | None:
-    del now, ttl
     if expires_at is not None:
         return expires_at
-    return None
+    if ttl is None:
+        return None
+    return now + ttl
 
 
 def _conversation_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -148,7 +149,7 @@ async def _get_active_conversation(
     conversation_id: str | UUID,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    del now
+    effective_now = now or _now_utc()
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
     conversation = await get_conversation(db, conversation_id=conversation_uuid)
     if conversation is None:
@@ -156,6 +157,10 @@ async def _get_active_conversation(
     if conversation["status"] == "closed":
         raise ForbiddenError("Conversation is closed")
     if conversation["status"] == "expired":
+        raise ForbiddenError("Conversation is expired")
+    expires_at = conversation.get("expires_at")
+    if expires_at is not None and expires_at <= effective_now:
+        await expire_conversation(db, conversation_id=conversation_uuid)
         raise ForbiddenError("Conversation is expired")
     return conversation
 
@@ -524,21 +529,24 @@ async def touch_conversation_activity(
     ttl: timedelta | None = DEFAULT_CONVERSATION_TTL,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    del ttl
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
     effective_now = now or _now_utc()
+    effective_expires_at = _expires_at(effective_now, ttl, None)
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
         UPDATE {{tables.conversations}}
-        SET updated_at = $2
+        SET updated_at = $2,
+            expires_at = COALESCE($3::timestamptz, expires_at)
         WHERE conversation_id = $1
           AND status = 'active'
+          AND (expires_at IS NULL OR expires_at > $2)
         RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
                   created_at, updated_at, closed_at, expires_at
         """,
         conversation_uuid,
         effective_now,
+        effective_expires_at,
     )
     if not row:
         await _get_active_conversation(

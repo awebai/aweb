@@ -386,21 +386,26 @@ func shouldSearchOtherLocalTeamsForAlias(sel *awconfig.Selection, targetAlias st
 	return len(workspace.Memberships) > 1
 }
 
-func clientHasAgentAlias(ctx context.Context, c *aweb.Client, targetAlias string) (bool, error) {
+func clientAgentForAlias(ctx context.Context, c *aweb.Client, targetAlias string) (awid.AgentView, bool, error) {
 	if c == nil || c.Client == nil {
-		return false, nil
+		return awid.AgentView{}, false, nil
 	}
 	resp, err := c.Client.ListAgents(ctx)
 	if err != nil {
-		return false, err
+		return awid.AgentView{}, false, err
 	}
 	targetAlias = strings.TrimSpace(targetAlias)
 	for _, agent := range resp.Agents {
 		if strings.TrimSpace(agent.Alias) == targetAlias {
-			return true, nil
+			return agent, true, nil
 		}
 	}
-	return false, nil
+	return awid.AgentView{}, false, nil
+}
+
+func clientHasAgentAlias(ctx context.Context, c *aweb.Client, targetAlias string) (bool, error) {
+	_, found, err := clientAgentForAlias(ctx, c, targetAlias)
+	return found, err
 }
 
 // resolveCertificateClient attempts to create a certificate-authenticated client.

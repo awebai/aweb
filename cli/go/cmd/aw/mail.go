@@ -61,10 +61,108 @@ func mailIdentityMatchesTarget(msg awid.InboxMessage, targetKind, targetValue st
 	return false
 }
 
+func mailConversationMatchesTarget(conv awid.ConversationItem, targetKind, targetValue string) bool {
+	targetValue = strings.TrimSpace(targetValue)
+	if targetValue == "" || conv.ConversationType != "mail" || strings.TrimSpace(conv.ConversationID) == "" {
+		return false
+	}
+	status := strings.TrimSpace(conv.Status)
+	if status != "" && status != "active" {
+		return false
+	}
+	var values []string
+	switch targetKind {
+	case "address":
+		values = conv.ParticipantAddresses
+	case "did":
+		values = conv.ParticipantDIDs
+	default:
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), targetValue) {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueMailConversationID(conversations map[string]bool, targetValue string) (string, error) {
+	if len(conversations) == 0 {
+		return "", nil
+	}
+	if len(conversations) != 1 {
+		return "", fmt.Errorf("multiple mail conversations match %s; use --conversation-id to choose one", targetValue)
+	}
+	for conversationID := range conversations {
+		return conversationID, nil
+	}
+	return "", nil
+}
+
+func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (string, error) {
+	for _, target := range []struct {
+		kind  string
+		value string
+	}{
+		{kind: "did", value: strings.TrimSpace(agent.DIDAW)},
+		{kind: "did", value: strings.TrimSpace(agent.DIDKey)},
+		{kind: "address", value: strings.TrimSpace(agent.Address)},
+	} {
+		if target.value == "" {
+			continue
+		}
+		conversationID, err := findUniqueMailConversationForTarget(ctx, c, target.kind, target.value)
+		if err != nil || conversationID != "" {
+			return conversationID, err
+		}
+	}
+	return "", nil
+}
+
+func agentMatchesSelection(agent awid.AgentView, sel *awconfig.Selection) bool {
+	if sel == nil {
+		return false
+	}
+	for _, pair := range []struct {
+		agentValue string
+		selfValue  string
+	}{
+		{agentValue: agent.DIDAW, selfValue: sel.StableID},
+		{agentValue: agent.DIDKey, selfValue: sel.DID},
+		{agentValue: agent.Address, selfValue: sel.Address},
+	} {
+		agentValue := strings.TrimSpace(pair.agentValue)
+		selfValue := strings.TrimSpace(pair.selfValue)
+		if agentValue != "" && selfValue != "" && strings.EqualFold(agentValue, selfValue) {
+			return true
+		}
+	}
+	return false
+}
+
 func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, targetKind, targetValue string) (string, error) {
 	if c == nil || (targetKind != "address" && targetKind != "did") {
 		return "", nil
 	}
+	conversationsResp, err := c.ListConversations(ctx, 100)
+	if err == nil {
+		conversations := map[string]bool{}
+		for _, conv := range conversationsResp.Conversations {
+			conversationID := strings.TrimSpace(conv.ConversationID)
+			if conversationID == "" || !mailConversationMatchesTarget(conv, targetKind, targetValue) {
+				continue
+			}
+			conversations[conversationID] = true
+		}
+		if conversationID, err := uniqueMailConversationID(conversations, targetValue); err != nil || conversationID != "" {
+			return conversationID, err
+		}
+		return "", nil
+	}
+
+	// Older servers do not expose participant identities on /v1/conversations.
+	// Fall back to inbox only when the conversation index is unavailable.
 	resp, err := c.Inbox(ctx, awid.InboxParams{
 		UnreadOnly: false,
 		Limit:      200,
@@ -81,13 +179,7 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 		}
 		conversations[conversationID] = true
 	}
-	if len(conversations) != 1 {
-		return "", nil
-	}
-	for conversationID := range conversations {
-		return conversationID, nil
-	}
-	return "", nil
+	return uniqueMailConversationID(conversations, targetValue)
 }
 
 var mailSendCmd = &cobra.Command{
@@ -130,7 +222,24 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			req.ToAlias = targetValue
+			if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
+				debugLog("list agents for mail auto-threading: %v", findErr)
+				req.ToAlias = targetValue
+			} else if found {
+				if agentMatchesSelection(agent, sel) {
+					req.ToAlias = targetValue
+				} else if conversationID, findErr := findUniqueMailConversationForAgent(ctx, c, agent); findErr != nil {
+					return findErr
+				} else if conversationID != "" {
+					targetKind = "conversation"
+					targetValue = conversationID
+					req.ConversationID = conversationID
+				} else {
+					req.ToAlias = targetValue
+				}
+			} else {
+				req.ToAlias = targetValue
+			}
 		case "did":
 			if strings.TrimSpace(teamFlag) != "" {
 				c, sel, err = resolveClientSelection()

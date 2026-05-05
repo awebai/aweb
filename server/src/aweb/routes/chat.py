@@ -994,6 +994,7 @@ async def pending(
             {
                 "session_id": item["session_id"],
                 "conversation_id": item["session_id"],
+                "team_id": item.get("team_id") or "",
                 "participants": participants,
                 "participant_dids": [
                     (row.get("did") or "").strip()
@@ -1636,6 +1637,7 @@ async def send_message(
 class SessionListItem(BaseModel):
     session_id: str
     conversation_id: str
+    team_id: str = ""
     participants: list[str]
     participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
@@ -1667,6 +1669,7 @@ async def list_sessions(
         rows = await aweb_db.fetch_all(
             """
             SELECT s.session_id, s.created_at,
+                   s.team_id,
                    COALESCE(MAX(m.created_at), s.created_at) AS last_activity,
                    array_agg(DISTINCT p2.alias ORDER BY p2.alias) AS participants,
                    array_agg(DISTINCT p2.did ORDER BY p2.did) AS participant_dids
@@ -1677,7 +1680,7 @@ async def list_sessions(
               ON p2.session_id = s.session_id
             LEFT JOIN {{tables.chat_messages}} m
               ON m.session_id = s.session_id
-            GROUP BY s.session_id, s.created_at
+            GROUP BY s.session_id, s.team_id, s.created_at
             ORDER BY last_activity DESC, s.created_at DESC
             """,
             participant_did,
@@ -1720,6 +1723,7 @@ async def list_sessions(
             SessionListItem(
                 session_id=str(row["session_id"]),
                 conversation_id=str(row["session_id"]),
+                team_id=row["team_id"] or "",
                 participants=[
                     participant["alias"]
                     for participant in session_participants
