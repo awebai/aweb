@@ -3491,6 +3491,77 @@ func TestSendStartConversationUpgradesWhenNotExplicit(t *testing.T) {
 	}
 }
 
+func TestSendStartConversationProbesExistingSession(t *testing.T) {
+	t.Parallel()
+
+	var gotBody awid.ChatSendMessageRequest
+	var listedSessions bool
+	var createSessionCalls int
+	sentMsgID := "msg-sent-existing"
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			listedSessions = true
+			jsonResponse(w, awid.ChatListSessionsResponse{
+				Sessions: []awid.ChatSessionItem{
+					{
+						SessionID:    "s-existing",
+						Participants: []string{"alice", "bob"},
+						CreatedAt:    "2026-01-01T00:00:01Z",
+						LastActivity: "2026-01-01T00:00:05Z",
+					},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s-existing/messages": func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			jsonResponse(w, awid.ChatSendMessageResponse{MessageID: sentMsgID, Delivered: true})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			createSessionCalls++
+			http.Error(w, `{"detail":"Existing active chat session found; continue that session instead"}`, http.StatusConflict)
+		},
+		"GET /v1/chat/sessions/s-existing/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			sentData, _ := json.Marshal(map[string]any{
+				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
+			})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
+			if flusher != nil {
+				flusher.Flush()
+			}
+			<-time.After(10 * time.Second)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := Send(ctx, mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{
+		Wait:              1,
+		StartConversation: true,
+	}, nil)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected context.DeadlineExceeded (proving wait was upgraded past 1s), got %v", err)
+	}
+	if !listedSessions {
+		t.Fatal("session list was not probed")
+	}
+	if createSessionCalls != 0 {
+		t.Fatalf("expected probe to find existing session and skip ChatCreateSession; create calls=%d", createSessionCalls)
+	}
+	if gotBody.Body != "hello" {
+		t.Fatalf("body=%q, want hello", gotBody.Body)
+	}
+}
+
 // --- Fix 2: Listen() ---
 
 func TestListen(t *testing.T) {

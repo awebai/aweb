@@ -464,7 +464,13 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/chat/pending":
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
 		case "/api/v1/chat/sessions":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+				return
+			}
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"detail": "Target not found",

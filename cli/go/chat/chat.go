@@ -1134,7 +1134,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
-	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
+	if len(targets) == 1 && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:    message,
