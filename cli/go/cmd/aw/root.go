@@ -24,11 +24,13 @@ const (
 var rootCmd = &cobra.Command{
 	Use:   "aw",
 	Short: "aweb CLI",
+	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
 			debugFlag = true
 		}
 		loadDotenvBestEffort()
+		maybeCheckLatestVersion(cmd)
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -48,7 +50,7 @@ var versionCmd = &cobra.Command{
 		if date != "unknown" {
 			fmt.Printf("  built:  %s\n", date)
 		}
-		checkLatestVersion(os.Stdout, "")
+		checkLatestVersion(os.Stderr, "")
 	},
 }
 

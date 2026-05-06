@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const (
 	updateGithubRepo    = "awebai/aw"
 	updateGithubAPIBase = "https://api.github.com"
+	updateCheckCacheTTL = time.Hour
 )
 
 type releaseAsset struct {
@@ -34,6 +36,19 @@ type releaseInfo struct {
 	TagName string         `json:"tag_name"`
 	Assets  []releaseAsset `json:"assets"`
 }
+
+type updateCheckCache struct {
+	CheckedAt     time.Time `json:"checked_at"`
+	LatestVersion string    `json:"latest_version"`
+}
+
+var (
+	updateCheckAPIBase               = ""
+	updateCheckOutput      io.Writer = os.Stderr
+	updateCheckNow                   = time.Now
+	updateCheckStdoutIsTTY           = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+	updateCheckCachePath             = defaultUpdateCheckCachePath
+)
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
@@ -99,6 +114,132 @@ func fetchLatestRelease(timeoutSeconds int, apiBase string) (*releaseInfo, error
 		return nil, fmt.Errorf("parsing release info: %w", err)
 	}
 	return &info, nil
+}
+
+func defaultUpdateCheckCachePath() string {
+	configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configHome == "" {
+		home := strings.TrimSpace(os.Getenv("HOME"))
+		if home == "" {
+			return ""
+		}
+		configHome = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configHome, "aw", "update-check.json")
+}
+
+func maybeCheckLatestVersion(cmd *cobra.Command) {
+	currentVersion := strings.TrimPrefix(version, "v")
+	if currentVersion == "dev" || currentVersion == "" {
+		return
+	}
+	if jsonFlag || strings.TrimSpace(os.Getenv("AW_NO_UPDATE_CHECK")) != "" || !updateCheckStdoutIsTTY() {
+		return
+	}
+	if shouldSkipUpdateCheck(cmd) {
+		return
+	}
+	checkLatestVersionWithCache(updateCheckOutput, currentVersion, updateCheckAPIBase)
+}
+
+func shouldSkipUpdateCheck(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	path := strings.Fields(cmd.CommandPath())
+	if len(path) == 0 {
+		return false
+	}
+	if path[0] == "aw" {
+		path = path[1:]
+	}
+	if len(path) == 0 {
+		return false
+	}
+	switch path[0] {
+	case "run", "heartbeat", "events", "notify", "control", "log", "instructions", "upgrade", "version":
+		return true
+	case "lock":
+		return len(path) > 1 && path[1] == "renew"
+	default:
+		return false
+	}
+}
+
+func checkLatestVersionWithCache(w io.Writer, currentVersion, apiBase string) {
+	if currentVersion == "" || currentVersion == "dev" {
+		return
+	}
+
+	if cache, ok := readUpdateCheckCache(); ok && updateCheckNow().Sub(cache.CheckedAt) < updateCheckCacheTTL {
+		printUpgradeHintIfNewer(w, currentVersion, cache.LatestVersion)
+		return
+	}
+
+	done := make(chan string, 1)
+	go func() {
+		info, err := fetchLatestRelease(3, apiBase)
+		if err != nil {
+			done <- ""
+			return
+		}
+		done <- strings.TrimPrefix(info.TagName, "v")
+	}()
+
+	select {
+	case latestVersion := <-done:
+		if latestVersion == "" {
+			return
+		}
+		writeUpdateCheckCache(updateCheckCache{
+			CheckedAt:     updateCheckNow().UTC(),
+			LatestVersion: latestVersion,
+		})
+		printUpgradeHintIfNewer(w, currentVersion, latestVersion)
+	case <-time.After(3 * time.Second):
+		return
+	}
+}
+
+func readUpdateCheckCache() (updateCheckCache, bool) {
+	path := updateCheckCachePath()
+	if path == "" {
+		return updateCheckCache{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return updateCheckCache{}, false
+	}
+	var cache updateCheckCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return updateCheckCache{}, false
+	}
+	if cache.CheckedAt.IsZero() || strings.TrimSpace(cache.LatestVersion) == "" {
+		return updateCheckCache{}, false
+	}
+	return cache, true
+}
+
+func writeUpdateCheckCache(cache updateCheckCache) {
+	path := updateCheckCachePath()
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0644)
+}
+
+func printUpgradeHintIfNewer(w io.Writer, currentVersion, latestVersion string) {
+	latestVersion = strings.TrimPrefix(strings.TrimSpace(latestVersion), "v")
+	if latestVersion != "" && compareVersions(currentVersion, latestVersion) < 0 {
+		fmt.Fprintf(w, "Upgrade available: v%s → v%s (run `aw upgrade`)\n", currentVersion, latestVersion)
+	}
 }
 
 // verifyChecksum verifies the SHA256 checksum of a file.
@@ -436,7 +577,5 @@ func checkLatestVersion(w io.Writer, apiBase string) {
 	}
 
 	latestVersion := strings.TrimPrefix(info.TagName, "v")
-	if compareVersions(currentVersion, latestVersion) < 0 {
-		fmt.Fprintf(w, "Upgrade available: v%s → v%s (run `aw upgrade`)\n", currentVersion, latestVersion)
-	}
+	printUpgradeHintIfNewer(w, currentVersion, latestVersion)
 }

@@ -25,6 +25,7 @@ team-architecture flows:
 - launch guided onboarding in a TTY when this directory is still clean`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		loadDotenvBestEffort()
+		maybeCheckLatestVersion(cmd)
 		// No heartbeat for init — no credentials yet.
 	},
 	RunE: runInit,

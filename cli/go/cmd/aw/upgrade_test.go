@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestCompareVersions(t *testing.T) {
@@ -155,10 +158,10 @@ func TestExtractBinary_PathTraversal(t *testing.T) {
 	maliciousContent := []byte("#!/bin/bash\necho evil\n")
 
 	tests := []struct {
-		name        string
-		malPath     string
+		name         string
+		malPath      string
 		includeLegit bool
-		wantErr     bool
+		wantErr      bool
 	}{
 		{"relative traversal", "../../etc/passwd", true, false},
 		{"absolute path", "/tmp/exploit", true, false},
@@ -390,4 +393,218 @@ func TestCheckLatestVersion_DevVersion(t *testing.T) {
 	if output != "" {
 		t.Errorf("expected no output for dev version, got: %s", output)
 	}
+}
+
+func TestPersistentPreRunSkipsOnJSONFlag(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v2.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+	jsonFlag = true
+
+	maybeCheckLatestVersion(testCommandPath("aw", "mail", "inbox"))
+
+	if calls != 0 {
+		t.Fatalf("release calls=%d, want 0", calls)
+	}
+	if buf.String() != "" {
+		t.Fatalf("output=%q, want empty", buf.String())
+	}
+}
+
+func TestPersistentPreRunSkipsOnNonTTYStdout(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v2.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, false)
+
+	maybeCheckLatestVersion(testCommandPath("aw", "mail", "inbox"))
+
+	if calls != 0 {
+		t.Fatalf("release calls=%d, want 0", calls)
+	}
+	if buf.String() != "" {
+		t.Fatalf("output=%q, want empty", buf.String())
+	}
+}
+
+func TestPersistentPreRunSkipsOnEnvVar(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v2.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+	t.Setenv("AW_NO_UPDATE_CHECK", "1")
+
+	maybeCheckLatestVersion(testCommandPath("aw", "mail", "inbox"))
+
+	if calls != 0 {
+		t.Fatalf("release calls=%d, want 0", calls)
+	}
+	if buf.String() != "" {
+		t.Fatalf("output=%q, want empty", buf.String())
+	}
+}
+
+func TestPersistentPreRunSkipsOnSkipListCommand(t *testing.T) {
+	for _, path := range [][]string{
+		{"aw", "heartbeat"},
+		{"aw", "run"},
+		{"aw", "events"},
+		{"aw", "lock", "renew"},
+	} {
+		t.Run(strings.Join(path[1:], "_"), func(t *testing.T) {
+			calls := 0
+			server := updateCheckTestServer(t, "v2.0.0", &calls)
+			defer server.Close()
+			var buf bytes.Buffer
+			resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+
+			maybeCheckLatestVersion(testCommandPath(path...))
+
+			if calls != 0 {
+				t.Fatalf("release calls=%d, want 0", calls)
+			}
+			if buf.String() != "" {
+				t.Fatalf("output=%q, want empty", buf.String())
+			}
+		})
+	}
+}
+
+func TestPersistentPreRunFiresOnAlwaysListCommand(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v2.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+
+	maybeCheckLatestVersion(testCommandPath("aw", "mail", "inbox"))
+
+	if calls != 1 {
+		t.Fatalf("release calls=%d, want 1", calls)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Upgrade available") || !strings.Contains(output, "v1.0.0") || !strings.Contains(output, "v2.0.0") {
+		t.Fatalf("unexpected output=%q", output)
+	}
+}
+
+func TestUpdateCacheRespects1HourTTL(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v3.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	cachePath := resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+	updateCheckNow = func() time.Time { return now }
+	writeUpdateCheckCache(updateCheckCache{CheckedAt: now, LatestVersion: "2.0.0"})
+
+	checkLatestVersionWithCache(&buf, "1.0.0", server.URL)
+	if calls != 0 {
+		t.Fatalf("release calls on fresh cache=%d, want 0", calls)
+	}
+	if !strings.Contains(buf.String(), "v2.0.0") {
+		t.Fatalf("fresh-cache output=%q, want cached latest version", buf.String())
+	}
+
+	buf.Reset()
+	updateCheckNow = func() time.Time { return now.Add(updateCheckCacheTTL + time.Second) }
+	checkLatestVersionWithCache(&buf, "1.0.0", server.URL)
+	if calls != 1 {
+		t.Fatalf("release calls after stale cache=%d, want 1", calls)
+	}
+	if !strings.Contains(buf.String(), "v3.0.0") {
+		t.Fatalf("stale-cache output=%q, want fetched latest version", buf.String())
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("cache file missing after write: %v", err)
+	}
+}
+
+func TestUpdateCacheBestEffortWriteFailure(t *testing.T) {
+	calls := 0
+	server := updateCheckTestServer(t, "v2.0.0", &calls)
+	defer server.Close()
+	var buf bytes.Buffer
+	resetUpdateCheckTestState(t, "1.0.0", server.URL, &buf, true)
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("block mkdir"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	updateCheckCachePath = func() string {
+		return filepath.Join(blocker, "aw", "update-check.json")
+	}
+
+	checkLatestVersionWithCache(&buf, "1.0.0", server.URL)
+
+	if calls != 1 {
+		t.Fatalf("release calls=%d, want 1", calls)
+	}
+	if !strings.Contains(buf.String(), "Upgrade available") {
+		t.Fatalf("output=%q, want upgrade hint", buf.String())
+	}
+}
+
+func resetUpdateCheckTestState(t *testing.T, testVersion, apiBase string, output *bytes.Buffer, stdoutTTY bool) string {
+	t.Helper()
+	oldVersion := version
+	oldJSONFlag := jsonFlag
+	oldAPIBase := updateCheckAPIBase
+	oldOutput := updateCheckOutput
+	oldNow := updateCheckNow
+	oldStdoutIsTTY := updateCheckStdoutIsTTY
+	oldCachePath := updateCheckCachePath
+	version = testVersion
+	jsonFlag = false
+	updateCheckAPIBase = apiBase
+	updateCheckOutput = output
+	updateCheckNow = func() time.Time { return time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC) }
+	updateCheckStdoutIsTTY = func() bool { return stdoutTTY }
+	cachePath := filepath.Join(t.TempDir(), "aw", "update-check.json")
+	updateCheckCachePath = func() string { return cachePath }
+	t.Setenv("AW_NO_UPDATE_CHECK", "")
+	t.Cleanup(func() {
+		version = oldVersion
+		jsonFlag = oldJSONFlag
+		updateCheckAPIBase = oldAPIBase
+		updateCheckOutput = oldOutput
+		updateCheckNow = oldNow
+		updateCheckStdoutIsTTY = oldStdoutIsTTY
+		updateCheckCachePath = oldCachePath
+	})
+	return cachePath
+}
+
+func updateCheckTestServer(t *testing.T, tagName string, calls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/awebai/aw/releases/latest" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		*calls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": tagName,
+			"assets":   []map[string]any{},
+		})
+	}))
+}
+
+func testCommandPath(parts ...string) *cobra.Command {
+	if len(parts) == 0 {
+		return &cobra.Command{Use: "aw"}
+	}
+	root := &cobra.Command{Use: parts[0]}
+	current := root
+	for _, part := range parts[1:] {
+		child := &cobra.Command{Use: part}
+		current.AddCommand(child)
+		current = child
+	}
+	return current
 }
