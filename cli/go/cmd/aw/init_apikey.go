@@ -642,16 +642,3 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	return &result, nil
 }
 
-func runRequestedInitPostSetup(workingDir string) error {
-	repoRoot := resolveRepoRoot(workingDir)
-	if initInjectDocs {
-		printInjectDocsResult(InjectAgentDocs(repoRoot))
-	}
-	if initSetupChannel {
-		printChannelMCPResult(SetupChannelMCP(repoRoot, initIsTTY()))
-	}
-	if initSetupHooks {
-		printClaudeHooksResult(SetupClaudeHooks(repoRoot, initIsTTY()))
-	}
-	return nil
-}

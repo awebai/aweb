@@ -61,6 +61,12 @@ type initResult struct {
 	ServerName    string
 	ExportBaseURL string
 	Alias         string
+	// APIKeyAuth is true when init succeeded via an API key bootstrap.
+	// API keys are minted from an authenticated context (dashboard or
+	// programmatic), so the actor already has an account; suggesting
+	// `aw claim-human` is misleading. Other init paths leave this false
+	// and the claim-human suggestion fires per shouldSuggestClaimHuman.
+	APIKeyAuth bool
 }
 
 func init() {
@@ -141,14 +147,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		printOutput(result, formatConnect)
-		if err := runRequestedInitPostSetup(wd); err != nil {
-			return err
-		}
 		if !jsonFlag {
 			printPostInitActions(&initResult{
 				ServerName:    hostFromBaseURL(result.AwebURL),
 				ExportBaseURL: result.AwebURL,
 				Alias:         strings.TrimSpace(result.Alias),
+				APIKeyAuth:    true,
 			}, wd)
 		}
 		return nil
@@ -546,10 +550,14 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, "  Start Claude Code with the channel enabled:")
+	lines = append(lines, "  Install the channel directly inside Claude Code (real-time coordination):")
+	lines = append(lines, "    /plugin marketplace add awebai/claude-plugins")
+	lines = append(lines, "    /plugin install aweb-channel@awebai-marketplace")
+	lines = append(lines, "")
+	lines = append(lines, "  Then start Claude Code with the channel enabled:")
 	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
-	lines = append(lines, "  Agent guide: docs/agent-guide.md")
+	lines = append(lines, "  Tell your agent: please read https://aweb.ai/agent-guide.md")
 	return lines
 }
 
@@ -559,6 +567,12 @@ func formatInitNextStep(command, description string) string {
 
 func shouldSuggestClaimHuman(result *initResult) bool {
 	if result == nil {
+		return false
+	}
+	// API-key bootstrap implies the actor already has an account: API keys
+	// are minted from authenticated contexts (dashboard or programmatic).
+	// Suggesting claim-human in that case is misleading.
+	if result.APIKeyAuth {
 		return false
 	}
 	values := []string{result.ServerName, result.ExportBaseURL}
