@@ -64,7 +64,7 @@ type guidedOnboardingPath string
 
 const (
 	guidedOnboardingPathHosted guidedOnboardingPath = "Use the aweb.ai managed identity"
-	guidedOnboardingPathBYOD   guidedOnboardingPath = "I have a domain I control (BYOD)"
+	guidedOnboardingPathBYOD   guidedOnboardingPath = "I have a domain I control"
 )
 
 func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -535,6 +535,14 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	alias := strings.TrimSpace(req.Alias)
 	if alias != "" {
 		return alias, nil
+	}
+	// Persistent identities make the alias the public address (alice -> aweb.ai/alice).
+	// Defaulting to the OS username (e.g., "juan") would silently bind that user's name
+	// to a public did:aw forever. Force an explicit choice and label it "name" to match
+	// the BYOD persistent path's vocabulary. Ephemeral identities are session-local;
+	// $USER as a convenience default is fine there.
+	if req.Persistent {
+		return promptRequiredStringWithIO("Agent name", "", req.PromptIn, req.PromptOut)
 	}
 	return promptRequiredStringWithIO("Agent alias", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 }

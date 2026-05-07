@@ -83,6 +83,18 @@ func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 			result.Errors = append(result.Errors, fmt.Sprintf("AGENTS.md: %v", err))
 		} else {
 			result.Created = append(result.Created, "AGENTS.md")
+			// Symlink CLAUDE.md → AGENTS.md so Claude Code picks up the same file.
+			// Skip if CLAUDE.md already exists (don't clobber user state). Best-effort:
+			// symlink failure isn't fatal; AGENTS.md alone still works for tools that
+			// read it directly.
+			claudePath := filepath.Join(repoRoot, "CLAUDE.md")
+			if _, err := os.Lstat(claudePath); os.IsNotExist(err) {
+				if err := os.Symlink("AGENTS.md", claudePath); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("CLAUDE.md symlink: %v", err))
+				} else {
+					result.Created = append(result.Created, "CLAUDE.md (symlink → AGENTS.md)")
+				}
+			}
 		}
 	}
 

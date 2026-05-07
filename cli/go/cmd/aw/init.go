@@ -398,10 +398,7 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	fmt.Println()
 	fmt.Println("Workspace ready.")
 	fmt.Println()
-	fmt.Println("Run an agent here with:")
-	fmt.Println("  aw run claude")
-	fmt.Println("  aw run codex")
-	fmt.Println("Agent guide: https://aweb.ai/agent-guide.md")
+	fmt.Println("Tell your agent: please read https://aweb.ai/agent-guide.md")
 	fmt.Println()
 	printChannelLaunchInstructions(os.Stdout)
 }
