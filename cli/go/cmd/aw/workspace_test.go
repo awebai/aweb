@@ -81,6 +81,46 @@ func initGitRepoWithOriginAndCommit(t *testing.T, dir, origin string) {
 	}
 }
 
+func runGitForTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return string(out)
+}
+
+func TestEnsureConnectTargetCleanAddsAwebRuntimeToGitExclude(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+
+	if err := ensureConnectTargetClean(repo); err != nil {
+		t.Fatalf("ensureConnectTargetClean: %v", err)
+	}
+	if err := ensureConnectTargetClean(repo); err != nil {
+		t.Fatalf("second ensureConnectTargetClean: %v", err)
+	}
+
+	excludePath := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "--git-path", "info/exclude"))
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(repo, excludePath)
+	}
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read git exclude: %v", err)
+	}
+	if got := strings.Count(string(data), ".aw/"); got != 1 {
+		t.Fatalf("expected one .aw/ exclude entry, got %d:\n%s", got, string(data))
+	}
+}
+
 func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	t.Parallel()
 
@@ -862,6 +902,69 @@ func TestWorkspaceDeleteProtectiveReasonParsesStructuredConflict(t *testing.T) {
 	}
 }
 
+func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".aw", "team-certs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	buildAwBinary(t, ctx, bin)
+
+	for path, body := range map[string]string{
+		".aw/signing.key":                      "tracked parent key\n",
+		".aw/team-certs/backend__acme.com.pem": "tracked parent cert\n",
+		".aw/teams.yaml":                       "active_team: backend:acme.com\n",
+		".aw/workspace.yaml":                   "aweb_url: https://app.aweb.ai/api\n",
+		".aw/context":                          "{}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	runGitForTest(t, repo, "add", ".aw")
+	runGitForTest(t, repo, "commit", "-m", "Accidentally track aw runtime")
+
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", "bob")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = repo
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected tracked .aw error, got success:\n%s", string(out))
+	}
+	text := string(out)
+	for _, want := range []string{
+		"cannot create a new worktree because aweb runtime files are tracked",
+		".aw/signing.key",
+		".aw/team-certs/backend__acme.com.pem",
+		"git rm --cached -r .aw",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected output to contain %q:\n%s", want, text)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "repo-bob")); !os.IsNotExist(err) {
+		t.Fatalf("child worktree should not be created, stat err=%v", err)
+	}
+	excludePath := strings.TrimSpace(runGitForTest(t, repo, "rev-parse", "--git-path", "info/exclude"))
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(repo, excludePath)
+	}
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read git exclude: %v", err)
+	}
+	if strings.Contains(string(data), ".aw/") {
+		t.Fatalf("refused add-worktree should not mutate git exclude:\n%s", string(data))
+	}
+}
+
 func TestAwWorkspaceAddWorktreeCreatesSiblingWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -1283,6 +1386,14 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	}
 	if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("child identity.yaml should not exist: %v", err)
+	}
+	childKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(child))
+	if err != nil {
+		t.Fatalf("load child signing key: %v", err)
+	}
+	childDID := awid.ComputeDIDKey(childKey.Public().(ed25519.PublicKey))
+	if childDID == parentDID {
+		t.Fatalf("child worktree reused parent signing key DID %s", childDID)
 	}
 
 	mu.Lock()

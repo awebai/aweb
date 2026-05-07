@@ -498,6 +498,9 @@ func persistLocalSigningKeyAndCertificate(workingDir string, signingKey ed25519.
 	if cert == nil {
 		return fmt.Errorf("team certificate is required")
 	}
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return err
+	}
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), signingKey); err != nil {
 		return err
 	}

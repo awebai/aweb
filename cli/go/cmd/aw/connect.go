@@ -139,6 +139,9 @@ func validateConnectAddress(address string) error {
 }
 
 func ensureConnectTargetClean(workingDir string) error {
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return err
+	}
 	paths := []string{
 		awconfig.WorktreeSigningKeyPath(workingDir),
 		filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
@@ -236,6 +239,9 @@ func persistBootstrapConnectState(
 	resp *awid.BootstrapRedeemResponse,
 	didKey, stableID, address, registryURL string,
 ) error {
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return err
+	}
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	if err := awid.SaveSigningKey(signingKeyPath, signingKey); err != nil {
 		return err

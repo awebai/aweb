@@ -1397,6 +1397,9 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 	if err != nil {
 		return "", err
 	}
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return "", err
+	}
 	if err := awid.SaveSigningKey(signingKeyPath, priv); err != nil {
 		return "", err
 	}

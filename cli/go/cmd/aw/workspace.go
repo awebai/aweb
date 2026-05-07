@@ -208,14 +208,20 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
-	client, _, err := resolveClientSelectionForDir(workingDir)
-	if err != nil {
-		return err
-	}
-
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {
 		return usageError("workspace add-worktree requires a git worktree")
+	}
+	if err := ensureAwebRuntimeUntrackedForAddWorktree(root); err != nil {
+		return err
+	}
+	if err := ensureAwebRuntimeGitIgnored(root); err != nil {
+		return err
+	}
+
+	client, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
 	}
 
 	requested := ""
@@ -302,6 +308,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	branchCreated, err := createWorkspaceGitWorktree(root, worktreePath, branchName, jsonFlag)
 	if err != nil {
 		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+	if err := ensureAwebRuntimeGitIgnored(worktreePath); err != nil {
+		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		return err
 	}
 
 	if !jsonFlag {
