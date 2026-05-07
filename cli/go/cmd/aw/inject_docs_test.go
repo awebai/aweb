@@ -3,11 +3,22 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+// skipIfNoSymlinkSupport skips on platforms where os.Symlink generally
+// requires elevated privileges (Windows non-admin shells). The InjectAgentDocs
+// symlink behavior is best-effort on those platforms; AGENTS.md alone still works.
+func skipIfNoSymlinkSupport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows; skipping")
+	}
+}
+
 func TestInjectAgentDocsCreatesAgentsWhenNoFilesExist(t *testing.T) {
+	skipIfNoSymlinkSupport(t)
 	t.Parallel()
 
 	tmp := t.TempDir()

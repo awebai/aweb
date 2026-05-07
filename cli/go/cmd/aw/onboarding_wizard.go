@@ -242,7 +242,7 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 
 func promptGuidedOnboardingPath(in io.Reader, out io.Writer) (guidedOnboardingPath, error) {
 	fmt.Fprintln(out, "How should this agent get its identity?")
-	fmt.Fprintln(out, "  Hosted is the fastest path. BYOD uses a domain you already control.")
+	fmt.Fprintln(out, "  Hosted is the fastest path. The other option uses a domain you already control.")
 	choice, err := promptIndexedChoice(
 		"Choose onboarding path",
 		[]string{string(guidedOnboardingPathHosted), string(guidedOnboardingPathBYOD)},

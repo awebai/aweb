@@ -115,7 +115,7 @@ func (r *doctorRunner) runLocalChecks() {
 				doctorStatusInfo,
 				state.workspacePath,
 				"No local workspace binding was found.",
-				"Run `aw init` or `aw run <provider>` when you are ready to connect this directory.",
+				"Run `aw init` when you are ready to connect this directory.",
 				map[string]any{"state": "missing"},
 			))
 			return

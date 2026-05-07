@@ -1184,6 +1184,162 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 	}
 }
 
+// TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias locks in the
+// regression that defaulting the persistent-hosted alias to the OS $USER
+// value was silently binding the user's login name to a public did:aw
+// address (e.g. aweb.ai/juan). Persistent identities must force an
+// explicit name, prompted as "Agent name" (not "Agent alias") to match
+// the BYOD persistent-path vocabulary.
+func TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USER", "juan")
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var didRegistrations []map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didRegistrations = append(didRegistrations, body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			stableID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			for _, req := range didRegistrations {
+				if req["did_aw"] == stableID {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"did_aw":          stableID,
+						"current_did_key": req["new_did_key"],
+						"created_at":      "2026-05-07T00:00:00Z",
+						"updated_at":      "2026-05-07T00:00:00Z",
+					})
+					return
+				}
+			}
+			t.Fatalf("missing did registration for %s", stableID)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	var signupBody map[string]any
+	var onboardingURL string
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:jack.aweb.ai",
+				"alias":        "alice",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       awebServer.URL,
+				"registry_url":   registryServer.URL,
+				"version":        "1.7.0",
+				"features":       []string{"managed_namespaces"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"available":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(signupBody["username"].(string))
+			alias := strings.TrimSpace(signupBody["alias"].(string))
+			didKey := strings.TrimSpace(signupBody["did_key"].(string))
+			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:          "default:" + username + ".aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			certB64, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Mirror the production cli-signup response shape that
+			// validateHostedSignupResponse expects: certificate (base64), did_aw,
+			// member_address, alias. Older test-fixture variants used
+			// "team_certificate" + missing did_aw and predate the validate path
+			// added in onboarding_wizard.go:665.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"certificate":    certB64,
+				"did_aw":         didAW,
+				"member_address": memberAddress,
+				"alias":          alias,
+				"team_id":        "default:" + username + ".aweb.ai",
+			})
+		default:
+			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = onboardingServer.URL
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	// stdin: username "jack", lifetime Enter (persistent default), explicit
+	// name "alice" (NOT "juan", to prove the OS USER is not used as default),
+	// claim-human "n".
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("jack\n\nalice\nn\n"),
+		PromptOut:  &out,
+		BaseURL:    onboardingServer.URL + "/api",
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	output := out.String()
+	// The prompt for the persistent identity must use "Agent name", not "Agent alias".
+	if !strings.Contains(output, "Agent name") {
+		t.Fatalf("persistent hosted path should prompt 'Agent name', output:\n%s", output)
+	}
+	// Crucially: the prompt must NOT suggest [juan] as a default. The OS USER
+	// value silently becoming the public did:aw address is the exact regression
+	// this test locks in.
+	if strings.Contains(output, "[juan]") {
+		t.Fatalf("persistent hosted alias prompt must not default to OS $USER (juan); output:\n%s", output)
+	}
+
+	// The chosen explicit name must be what gets sent in the signup body, not
+	// the OS USER value.
+	if got, _ := signupBody["alias"].(string); got != "alice" {
+		t.Fatalf("signup alias=%q want alice (explicit input); USER=juan must not leak through", got)
+	}
+}
+
 func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
