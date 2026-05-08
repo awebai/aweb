@@ -1119,7 +1119,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 
 	// Compute the actual wait duration so the server can track it.
 	waitSeconds := opts.Wait
-	if opts.StartConversation && !opts.WaitExplicit {
+	if opts.StartConversation && !opts.WaitExplicit && !opts.Leaving {
 		waitSeconds = 300
 	}
 
@@ -1134,7 +1134,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
-	if len(targets) == 1 && shouldProbeExistingSession(targets[0]) {
+	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:    message,

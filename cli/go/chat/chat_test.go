@@ -3491,13 +3491,12 @@ func TestSendStartConversationUpgradesWhenNotExplicit(t *testing.T) {
 	}
 }
 
-func TestSendStartConversationProbesExistingSession(t *testing.T) {
+func TestSendStartConversationBypassesExistingSessionProbe(t *testing.T) {
 	t.Parallel()
 
-	var gotBody awid.ChatSendMessageRequest
+	var gotBody awid.ChatCreateSessionRequest
 	var listedSessions bool
 	var createSessionCalls int
-	sentMsgID := "msg-sent-existing"
 
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
@@ -3516,49 +3515,75 @@ func TestSendStartConversationProbesExistingSession(t *testing.T) {
 				},
 			})
 		},
-		"POST /v1/chat/sessions/s-existing/messages": func(w http.ResponseWriter, r *http.Request) {
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			createSessionCalls++
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
-			jsonResponse(w, awid.ChatSendMessageResponse{MessageID: sentMsgID, Delivered: true})
-		},
-		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
-			createSessionCalls++
-			http.Error(w, `{"detail":"Existing active chat session found; continue that session instead"}`, http.StatusConflict)
-		},
-		"GET /v1/chat/sessions/s-existing/stream": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			flusher, _ := w.(http.Flusher)
-			sentData, _ := json.Marshal(map[string]any{
-				"type": "message", "message_id": sentMsgID, "from_agent": "alice", "body": "hello",
-			})
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", sentData)
-			if flusher != nil {
-				flusher.Flush()
-			}
-			<-time.After(10 * time.Second)
+			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s-new", MessageID: "m-new"})
 		},
 	})
 	t.Cleanup(server.Close)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	_, err := Send(ctx, mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{
-		Wait:              1,
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{
+		Wait:              0,
+		WaitExplicit:      true,
 		StartConversation: true,
 	}, nil)
-	if err != context.DeadlineExceeded {
-		t.Fatalf("expected context.DeadlineExceeded (proving wait was upgraded past 1s), got %v", err)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
 	}
-	if !listedSessions {
-		t.Fatal("session list was not probed")
+	if listedSessions {
+		t.Fatal("start-conversation must not probe existing sessions")
 	}
-	if createSessionCalls != 0 {
-		t.Fatalf("expected probe to find existing session and skip ChatCreateSession; create calls=%d", createSessionCalls)
+	if createSessionCalls != 1 {
+		t.Fatalf("create calls=%d, want 1", createSessionCalls)
 	}
-	if gotBody.Body != "hello" {
-		t.Fatalf("body=%q, want hello", gotBody.Body)
+	if result.SessionID != "s-new" {
+		t.Fatalf("session_id=%s, want s-new", result.SessionID)
+	}
+	if gotBody.Message != "hello" {
+		t.Fatalf("message=%q, want hello", gotBody.Message)
+	}
+}
+
+func TestSendStartConversationWithLeavingDoesNotWaitOrProbe(t *testing.T) {
+	t.Parallel()
+
+	var gotBody awid.ChatCreateSessionRequest
+	var listedSessions bool
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			listedSessions = true
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+		},
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatal(err)
+			}
+			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s-new", MessageID: "m-new"})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "bye", SendOptions{
+		Leaving:           true,
+		StartConversation: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Send returned error: %v", err)
+	}
+	if listedSessions {
+		t.Fatal("start-conversation send-and-leave must not probe existing sessions")
+	}
+	if result.SessionID != "s-new" {
+		t.Fatalf("session_id=%s, want s-new", result.SessionID)
+	}
+	if !gotBody.Leaving {
+		t.Fatal("leaving=false, want true")
+	}
+	if gotBody.WaitSeconds != nil {
+		t.Fatalf("wait_seconds=%d, want omitted for send-and-leave", *gotBody.WaitSeconds)
 	}
 }
 

@@ -49,6 +49,7 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     send_in_session,
 )
+from aweb.messaging.conversations import close_conversation
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
 from aweb.messaging.messages import evaluate_messaging_policy, utc_iso as _utc_iso
 from aweb.messaging.verification import require_conversation_not_legacy_bound
@@ -690,6 +691,11 @@ async def create_or_send(
 
     requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
     validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
+    signed_requested_session_id = (
+        requested_session_id is not None
+        and payload.signature is not None
+        and _signed_payload_conversation_id(payload.signed_payload) == str(requested_session_id)
+    )
     if len(participant_rows) == 2:
         try:
             existing_session_id = await find_session_between(
@@ -706,21 +712,35 @@ async def create_or_send(
         except ConflictError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         if existing_session_id is not None:
-            if requested_session_id is not None and requested_session_id != existing_session_id:
+            if (
+                signed_requested_session_id
+                and requested_session_id is not None
+                and requested_session_id != existing_session_id
+            ):
+                try:
+                    await close_conversation(
+                        db,
+                        conversation_id=existing_session_id,
+                        system_close=True,
+                    )
+                except NotFoundError:
+                    pass
+            elif requested_session_id is not None and requested_session_id != existing_session_id:
                 raise HTTPException(
                     status_code=409,
                     detail="Existing active chat session found; continue that session instead",
                 )
-            requested_session_id = existing_session_id
-            validation_conversation_id = str(existing_session_id)
-            if (
-                payload.signature is not None
-                and _signed_payload_conversation_id(payload.signed_payload) != str(existing_session_id)
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Signed chat message must bind the existing session_id",
-                )
+            else:
+                requested_session_id = existing_session_id
+                validation_conversation_id = str(existing_session_id)
+                if (
+                    payload.signature is not None
+                    and _signed_payload_conversation_id(payload.signed_payload) != str(existing_session_id)
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Signed chat message must bind the existing session_id",
+                    )
     session_id = await ensure_session(
         db,
         team_id=auth.team_id,

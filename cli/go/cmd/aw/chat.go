@@ -100,9 +100,10 @@ func selectionIdentityDIDs(sel *awconfig.Selection) []string {
 // chat send-and-wait
 
 var (
-	chatSendAndWaitWait              int
-	chatSendAndWaitStartConversation bool
-	chatListenWait                   int
+	chatSendAndWaitWait               int
+	chatSendAndWaitStartConversation  bool
+	chatSendAndLeaveStartConversation bool
+	chatListenWait                    int
 )
 
 var chatSendAndWaitCmd = &cobra.Command{
@@ -159,8 +160,9 @@ var chatSendAndLeaveCmd = &cobra.Command{
 		defer cancel()
 
 		result, sel, err := chatSend(ctx, args[0], args[1], chat.SendOptions{
-			Wait:    0,
-			Leaving: true,
+			Wait:              0,
+			Leaving:           true,
+			StartConversation: chatSendAndLeaveStartConversation,
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -357,6 +359,7 @@ var chatShowPendingCmd = &cobra.Command{
 func init() {
 	chatSendAndWaitCmd.Flags().IntVar(&chatSendAndWaitWait, "wait", chat.DefaultWait, "Seconds to wait for reply")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
+	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
 
 	chatListenCmd.Flags().IntVar(&chatListenWait, "wait", chat.DefaultWait, "Seconds to wait for a message (0 = no wait)")
 

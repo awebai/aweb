@@ -1849,6 +1849,154 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(aweb_
 
 
 @pytest.mark.asyncio
+async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_session(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:acme.com', 'bob', $1, 'did:aw:bob', 'acme.com/bob',
+                'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """,
+        bob_did_key,
+    )
+    legacy_session_id = uuid4()
+    legacy_message_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'backend:acme.com', 'alice')
+        """,
+        legacy_session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        legacy_session_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'chat', 'backend:acme.com', 'did:aw:alice')
+        """,
+        legacy_session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'chat', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', 'chat', 'participant')
+        """,
+        legacy_session_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+    legacy_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    legacy_signed_payload = canonical_json_bytes(
+        {
+            "body": "legacy chat",
+            "from": "alice",
+            "from_did": alice_did_key,
+            "message_id": str(legacy_message_id),
+            "timestamp": legacy_timestamp,
+            "to": "bob",
+            "to_did": "did:aw:bob",
+            "type": "chat",
+        }
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, signature, signed_payload, created_at)
+        VALUES ($1, $2, 'did:aw:alice', 'alice', 'legacy chat', $3, $4, NOW())
+        """,
+        legacy_message_id,
+        legacy_session_id,
+        sign_message(alice_sk, legacy_signed_payload),
+        legacy_signed_payload.decode(),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _bob_auth_override():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth_override
+
+    fresh_session_id = uuid4()
+    fresh_message_id = uuid4()
+    fresh_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    fresh_signed_payload = canonical_json_bytes(
+        {
+            "body": "fresh chat",
+            "conversation_id": str(fresh_session_id),
+            "from": "bob",
+            "from_did": bob_did_key,
+            "message_id": str(fresh_message_id),
+            "timestamp": fresh_timestamp,
+            "to": "alice",
+            "to_did": "did:aw:alice",
+            "type": "chat",
+        }
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/chat/sessions",
+            json={
+                "session_id": str(fresh_session_id),
+                "to_aliases": ["alice"],
+                "message": "fresh chat",
+                "from_did": bob_did_key,
+                "message_id": str(fresh_message_id),
+                "timestamp": fresh_timestamp,
+                "signature": sign_message(bob_sk, fresh_signed_payload),
+                "signed_payload": fresh_signed_payload.decode(),
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["session_id"] == str(fresh_session_id)
+    assert body["message_id"] == str(fresh_message_id)
+    legacy_status = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1",
+        legacy_session_id,
+    )
+    assert legacy_status == "closed"
+
+
+@pytest.mark.asyncio
 async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
