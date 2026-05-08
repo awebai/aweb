@@ -172,6 +172,13 @@ async def _equivalent_identity_refs(
     did_key: str | None = None,
     agent_id: str | UUID | None = None,
 ) -> tuple[list[str], list[UUID]]:
+    """Return all identity refs (did_aw + did_key) and agent_ids equivalent to the input.
+
+    Walking is anchored on did_key when available: the cryptographic key is
+    collision-resistant. did_aw is name-stable but can collide across distinct
+    cryptographic identities (e.g., post-rotation, adversarial registration);
+    we only walk by did_aw when no did_key is reachable from the inputs.
+    """
     refs: list[str] = []
     for value in (did, did_key):
         normalized = str(value or "").strip()
@@ -187,26 +194,69 @@ async def _equivalent_identity_refs(
         return [], []
 
     aweb_db = db.get_manager("aweb")
+
+    # Anchor the cryptographic identity. If we have agent_id, fetch its
+    # did_key from the agents table so a multi-team agent's other team rows
+    # can be found via did_key match below. seed_did_keys gates the strict
+    # walk; seed_did_aw is captured for the best-effort walk fallback.
+    seed_did_keys: list[str] = []
+    input_did_key = (did_key or "").strip()
+    if input_did_key:
+        seed_did_keys.append(input_did_key)
+    seed_did_aws: list[str] = []
+    input_did = (did or "").strip()
+    if input_did and input_did not in seed_did_keys:
+        seed_did_aws.append(input_did)
+
     if agent_uuid is not None:
-        rows = await aweb_db.fetch_all(
+        seed_row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, did_aw, did_key
+            SELECT did_aw, did_key
             FROM {{tables.agents}}
             WHERE deleted_at IS NULL
               AND agent_id = $1
             """,
             agent_uuid,
         )
-    else:
+        if seed_row is not None:
+            seed_did_key = str(seed_row.get("did_key") or "").strip()
+            if seed_did_key and seed_did_key not in seed_did_keys:
+                seed_did_keys.append(seed_did_key)
+            seed_did_aw = str(seed_row.get("did_aw") or "").strip()
+            if seed_did_aw and seed_did_aw not in seed_did_aws and seed_did_aw not in seed_did_keys:
+                seed_did_aws.append(seed_did_aw)
+            for value in (seed_did_aw, seed_did_key):
+                if value and value not in refs:
+                    refs.append(value)
+
+    rows: list[dict[str, Any]] = []
+    if seed_did_keys:
+        # Strict cryptographic walk: only matches rows sharing the did_key.
+        # Multi-team agents (same did_key, multiple agent_ids) expand here;
+        # did_aw collisions (different did_keys, same did_aw) do not.
         rows = await aweb_db.fetch_all(
             """
             SELECT agent_id, did_aw, did_key
             FROM {{tables.agents}}
             WHERE deleted_at IS NULL
-              AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+              AND did_key = ANY($1::text[])
             """,
-            refs,
+            seed_did_keys,
         )
+    elif seed_did_aws:
+        # Best-effort name walk for callers without a did_key (external/
+        # unauthenticated). This path can conflate did_aw collisions; trust
+        # of the input is the caller's responsibility.
+        rows = await aweb_db.fetch_all(
+            """
+            SELECT agent_id, did_aw, did_key
+            FROM {{tables.agents}}
+            WHERE deleted_at IS NULL
+              AND did_aw = ANY($1::text[])
+            """,
+            seed_did_aws,
+        )
+
     for row in rows:
         row_agent_id = _uuid_or_none(row.get("agent_id"), field_name="agent_id")
         if row_agent_id is not None and row_agent_id not in agent_ids:

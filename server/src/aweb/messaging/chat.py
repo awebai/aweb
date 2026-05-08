@@ -7,7 +7,10 @@ from typing import Any
 from uuid import UUID
 
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError
-from aweb.messaging.conversations import find_active_one_to_one_conversation_between
+from aweb.messaging.conversations import (
+    _equivalent_identity_refs,
+    find_active_one_to_one_conversation_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +129,20 @@ async def find_session_between(
         address_b=address_b,
     )
     if conversation is None:
-        dids_a = [value for value in (did_a, did_key_a) if str(value or "").strip()]
-        dids_b = [value for value in (did_b, did_key_b) if str(value or "").strip()]
-        agent_uuid_a = _uuid_or_none(agent_id_a)
-        agent_uuid_b = _uuid_or_none(agent_id_b)
+        # Fallback: legacy chat_sessions row without a matching conversations
+        # row. Use _equivalent_identity_refs so the multi-team agent expansion
+        # is the same here as in the conversations-table path: single shared
+        # walk anchored on did_key, collision-resistant against did_aw collisions.
+        dids_a, agent_ids_a = await _equivalent_identity_refs(
+            db, did_a, did_key=did_key_a, agent_id=agent_id_a
+        )
+        dids_b, agent_ids_b = await _equivalent_identity_refs(
+            db, did_b, did_key=did_key_b, agent_id=agent_id_b
+        )
         addresses_a = [value for value in (address_a,) if str(value or "").strip()]
         addresses_b = [value for value in (address_b,) if str(value or "").strip()]
+        if not (dids_a or agent_ids_a or addresses_a) or not (dids_b or agent_ids_b or addresses_b):
+            return None
         aweb_db = db.get_manager("aweb")
         rows = await aweb_db.fetch_all(
             """
@@ -142,13 +153,13 @@ async def find_session_between(
             JOIN {{tables.chat_participants}} pb
               ON pb.session_id = s.session_id
             WHERE (
-                    ($2::uuid IS NOT NULL AND pa.agent_id = $2)
-                 OR ($2::uuid IS NULL AND pa.did = ANY($1::text[]))
+                    ($2::uuid[] <> '{}'::uuid[] AND pa.agent_id = ANY($2::uuid[]))
+                 OR ($2::uuid[] = '{}'::uuid[] AND pa.did = ANY($1::text[]))
                  OR ($3::text[] <> '{}'::text[] AND pa.address = ANY($3::text[]))
               )
               AND (
-                    ($5::uuid IS NOT NULL AND pb.agent_id = $5)
-                 OR ($5::uuid IS NULL AND pb.did = ANY($4::text[]))
+                    ($5::uuid[] <> '{}'::uuid[] AND pb.agent_id = ANY($5::uuid[]))
+                 OR ($5::uuid[] = '{}'::uuid[] AND pb.did = ANY($4::text[]))
                  OR ($6::text[] <> '{}'::text[] AND pb.address = ANY($6::text[]))
               )
               AND pa.did <> pb.did
@@ -161,10 +172,10 @@ async def find_session_between(
             LIMIT 2
             """,
             dids_a,
-            agent_uuid_a,
+            agent_ids_a,
             addresses_a,
             dids_b,
-            agent_uuid_b,
+            agent_ids_b,
             addresses_b,
         )
         if len(rows) > 1:

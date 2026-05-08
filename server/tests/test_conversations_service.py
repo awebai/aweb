@@ -6,11 +6,13 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 import pytest
 
+from aweb.messaging.chat import find_session_between
 from aweb.messaging.conversations import (
     add_conversation_participant,
     close_conversation,
     create_conversation,
     expire_conversation,
+    find_active_one_to_one_conversation_between,
     get_conversation,
     list_conversation_participants,
     require_active_conversation_participant,
@@ -391,3 +393,165 @@ async def test_explicitly_expired_conversation_rejects_continuation_idempotently
         conversation_id=conversation["conversation_id"],
     )
     assert expired_after_second_check["updated_at"] == expired_updated_at
+
+
+# ---------------------------------------------------------------------------
+# Multi-team agent participant lookup regression - aweb-aam? (Athena follow-on
+# to 1.20.2 routes/conversations.py:117 fix). Four sibling SQL spots had:
+#   ($X::uuid IS NOT NULL AND p.agent_id = $X)
+#   OR ($X::uuid IS NULL AND p.did = ANY($Y::text[]))
+# The did fallback only fires when agent_id IS NULL, so a multi-team agent
+# whose participation row carries a different team's agent_id is never matched.
+# Fix: expand equivalent agent_ids by shared did_key, not by did_aw collision.
+# ---------------------------------------------------------------------------
+
+
+async def _multi_team_alice_setup(aweb_cloud_db):
+    """Set up alice as a multi-team agent: same did_aw across two team rows.
+
+    Returns (alice_team_a_agent_id, alice_team_b_agent_id, bob_team_b_agent_id).
+    """
+    aweb_db = aweb_cloud_db.aweb_db
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('team-a:acme.com', 'acme.com', 'team-a', 'did:key:z6Mkteama')
+        ON CONFLICT DO NOTHING
+        """
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('team-b:acme.com', 'acme.com', 'team-b', 'did:key:z6Mkteamb')
+        ON CONFLICT DO NOTHING
+        """
+    )
+    alice_a = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('team-a:acme.com', 'did:key:z6Mkalice', 'did:aw:alice',
+                'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """
+    )
+    alice_b = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('team-b:acme.com', 'did:key:z6Mkalice', 'did:aw:alice',
+                'acme.com/alice', 'alice', 'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """
+    )
+    bob_b = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, lifetime, role, messaging_policy
+        )
+        VALUES ('team-b:acme.com', 'did:key:z6Mkbob', 'did:aw:bob',
+                'acme.com/bob', 'bob', 'persistent', 'developer', 'everyone')
+        RETURNING agent_id
+        """
+    )
+    return alice_a["agent_id"], alice_b["agent_id"], bob_b["agent_id"]
+
+
+@pytest.mark.asyncio
+async def test_find_active_conversation_matches_multi_team_agent_via_did_fallback(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
+
+    conversation = await create_conversation(
+        db,
+        conversation_type="mail",
+        created_by_did="did:aw:alice",
+        initiator={
+            "did": "did:aw:alice",
+            "agent_id": alice_b,
+            "alias": "alice",
+            "address": "acme.com/alice",
+            "transport_hint": "mail",
+        },
+        recipients=[{
+            "did": "did:aw:bob",
+            "agent_id": bob_b,
+            "alias": "bob",
+            "address": "acme.com/bob",
+            "transport_hint": "mail",
+        }],
+        team_id="team-b:acme.com",
+    )
+
+    # Caller is alice acting from team-A's identity (team-A agent_id), but the
+    # participation row carries team-B's agent_id. Address is intentionally
+    # NOT passed so the address branch can't bypass the buggy did fallback.
+    # Pre-fix: agent_id mismatches team-B AND the did fallback is gated on
+    # agent_id IS NULL (which fails because the row has team-B's agent_id).
+    # Post-fix: did matches via the un-gated OR, lookup finds the conversation.
+    found = await find_active_one_to_one_conversation_between(
+        db,
+        conversation_type="mail",
+        did_a="did:aw:alice",
+        did_key_a="did:key:z6Mkalice",
+        agent_id_a=alice_a,
+        did_b="did:aw:bob",
+        did_key_b="did:key:z6Mkbob",
+        agent_id_b=bob_b,
+    )
+    assert found is not None, (
+        "find_active_one_to_one_conversation_between should match via did when "
+        "the caller's agent_id differs from the participation row's agent_id "
+        "(multi-team agent fallback)."
+    )
+    assert str(found["conversation_id"]) == str(conversation["conversation_id"])
+
+
+@pytest.mark.asyncio
+async def test_find_session_between_matches_multi_team_agent_via_did_fallback(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
+    aweb_db = aweb_cloud_db.aweb_db
+
+    # Seed a chat_sessions row + chat_participants directly (no conversations
+    # row) so that find_session_between's conversations-table lookup returns
+    # None and the chat_participants-direct fallback at chat.py:145 fires.
+    session = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ('team-b:acme.com', 'did:aw:alice')
+        RETURNING session_id
+        """
+    )
+    session_id = session["session_id"]
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}}
+            (session_id, did, agent_id, alias, address)
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        session_id,
+        alice_b,
+        bob_b,
+    )
+
+    # Same multi-team scenario as the conversation test above, on the chat
+    # fallback path. Address omitted to isolate the did-fallback branch.
+    found_session_id = await find_session_between(
+        db,
+        did_a="did:aw:alice",
+        did_b="did:aw:bob",
+        did_key_a="did:key:z6Mkalice",
+        did_key_b="did:key:z6Mkbob",
+        agent_id_a=alice_a,
+        agent_id_b=bob_b,
+    )
+    assert found_session_id is not None, (
+        "find_session_between should match via did when the caller's agent_id "
+        "differs from the participation row's agent_id."
+    )
+    assert str(found_session_id) == str(session_id)
