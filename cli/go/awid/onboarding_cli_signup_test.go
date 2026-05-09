@@ -208,6 +208,7 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 			"org_id":"o1",
 			"namespace_domain":"juanre.aweb.ai",
 			"team_id":"default:juanre.aweb.ai",
+			"api_key":"aw_sk_cli_signup_workspace",
 			"certificate":"eyJ2ZXJzaW9uIjoxfQ==",
 			"did_aw":"did:aw:test",
 			"member_address":"juanre.aweb.ai/laptop",
@@ -234,6 +235,9 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 	}
 	if resp.Certificate == "" {
 		t.Fatalf("missing certificate")
+	}
+	if resp.APIKey != "aw_sk_cli_signup_workspace" {
+		t.Fatalf("unexpected api_key: %s", resp.APIKey)
 	}
 }
 
@@ -268,6 +272,7 @@ func TestCliSignup_APIBasePath(t *testing.T) {
 			"org_id":"o1",
 			"namespace_domain":"juanre.aweb.ai",
 			"team_id":"default:juanre.aweb.ai",
+			"api_key":"aw_sk_cli_signup_workspace",
 			"certificate":"eyJ2ZXJzaW9uIjoxfQ==",
 			"did_aw":"did:aw:test",
 			"member_address":"juanre.aweb.ai/laptop",

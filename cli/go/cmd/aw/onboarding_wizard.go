@@ -142,8 +142,9 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		return nil, err
 	}
 
+	var provisioned hostedIdentityProvision
 	for {
-		signingKey, cert, didKey, didAW, memberAddress, registryURL, err := provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent)
+		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
 				fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
@@ -155,7 +156,16 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			}
 			return nil, err
 		}
-		if err := persistGuidedHostedState(req.WorkingDir, registryURL, signingKey, cert, didKey, didAW, memberAddress, req.Persistent); err != nil {
+		if err := persistGuidedHostedState(
+			req.WorkingDir,
+			provisioned.RegistryURL,
+			provisioned.SigningKey,
+			provisioned.Certificate,
+			provisioned.DIDKey,
+			provisioned.DIDAW,
+			provisioned.MemberAddress,
+			req.Persistent,
+		); err != nil {
 			return nil, err
 		}
 		break
@@ -165,6 +175,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		Role:      req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
+		APIKey:    provisioned.APIKey,
 	})
 	if err != nil {
 		return nil, err
@@ -590,22 +601,32 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL st
 	}
 }
 
+type hostedIdentityProvision struct {
+	SigningKey    ed25519.PrivateKey
+	Certificate   *awid.TeamCertificate
+	DIDKey        string
+	DIDAW         string
+	MemberAddress string
+	RegistryURL   string
+	APIKey        string
+}
+
 func provisionHostedIdentity(
 	onboardingURL, registryURL, username, alias string, persistent bool,
-) (ed25519.PrivateKey, *awid.TeamCertificate, string, string, string, string, error) {
+) (hostedIdentityProvision, error) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
-		return nil, nil, "", "", "", "", err
+		return hostedIdentityProvision{}, err
 	}
 	if strings.TrimSpace(registryURL) != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return nil, nil, "", "", "", "", err
+			return hostedIdentityProvision{}, err
 		}
 	}
 
 	pub, signingKey, err := awid.GenerateKeypair()
 	if err != nil {
-		return nil, nil, "", "", "", "", err
+		return hostedIdentityProvision{}, err
 	}
 	didKey := awid.ComputeDIDKey(pub)
 	didAW := ""
@@ -622,7 +643,7 @@ func provisionHostedIdentity(
 		// Hosted onboarding receives the managed address from cli-signup; the CLI
 		// publishes only the did:aw identity before asking the cloud to bind it.
 		if err := registerHostedDID(ctx, registry, didKey, didAW, signingKey); err != nil {
-			return nil, nil, "", "", "", "", err
+			return hostedIdentityProvision{}, err
 		}
 	}
 
@@ -633,15 +654,27 @@ func provisionHostedIdentity(
 		Alias:    alias,
 	}, signingKey)
 	if err != nil {
-		return nil, nil, "", "", "", "", err
+		return hostedIdentityProvision{}, err
 	}
 
 	cert, err := validateHostedSignupResponse(resp, didKey, didAW, memberAddress, alias)
 	if err != nil {
-		return nil, nil, "", "", "", "", err
+		return hostedIdentityProvision{}, err
+	}
+	apiKey := strings.TrimSpace(resp.APIKey)
+	if apiKey == "" {
+		return hostedIdentityProvision{}, fmt.Errorf("hosted signup response missing api_key")
 	}
 
-	return signingKey, cert, didKey, didAW, memberAddress, strings.TrimSpace(registry.DefaultRegistryURL), nil
+	return hostedIdentityProvision{
+		SigningKey:    signingKey,
+		Certificate:   cert,
+		DIDKey:        didKey,
+		DIDAW:         didAW,
+		MemberAddress: memberAddress,
+		RegistryURL:   strings.TrimSpace(registry.DefaultRegistryURL),
+		APIKey:        apiKey,
+	}, nil
 }
 
 func registerHostedDID(

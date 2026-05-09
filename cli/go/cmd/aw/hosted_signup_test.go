@@ -117,11 +117,34 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 				"org_id":           "org-1",
 				"namespace_domain": "juanre.aweb.ai",
 				"team_id":          "default:juanre.aweb.ai",
+				"api_key":          "aw_sk_cli_signup_workspace",
 				"certificate":      encoded,
 				"did_aw":           didAW,
 				"member_address":   "juanre.aweb.ai/laptop",
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+				t.Fatal("connect missing Authorization")
+			}
+			if strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")) == "" {
+				t.Fatal("connect missing team certificate")
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["workspace_path"] == "" {
+				t.Fatalf("connect workspace_path=%v", payload["workspace_path"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:juanre.aweb.ai",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "workspace-hosted",
+				"repo_id":      "repo-1",
+				"team_did_key": teamDIDKey,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -186,6 +209,9 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	if got["member_address"] != "juanre.aweb.ai/laptop" {
 		t.Fatalf("member_address=%v", got["member_address"])
 	}
+	if _, ok := got["api_key"]; ok {
+		t.Fatalf("hosted init output leaked api_key")
+	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {
@@ -216,6 +242,20 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	}
 	if cert.MemberAddress != "juanre.aweb.ai/laptop" {
 		t.Fatalf("cert member_address=%q", cert.MemberAddress)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("workspace.yaml missing: %v", err)
+	}
+	if workspace.APIKey != "aw_sk_cli_signup_workspace" {
+		t.Fatalf("workspace api_key=%q", workspace.APIKey)
+	}
+	membership := workspace.Membership("default:juanre.aweb.ai")
+	if membership == nil {
+		t.Fatalf("workspace missing hosted team membership: %+v", workspace.Memberships)
+	}
+	if membership.WorkspaceID != "workspace-hosted" {
+		t.Fatalf("membership workspace_id=%q", membership.WorkspaceID)
 	}
 }
 
@@ -300,11 +340,21 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 				"org_id":           "org-1",
 				"namespace_domain": "juanre.aweb.ai",
 				"team_id":          "default:juanre.aweb.ai",
+				"api_key":          "aw_sk_cli_signup_workspace",
 				"certificate":      encoded,
 				"did_aw":           didAW,
 				"member_address":   "juanre.aweb.ai/laptop",
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:juanre.aweb.ai",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "workspace-hosted",
+				"repo_id":      "repo-1",
+				"team_did_key": teamDIDKey,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -416,11 +466,21 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 				"org_id":           "org-1",
 				"namespace_domain": "juanre.aweb.ai",
 				"team_id":          "default:juanre.aweb.ai",
+				"api_key":          "aw_sk_cli_signup_workspace",
 				"certificate":      encoded,
 				"did_aw":           "",
 				"member_address":   "",
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:juanre.aweb.ai",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "workspace-hosted",
+				"repo_id":      "repo-1",
+				"team_did_key": teamDIDKey,
 			})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)

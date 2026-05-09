@@ -733,6 +733,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"org_id":           "org-1",
 				"namespace_domain": username + ".aweb.ai",
 				"team_id":          "default:" + username + ".aweb.ai",
+				"api_key":          "aw_sk_guided_hosted",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
 				"member_address":   "",
@@ -817,6 +818,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	}
 	if workspace.AwebURL != awebServer.URL {
 		t.Fatalf("aweb_url=%q", workspace.AwebURL)
+	}
+	if workspace.APIKey != "aw_sk_guided_hosted" {
+		t.Fatalf("api_key=%q", workspace.APIKey)
 	}
 	if activeMembership.TeamID != "default:jack.aweb.ai" {
 		t.Fatalf("team_id=%q", activeMembership.TeamID)
@@ -968,6 +972,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"org_id":           "org-1",
 				"namespace_domain": username + ".aweb.ai",
 				"team_id":          "default:" + username + ".aweb.ai",
+				"api_key":          "aw_sk_guided_hosted",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
 				"member_address":   "",
@@ -1135,6 +1140,7 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 				"org_id":           "org-1",
 				"namespace_domain": username + ".aweb.ai",
 				"team_id":          "default:" + username + ".aweb.ai",
+				"api_key":          "aw_sk_guided_hosted",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
 				"member_address":   memberAddress,
@@ -1299,6 +1305,7 @@ func TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias(t *testing.T) {
 				"member_address": memberAddress,
 				"alias":          alias,
 				"team_id":        "default:" + username + ".aweb.ai",
+				"api_key":        "aw_sk_guided_hosted",
 			})
 		default:
 			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)

@@ -120,6 +120,12 @@ func runHostedInit(cmd *cobra.Command) error {
 	if err := persistHostedInitState(workingDir, registry.DefaultRegistryURL, signingKey, didKey, stableID, resp, initPersistent); err != nil {
 		return err
 	}
+	connectResult, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
+		APIKey: strings.TrimSpace(resp.APIKey),
+	})
+	if err != nil {
+		return err
+	}
 
 	out := hostedInitOutput{
 		Status:          "signed_up",
@@ -128,9 +134,10 @@ func runHostedInit(cmd *cobra.Command) error {
 		DIDKey:          didKey,
 		DIDAW:           stableID,
 		NamespaceDomain: strings.TrimSpace(resp.NamespaceDomain),
-		TeamID:          strings.TrimSpace(resp.TeamID),
-		MemberAddress:   strings.TrimSpace(resp.MemberAddress),
-		Certificate:     strings.TrimSpace(resp.Certificate),
+		// Report the team the workspace actually connected to.
+		TeamID:        strings.TrimSpace(connectResult.TeamID),
+		MemberAddress: strings.TrimSpace(resp.MemberAddress),
+		Certificate:   strings.TrimSpace(resp.Certificate),
 	}
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
@@ -148,6 +155,9 @@ func persistHostedInitState(
 ) error {
 	if resp == nil {
 		return fmt.Errorf("missing cli-signup response")
+	}
+	if strings.TrimSpace(resp.APIKey) == "" {
+		return fmt.Errorf("cli-signup response missing api_key")
 	}
 
 	cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(resp.Certificate))
