@@ -99,6 +99,75 @@ func TestTeamKeyLoadErrorByoidtNamespacePointsToLocalControllerKey(t *testing.T)
 	}
 }
 
+func setTeamImportRequestGlobalsForTest(t *testing.T, team, namespace string) {
+	t.Helper()
+	oldTeam := teamImportRequestTeam
+	oldNamespace := teamImportRequestNamespace
+	oldOrganizationID := teamImportRequestOrganizationID
+	oldCloudTeamID := teamImportRequestCloudTeamID
+	oldAccessMode := teamImportRequestAccessMode
+	oldTimestamp := teamImportRequestTimestamp
+	oldApply := teamImportRequestApply
+	teamImportRequestTeam = team
+	teamImportRequestNamespace = namespace
+	teamImportRequestOrganizationID = "org-1"
+	teamImportRequestCloudTeamID = ""
+	teamImportRequestAccessMode = "open"
+	teamImportRequestTimestamp = "2026-05-09T12:00:00Z"
+	teamImportRequestApply = false
+	t.Cleanup(func() {
+		teamImportRequestTeam = oldTeam
+		teamImportRequestNamespace = oldNamespace
+		teamImportRequestOrganizationID = oldOrganizationID
+		teamImportRequestCloudTeamID = oldCloudTeamID
+		teamImportRequestAccessMode = oldAccessMode
+		teamImportRequestTimestamp = oldTimestamp
+		teamImportRequestApply = oldApply
+	})
+}
+
+func TestRunTeamImportRequestRejectsHostedNamespaceBeforeKeyLoad(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setTeamImportRequestGlobalsForTest(t, "aweb", " Juan.AWEB.AI. ")
+	err := runTeamImportRequest(nil, nil)
+	if err == nil {
+		t.Fatal("expected hosted namespace refusal")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"hosted by aweb.ai",
+		"hosted dashboard flow",
+		"BYOT import-request",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "team-keys") {
+		t.Fatalf("hosted refusal should happen before key-load guidance, got %q", got)
+	}
+}
+
+func TestRunTeamImportRequestMissingKeyUsesBYOTGuidance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setTeamImportRequestGlobalsForTest(t, "research", "example.com")
+	err := runTeamImportRequest(nil, nil)
+	if err == nil {
+		t.Fatal("expected missing local team key error")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"research:example.com",
+		"BYOIDT/BYOD teams",
+		"~/.config/aw/team-keys/<namespace>/<team>.key",
+		"hosted aweb.ai teams should use the dashboard Add existing agent action",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error %q missing %q", got, want)
+		}
+	}
+}
+
 func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
 	teamKey := ed25519.NewKeyFromSeed([]byte{
 		0, 1, 2, 3, 4, 5, 6, 7,

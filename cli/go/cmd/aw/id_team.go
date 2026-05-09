@@ -268,7 +268,8 @@ var teamImportRequestCmd = &cobra.Command{
 		"This command signs the canonical import payload with your local BYOT team\n" +
 		"controller key. It prints the request body expected by\n" +
 		"POST /api/v1/teams/byoidt/import. It never uploads or prints namespace or\n" +
-		"team controller private keys.",
+		"team controller private keys. The cloud import endpoint accepts the signed\n" +
+		"timestamp for five minutes; regenerate the request body after it expires.",
 	RunE: runTeamImportRequest,
 }
 
@@ -334,7 +335,7 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestOrganizationID, "organization-id", "", "AC organization id for a new imported team")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestCloudTeamID, "cloud-team-id", "", "Existing AC team id to sync")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestAccessMode, "access-mode", "open", "Access mode for imported members")
-	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now)")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
 	teamCmd.AddCommand(teamImportRequestCmd)
 

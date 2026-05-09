@@ -441,7 +441,8 @@ Create a signed BYOT import request for aweb cloud.
 This command signs the canonical import payload with the local BYOT team
 controller key. It prints the request body expected by
 `POST /api/v1/teams/byoidt/import` and never uploads or prints namespace or
-team controller private keys.
+team controller private keys. The cloud import endpoint accepts the signed
+timestamp for five minutes; regenerate the request body after it expires.
 
 Flags:
 - `--access-mode string Access mode for imported members (default "open")`
@@ -451,7 +452,7 @@ Flags:
 - `--namespace string Namespace domain`
 - `--organization-id string AC organization id for a new imported team`
 - `--team string Team name`
-- `--timestamp string RFC3339 timestamp to sign (defaults to now)`
+- `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
 
 ## `id team leave`
 
