@@ -9,6 +9,7 @@ from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_k
 from awid.signing import canonical_json_bytes
 from awid.signing import sign_message
 
+from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
 
 
@@ -100,6 +101,28 @@ async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, 
     assert address_list_resp.status_code == 404
     assert address_get_resp.status_code == 404
     assert len(fake_redis.eval_calls) >= 3
+
+
+@pytest.mark.asyncio
+async def test_awid_rate_limit_disabled_uses_noop_limiter(
+    awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch
+):
+    monkeypatch.setenv("AWID_RATE_LIMIT_DISABLED", "1")
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
+
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+            health = await test_client.get("/health")
+            namespace = await test_client.get("/v1/namespaces")
+            address = await test_client.get("/v1/namespaces/example.com/addresses/alice")
+
+    assert health.status_code == 200
+    assert health.json()["checks"]["rate_limiter"] == "NoOpRateLimiter"
+    assert namespace.status_code == 200
+    assert address.status_code == 404
+    assert fake_redis.eval_calls == []
 
 
 @pytest.mark.asyncio
