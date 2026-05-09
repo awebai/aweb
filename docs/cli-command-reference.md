@@ -329,6 +329,7 @@ Subcommands:
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
 - `fetch-cert` Fetch and install an approved team certificate
+- `import-request` Create a signed BYOT import request for aweb cloud
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
@@ -430,6 +431,27 @@ Flags:
 - `-h, --help help for invite`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team import-request`
+
+### `id team import-request`
+
+Create a signed BYOT import request for aweb cloud.
+
+This command signs the canonical import payload with the local BYOT team
+controller key. It prints the request body expected by
+`POST /api/v1/teams/byoidt/import` and never uploads or prints namespace or
+team controller private keys.
+
+Flags:
+- `--access-mode string Access mode for imported members (default "open")`
+- `--apply Create an apply request instead of the default dry-run request`
+- `--cloud-team-id string Existing AC team id to sync`
+- `-h, --help help for import-request`
+- `--namespace string Namespace domain`
+- `--organization-id string AC organization id for a new imported team`
+- `--team string Team name`
+- `--timestamp string RFC3339 timestamp to sign (defaults to now)`
 
 ## `id team leave`
 

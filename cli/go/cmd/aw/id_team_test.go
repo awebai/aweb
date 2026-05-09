@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -95,6 +96,59 @@ func TestTeamKeyLoadErrorByoidtNamespacePointsToLocalControllerKey(t *testing.T)
 	}
 	if strings.Contains(got, "This looks like an aweb.ai hosted namespace") {
 		t.Fatalf("non-hosted namespace used hosted-specific message: %q", got)
+	}
+}
+
+func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
+	teamKey := ed25519.NewKeyFromSeed([]byte{
+		0, 1, 2, 3, 4, 5, 6, 7,
+		8, 9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+		24, 25, 26, 27, 28, 29, 30, 31,
+	})
+	pub := teamKey.Public().(ed25519.PublicKey)
+	out, err := buildTeamImportRequestOutput(
+		teamKey,
+		"research:acme.com",
+		"org-1",
+		"",
+		true,
+		"open",
+		"2026-05-09T12:00:00Z",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantCanonical := `{"access_mode":"open","awid_team_id":"research:acme.com","dry_run":true,"operation":"byoidt_import","organization_id":"org-1","team_id":"","timestamp":"2026-05-09T12:00:00Z"}`
+	if out.CanonicalPayload != wantCanonical {
+		t.Fatalf("canonical payload mismatch:\n got: %s\nwant: %s", out.CanonicalPayload, wantCanonical)
+	}
+	if out.ControllerDID != awid.ComputeDIDKey(pub) {
+		t.Fatalf("controller did=%q want %q", out.ControllerDID, awid.ComputeDIDKey(pub))
+	}
+	if out.ControllerDID != "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd" {
+		t.Fatalf("controller did interop vector changed: %q", out.ControllerDID)
+	}
+	const wantSignature = "5mdXJbmrncZUuu6701IZDBUZfonfChxtdTn3JZ/bVz+79CkMOaosWSaNq5OD23U6LOHzQTuka9RraSOvS0gcCA"
+	if out.ControllerSignature != wantSignature {
+		t.Fatalf("signature mismatch:\n got: %s\nwant: %s", out.ControllerSignature, wantSignature)
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	if !ed25519.Verify(pub, []byte(out.CanonicalPayload), sig) {
+		t.Fatal("controller signature does not verify")
+	}
+	if got := out.RequestBody["organization_id"]; got != "org-1" {
+		t.Fatalf("request organization_id=%v", got)
+	}
+	if got := out.RequestBody["team_id"]; got != nil {
+		t.Fatalf("empty cloud team id should encode as nil request field, got %v", got)
+	}
+	if got := out.RequestBody["controller_signature"]; got != out.ControllerSignature {
+		t.Fatalf("request signature=%v want %s", got, out.ControllerSignature)
 	}
 }
 

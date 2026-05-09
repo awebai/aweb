@@ -126,6 +126,27 @@ Persistent identities have two custody modes:
   from the dashboard for hosted/browser MCP use. The dashboard creates
   persistent custodial identities, not generic "agents".
 
+### Hosted vs BYOT Authority
+
+Customer onboarding has exactly two supported authority shapes:
+
+- **Fully Hosted**: aweb owns hosted namespace/team authority under its hosted
+  base domain, such as `*.aweb.ai`. aweb may create hosted namespaces, hosted
+  team certificates, hosted addresses, and custodial identities.
+- **BYOT**: the customer brings the DNS-backed namespace and AWID team. The
+  customer holds the namespace controller private key and team controller
+  private key. aweb imports customer-signed AWID facts and stores runtime
+  projections, but must not hold or use the customer namespace/team controller
+  keys.
+
+Identity custody remains independent of namespace/team authority. A BYOT
+customer may use an aweb-custodial agent identity, but aweb then holds only the
+agent identity signing key. The customer must still authorize that identity into
+the BYOT team and namespace with customer-held controllers.
+
+The full onboarding and authority contract lives in
+[`byot-onboarding-contract.md`](byot-onboarding-contract.md).
+
 ### Membership Facts vs Runtime Projections
 
 AWID is the source of truth for identity, team, and certificate facts.
@@ -1081,6 +1102,7 @@ relies on are:
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
+| `aw id team import-request --team X --namespace Y --organization-id ORG` | Produce the customer team-controller-signed BYOT import/sync request body for aweb cloud; no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |

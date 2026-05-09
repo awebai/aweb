@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -59,6 +60,18 @@ type teamRemoveMemberOutput struct {
 	Status        string `json:"status"`
 	TeamID        string `json:"team_id"`
 	MemberAddress string `json:"member_address"`
+}
+
+type teamImportRequestOutput struct {
+	Status              string         `json:"status"`
+	AWIDTeamID          string         `json:"awid_team_id"`
+	DryRun              bool           `json:"dry_run"`
+	AccessMode          string         `json:"access_mode"`
+	Timestamp           string         `json:"timestamp"`
+	ControllerDID       string         `json:"controller_did"`
+	ControllerSignature string         `json:"controller_signature"`
+	CanonicalPayload    string         `json:"canonical_payload"`
+	RequestBody         map[string]any `json:"request_body"`
 }
 
 type teamAddOutput struct {
@@ -162,6 +175,14 @@ var (
 	teamRemoveNamespace   string
 	teamRemoveMember      string
 	teamRemoveRegistryURL string
+
+	teamImportRequestTeam           string
+	teamImportRequestNamespace      string
+	teamImportRequestOrganizationID string
+	teamImportRequestCloudTeamID    string
+	teamImportRequestAccessMode     string
+	teamImportRequestTimestamp      string
+	teamImportRequestApply          bool
 )
 
 // --- commands ---
@@ -240,6 +261,17 @@ var teamRemoveMemberCmd = &cobra.Command{
 	RunE:  runTeamRemoveMember,
 }
 
+var teamImportRequestCmd = &cobra.Command{
+	Use:   "import-request",
+	Short: "Create a signed BYOT import request for aweb cloud",
+	Long: "Create a signed BYOT import request for aweb cloud.\n\n" +
+		"This command signs the canonical import payload with your local BYOT team\n" +
+		"controller key. It prints the request body expected by\n" +
+		"POST /api/v1/teams/byoidt/import. It never uploads or prints namespace or\n" +
+		"team controller private keys.",
+	RunE: runTeamImportRequest,
+}
+
 var certShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the current team certificate",
@@ -296,6 +328,15 @@ func init() {
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveMember, "member", "", "Member address (e.g. acme.com/alice)")
 	teamRemoveMemberCmd.Flags().StringVar(&teamRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamCmd.AddCommand(teamRemoveMemberCmd)
+
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTeam, "team", "", "Team name")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestNamespace, "namespace", "", "Namespace domain")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestOrganizationID, "organization-id", "", "AC organization id for a new imported team")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestCloudTeamID, "cloud-team-id", "", "Existing AC team id to sync")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestAccessMode, "access-mode", "open", "Access mode for imported members")
+	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now)")
+	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
+	teamCmd.AddCommand(teamImportRequestCmd)
 
 	identityCmd.AddCommand(teamCmd)
 
@@ -1038,6 +1079,106 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		MemberAddress: member,
 	}, formatTeamRemoveMember)
 	return nil
+}
+
+func runTeamImportRequest(cmd *cobra.Command, args []string) error {
+	team := strings.ToLower(strings.TrimSpace(teamImportRequestTeam))
+	domain := awconfig.NormalizeDomain(teamImportRequestNamespace)
+	organizationID := strings.TrimSpace(teamImportRequestOrganizationID)
+	cloudTeamID := strings.TrimSpace(teamImportRequestCloudTeamID)
+	accessMode := strings.TrimSpace(teamImportRequestAccessMode)
+	timestamp := strings.TrimSpace(teamImportRequestTimestamp)
+	if team == "" {
+		return usageError("--team is required")
+	}
+	if domain == "" {
+		return usageError("--namespace is required")
+	}
+	if isAwebHostedNamespace(domain) {
+		return usageError("namespace %s is hosted by aweb.ai; use the hosted dashboard flow instead of BYOT import-request", domain)
+	}
+	if organizationID != "" && cloudTeamID != "" {
+		return usageError("--organization-id and --cloud-team-id are mutually exclusive")
+	}
+	if accessMode == "" {
+		accessMode = "open"
+	}
+	if timestamp == "" {
+		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	teamID := awid.BuildTeamID(domain, team)
+	teamKey, err := awconfig.LoadTeamKey(domain, team)
+	if err != nil {
+		return teamKeyLoadError(teamID, domain, err)
+	}
+	output, err := buildTeamImportRequestOutput(
+		teamKey,
+		teamID,
+		organizationID,
+		cloudTeamID,
+		!teamImportRequestApply,
+		accessMode,
+		timestamp,
+	)
+	if err != nil {
+		return err
+	}
+	printOutput(output, formatTeamImportRequest)
+	return nil
+}
+
+func buildTeamImportRequestOutput(
+	teamKey ed25519.PrivateKey,
+	awidTeamID string,
+	organizationID string,
+	cloudTeamID string,
+	dryRun bool,
+	accessMode string,
+	timestamp string,
+) (teamImportRequestOutput, error) {
+	payload := map[string]any{
+		"operation":       "byoidt_import",
+		"awid_team_id":    strings.TrimSpace(awidTeamID),
+		"organization_id": strings.TrimSpace(organizationID),
+		"team_id":         strings.TrimSpace(cloudTeamID),
+		"dry_run":         dryRun,
+		"access_mode":     strings.TrimSpace(accessMode),
+		"timestamp":       strings.TrimSpace(timestamp),
+	}
+	canonical, err := awid.CanonicalJSONValue(payload)
+	if err != nil {
+		return teamImportRequestOutput{}, err
+	}
+	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(canonical)))
+	body := map[string]any{
+		"awid_team_id":         strings.TrimSpace(awidTeamID),
+		"organization_id":      nullableString(strings.TrimSpace(organizationID)),
+		"team_id":              nullableString(strings.TrimSpace(cloudTeamID)),
+		"dry_run":              dryRun,
+		"access_mode":          strings.TrimSpace(accessMode),
+		"timestamp":            strings.TrimSpace(timestamp),
+		"controller_signature": signature,
+	}
+	return teamImportRequestOutput{
+		Status:              "signed",
+		AWIDTeamID:          strings.TrimSpace(awidTeamID),
+		DryRun:              dryRun,
+		AccessMode:          strings.TrimSpace(accessMode),
+		Timestamp:           strings.TrimSpace(timestamp),
+		ControllerDID:       controllerDID,
+		ControllerSignature: signature,
+		CanonicalPayload:    canonical,
+		RequestBody:         body,
+	}, nil
+}
+
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return strings.TrimSpace(value)
 }
 
 func runCertShow(cmd *cobra.Command, args []string) error {

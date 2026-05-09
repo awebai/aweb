@@ -17,6 +17,9 @@ These documents define the system:
 - [identity-messaging-contract.md](identity-messaging-contract.md): the
   cross-service contract for identity-scoped mail/chat, direct-address
   reachability, recipient binding, and local fallback rules
+- [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
+  engineering contract for the two supported onboarding shapes: Fully Hosted
+  and BYOT
 
 ## User guides
 

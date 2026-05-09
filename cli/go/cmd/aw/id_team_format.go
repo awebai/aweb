@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/awebai/aw/awid"
 )
 
 func formatTeamCreate(v any) string {
@@ -68,6 +70,24 @@ func formatTeamRemoveMember(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Member:      %s\n", out.MemberAddress))
+	return sb.String()
+}
+
+func formatTeamImportRequest(v any) string {
+	out := v.(teamImportRequestOutput)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
+	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.AWIDTeamID))
+	sb.WriteString(fmt.Sprintf("Mode:        %s\n", map[bool]string{true: "dry-run", false: "apply"}[out.DryRun]))
+	sb.WriteString(fmt.Sprintf("Access:      %s\n", out.AccessMode))
+	sb.WriteString(fmt.Sprintf("Timestamp:   %s\n", out.Timestamp))
+	sb.WriteString(fmt.Sprintf("Controller:  %s\n", out.ControllerDID))
+	sb.WriteString(fmt.Sprintf("Signature:   %s\n", out.ControllerSignature))
+	sb.WriteString("Request body:\n")
+	if body, err := awid.CanonicalJSONValue(out.RequestBody); err == nil {
+		sb.WriteString(body)
+		sb.WriteByte('\n')
+	}
 	return sb.String()
 }
 

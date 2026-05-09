@@ -291,6 +291,12 @@ aweb. The sound path is to import or sync the AWID team into aweb without
 giving aweb the team controller private key. Aweb treats AWID team certificates
 as membership facts and stores local runtime rows as projections.
 
+Use `aw id team import-request --namespace <domain> --team <team>
+--organization-id <org-id>` to produce the signed request body for dashboard or
+API import. Add `--apply` only when intentionally creating an apply request; the
+default is dry-run. This helper refuses hosted `*.aweb.ai` namespaces because
+those belong to the fully hosted flow.
+
 Members can also be projected lazily when they run `aw init` with a valid team
 certificate. Spawn and invites are still useful for creating new aweb-managed
 operational workspaces; they are not the product path for importing an existing
