@@ -259,6 +259,246 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	}
 }
 
+func TestInitHostedThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
+	t.Parallel()
+
+	const (
+		teamID       = "default:hostedchain.aweb.ai"
+		parentAPIKey = "aw_sk_cli_signup_workspace"
+	)
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+	var (
+		registeredDIDAW  string
+		registeredDIDKey string
+		workspaceInits   []map[string]any
+		connectAliases   []string
+	)
+
+	signCert := func(fields awid.TeamCertificateFields) string {
+		t.Helper()
+		cert, err := awid.SignTeamCertificate(teamKey, fields)
+		if err != nil {
+			t.Fatalf("sign cert: %v", err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(cert)
+		if err != nil {
+			t.Fatalf("encode cert: %v", err)
+		}
+		return encoded
+	}
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			registeredDIDAW, _ = payload["did_aw"].(string)
+			registeredDIDKey, _ = payload["new_did_key"].(string)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"status":"registered"}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/full"):
+			didAW := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/did/"), "/full")
+			if didAW != registeredDIDAW {
+				t.Fatalf("did full did_aw=%q want %q", didAW, registeredDIDAW)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          didAW,
+				"current_did_key": registeredDIDKey,
+				"created_at":      "2026-05-09T00:00:00Z",
+				"updated_at":      "2026-05-09T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := payload["did_key"].(string)
+			didAW, _ := payload["did_aw"].(string)
+			encoded := signCert(awid.TeamCertificateFields{
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: "hostedchain.aweb.ai/laptop",
+				Alias:         "laptop",
+				Lifetime:      awid.LifetimePersistent,
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         "hostedchain",
+				"org_id":           "org-1",
+				"namespace_domain": "hostedchain.aweb.ai",
+				"team_id":          teamID,
+				"api_key":          parentAPIKey,
+				"certificate":      encoded,
+				"did_aw":           didAW,
+				"member_address":   "hostedchain.aweb.ai/laptop",
+				"alias":            "laptop",
+				"team_did_key":     teamDIDKey,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer "+parentAPIKey {
+				t.Fatalf("workspace init Authorization=%q", got)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			workspaceInits = append(workspaceInits, payload)
+			didKey, _ := payload["did"].(string)
+			alias, _ := payload["alias"].(string)
+			encoded := signCert(awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url":   server.URL,
+				"team_cert":    encoded,
+				"alias":        alias,
+				"team_id":      teamID,
+				"workspace_id": "ws-" + alias,
+				"did":          didKey,
+				"stable_id":    "",
+				"lifetime":     awid.LifetimeEphemeral,
+				"custody":      awid.CustodySelf,
+				"api_key":      "aw_sk_child_" + alias,
+				"team_did_key": teamDIDKey,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-1",
+				"roles": map[string]any{
+					"developer": map[string]any{"title": "Developer"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/team":
+			workspaces := make([]map[string]any, 0, len(connectAliases))
+			for _, alias := range connectAliases {
+				workspaces = append(workspaces, map[string]any{
+					"workspace_id": "ws-" + alias,
+					"alias":        alias,
+					"role":         "developer",
+					"status":       "active",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": workspaces})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")))
+			if err != nil {
+				t.Fatalf("decode connect cert: %v", err)
+			}
+			alias := strings.TrimSpace(cert.Alias)
+			if alias == "" {
+				t.Fatal("connect certificate missing alias")
+			}
+			connectAliases = append(connectAliases, alias)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        alias,
+				"agent_id":     "agent-" + alias,
+				"workspace_id": "ws-" + alias,
+				"repo_id":      "repo-1",
+				"team_did_key": teamDIDKey,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/hosted-chain.git")
+	buildAwBinary(t, ctx, bin)
+
+	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--hosted", "--persistent", "--username", "hostedchain", "--alias", "laptop", "--url", server.URL)
+	initCmd.Env = testCommandEnv(tmp)
+	initCmd.Dir = repo
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("init --hosted failed: %v\n%s", err, string(out))
+	}
+
+	parentWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(repo, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load parent workspace: %v", err)
+	}
+	if parentWorkspace.APIKey != parentAPIKey {
+		t.Fatalf("parent api_key=%q", parentWorkspace.APIKey)
+	}
+	if parentWorkspace.Membership(teamID) == nil {
+		t.Fatalf("parent missing team membership: %+v", parentWorkspace.Memberships)
+	}
+
+	for _, alias := range []string{"bob", "carol"} {
+		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--alias", alias)
+		cmd.Env = testCommandEnv(tmp)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("add-worktree %s failed: %v\n%s", alias, err, string(out))
+		}
+		child := filepath.Join(tmp, "repo-"+alias)
+		childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
+		if err != nil {
+			t.Fatalf("load child %s workspace: %v", alias, err)
+		}
+		if childWorkspace.APIKey != "aw_sk_child_"+alias {
+			t.Fatalf("child %s api_key=%q", alias, childWorkspace.APIKey)
+		}
+		membership := childWorkspace.Membership(teamID)
+		if membership == nil {
+			t.Fatalf("child %s missing team membership: %+v", alias, childWorkspace.Memberships)
+		}
+		if membership.WorkspaceID != "ws-"+alias {
+			t.Fatalf("child %s workspace_id=%q", alias, membership.WorkspaceID)
+		}
+		if _, err := os.Stat(filepath.Join(child, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("child %s should be ephemeral without identity.yaml: %v", alias, err)
+		}
+	}
+
+	if got := len(workspaceInits); got != 2 {
+		t.Fatalf("workspace init calls=%d want 2", got)
+	}
+	for i, alias := range []string{"bob", "carol"} {
+		if workspaceInits[i]["alias"] != alias {
+			t.Fatalf("workspace init %d alias=%v want %s", i, workspaceInits[i]["alias"], alias)
+		}
+		if workspaceInits[i]["role_name"] != "developer" {
+			t.Fatalf("workspace init %d role_name=%v", i, workspaceInits[i]["role_name"])
+		}
+		if workspaceInits[i]["lifetime"] != awid.LifetimeEphemeral {
+			t.Fatalf("workspace init %d lifetime=%v", i, workspaceInits[i]["lifetime"])
+		}
+	}
+	if strings.Join(connectAliases, ",") != "laptop,bob,carol" {
+		t.Fatalf("connect aliases=%v", connectAliases)
+	}
+}
+
 func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
 	t.Parallel()
 
