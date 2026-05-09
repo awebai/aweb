@@ -37,15 +37,18 @@ func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
-			if req["role"] != "reviewer" {
-				t.Fatalf("role=%v", req["role"])
+			if _, ok := req["role"]; ok {
+				t.Fatalf("request used legacy role field: %#v", req)
+			}
+			if req["role_name"] != "reviewer" {
+				t.Fatalf("role_name=%v", req["role_name"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"agent_id":       "agent-1",
 				"alias":          "alice",
 				"hostname":       "devbox",
 				"workspace_path": "/tmp/repo",
-				"role":           "reviewer",
+				"role_name":      "reviewer",
 				"human_name":     "Alice",
 			})
 		case "/v1/agents/heartbeat":

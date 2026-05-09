@@ -72,6 +72,7 @@ type WorkspaceTeamParams struct {
 type PatchCurrentWorkspaceRequest struct {
 	Hostname      string `json:"hostname,omitempty"`
 	WorkspacePath string `json:"workspace_path,omitempty"`
+	RoleName      string `json:"role_name,omitempty"`
 	Role          string `json:"role,omitempty"`
 	HumanName     string `json:"human_name,omitempty"`
 }
@@ -81,6 +82,7 @@ type PatchCurrentWorkspaceResponse struct {
 	Alias         string `json:"alias"`
 	Hostname      string `json:"hostname,omitempty"`
 	WorkspacePath string `json:"workspace_path,omitempty"`
+	RoleName      string `json:"role_name,omitempty"`
 	Role          string `json:"role,omitempty"`
 	HumanName     string `json:"human_name,omitempty"`
 }

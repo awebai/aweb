@@ -1,4 +1,4 @@
-"""HTTP-level tests for POST /v1/agents/suggest-alias-prefix."""
+"""HTTP-level tests for /v1/agents routes."""
 
 from __future__ import annotations
 
@@ -246,3 +246,70 @@ async def test_suggest_alias_prefix_uses_agent_aliases_without_workspace_rows(aw
         "team_id": "backend:acme.com",
         "name_prefix": "bob",
     }
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, lifetime, status)
+        VALUES ($1, $2, $3, $4, 'ephemeral', 'active')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, role, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'developer', 'agent')
+        """,
+        workspace_id,
+        "backend:acme.com",
+        agent_id,
+    )
+
+    body_bytes = json.dumps({"role_name": "Reviewer"}, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.patch(
+            "/v1/agents/me",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["role_name"] == "reviewer"
+    assert data["role"] == "reviewer"
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT role
+        FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        workspace_id,
+    )
+    assert row["role"] == "reviewer"

@@ -59,7 +59,7 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	resp, err := client.PatchCurrentWorkspace(ctx, &aweb.PatchCurrentWorkspaceRequest{
-		Role: roleName,
+		RoleName: roleName,
 	})
 	if err != nil {
 		return fmt.Errorf("setting role name: %w", err)
@@ -71,11 +71,18 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	if activeMembership == nil {
 		return fmt.Errorf("workspace is missing selected team membership")
 	}
-	activeMembership.RoleName = strings.TrimSpace(resp.Role)
+	updatedRoleName := strings.TrimSpace(resp.RoleName)
+	if updatedRoleName == "" {
+		updatedRoleName = strings.TrimSpace(resp.Role)
+	}
+	if updatedRoleName == "" {
+		updatedRoleName = roleName
+	}
+	activeMembership.RoleName = updatedRoleName
 	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
 		return fmt.Errorf("write %s: %w", workspacePath, err)
 	}
-	fmt.Printf("Role name set to %s\n", roleName)
+	fmt.Printf("Role name set to %s\n", updatedRoleName)
 	return nil
 }

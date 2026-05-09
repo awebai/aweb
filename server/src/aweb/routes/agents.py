@@ -4,10 +4,12 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from aweb.alias_allocator import suggest_next_name_prefix
+from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.deps import get_db, get_redis
+from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
@@ -30,6 +32,7 @@ class AgentView(BaseModel):
     agent_type: Optional[str] = None
     workspace_type: Optional[str] = None
     role: Optional[str] = None
+    role_name: Optional[str] = None
     hostname: Optional[str] = None
     workspace_path: Optional[str] = None
     repo: Optional[str] = None
@@ -60,8 +63,21 @@ class PatchWorkspaceRequest(BaseModel):
 
     hostname: Optional[str] = Field(None, max_length=256)
     workspace_path: Optional[str] = Field(None, max_length=1024)
-    role: Optional[str] = Field(None, max_length=50)
+    role: Optional[str] = Field(None, max_length=ROLE_MAX_LENGTH)
+    role_name: Optional[str] = Field(None, max_length=ROLE_MAX_LENGTH)
     human_name: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("role", "role_name")
+    @classmethod
+    def validate_role_field(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_optional_role_name(value)
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class PatchWorkspaceResponse(BaseModel):
@@ -70,7 +86,15 @@ class PatchWorkspaceResponse(BaseModel):
     hostname: Optional[str] = None
     workspace_path: Optional[str] = None
     role: Optional[str] = None
+    role_name: Optional[str] = None
     human_name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_role_aliases(self):
+        resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
+        self.role = resolved
+        self.role_name = resolved
+        return self
 
 
 class SendControlSignalRequest(BaseModel):
@@ -189,6 +213,7 @@ async def list_agents(
                 agent_type=r.get("agent_type") or None,
                 workspace_type=(ctx.get("workspace_type") if ctx else None),
                 role=role,
+                role_name=role,
                 hostname=(ctx.get("hostname") if ctx else None),
                 workspace_path=(ctx.get("workspace_path") if ctx else None),
                 repo=(ctx.get("repo") if ctx else None),
@@ -294,6 +319,7 @@ async def patch_agent_workspace(
         hostname=new_hostname,
         workspace_path=new_path,
         role=new_role,
+        role_name=new_role,
         human_name=new_human_name,
     )
 
