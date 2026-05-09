@@ -350,6 +350,149 @@ func TestAwRolesSetCreatesAndActivatesNewVersion(t *testing.T) {
 	}
 }
 
+func TestAwRolesSetAcceptsArrayBundleShape(t *testing.T) {
+	t.Parallel()
+
+	var createBody map[string]any
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id":        "roles-1",
+				"active_team_roles_id": "roles-1",
+				"team_id":              "backend:proj-1",
+				"version":              1,
+				"updated_at":           "2026-03-10T10:00:00Z",
+				"roles":                map[string]any{},
+				"adapters":             map[string]any{},
+			})
+		case "/v1/roles":
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-2",
+				"team_id":       "backend:proj-1",
+				"version":       2,
+				"created":       true,
+			})
+		case "/v1/roles/roles-2/activate":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"activated":            true,
+				"active_team_roles_id": "roles-2",
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "set", "--bundle-file", "-")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	run.Stdin = strings.NewReader(`[
+		{"name":"developer","title":"Developer","playbook_md":"Ship code."},
+		{"name":"reviewer","title":"Reviewer","playbook_md":"Review code."}
+	]`)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	bundle, ok := createBody["bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("bundle=%#v", createBody["bundle"])
+	}
+	roles, ok := bundle["roles"].(map[string]any)
+	if !ok {
+		t.Fatalf("roles=%#v", bundle["roles"])
+	}
+	if len(roles) != 2 {
+		t.Fatalf("roles=%#v", roles)
+	}
+	developer := roles["developer"].(map[string]any)
+	reviewer := roles["reviewer"].(map[string]any)
+	if developer["title"] != "Developer" || developer["playbook_md"] != "Ship code." {
+		t.Fatalf("developer=%#v", developer)
+	}
+	if reviewer["title"] != "Reviewer" || reviewer["playbook_md"] != "Review code." {
+		t.Fatalf("reviewer=%#v", reviewer)
+	}
+	if !strings.Contains(string(out), "Activated team roles v2 (roles-2)") {
+		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+func TestResolveRolesBundleAcceptsArrayShapesAndNormalizes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "top-level array",
+			input: `[
+				{"name":"developer","title":"Developer","playbook_md":"Ship code."},
+				{"name":"reviewer","title":"Reviewer","playbook_md":"Review code."}
+			]`,
+		},
+		{
+			name: "roles field array",
+			input: `{"roles":[
+				{"name":"developer","title":"Developer","playbook_md":"Ship code."},
+				{"name":"reviewer","title":"Reviewer","playbook_md":"Review code."}
+			],"adapters":{"openai":{"model":"gpt-5"}}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bundle, err := resolveRolesBundle(strings.NewReader(tt.input), "", "-")
+			if err != nil {
+				t.Fatalf("resolveRolesBundle: %v", err)
+			}
+			if len(bundle.Roles) != 2 {
+				t.Fatalf("roles=%#v", bundle.Roles)
+			}
+			if bundle.Roles["developer"].Title != "Developer" || bundle.Roles["developer"].PlaybookMD != "Ship code." {
+				t.Fatalf("developer=%#v", bundle.Roles["developer"])
+			}
+			if bundle.Roles["reviewer"].Title != "Reviewer" || bundle.Roles["reviewer"].PlaybookMD != "Review code." {
+				t.Fatalf("reviewer=%#v", bundle.Roles["reviewer"])
+			}
+		})
+	}
+}
+
+func TestResolveRolesBundleRejectsArrayRoleWithoutNameUsefulError(t *testing.T) {
+	t.Parallel()
+
+	_, err := resolveRolesBundle(strings.NewReader(`[{"title":"Developer","playbook_md":"Ship code."}]`), "", "-")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	text := err.Error()
+	if !strings.Contains(text, "roles[0].name is required") {
+		t.Fatalf("error=%q", text)
+	}
+	if strings.Contains(text, "cannot unmarshal") || strings.Contains(text, "Go struct") {
+		t.Fatalf("leaked Go internals: %q", text)
+	}
+}
+
 func TestAwRolesActivateActivatesExistingVersion(t *testing.T) {
 	t.Parallel()
 

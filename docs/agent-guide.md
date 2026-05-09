@@ -398,7 +398,8 @@ each agent reads the role assigned to them.
 
 A roles bundle is a JSON file that maps role names to their
 definitions. Each role has a title and a playbook (markdown
-instructions for the agent in that role):
+instructions for the agent in that role). The canonical shape is an
+object with a `roles` map keyed by role name:
 
 ```json
 {
@@ -413,6 +414,25 @@ instructions for the agent in that role):
     }
   }
 }
+```
+
+For convenience, `aw roles set` also accepts an array of role objects
+with a `name` field and normalizes it to the canonical map before
+sending it to the server:
+
+```json
+[
+  {
+    "name": "developer",
+    "title": "Developer",
+    "playbook_md": "You write code and implement features..."
+  },
+  {
+    "name": "reviewer",
+    "title": "Reviewer",
+    "playbook_md": "You review code for correctness..."
+  }
+]
 ```
 
 aweb ships with default roles (developer, reviewer, coordinator,

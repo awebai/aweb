@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -96,6 +97,12 @@ type teamRolesActivateOutput struct {
 type teamRoleItem struct {
 	Name  string `json:"name"`
 	Title string `json:"title"`
+}
+
+type namedRoleDefinition struct {
+	Name       string `json:"name"`
+	Title      string `json:"title"`
+	PlaybookMD string `json:"playbook_md"`
 }
 
 func init() {
@@ -340,14 +347,146 @@ func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.Te
 		raw = data
 	}
 
-	var bundle aweb.TeamRolesBundle
-	if err := json.Unmarshal(raw, &bundle); err != nil {
-		return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: %w", err)
+	return parseRolesBundle(raw)
+}
+
+func parseRolesBundle(raw []byte) (aweb.TeamRolesBundle, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: empty input")
 	}
-	if bundle.Roles == nil {
-		bundle.Roles = map[string]aweb.RoleDefinition{}
+
+	switch raw[0] {
+	case '[':
+		roles, err := parseNamedRoleDefinitions(raw)
+		if err != nil {
+			return aweb.TeamRolesBundle{}, err
+		}
+		return aweb.TeamRolesBundle{Roles: roles}, nil
+	case '{':
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: %w", err)
+		}
+
+		roles := map[string]aweb.RoleDefinition{}
+		if rolesRaw, hasRoles := fields["roles"]; hasRoles && len(bytes.TrimSpace(rolesRaw)) > 0 && string(bytes.TrimSpace(rolesRaw)) != "null" {
+			parsed, err := parseRoleDefinitions(rolesRaw)
+			if err != nil {
+				return aweb.TeamRolesBundle{}, err
+			}
+			roles = parsed
+		} else if _, hasRoles := fields["roles"]; !hasRoles && len(fields) > 0 {
+			if _, hasAdapters := fields["adapters"]; !hasAdapters {
+				return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: expected either {\"roles\":{\"developer\":{...}}} or an array of role objects with a name field")
+			}
+		}
+
+		adapters, err := parseRoleAdapters(fields["adapters"])
+		if err != nil {
+			return aweb.TeamRolesBundle{}, err
+		}
+		return aweb.TeamRolesBundle{
+			Roles:    roles,
+			Adapters: adapters,
+		}, nil
+	default:
+		return aweb.TeamRolesBundle{}, fmt.Errorf("invalid roles bundle JSON: expected an object with a roles field or an array of role objects")
 	}
-	return bundle, nil
+}
+
+func parseRoleAdapters(raw json.RawMessage) (map[string]any, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if raw[0] != '{' {
+		return nil, fmt.Errorf("invalid roles bundle JSON: adapters must be an object")
+	}
+	var adapters map[string]any
+	if err := json.Unmarshal(raw, &adapters); err != nil {
+		return nil, fmt.Errorf("invalid roles bundle JSON: adapters must be an object")
+	}
+	return adapters, nil
+}
+
+func parseRoleDefinitions(raw json.RawMessage) (map[string]aweb.RoleDefinition, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]aweb.RoleDefinition{}, nil
+	}
+	switch raw[0] {
+	case '[':
+		return parseNamedRoleDefinitions(raw)
+	case '{':
+		return parseRoleDefinitionMap(raw)
+	default:
+		return nil, fmt.Errorf("invalid roles bundle JSON: roles must be a map keyed by role name or an array of role objects with a name field")
+	}
+}
+
+func parseRoleDefinitionMap(raw json.RawMessage) (map[string]aweb.RoleDefinition, error) {
+	var roleMessages map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &roleMessages); err != nil {
+		return nil, fmt.Errorf("invalid roles bundle JSON: roles must be a map keyed by role name")
+	}
+
+	roles := make(map[string]aweb.RoleDefinition, len(roleMessages))
+	for rawName, rawRole := range roleMessages {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, fmt.Errorf("invalid roles bundle JSON: role names must not be empty")
+		}
+		role, err := parseRoleDefinition(rawRole, fmt.Sprintf("roles.%s", name))
+		if err != nil {
+			return nil, err
+		}
+		roles[name] = role
+	}
+	return roles, nil
+}
+
+func parseNamedRoleDefinitions(raw json.RawMessage) (map[string]aweb.RoleDefinition, error) {
+	var roleMessages []json.RawMessage
+	if err := json.Unmarshal(raw, &roleMessages); err != nil {
+		return nil, fmt.Errorf("invalid roles bundle JSON: expected an array of role objects")
+	}
+
+	roles := make(map[string]aweb.RoleDefinition, len(roleMessages))
+	for i, rawRole := range roleMessages {
+		trimmed := bytes.TrimSpace(rawRole)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
+			return nil, fmt.Errorf("invalid roles bundle JSON: roles[%d] must be an object with name, title, and playbook_md", i)
+		}
+		var role namedRoleDefinition
+		if err := json.Unmarshal(trimmed, &role); err != nil {
+			return nil, fmt.Errorf("invalid roles bundle JSON: roles[%d] must be an object with name, title, and playbook_md", i)
+		}
+		name := strings.TrimSpace(role.Name)
+		if name == "" {
+			return nil, fmt.Errorf("invalid roles bundle JSON: roles[%d].name is required for array-shaped bundles", i)
+		}
+		if _, exists := roles[name]; exists {
+			return nil, fmt.Errorf("invalid roles bundle JSON: duplicate role name %q", name)
+		}
+		roles[name] = aweb.RoleDefinition{
+			Title:      role.Title,
+			PlaybookMD: role.PlaybookMD,
+		}
+	}
+	return roles, nil
+}
+
+func parseRoleDefinition(raw json.RawMessage, label string) (aweb.RoleDefinition, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return aweb.RoleDefinition{}, fmt.Errorf("invalid roles bundle JSON: %s must be an object with title and playbook_md", label)
+	}
+	var role aweb.RoleDefinition
+	if err := json.Unmarshal(trimmed, &role); err != nil {
+		return aweb.RoleDefinition{}, fmt.Errorf("invalid roles bundle JSON: %s must be an object with title and playbook_md", label)
+	}
+	return role, nil
 }
 
 func formatTeamRolesShow(v any) string {

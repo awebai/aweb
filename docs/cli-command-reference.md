@@ -1068,6 +1068,10 @@ Flags:
 
 Create and activate a new team roles bundle version
 
+Bundle files use the canonical shape `{ "roles": { "<role-name>": { "title": "...", "playbook_md": "..." } } }`.
+For convenience, `aw roles set` also accepts an array of role objects with
+a `name` field and normalizes it before sending it to the server.
+
 Flags:
 - `--bundle-file string Read team roles bundle JSON from file ('-' for stdin)`
 - `--bundle-json string Team roles bundle JSON`
