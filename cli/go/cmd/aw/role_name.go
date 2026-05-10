@@ -59,6 +59,7 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	resp, err := client.PatchCurrentWorkspace(ctx, &aweb.PatchCurrentWorkspaceRequest{
+		Role:     roleName,
 		RoleName: roleName,
 	})
 	if err != nil {

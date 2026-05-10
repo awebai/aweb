@@ -173,10 +173,13 @@ a human has already created the workspace in the dashboard:
 AWEB_API_KEY=aw_sk_... aw init --role <role-name>
 ```
 
-This generates a local self-custodial key, redeems the one-time
-bootstrap token, writes the team certificate and workspace state
-into `.aw/`, and then continues with normal certificate-based
-auth. The bootstrap token is not stored on disk.
+This generates a local self-custodial key, uses the API key to
+request a team certificate and workspace binding, writes the
+certificate and workspace state into `.aw/`, and then continues
+with normal certificate-based auth. The input `AWEB_API_KEY` is
+not stored on disk; the server may return a workspace API key that
+is stored in `.aw/workspace.yaml` for future workspace operations
+such as `aw workspace add-worktree`.
 
 **`aw run`** launches the same guided wizard when needed, then
 starts the provider in the event-driven loop. The agent will be
@@ -207,7 +210,9 @@ The guided onboarding path must be run in an interactive terminal
 
 ### Team setup
 
-Teams are created at awid.ai. The flow is:
+For fully hosted teams, create and manage teams in the dashboard.
+For BYOT/local-controller teams, create the namespace, team, and
+membership certificates at AWID. The CLI flow is:
 
 1. Create a persistent identity (if you don't have one):
 
@@ -276,17 +281,19 @@ file layout.
 ### Hosted Add Existing Identity
 
 Use the dashboard Add existing identity action when a hosted team owner/admin
-wants to add an identity that already has a `did:key`, optional `did:aw`, and
-optional address. Hosted aweb holds the hosted team controller key, signs and
-registers the AWID team certificate, then creates the aweb runtime projection.
+wants to add a persistent identity that already exists outside the hosted team.
+The normal input is the identity's address; the dashboard should only ask for
+`did:aw` or current DID material when the address cannot be resolved from the
+registry. Hosted aweb holds the hosted team controller key, signs and registers
+the AWID team certificate, then creates the aweb runtime projection.
 
 Do not use `aw id team add-member` for hosted aweb.ai teams unless you hold the
 team controller key locally. That command is intentionally limited to
-BYOD/BYOIDT local-controller signing.
+BYOT/local-controller signing.
 
-### BYOIDT Import/Sync
+### BYOT Import/Sync
 
-BYOIDT means you created the AWID namespace, team, and memberships outside
+BYOT means you created the AWID namespace, team, and memberships outside
 aweb. The sound path is to import or sync the AWID team into aweb without
 giving aweb the team controller private key. Aweb treats AWID team certificates
 as membership facts and stores local runtime rows as projections.
@@ -506,7 +513,7 @@ Everything lives in `.aw/` in the working directory:
 - `.aw/workspace.yaml` — aweb binding: server URL, workspace API
   key, memberships, metadata.
 - `~/.config/aw/controllers/<domain>.key` — namespace controller
-  key (BYOD).
+  key (BYOT/local-controller).
 - `~/.config/aw/team-keys/<domain>/<name>.key` — team controller
   key.
 - `CLAUDE.md` and/or `AGENTS.md` — injected team instructions
@@ -536,23 +543,27 @@ active team selection.
 ### Multiple agents in the same repo
 
 Use worktrees. Each worktree gets its own `.aw/` directory and
-its own agent identity. On the machine that holds the team
-controller key, `aw workspace add-worktree` can create the
-sibling worktree, mint the ephemeral team certificate, and
-connect it in one step.
+its own agent identity. `aw workspace add-worktree` creates the
+sibling worktree, mints an ephemeral team certificate, and
+connects it in one step. For BYOT/local-controller teams it uses
+the local team controller key. For hosted/API-key bootstrapped
+workspaces it asks the cloud to issue the child certificate using
+the parent workspace API key.
 
 ```bash
 aw workspace add-worktree developer
 aw workspace add-worktree reviewer
 ```
 
-Repeat `add-worktree` for each additional local worktree. Use the
-explicit invite flow for another repo, another machine, or any
-setup that does not have the local team controller key. Start a
-separate AI agent (via `aw run` or directly) in each worktree
-directory.
+Repeat `add-worktree` for each additional local worktree. The
+command refuses to run if `.aw/` runtime files are tracked by git;
+remove them from git tracking and ignore `.aw/` before creating
+agent worktrees. Use the explicit certificate request/fetch flow
+for another repo, another machine, or any setup where you are not
+spawning from an already connected workspace. Start a separate AI
+agent (via `aw run` or directly) in each worktree directory.
 
-### Cross-machine BYOIDT/BYOD team joins
+### Cross-machine BYOT/local-controller team joins
 
 For a member identity on a different machine, the joining machine can print
 the controller-side command:
@@ -588,15 +599,17 @@ aw init
 
 ### Multiple repos in one team
 
-Use team invites to connect repos to the same team. Agents across
-all repos can see each other's status, tasks, and messages.
+For BYOT/local-controller teams, use team invites to connect repos
+to the same team. For hosted teams, use the dashboard/API-key
+bootstrap path. Agents across all repos can see each other's
+status, tasks, and messages.
 
 ```bash
 # Create team and invite agents:
-aw id team create --name myteam --namespace myteam.aweb.ai
-aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-a
-aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-b
-aw id team invite --team myteam --namespace myteam.aweb.ai   # for repo-c
+aw id team create --name myteam --namespace acme.com
+aw id team invite --team myteam --namespace acme.com   # for repo-a
+aw id team invite --team myteam --namespace acme.com   # for repo-b
+aw id team invite --team myteam --namespace acme.com   # for repo-c
 
 # In repo-a:
 aw id team accept-invite <token>
