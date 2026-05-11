@@ -39,9 +39,13 @@ class CreateContactRequest(BaseModel):
 
 class ContactView(BaseModel):
     contact_id: str
-    contact_address: str
+    contact_address: str | None
     label: str
     created_at: str
+    reference_type: str = "identity"
+    status: str = "active"
+    handle_namespace: str | None = None
+    target_agent_name: str | None = None
 
 
 class ListContactsResponse(BaseModel):

@@ -28,9 +28,14 @@ from aweb.mcp.tools.chat import chat_history as _chat_history_impl
 from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
 from aweb.mcp.tools.chat import chat_read as _chat_read_impl
 from aweb.mcp.tools.chat import chat_send as _chat_send_impl
-from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
+from aweb.mcp.tools.contacts import add_contact_by_email as _add_contact_by_email_impl
+from aweb.mcp.tools.contacts import add_contact_by_handle as _add_contact_by_handle_impl
 from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
+from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
 from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
+from aweb.mcp.tools.contacts import list_contacts_tool as _list_contacts_tool_impl
+from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages_from_contact_impl
+from aweb.mcp.tools.contacts import send_message_to_contact as _send_message_to_contact_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
@@ -486,6 +491,71 @@ def register_tools(
     )
     async def contacts_remove(contact_id: str) -> str:
         return await _contacts_remove_impl(db_infra, contact_id=contact_id)
+
+    @mcp.tool(
+        name="list_contacts",
+        description="List saved contacts for the authenticated identity.",
+    )
+    async def list_contacts() -> str:
+        return await _list_contacts_tool_impl(db_infra)
+
+    @mcp.tool(
+        name="add_contact_by_handle",
+        description="Add a pending contact by @handle or @handle/agent.",
+    )
+    async def add_contact_by_handle(handle: str, label: str = "") -> str:
+        return await _add_contact_by_handle_impl(db_infra, handle=handle, label=label)
+
+    @mcp.tool(
+        name="add_contact_by_email",
+        description="Add a pending contact by email address.",
+    )
+    async def add_contact_by_email(email: str, label: str = "") -> str:
+        return await _add_contact_by_email_impl(db_infra, email=email, label=label)
+
+    @mcp.tool(
+        name="send_message_to_contact",
+        description="Send mail or chat to a saved contact.",
+    )
+    async def send_message_to_contact(
+        contact_id: str,
+        message: str,
+        subject: str = "",
+        channel: str = "mail",
+        priority: str = "normal",
+        wait: bool = False,
+        wait_seconds: int = 120,
+    ) -> str:
+        return await _send_message_to_contact_impl(
+            db_infra,
+            redis,
+            registry_client=registry_client,
+            hosted_signer=hosted_signer,
+            contact_id=contact_id,
+            message=message,
+            subject=subject,
+            channel=channel,
+            priority=priority,
+            wait=wait,
+            wait_seconds=wait_seconds,
+        )
+
+    @mcp.tool(
+        name="read_messages_from_contact",
+        description="Read mail or chat messages exchanged with a saved contact.",
+    )
+    async def read_messages_from_contact(
+        contact_id: str,
+        channel: str = "mail",
+        limit: int = 50,
+    ) -> str:
+        return await _read_messages_from_contact_impl(
+            db_infra,
+            registry_client=registry_client,
+            contact_id=contact_id,
+            channel=channel,
+            limit=limit,
+        )
 
 
 
