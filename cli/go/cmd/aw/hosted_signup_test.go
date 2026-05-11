@@ -43,7 +43,7 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
+				"aweb_url":       server.URL + "/api",
 				"registry_url":   server.URL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
@@ -124,7 +124,7 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 				"alias":            "laptop",
 				"team_did_key":     teamDIDKey,
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/connect":
 			if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 				t.Fatal("connect missing Authorization")
 			}
@@ -246,6 +246,9 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatalf("workspace.yaml missing: %v", err)
+	}
+	if workspace.AwebURL != server.URL+"/api" {
+		t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
 	}
 	if workspace.APIKey != "aw_sk_cli_signup_workspace" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)

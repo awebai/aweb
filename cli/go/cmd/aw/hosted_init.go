@@ -120,7 +120,7 @@ func runHostedInit(cmd *cobra.Command) error {
 	if err := persistHostedInitState(workingDir, registry.DefaultRegistryURL, signingKey, didKey, stableID, resp, initPersistent); err != nil {
 		return err
 	}
-	connectResult, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
+	connectResult, err := initCertificateConnectWithOptions(workingDir, serviceURLs.AwebURL, certificateConnectOptions{
 		APIKey: strings.TrimSpace(resp.APIKey),
 	})
 	if err != nil {
