@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
@@ -33,6 +33,7 @@ from aweb.messaging.conversations import (
     require_active_conversation_participant,
     touch_conversation_activity,
 )
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -76,6 +77,25 @@ class SendMessageRequest(BaseModel):
     signature: Optional[str] = Field(default=None, max_length=512)
     signed_payload: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_hosted_handle_targets(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        to_alias = str(normalized.get("to_alias") or "").strip()
+        if to_alias.startswith("@"):
+            address = normalize_hosted_handle_reference(to_alias, require_agent=True)
+            if address != to_alias and "/" in address and not normalized.get("to_address"):
+                normalized["to_address"] = address
+                normalized.pop("to_alias", None)
+        if normalized.get("to_address") is not None:
+            normalized["to_address"] = normalize_hosted_handle_reference(
+                str(normalized["to_address"]),
+                require_agent=True,
+            )
+        return normalized
+
     @field_validator("to_agent_id")
     @classmethod
     def _validate_agent_id(cls, v: Optional[str]) -> Optional[str]:
@@ -92,6 +112,16 @@ class SendMessageRequest(BaseModel):
         if v is None:
             return None
         return validate_alias_selector(v, field="to_alias")
+
+    @field_validator("to_address")
+    @classmethod
+    def _validate_to_address(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        if value.startswith("@"):
+            raise ValueError("Invalid to_address format")
+        return value
 
     @field_validator("message_id")
     @classmethod

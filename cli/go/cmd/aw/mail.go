@@ -497,7 +497,7 @@ func resolveMailTarget() (string, string, error) {
 	if count > 1 {
 		return "", "", usageError("recipient flags are mutually exclusive: use only one of --to, --to-did, or --to-address")
 	}
-	if value := strings.TrimSpace(mailSendTo); value != "" {
+	if value := awid.NormalizeHostedHandleAddress(mailSendTo); value != "" {
 		switch {
 		case strings.HasPrefix(value, "did:"):
 			return "did", value, nil
@@ -510,7 +510,7 @@ func resolveMailTarget() (string, string, error) {
 	if value := strings.TrimSpace(mailSendToDID); value != "" {
 		return "did", value, nil
 	}
-	return "address", strings.TrimSpace(mailSendToAddress), nil
+	return "address", awid.NormalizeHostedHandleAddress(mailSendToAddress), nil
 }
 
 // mail inbox

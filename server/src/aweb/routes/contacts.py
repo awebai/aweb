@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.contacts import (
     CONTACT_ADDRESS_PATTERN,
     add_contact,
@@ -29,7 +30,7 @@ class CreateContactRequest(BaseModel):
     @field_validator("contact_address")
     @classmethod
     def _validate_contact_address(cls, v: str) -> str:
-        v = v.strip()
+        v = normalize_hosted_handle_reference(v)
         if not v:
             raise ValueError("contact_address must not be empty")
         if not CONTACT_ADDRESS_PATTERN.match(v):

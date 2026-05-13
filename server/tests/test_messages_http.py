@@ -399,6 +399,81 @@ async def test_send_message_to_external_address_creates_conversation(aweb_cloud_
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-c3po",
+            domain="jane.aweb.ai",
+            name="c3po",
+            did_aw="did:aw:c3po",
+            current_did_key="did:key:c3po",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.list_did_addresses = AsyncMock(
+        return_value=[
+            Address(
+                address_id="addr-alice",
+                domain="acme.com",
+                name="alice",
+                did_aw="did:aw:alice",
+                current_did_key=alice_did_key,
+                reachability="public",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
+    )
+    registry.list_team_certificates = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    payload = {"to_alias": "@jane/c3po", "subject": "hosted handle", "body": "hello"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    registry.resolve_address.assert_awaited_once_with("jane.aweb.ai", "c3po", did_key=alice_did_key)
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_agent_id, to_alias
+        FROM {{tables.messages}}
+        WHERE subject = 'hosted handle'
+        """
+    )
+    assert row["to_did"] == "did:aw:c3po"
+    assert row["to_agent_id"] is None
+    assert row["to_alias"] == "c3po"
+
+
+@pytest.mark.asyncio
 async def test_send_message_continues_conversation_without_address_discovery(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()

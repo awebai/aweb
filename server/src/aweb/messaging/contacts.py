@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.service_errors import ConflictError, ValidationError
 
 CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
@@ -40,7 +41,7 @@ async def add_contact(
     """
     aweb_db = db.get_manager("aweb")
 
-    addr = contact_address.strip()
+    addr = normalize_hosted_handle_reference(contact_address)
     if not addr or not CONTACT_ADDRESS_PATTERN.match(addr):
         raise ValidationError("Invalid contact_address format")
     contact_status = _normalize_status(status)
@@ -264,9 +265,9 @@ def _normalize_status(status: str) -> str:
 
 
 def _normalize_handle_namespace(handle_namespace: str) -> str:
-    namespace = (handle_namespace or "").strip()
+    namespace = normalize_hosted_handle_reference(handle_namespace)
     if namespace.startswith("@"):
-        namespace = namespace[1:]
+        raise ValidationError("Invalid handle_namespace format")
     if not namespace or "/" in namespace or not HANDLE_NAMESPACE_PATTERN.match(namespace):
         raise ValidationError("Invalid handle_namespace format")
     return namespace

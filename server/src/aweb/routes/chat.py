@@ -51,6 +51,7 @@ from aweb.messaging.chat import (
 )
 from aweb.messaging.conversations import close_conversation
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import evaluate_messaging_policy, utc_iso as _utc_iso
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.messaging.waiting import (
@@ -588,6 +589,31 @@ class CreateSessionRequest(BaseModel):
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_hosted_handle_targets(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        aliases: list[str] = []
+        promoted_addresses: list[str] = []
+        for value in normalized.get("to_aliases") or []:
+            text = str(value or "").strip()
+            address = normalize_hosted_handle_reference(text, require_agent=True)
+            if text.startswith("@") and address != text and "/" in address:
+                promoted_addresses.append(address)
+            else:
+                aliases.append(text)
+        if promoted_addresses:
+            normalized["to_aliases"] = aliases
+            normalized["to_addresses"] = list(normalized.get("to_addresses") or []) + promoted_addresses
+        if normalized.get("to_addresses"):
+            normalized["to_addresses"] = [
+                normalize_hosted_handle_reference(str(value), require_agent=True)
+                for value in normalized.get("to_addresses") or []
+            ]
+        return normalized
+
     @field_validator("to_aliases", "to_dids", "to_addresses")
     @classmethod
     def _clean_targets(cls, values: list[str]) -> list[str]:
@@ -602,6 +628,14 @@ class CreateSessionRequest(BaseModel):
     @classmethod
     def _validate_aliases(cls, values: list[str]) -> list[str]:
         return [validate_alias_selector(value, field="to_aliases") for value in values]
+
+    @field_validator("to_addresses")
+    @classmethod
+    def _validate_addresses(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if value.startswith("@"):
+                raise ValueError("Invalid to_addresses format")
+        return values
 
     @model_validator(mode="after")
     def _validate_targets(self) -> "CreateSessionRequest":

@@ -52,6 +52,21 @@ async def test_add_and_list_contacts(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_add_contact_normalizes_hosted_handle_address(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    owner_did = "did:aw:owner-hosted-handle"
+
+    result = await add_contact(
+        db_shim,
+        owner_did=owner_did,
+        contact_address="@jane/c3po",
+        label="C-3PO",
+    )
+
+    assert result["contact_address"] == "jane.aweb.ai/c3po"
+
+
+@pytest.mark.asyncio
 async def test_add_duplicate_contact_raises(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-bob"
@@ -140,6 +155,39 @@ async def test_add_and_list_handle_contact(aweb_cloud_db):
     assert len(contacts) == 1
     assert contacts[0]["handle_namespace"] == "acme.com"
     assert contacts[0]["target_agent_name"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_add_handle_contact_normalizes_hosted_handle_namespace(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    owner_did = "did:aw:owner-hosted-handle-contact"
+
+    result = await add_handle_contact(
+        db_shim,
+        owner_did=owner_did,
+        handle_namespace="@jane",
+        target_agent_name="c3po",
+        label="C-3PO",
+    )
+
+    assert result["reference_type"] == "handle"
+    assert result["handle_namespace"] == "jane.aweb.ai"
+    assert result["target_agent_name"] == "c3po"
+
+
+@pytest.mark.asyncio
+async def test_add_handle_contact_rejects_bad_hosted_handle_namespace(aweb_cloud_db):
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    owner_did = "did:aw:owner-bad-hosted-handle"
+
+    with pytest.raises(ValidationError, match="Invalid handle_namespace format"):
+        await add_handle_contact(
+            db_shim,
+            owner_did=owner_did,
+            handle_namespace="@jane..aweb.ai",
+            target_agent_name="c3po",
+            label="Broken",
+        )
 
 
 @pytest.mark.asyncio

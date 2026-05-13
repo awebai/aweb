@@ -20,6 +20,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
     MessagePriority,
     deliver_message,
@@ -95,7 +96,7 @@ async def send_mail(
     if not body.strip():
         return json.dumps({"error": "body is required"})
 
-    recipient_ref = (to or "").strip()
+    recipient_ref = normalize_hosted_handle_reference(to, require_agent=True)
     conversation_ref = (conversation_id or "").strip()
     if conversation_ref and recipient_ref:
         return json.dumps({"error": "Provide to or conversation_id, not both"})

@@ -26,6 +26,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import evaluate_messaging_policy
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
@@ -291,6 +292,12 @@ async def chat_send(
     actor_alias = _actor_alias(actor_agent)
     sender_address = _sender_address(auth)
     aweb_db = db_infra.get_manager("aweb")
+    normalized_alias = normalize_hosted_handle_reference(to_alias, require_agent=True)
+    if to_alias.strip().startswith("@") and normalized_alias != to_alias.strip() and "/" in normalized_alias:
+        to_address = normalized_alias
+        to_alias = ""
+    else:
+        to_address = normalize_hosted_handle_reference(to_address, require_agent=True)
 
     recipient_modes = int(bool(to_alias.strip())) + int(bool(to_did.strip())) + int(bool(to_address.strip()))
     if not session_id and recipient_modes != 1:

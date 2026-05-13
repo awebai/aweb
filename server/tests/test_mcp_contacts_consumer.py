@@ -78,6 +78,29 @@ async def _seed_team(aweb_db) -> tuple[str, str]:
     return alice_agent_id, bob_agent_id
 
 
+async def _seed_hosted_target(aweb_db) -> str:
+    c3po_agent_id = str(uuid4())
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('default:jane.aweb.ai', 'jane.aweb.ai', 'default', 'did:key:jane-team')
+        """
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias, lifetime, role, status, messaging_policy
+        )
+        VALUES (
+            $1, 'default:jane.aweb.ai', 'did:key:c3po', 'did:aw:c3po',
+            'jane.aweb.ai/c3po', 'c3po', 'persistent', 'developer', 'active', 'everyone'
+        )
+        """,
+        c3po_agent_id,
+    )
+    return c3po_agent_id
+
+
 def test_consumer_contact_mcp_tool_names_are_registered():
     collector = ToolCollector()
 
@@ -157,6 +180,138 @@ async def test_consumer_mcp_add_contact_by_handle_is_pending_even_when_target_al
     assert result["status"] == "pending"
     assert result["handle_namespace"] == "acme.com"
     assert result["target_agent_name"] == "bob"
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_add_contact_by_hosted_handle_normalizes_namespace(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    _patch_auth(monkeypatch, _auth())
+
+    result = json.loads(
+        await contacts_tools.add_contact_by_handle(
+            DBInfra(aweb_cloud_db.aweb_db),
+            handle="@jane/c3po",
+            label="C-3PO",
+        )
+    )
+
+    assert result["reference_type"] == "handle"
+    assert result["status"] == "pending"
+    assert result["handle_namespace"] == "jane.aweb.ai"
+    assert result["target_agent_name"] == "c3po"
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_add_contact_by_hosted_handle_rejects_empty_agent(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    _patch_auth(monkeypatch, _auth())
+
+    result = json.loads(
+        await contacts_tools.add_contact_by_handle(
+            DBInfra(aweb_cloud_db.aweb_db),
+            handle="@jane/",
+            label="Broken",
+        )
+    )
+
+    assert result == {"error": "Invalid handle format"}
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_add_contact_by_hosted_handle_rejects_bad_namespace(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    _patch_auth(monkeypatch, _auth())
+
+    result = json.loads(
+        await contacts_tools.add_contact_by_handle(
+            DBInfra(aweb_cloud_db.aweb_db),
+            handle="@jane..aweb.ai/c3po",
+            label="Broken",
+        )
+    )
+
+    assert result == {"error": "Invalid handle format"}
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    _patch_auth(monkeypatch, _auth())
+
+    result = json.loads(
+        await contacts_tools.contacts_add(
+            DBInfra(aweb_cloud_db.aweb_db),
+            contact_address="@jane/c3po",
+            label="C-3PO",
+        )
+    )
+
+    assert result["contact_address"] == "jane.aweb.ai/c3po"
+
+
+@pytest.mark.asyncio
+async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_db, monkeypatch):
+    alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
+    await _seed_hosted_target(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            to="@jane/c3po",
+            subject="hosted handle",
+            body="hello",
+        )
+    )
+
+    assert result["status"] == "delivered"
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT to_did, to_alias, to_agent_id
+        FROM {{tables.messages}}
+        WHERE subject = 'hosted handle'
+        """
+    )
+    assert row["to_did"] == "did:aw:c3po"
+    assert row["to_alias"] == "c3po"
+    assert row["to_agent_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(aweb_cloud_db, monkeypatch):
+    alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
+    await _seed_hosted_target(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            redis=None,
+            registry_client=None,
+            to_alias="@jane/c3po",
+            message="hello",
+        )
+    )
+
+    assert result["delivered"] is True
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT did, alias, address
+        FROM {{tables.chat_participants}}
+        WHERE did = 'did:aw:c3po'
+        """
+    )
+    assert row["alias"] == "c3po"
+    assert row["address"] == "jane.aweb.ai/c3po"
 
 
 @pytest.mark.asyncio

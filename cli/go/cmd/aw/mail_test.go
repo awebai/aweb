@@ -42,6 +42,58 @@ func TestResolveMailTargetKeepsTildeTargetAsAlias(t *testing.T) {
 	}
 }
 
+func TestResolveMailTargetNormalizesHostedHandleAddress(t *testing.T) {
+	oldTo, oldToDID, oldToAddress, oldConversationID := mailSendTo, mailSendToDID, mailSendToAddress, mailSendConversationID
+	t.Cleanup(func() {
+		mailSendTo = oldTo
+		mailSendToDID = oldToDID
+		mailSendToAddress = oldToAddress
+		mailSendConversationID = oldConversationID
+	})
+
+	mailSendTo = "@jane/c3po"
+	mailSendToDID = ""
+	mailSendToAddress = ""
+	mailSendConversationID = ""
+
+	kind, value, err := resolveMailTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "address" {
+		t.Fatalf("kind=%q, want address", kind)
+	}
+	if value != "jane.aweb.ai/c3po" {
+		t.Fatalf("value=%q, want jane.aweb.ai/c3po", value)
+	}
+}
+
+func TestResolveMailTargetNormalizesExplicitHostedHandleAddress(t *testing.T) {
+	oldTo, oldToDID, oldToAddress, oldConversationID := mailSendTo, mailSendToDID, mailSendToAddress, mailSendConversationID
+	t.Cleanup(func() {
+		mailSendTo = oldTo
+		mailSendToDID = oldToDID
+		mailSendToAddress = oldToAddress
+		mailSendConversationID = oldConversationID
+	})
+
+	mailSendTo = ""
+	mailSendToDID = ""
+	mailSendToAddress = "@jane/c3po"
+	mailSendConversationID = ""
+
+	kind, value, err := resolveMailTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "address" {
+		t.Fatalf("kind=%q, want address", kind)
+	}
+	if value != "jane.aweb.ai/c3po" {
+		t.Fatalf("value=%q, want jane.aweb.ai/c3po", value)
+	}
+}
+
 func TestResolveMailTargetConversationIDRejectsRecipients(t *testing.T) {
 	oldTo, oldToDID, oldToAddress, oldConversationID := mailSendTo, mailSendToDID, mailSendToAddress, mailSendConversationID
 	t.Cleanup(func() {

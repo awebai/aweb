@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -116,3 +117,28 @@ async def test_contacts_routes_accept_equivalent_identity_owner_did(aweb_cloud_d
         bob_did_key,
     )
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_contacts_route_normalizes_hosted_handle_address(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    payload = {"contact_address": "@jane/c3po", "label": "C-3PO"}
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/contacts", content=body, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["contact_address"] == "jane.aweb.ai/c3po"
+    stored = await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT contact_address FROM {{tables.contacts}} WHERE owner_did = 'did:aw:alice'"
+    )
+    assert stored == "jane.aweb.ai/c3po"

@@ -37,6 +37,21 @@ func TestClassifyChatTargetsKeepsTildeAliasAsAlias(t *testing.T) {
 	}
 }
 
+func TestClassifyChatTargetsNormalizesHostedHandleAddress(t *testing.T) {
+	t.Parallel()
+
+	aliases, dids, addresses := classifyChatTargets([]string{"@jane/c3po"})
+	if len(addresses) != 1 || addresses[0] != "jane.aweb.ai/c3po" {
+		t.Fatalf("addresses=%v", addresses)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("aliases=%v", aliases)
+	}
+	if len(dids) != 0 {
+		t.Fatalf("dids=%v", dids)
+	}
+}
+
 // mockHandler dispatches requests to registered handlers by exact method+path match.
 type mockHandler struct {
 	handlers map[string]http.HandlerFunc

@@ -14,6 +14,7 @@ from aweb.messaging.alias_targets import (
     derive_team_address,
     get_agent_by_namespace_alias,
 )
+from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.chat import find_session_between
 from aweb.messaging.contacts import (
     add_contact,
@@ -225,13 +226,15 @@ def _owner_dids() -> list[str]:
 
 
 def _parse_handle(handle: str) -> tuple[str, str | None]:
-    ref = (handle or "").strip()
+    ref = normalize_hosted_handle_reference(handle)
     if ref.startswith("@"):
-        ref = ref[1:]
+        raise ValidationError("Invalid handle format")
     if not ref:
         raise ValidationError("handle is required")
     if "/" in ref:
         namespace, agent_name = ref.split("/", 1)
+        if not agent_name.strip():
+            raise ValidationError("Invalid handle format")
     else:
         namespace, agent_name = ref, None
     return namespace, agent_name

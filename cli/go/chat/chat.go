@@ -49,7 +49,7 @@ const MaxSendTimeout = 16 * time.Minute
 
 func classifyChatTargets(targets []string) (aliases []string, dids []string, addresses []string) {
 	for _, target := range targets {
-		target = strings.TrimSpace(target)
+		target = awid.NormalizeHostedHandleAddress(target)
 		if target == "" {
 			continue
 		}

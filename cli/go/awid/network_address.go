@@ -2,6 +2,34 @@ package awid
 
 import "strings"
 
+const hostedHandleDomainSuffix = ".aweb.ai"
+
+// NormalizeHostedHandleAddress converts @handle/agent shorthand into the
+// canonical hosted address handle.aweb.ai/agent. Dotted handles are already
+// explicit namespaces, so @acme.com/bot becomes acme.com/bot.
+// This is the direct-recipient form; contact-handle namespace expansion is
+// normalized server-side because bare @handle is not a direct recipient.
+func NormalizeHostedHandleAddress(target string) string {
+	target = strings.TrimSpace(target)
+	if !strings.HasPrefix(target, "@") {
+		return target
+	}
+	ref := strings.TrimSpace(strings.TrimPrefix(target, "@"))
+	domain, alias, ok := strings.Cut(ref, "/")
+	if !ok {
+		return target
+	}
+	domain = canonicalizeDomain(domain)
+	alias = strings.TrimSpace(alias)
+	if domain == "" || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") || alias == "" || strings.Contains(alias, "/") {
+		return target
+	}
+	if !strings.Contains(domain, ".") {
+		domain += hostedHandleDomainSuffix
+	}
+	return domain + "/" + alias
+}
+
 // NetworkAddress represents either a network address (domain/alias)
 // or a plain local alias.
 type NetworkAddress struct {
@@ -14,7 +42,7 @@ type NetworkAddress struct {
 // If the string contains a '/', it is treated as a network address (domain/alias).
 // Otherwise it is a plain local alias.
 func ParseNetworkAddress(target string) NetworkAddress {
-	target = strings.TrimSpace(target)
+	target = NormalizeHostedHandleAddress(target)
 	if target == "" {
 		return NetworkAddress{}
 	}

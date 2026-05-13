@@ -2,6 +2,32 @@ package awid
 
 import "testing"
 
+func TestNormalizeHostedHandleAddress(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"@jane/c3po":          "jane.aweb.ai/c3po",
+		" @Jane/c3po ":        "jane.aweb.ai/c3po",
+		"@Jane/C3PO":          "jane.aweb.ai/C3PO",
+		"@acme.com/billing":   "acme.com/billing",
+		"jane.aweb.ai/c3po":   "jane.aweb.ai/c3po",
+		"@jane":               "@jane",
+		"@jane/":              "@jane/",
+		"@jane/c3po/extra":    "@jane/c3po/extra",
+		"@jane..aweb.ai/c3po": "@jane..aweb.ai/c3po",
+		"@.jane/c3po":         "@.jane/c3po",
+	}
+	for input, want := range tests {
+		input, want := input, want
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			if got := NormalizeHostedHandleAddress(input); got != want {
+				t.Fatalf("NormalizeHostedHandleAddress(%q)=%q want %q", input, got, want)
+			}
+		})
+	}
+}
+
 func TestParseNetworkAddress(t *testing.T) {
 	t.Parallel()
 
