@@ -272,6 +272,7 @@ type TaskComment struct {
 	CommentID     string  `json:"comment_id"`
 	TaskID        string  `json:"task_id"`
 	AuthorAgentID *string `json:"author_agent_id"`
+	AuthorAlias   string  `json:"author_alias"`
 	Body          string  `json:"body"`
 	ParentID      *string `json:"parent_id"`
 	CreatedAt     string  `json:"created_at"`

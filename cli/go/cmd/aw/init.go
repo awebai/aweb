@@ -103,7 +103,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
 	// operate on the existing workspace without running the full init flow.
-	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInit() {
+	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInitForAddonOnly() {
 		wd, _ := os.Getwd()
 		repoRoot := resolveRepoRoot(wd)
 		if initInjectDocs {
@@ -369,10 +369,11 @@ func hostedInitRequested() bool {
 	return initHosted || strings.TrimSpace(initHostedUsername) != ""
 }
 
-// initNeedsFullInit returns true if the user passed flags that require the
-// full init flow, or if no local workspace binding exists yet (first-time init).
-func initNeedsFullInit() bool {
-	if initURL != "" || initAwebURL != "" || initAWIDRegistry != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
+// initNeedsFullInitForAddonOnly returns true when an add-on request must
+// escalate to full init because it changes identity/team state or has no
+// existing workspace to operate on.
+func initNeedsFullInitForAddonOnly() bool {
+	if hostedInitRequested() || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
 		return true
 	}
 	wd, _ := os.Getwd()
@@ -398,7 +399,7 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	fmt.Println()
 	fmt.Println("Workspace ready.")
 	fmt.Println()
-	fmt.Println("Tell your agent: please read https://aweb.ai/agent-guide.md")
+	fmt.Println("Tell your agent: please read https://aweb.ai/introduction.md")
 	fmt.Println()
 	printChannelLaunchInstructions(os.Stdout)
 }
@@ -554,7 +555,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "  Then start Claude Code with the channel enabled:")
 	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
-	lines = append(lines, "  Tell your agent: please read https://aweb.ai/agent-guide.md")
+	lines = append(lines, "  Tell your agent: please read https://aweb.ai/introduction.md")
 	return lines
 }
 

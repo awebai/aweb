@@ -79,9 +79,12 @@ func runTaskCommentList(cmd *cobra.Command, args []string) error {
 		}
 		var sb strings.Builder
 		for _, c := range r.Comments {
-			author := "(unknown)"
-			if c.AuthorAgentID != nil {
+			author := strings.TrimSpace(c.AuthorAlias)
+			if author == "" && c.AuthorAgentID != nil {
 				author = *c.AuthorAgentID
+			}
+			if strings.TrimSpace(author) == "" {
+				author = "(unknown)"
 			}
 			sb.WriteString(fmt.Sprintf("[%s] %s:\n  %s\n", formatDate(c.CreatedAt), author, c.Body))
 		}

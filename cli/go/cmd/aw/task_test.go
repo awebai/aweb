@@ -789,3 +789,97 @@ func TestAwTaskCommentAddSuccess(t *testing.T) {
 		t.Fatalf("output missing ref:\n%s", string(out))
 	}
 }
+
+func TestAwTaskCommentListUsesAuthorAlias(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/PROJ-001/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"comments": []map[string]any{{
+					"comment_id":   "c-1",
+					"task_id":      "tid-1",
+					"author_alias": "grace",
+					"body":         "Ready for review.",
+					"created_at":   "2026-03-21T10:00:00Z",
+				}},
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "task", "comment", "list", "PROJ-001")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "grace:") {
+		t.Fatalf("output missing author alias:\n%s", text)
+	}
+	if strings.Contains(text, "(unknown)") {
+		t.Fatalf("output should not show unknown author:\n%s", text)
+	}
+}
+
+func TestAwTaskCommentListFallsBackToAuthorAgentID(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/PROJ-001/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"comments": []map[string]any{{
+					"comment_id":      "c-1",
+					"task_id":         "tid-1",
+					"author_agent_id": "agent-123",
+					"body":            "Legacy response.",
+					"created_at":      "2026-03-21T10:00:00Z",
+				}},
+			})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "task", "comment", "list", "PROJ-001")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "agent-123:") {
+		t.Fatalf("output missing legacy author_agent_id fallback:\n%s", text)
+	}
+	if strings.Contains(text, "(unknown)") {
+		t.Fatalf("output should not show unknown author:\n%s", text)
+	}
+}
