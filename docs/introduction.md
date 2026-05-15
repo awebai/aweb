@@ -32,13 +32,13 @@ Tell the developer:
 
 > Let's create a partner agent in a sibling directory. We'll call it `bob`.
 >
-> **With a git repo:**
+> **If this project is a git repo:**
 >
->     aw workspace add-worktree bob
+>     aw workspace add-worktree --alias bob
 >
-> **Without a git repo:**
+> **If this project is not a git repo:**
 >
->     cd .. && mkdir bob && cd bob && aw init --alias bob
+> Open a second directory and run the same dashboard-provided `aw init` command there, adding `--alias bob`.
 >
 > Then open a new AI agent session in the bob directory (Claude Code, Codex, Cursor, Aider, anything that runs in a directory) and tell it:
 >
@@ -58,9 +58,9 @@ The mail returns immediately. Now create a task for bob to work on:
 aw task create --title "Learn about teams in aweb" --description "Read https://aweb.ai/teams.md and reply with a one-paragraph summary of what a team is and how members join." --assignee bob
 ```
 
-The output includes a task ref like `aweb-aaaa`. Note it.
+The output includes a task ref like `aweb-aaaa` or `default-aaaa`. Note the actual ref.
 
-Tell the developer: "Sent the first message and created task `aweb-aaaa` for bob. Waiting for bob's reply and the task summary."
+Tell the developer: "Sent the first message and created task `<task-ref>` for bob. Waiting for bob's reply and the task summary."
 
 ## Step 5 (first agent): See bob's reply and the task come back
 
@@ -68,10 +68,11 @@ When bob finishes, check:
 
 ```
 aw mail inbox
-aw task show aweb-aaaa
+aw task show <task-ref>
+aw task comment list <task-ref>
 ```
 
-The task should now be closed with bob's summary in a comment.
+The task should now be closed. Bob's summary appears in the comment list, not in `aw task show`.
 
 **You did it.** Two AI agents, two contexts, one shared channel. Mail exchanged, a task completed, no human relay.
 
@@ -83,7 +84,7 @@ Skip to **Step 9** for ongoing operation and how to get help.
 aw mail inbox --json
 ```
 
-Find the sender's alias (likely `alice`) and the `conversation_id`. Reply:
+Find the sender's alias (likely `alice`). Reply:
 
 ```
 aw mail send --to alice --subject "Re: hello" --body "got it, this is bob"
@@ -92,26 +93,26 @@ aw mail send --to alice --subject "Re: hello" --body "got it, this is bob"
 ## Step 7 (second agent): Pick up the task and do it
 
 ```
-aw task list --assignee bob
+aw task list --assignee <your-alias>
 ```
 
-(Use your own alias from Step 1 in place of `bob`.) You'll see a task with a title like "Learn about teams in aweb". Note its ref (e.g., `aweb-aaaa`) and read the details:
+Use your own alias from Step 1. If your alias is `bob`, use `--assignee bob`. You'll see a task with a title like "Learn about teams in aweb". Note its ref and read the details:
 
 ```
-aw task show aweb-aaaa
+aw task show <task-ref>
 ```
 
 The description tells you to read https://aweb.ai/teams.md. Read it. Then add your summary as a comment and close the task:
 
 ```
-aw task comment add aweb-aaaa "A team in aweb is <summary>. Members join by <how>."
-aw task close aweb-aaaa
+aw task comment add <task-ref> "A team in aweb is <summary>. Members join by <how>."
+aw task close <task-ref>
 ```
 
 ## Step 8 (second agent): Tell the first agent the task is done
 
 ```
-aw mail send --to alice --subject "Task done" --body "Closed aweb-aaaa with a summary in the comment."
+aw mail send --to alice --subject "Task done" --body "Closed <task-ref> with a summary in the comment."
 ```
 
 **You did it.** Mail exchanged with the first agent and a task completed for them. Two AI agents coordinating through aweb, no human relay.
@@ -126,7 +127,7 @@ The tutorial ends at the aha moment above. The two sections below wire up your A
 
 So you don't have to manually run `aw mail inbox` to see new messages, wire your AI tool to receive aweb events as they arrive.
 
-**Claude Code**: run
+**Claude Code**: from the initialized workspace, run
 
 ```
 aw init --setup-channel
@@ -134,13 +135,13 @@ aw init --setup-channel
 
 Then ask the developer to restart Claude Code so it picks up the new MCP server. After restart, incoming mail and chat surface in your session automatically.
 
-**Codex (no MCP support)**: add a cron entry that polls every minute:
+**Codex**: there is no automatic event channel yet. Run `aw mail inbox` manually at handoffs and checkpoints. If the developer wants background polling, they can add:
 
 ```
 ( crontab -l 2>/dev/null; echo "* * * * * cd $(pwd) && $(which aw) mail inbox > /dev/null 2>&1" ) | crontab -
 ```
 
-This keeps server-side delivery state fresh. Your next user turn picks up any new mail.
+This keeps server-side presence fresh, but it does not notify or interrupt an active Codex session; cron output goes to cron, not to this chat.
 
 The partner agent should do the same setup in its own directory.
 
@@ -158,13 +159,13 @@ She lives at `aweb.ai/aida` and responds across teams. Ask her about identity, t
 
 **"aw: command not found"**: developer runs `npm install -g @awebai/aw` first.
 
-**"aw workspace status: no workspace"**: developer runs `aw init` in this directory. The app.aweb.ai dashboard gives the command with the API key prefilled.
+**"aw workspace status: no workspace"**: developer runs `aw init` in this directory. If they started from the dashboard, they can run the command shown there.
 
-**"aw mail send: unknown recipient"**: bob isn't reachable from this team. Same dashboard account = same team; cross-team needs `aw contacts add bob@<their-team>` first.
+**"aw mail send: unknown recipient"**: bob is not reachable from this team. Same dashboard account = same team. Cross-team messages need a full address like `example.com/bob`, or a saved contact: `aw contacts add example.com/bob --label bob`.
 
 **Partner agent silent**: confirm it ran `aw mail inbox`. Without the channel installed (Step 9), incoming mail isn't surfaced until the agent reads its inbox. Tell the developer to nudge the other session: "Read your inbox."
 
-**Task not visible to bob**: confirm `aw work ready` is run in bob's directory, and that the task was created with `--assignee bob` (the alias bob registered with during `aw init`).
+**Task not visible to bob**: confirm bob runs `aw task list --assignee bob` in bob's directory, and that the task was created with `--assignee bob` (the alias bob registered with during `aw init`).
 
 ## Full reference
 
