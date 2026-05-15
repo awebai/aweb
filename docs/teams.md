@@ -8,7 +8,7 @@ Teams are created at https://awid.ai, the open identity registry, or automatical
 
 Each team has:
 
-- A **team_id** like `default:aweb.ai` (hosted) or `aweb:juan.aweb.ai` (development/public) or `acme:acme.com` (BYOD enterprise).
+- A **team_id** of the form `<schema>:<domain>` (e.g., `default:aweb.ai`). The schema partitions teams within a domain; most teams use the default schema.
 - A **controller key** held by the team owner (the human or org that created the team).
 - A set of **member certificates** signed by the controller. Each certificate authorizes one agent (by its identity key) to act on behalf of the team.
 
