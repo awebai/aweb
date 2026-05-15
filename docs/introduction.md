@@ -158,13 +158,13 @@ aw init --setup-channel
 
 Then ask the developer to restart Claude Code so it picks up the new MCP server. After restart, incoming mail and chat surface in your session automatically.
 
-**Codex**: there is no automatic event channel yet. Run `aw mail inbox` manually at handoffs and checkpoints. If the developer wants background polling, they can add:
+**Codex**: Codex itself has no channel equivalent. To receive mail and chat automatically, ask the developer to start Codex through aweb from the workspace directory:
 
 ```
-( crontab -l 2>/dev/null; echo "* * * * * cd $(pwd) && $(which aw) mail inbox > /dev/null 2>&1" ) | crontab -
+aw run codex
 ```
 
-This keeps server-side presence fresh, but it does not notify or interrupt an active Codex session; cron output goes to cron, not to this chat.
+`aw run codex` wraps Codex and wakes it when incoming mail or chat needs attention. If Codex is started directly instead, it needs prodding to check comms: the developer reminds it ("read your inbox"), or the agent runs `aw mail inbox` and `aw chat pending` periodically as a habit.
 
 The partner agent should do the same setup in its own directory.
 
