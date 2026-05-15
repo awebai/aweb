@@ -197,6 +197,59 @@ func TestAwRolesShowAllRolesRendersPlaybooks(t *testing.T) {
 	}
 }
 
+func TestAwRolesShowEmptyBundleExitsZero(t *testing.T) {
+	// New teams bootstrap with an empty roles bundle (per team_roles.py:113
+	// in the onboarding rework). `aw roles show` with no explicit role and
+	// no membership role must list the empty bundle and exit 0; previously
+	// the CLI defaulted role_name to "developer" and the server returned 400
+	// because no such role existed in the bundle.
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			if got := r.URL.Query().Get("role_name"); got != "" {
+				t.Fatalf("role_name=%q (expected empty when no membership role)", got)
+			}
+			if got := r.URL.Query().Get("only_selected"); got != "false" {
+				t.Fatalf("only_selected=%q (expected false on empty-bundle fallback)", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id": "roles-empty",
+				"team_id":       "backend:proj-empty",
+				"version":       1,
+				"updated_at":    "2026-05-15T10:00:00Z",
+				"roles":         map[string]any{},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "show")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed (empty bundle should exit 0): %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "No roles configured for this team") {
+		t.Fatalf("expected empty-bundle hint in output:\n%s", text)
+	}
+}
+
 func TestAwRolesHistoryListsVersions(t *testing.T) {
 	t.Parallel()
 

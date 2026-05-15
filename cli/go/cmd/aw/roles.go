@@ -135,6 +135,13 @@ func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 	}
 
 	roleName := resolveRequestedRoleName(sel, rolesShowRoleNameFlag)
+	onlySelected := !rolesShowAllFlag
+	if roleName == "" {
+		// No role resolvable: list the bundle instead of asking the server
+		// for a specific role. only_selected=true with no role name would
+		// 400 ("only_selected=true requires a role or role_name parameter").
+		onlySelected = false
+	}
 	if rolesShowAllFlag {
 		roleName = ""
 	}
@@ -143,7 +150,7 @@ func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 
 	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
 		RoleName:     roleName,
-		OnlySelected: !rolesShowAllFlag,
+		OnlySelected: onlySelected,
 	})
 	if err != nil {
 		return err
@@ -152,7 +159,7 @@ func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 	printOutput(teamRolesShowOutput{
 		RoleName:     roleName,
 		Role:         roleName,
-		OnlySelected: !rolesShowAllFlag,
+		OnlySelected: onlySelected,
 		TeamRoles:    resp,
 	}, formatTeamRolesShow)
 	return nil
@@ -318,7 +325,10 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 		}
 	}
 	_ = sel
-	return "developer"
+	// No role resolvable. Returning the empty string lets the caller fall
+	// back to listing the bundle instead of forcing a name like "developer"
+	// that may not exist in the team's bundle (new teams bootstrap empty).
+	return ""
 }
 
 func resolveRolesBundle(stdin io.Reader, bundleJSON, bundleFile string) (aweb.TeamRolesBundle, error) {
@@ -513,32 +523,35 @@ func formatTeamRolesShow(v any) string {
 		return sb.String()
 	}
 
-	if len(out.TeamRoles.Roles) > 0 {
-		names := make([]string, 0, len(out.TeamRoles.Roles))
-		for name := range out.TeamRoles.Roles {
-			names = append(names, name)
+	if len(out.TeamRoles.Roles) == 0 {
+		sb.WriteString("\nNo roles configured for this team. Add roles with `aw roles add`.\n")
+		return sb.String()
+	}
+
+	names := make([]string, 0, len(out.TeamRoles.Roles))
+	for name := range out.TeamRoles.Roles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	sb.WriteString("\n## Roles\n")
+	for _, name := range names {
+		role := out.TeamRoles.Roles[name]
+		title := strings.TrimSpace(role.Title)
+		if title == "" {
+			title = name
 		}
-		sort.Strings(names)
-		sb.WriteString("\n## Roles\n")
-		for _, name := range names {
-			role := out.TeamRoles.Roles[name]
-			title := strings.TrimSpace(role.Title)
-			if title == "" {
-				title = name
-			}
-			sb.WriteString(fmt.Sprintf("\n### %s\n", title))
-			playbook := strings.TrimSpace(role.PlaybookMD)
-			if playbook == "" {
-				sb.WriteString("(no playbook)\n")
+		sb.WriteString(fmt.Sprintf("\n### %s\n", title))
+		playbook := strings.TrimSpace(role.PlaybookMD)
+		if playbook == "" {
+			sb.WriteString("(no playbook)\n")
+			continue
+		}
+		for _, line := range strings.Split(playbook, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
 				continue
 			}
-			for _, line := range strings.Split(playbook, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				sb.WriteString(line + "\n")
-			}
+			sb.WriteString(line + "\n")
 		}
 	}
 
