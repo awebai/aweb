@@ -548,13 +548,15 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	if alias != "" {
 		return alias, nil
 	}
-	// Persistent identities make the name the public address (alice -> alice.aweb.ai).
-	// The hosted-init wizard provisions a fresh user + team, so "alice" cannot collide
-	// at this point (server provisioning will still reject if the org-slug pick
-	// races); offering it as the default lets a developer accept the canonical
-	// introduction.md flow with one Enter keystroke. Sibling worktrees that need
-	// a second identity pass --alias explicitly (e.g., "bob"). Ephemeral identities
-	// are session-local; $USER as a convenience default is fine there.
+	// Persistent identities make the name the alias inside the user's hosted
+	// namespace — for a developer signing up as "juan", the canonical first
+	// agent address is juan.aweb.ai/alice. The hosted-init wizard provisions a
+	// fresh user + team, so "alice" cannot collide at this point (server
+	// provisioning will still reject if the org-slug pick races); offering it
+	// as the default lets a developer accept the canonical introduction.md flow
+	// with one Enter keystroke. Sibling worktrees that need a second identity
+	// pass --alias explicitly (e.g., "bob"). Ephemeral identities are
+	// session-local; $USER as a convenience default is fine there.
 	if req.Persistent {
 		return promptRequiredStringWithIO("Agent name", defaultGuidedHostedPersistentName(), req.PromptIn, req.PromptOut)
 	}
