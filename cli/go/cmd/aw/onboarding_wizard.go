@@ -340,24 +340,15 @@ func guidedOnboardingSkipDNSVerify() bool {
 }
 
 func resolveGuidedBYODPersistent(req guidedOnboardingRequest) (bool, error) {
-	if req.Persistent {
-		return true, nil
-	}
-	if strings.TrimSpace(req.Name) != "" && strings.TrimSpace(req.Alias) == "" {
-		return true, nil
-	}
-	if strings.TrimSpace(req.Alias) != "" && strings.TrimSpace(req.Name) == "" {
-		return false, nil
-	}
-	return promptIdentityLifetime(req.PromptIn, req.PromptOut, false)
+	// Default ephemeral; the --persistent flag is the only signal that promotes
+	// the identity to a durable did:aw. --name no longer implies persistent —
+	// it's just the agent name.
+	return req.Persistent, nil
 }
 
-func resolveGuidedHostedPersistent(_ guidedOnboardingRequest) (bool, error) {
-	// Hosted identities default to persistent — that is the durable identity
-	// users coming through the dashboard signup flow expect. The --persistent
-	// and --name flags remain available as explicit overrides on the BYOD path;
-	// hosted has no ephemeral wizard branch.
-	return true, nil
+func resolveGuidedHostedPersistent(req guidedOnboardingRequest) (bool, error) {
+	// Default ephemeral; --persistent is the only signal. Matches BYOD shape.
+	return req.Persistent, nil
 }
 
 func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string, error) {
@@ -548,35 +539,20 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	if alias != "" {
 		return alias, nil
 	}
-	// Persistent identities make the name the alias inside the user's hosted
-	// namespace — for a developer signing up as "juan", the canonical first
-	// agent address is juan.aweb.ai/alice. The hosted-init wizard provisions a
-	// fresh user + team, so "alice" cannot collide at this point (server
-	// provisioning will still reject if the org-slug pick races); offering it
-	// as the default lets a developer accept the canonical introduction.md flow
-	// with one Enter keystroke. Sibling worktrees that need a second identity
-	// pass --alias explicitly (e.g., "bob"). Ephemeral identities are
-	// session-local; $USER as a convenience default is fine there.
+	// "alice" is the canonical first-agent name from introduction.md. The
+	// developer who hits Enter at the prompt lands at <username>.aweb.ai/alice
+	// for persistent or inside the local team for ephemeral. Sibling worktrees
+	// for a second identity pass --alias explicitly (e.g., "bob"). $USER is
+	// deliberately not used as a default — that previous behavior silently
+	// bound the developer's OS login name to a public did:aw address.
 	if req.Persistent {
-		return promptRequiredStringWithIO("Agent name", defaultGuidedHostedPersistentName(), req.PromptIn, req.PromptOut)
+		return promptRequiredStringWithIO("Agent name", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 	}
 	return promptRequiredStringWithIO("Agent alias", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 }
 
-// defaultGuidedHostedPersistentName is the canonical seed name for the first
-// hosted identity on a fresh team — keeps the introduction.md flow accessible
-// with a single Enter keystroke.
-func defaultGuidedHostedPersistentName() string {
-	return "alice"
-}
-
 func defaultGuidedHostedAlias() string {
-	if v := strings.TrimSpace(os.Getenv("USER")); v != "" {
-		if sanitized := strings.TrimSpace(sanitizeKeyComponent(v)); sanitized != "" {
-			return sanitized
-		}
-	}
-	return "laptop"
+	return "alice"
 }
 
 func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL string) (string, error) {

@@ -320,7 +320,7 @@ func TestExecuteBYODPathDefaultsToEphemeralAlias(t *testing.T) {
 	var out bytes.Buffer
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("\nAlice\nAcme.com\n"),
+		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &out,
 		BaseURL:    "https://app.example",
 		Role:       "developer",
@@ -339,9 +339,10 @@ func TestExecuteBYODPathDefaultsToEphemeralAlias(t *testing.T) {
 		t.Fatalf("domain=%q", gotDomain)
 	}
 	output := out.String()
+	// The wizard no longer prompts for persistent-vs-ephemeral. Default is
+	// ephemeral; --persistent is the only signal that flips it. Output still
+	// describes the chosen identity once name + domain are known.
 	for _, want := range []string{
-		"Ephemeral",
-		"Persistent",
 		"Agent alias",
 		"Creating ephemeral BYOD identity",
 		`Agent alias "alice"`,
@@ -350,6 +351,9 @@ func TestExecuteBYODPathDefaultsToEphemeralAlias(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
 		}
+	}
+	if strings.Contains(output, "Should this identity be persistent or ephemeral?") {
+		t.Fatalf("BYOD wizard must not prompt for lifetime any more:\n%s", output)
 	}
 	if strings.Contains(output, "Name:") {
 		t.Fatalf("BYOD wizard should not prompt with bare Name:\n%s", output)
@@ -439,10 +443,11 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("2\nAlice\nAcme.com\n"),
+		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    "https://app.example",
 		Role:       "developer",
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -758,8 +763,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username, agent name, claim-human=y, email.
-	// Wizard no longer prompts for lifetime — hosted is always persistent.
+	// stdin: username, agent name, claim-human=y, email. No lifetime prompt.
+	// Persistent: true is explicit — the wizard defaults to ephemeral; this
+	// test exercises the --persistent flag's promotion to a durable identity.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
@@ -768,6 +774,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1006,12 +1013,13 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	tmp := t.TempDir()
 	var out bytes.Buffer
 	// stdin: first username, agent name, retry username after conflict, claim-human=n.
-	// No lifetime prompt — hosted is always persistent.
+	// No lifetime prompt. Persistent: true exercises --persistent flag promotion.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1043,7 +1051,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	}
 }
 
-func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
+// TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup exercises the
+// hosted path under the --persistent flag (Persistent:true): the wizard no
+// longer prompts for lifetime; the resulting signup is persistent with a
+// registered did:aw and on-disk identity.yaml.
+func TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "")
@@ -1166,13 +1178,14 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username, agent name, claim-human=no.
-	// The wizard no longer prompts for lifetime — hosted is always persistent.
+	// stdin: username, agent name, claim-human=no. No lifetime prompt.
+	// Persistent: true selects the durable-identity branch.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\nlaptop\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1200,6 +1213,145 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) == "" {
 		t.Fatalf("cert member_did_aw=%q must be set for persistent", cert.MemberDIDAW)
+	}
+}
+
+// TestExecuteHostedPathDefaultsToEphemeralWithAliceAlias locks in the
+// Juan-directive default for `aw init`: without --persistent, the wizard
+// signs up an ephemeral identity. With no --alias either, the prompt's
+// default is "alice" (the introduction.md canonical name) so a developer
+// reaches a working identity in one Enter keystroke. No lifetime prompt
+// fires; no did:aw is registered; identity.yaml is not written.
+func TestExecuteHostedPathDefaultsToEphemeralWithAliceAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USER", "juan")
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var didRegistrations []map[string]any
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didRegistrations = append(didRegistrations, body)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	var signupBody map[string]any
+	var onboardingURL string
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:jack.aweb.ai",
+				"alias":        "alice",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	onboardingServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       awebServer.URL,
+				"registry_url":   registryServer.URL,
+				"version":        "1.7.0",
+				"features":       []string{"managed_namespaces"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"available":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			if err := json.NewDecoder(r.Body).Decode(&signupBody); err != nil {
+				t.Fatal(err)
+			}
+			username := strings.TrimSpace(signupBody["username"].(string))
+			alias := strings.TrimSpace(signupBody["alias"].(string))
+			didKey := strings.TrimSpace(signupBody["did_key"].(string))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         "default:" + username + ".aweb.ai",
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			certB64, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"certificate":    certB64,
+				"did_aw":         "",
+				"member_address": "",
+				"alias":          alias,
+				"team_id":        "default:" + username + ".aweb.ai",
+				"api_key":        "aw_sk_guided_hosted",
+			})
+		default:
+			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = onboardingServer.URL
+
+	tmp := t.TempDir()
+	var out bytes.Buffer
+	// stdin: username "jack", agent alias blank (accept "alice" default),
+	// claim-human "n". No --persistent flag.
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir: tmp,
+		PromptIn:   strings.NewReader("jack\n\nn\n"),
+		PromptOut:  &out,
+		BaseURL:    onboardingServer.URL + "/api",
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	output := out.String()
+	// Ephemeral branch prompts "Agent alias" (not "Agent name").
+	if !strings.Contains(output, "Agent alias") {
+		t.Fatalf("ephemeral hosted path must prompt 'Agent alias', output:\n%s", output)
+	}
+	// Default offered is "alice" — never $USER.
+	if !strings.Contains(output, "[alice]") {
+		t.Fatalf("ephemeral hosted alias prompt must default to [alice], output:\n%s", output)
+	}
+	if strings.Contains(output, "[juan]") {
+		t.Fatalf("ephemeral hosted alias prompt must not default to OS $USER (juan); output:\n%s", output)
+	}
+	// Empty input accepts the "alice" default.
+	if got, _ := signupBody["alias"].(string); got != "alice" {
+		t.Fatalf("signup alias=%q want alice (canonical default on Enter)", got)
+	}
+	// Ephemeral signup: no did:aw registered.
+	if len(didRegistrations) != 0 {
+		t.Fatalf("did registrations=%d want 0 for ephemeral path", len(didRegistrations))
+	}
+	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) != "" {
+		t.Fatalf("signup did_aw=%q want empty for ephemeral", got)
+	}
+	// No identity.yaml written for ephemeral.
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("identity.yaml must not exist for ephemeral hosted: %v", err)
 	}
 }
 
@@ -1330,12 +1482,15 @@ func TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias(t *testing.T) {
 	var out bytes.Buffer
 	// stdin: username "jack", agent name blank (accept "alice" default),
 	// claim-human "n". USER=juan is set in the env to prove the OS login name
-	// never leaks into the prompt default for the persistent path.
+	// never leaks into the prompt default for the persistent path. Persistent:
+	// true selects the "Agent name" branch (vs ephemeral "Agent alias"); both
+	// branches default to "alice" now.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
 		PromptIn:   strings.NewReader("jack\n\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1488,13 +1643,14 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	var out bytes.Buffer
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir:  tmp,
-		PromptIn:    strings.NewReader("2\nAlice\nAcme.com\n"),
+		PromptIn:    strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:   &out,
 		BaseURL:     connectServer.URL,
 		RegistryURL: registryServer.URL,
 		Role:        "developer",
 		HumanName:   "Operator Jane",
 		AgentType:   "codex",
+		Persistent:  true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -1720,12 +1876,13 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	tmp := t.TempDir()
 	_, err = executeBYODPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("2\nAlice\nAcme.com\n"),
+		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    onboardingServer.URL,
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
+		Persistent: true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
