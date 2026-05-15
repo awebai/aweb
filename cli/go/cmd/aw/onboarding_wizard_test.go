@@ -714,11 +714,14 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			alias := strings.TrimSpace(signupBody["alias"].(string))
 			didKey := strings.TrimSpace(signupBody["did_key"].(string))
 			didAW := strings.TrimSpace(signupBody["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:" + username + ".aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "default:" + username + ".aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -736,7 +739,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 				"api_key":          "aw_sk_guided_hosted",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
-				"member_address":   "",
+				"member_address":   memberAddress,
 				"alias":            alias,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
@@ -755,10 +758,11 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username, lifetime "2" (ephemeral; persistent is the new default), alias, claim-human=y, email.
+	// stdin: username, agent name, claim-human=y, email.
+	// Wizard no longer prompts for lifetime — hosted is always persistent.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\n2\nlaptop\ny\njack@example.com\n"),
+		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
 		Role:       "developer",
@@ -775,8 +779,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if checkBodies[0]["username"] != "jack" {
 		t.Fatalf("username=%v", checkBodies[0]["username"])
 	}
-	if len(didRequests) != 0 {
-		t.Fatalf("did registrations=%d", len(didRequests))
+	if len(didRequests) != 1 {
+		t.Fatalf("did registrations=%d want 1 for persistent path", len(didRequests))
 	}
 	if signupBody["username"] != "jack" {
 		t.Fatalf("signup username=%v", signupBody["username"])
@@ -784,8 +788,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if signupBody["alias"] != "laptop" {
 		t.Fatalf("signup alias=%v", signupBody["alias"])
 	}
-	if signupBody["did_aw"] != "" {
-		t.Fatalf("signup did_aw=%v want empty string", signupBody["did_aw"])
+	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("signup did_aw must be set for persistent path; got=%v", signupBody["did_aw"])
 	}
 	if connectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", connectBody["role"])
@@ -797,8 +801,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		t.Fatalf("connect agent_type=%v", connectBody["agent_type"])
 	}
 
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral hosted onboarding: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+		t.Fatalf("identity.yaml must exist for persistent hosted onboarding: %v", err)
 	}
 
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
@@ -850,11 +854,14 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if cert.Team != "default:jack.aweb.ai" {
 		t.Fatalf("cert team=%q", cert.Team)
 	}
-	if cert.MemberDIDAW != "" {
-		t.Fatalf("cert member_did_aw=%q want empty", cert.MemberDIDAW)
+	if cert.Lifetime != awid.LifetimePersistent {
+		t.Fatalf("cert lifetime=%q want persistent", cert.Lifetime)
 	}
-	if cert.MemberAddress != "" {
-		t.Fatalf("cert member_address=%q want empty", cert.MemberAddress)
+	if strings.TrimSpace(cert.MemberDIDAW) == "" {
+		t.Fatalf("cert member_did_aw=%q must be set for persistent", cert.MemberDIDAW)
+	}
+	if strings.TrimSpace(cert.MemberAddress) == "" {
+		t.Fatalf("cert member_address=%q must be set for persistent", cert.MemberAddress)
 	}
 	if claimBody["username"] != "jack" {
 		t.Fatalf("claim username=%v", claimBody["username"])
@@ -953,11 +960,14 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 			alias := strings.TrimSpace(body["alias"].(string))
 			didKey := strings.TrimSpace(body["did_key"].(string))
 			didAW := strings.TrimSpace(body["did_aw"].(string))
+			memberAddress := username + ".aweb.ai/" + alias
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:" + username + ".aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "default:" + username + ".aweb.ai",
+				MemberDIDKey:  didKey,
+				MemberDIDAW:   didAW,
+				MemberAddress: memberAddress,
+				Alias:         alias,
+				Lifetime:      awid.LifetimePersistent,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -975,7 +985,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 				"api_key":          "aw_sk_guided_hosted",
 				"certificate":      encodedCert,
 				"did_aw":           didAW,
-				"member_address":   "",
+				"member_address":   memberAddress,
 				"alias":            alias,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
@@ -995,11 +1005,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: first username, lifetime "2" (ephemeral; default is persistent),
-	// alias, retry username after conflict, claim-human=n.
+	// stdin: first username, agent name, retry username after conflict, claim-human=n.
+	// No lifetime prompt — hosted is always persistent.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\n2\nlaptop\njack-2\nn\n"),
+		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
 	})
@@ -1010,18 +1020,20 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	if len(signupBodies) != 2 {
 		t.Fatalf("signup calls=%d", len(signupBodies))
 	}
-	if len(didRequests) != 0 {
-		t.Fatalf("did registrations=%d", len(didRequests))
+	if len(didRequests) != 2 {
+		// One did:register per attempt: hosted persistent registers a fresh
+		// keypair on first attempt and again on retry under the new username.
+		t.Fatalf("did registrations=%d want 2 for persistent retry", len(didRequests))
 	}
 	if signupBodies[0]["username"] != "jack" || signupBodies[1]["username"] != "jack-2" {
 		t.Fatalf("signup usernames=%v", signupBodies)
 	}
-	if signupBodies[0]["did_aw"] != "" || signupBodies[1]["did_aw"] != "" {
-		t.Fatalf("expected empty ephemeral did_aw on retry, got %v", signupBodies)
+	if got, _ := signupBodies[1]["did_aw"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("signup did_aw must be set on persistent retry; got=%v", signupBodies)
 	}
 
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for ephemeral hosted onboarding retry: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
+		t.Fatalf("identity.yaml must exist for persistent hosted onboarding retry: %v", err)
 	}
 	if !strings.Contains(out.String(), "Run aw claim-human now?") {
 		t.Fatalf("expected claim-human prompt in hosted retry output: %q", out.String())
@@ -1154,10 +1166,11 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username, lifetime (Enter takes the persistent default), alias, claim-human=no.
+	// stdin: username, agent name, claim-human=no.
+	// The wizard no longer prompts for lifetime — hosted is always persistent.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\n\nlaptop\nn\n"),
+		PromptIn:   strings.NewReader("jack\nlaptop\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
 	})
@@ -1166,7 +1179,7 @@ func TestExecuteHostedPathDefaultsToPersistentOnEnter(t *testing.T) {
 	}
 
 	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
-		t.Fatalf("signup did_aw must be set when persistent default is taken; signup=%v", signupBody)
+		t.Fatalf("signup did_aw must be set for persistent hosted identity; signup=%v", signupBody)
 	}
 	if got, _ := signupBody["alias"].(string); got != "laptop" {
 		t.Fatalf("signup alias=%v want laptop", got)
@@ -1315,12 +1328,12 @@ func TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username "jack", lifetime Enter (persistent default), explicit
-	// name "alice" (NOT "juan", to prove the OS USER is not used as default),
-	// claim-human "n".
+	// stdin: username "jack", agent name blank (accept "alice" default),
+	// claim-human "n". USER=juan is set in the env to prove the OS login name
+	// never leaks into the prompt default for the persistent path.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\n\nalice\nn\n"),
+		PromptIn:   strings.NewReader("jack\n\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
 	})
@@ -1333,17 +1346,19 @@ func TestExecuteHostedPathPersistentDoesNotSuggestUserAsAlias(t *testing.T) {
 	if !strings.Contains(output, "Agent name") {
 		t.Fatalf("persistent hosted path should prompt 'Agent name', output:\n%s", output)
 	}
-	// Crucially: the prompt must NOT suggest [juan] as a default. The OS USER
-	// value silently becoming the public did:aw address is the exact regression
-	// this test locks in.
+	// The prompt must NOT suggest [juan] as a default. The OS USER value
+	// silently becoming the public did:aw address is the regression this test
+	// locks in. The canonical seed default is "alice", not $USER.
 	if strings.Contains(output, "[juan]") {
 		t.Fatalf("persistent hosted alias prompt must not default to OS $USER (juan); output:\n%s", output)
 	}
+	if !strings.Contains(output, "[alice]") {
+		t.Fatalf("persistent hosted alias prompt must offer [alice] as the canonical default; output:\n%s", output)
+	}
 
-	// The chosen explicit name must be what gets sent in the signup body, not
-	// the OS USER value.
+	// Empty input accepts the "alice" default; signup body carries it through.
 	if got, _ := signupBody["alias"].(string); got != "alice" {
-		t.Fatalf("signup alias=%q want alice (explicit input); USER=juan must not leak through", got)
+		t.Fatalf("signup alias=%q want alice (canonical default on Enter); USER=juan must not leak through", got)
 	}
 }
 

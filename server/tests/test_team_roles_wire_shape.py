@@ -10,6 +10,7 @@ from aweb.coordination.routes.team_roles import (
     TeamRolesHistoryResponse,
     SelectedRoleInfo,
     _resolve_selected_role_name,
+    get_active_team_roles,
 )
 from aweb.coordination.routes.team_instructions import (
     ActiveTeamInstructionsResponse,
@@ -249,3 +250,42 @@ async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_mi
 
     assert data["team_instructions_id"] == "instr-123"
     assert data["updated_at"] == "2026-02-01T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_team_roles_uses_empty_bundle(monkeypatch):
+    """New-team bootstrap must seed an empty roles bundle, not the disk defaults."""
+    from datetime import datetime
+
+    from aweb.coordination.routes import team_roles as team_roles_module
+
+    captured_bundle: dict = {}
+
+    class _FakeDB:
+        async def fetch_one(self, *_args, **_kwargs):
+            return None
+
+    async def fake_create_team_roles_version(_db, *, team_id, base_roles_id, bundle, created_by_alias):
+        captured_bundle["value"] = bundle
+        return team_roles_module.TeamRolesVersion(
+            id="version-1",
+            team_id=team_id,
+            version=1,
+            bundle=team_roles_module.TeamRolesBundle(**bundle),
+            created_by_alias=created_by_alias,
+            created_at=datetime(2026, 5, 15),
+            updated_at=None,
+        )
+
+    async def fake_activate_team_roles(_db, *, team_id, roles_id):
+        return None
+
+    monkeypatch.setattr(team_roles_module, "create_team_roles_version", fake_create_team_roles_version)
+    monkeypatch.setattr(team_roles_module, "activate_team_roles", fake_activate_team_roles)
+
+    result = await get_active_team_roles(_FakeDB(), "backend:acme.com", bootstrap_if_missing=True)
+
+    assert captured_bundle["value"] == {"roles": {}, "adapters": {}}
+    assert result is not None
+    assert result.bundle.roles == {}
+    assert result.bundle.adapters == {}

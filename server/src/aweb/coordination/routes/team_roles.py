@@ -104,13 +104,13 @@ async def get_active_team_roles(
     if not bootstrap_if_missing:
         return None
 
-    logger.info("Bootstrapping default team roles for team %s", team_id)
+    logger.info("Bootstrapping empty team roles for team %s", team_id)
     try:
         team_roles_version = await create_team_roles_version(
             db,
             team_id=team_id,
             base_roles_id=None,
-            bundle=get_default_bundle(),
+            bundle={"roles": {}, "adapters": {}},
             created_by_alias=None,
         )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
