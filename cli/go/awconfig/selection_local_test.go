@@ -198,6 +198,60 @@ func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) 
 	}
 }
 
+func TestResolveUsesEphemeralActiveCertIdentityOverPersistentIdentityFile(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "devteam:test.local"
+	if _, err := SaveTeamCertificateForTeam(tmp, teamID, &awid.TeamCertificate{
+		Version:       1,
+		CertificateID: "cert-alice",
+		Team:          teamID,
+		TeamDIDKey:    "did:key:z6MkTeam",
+		MemberDIDKey:  "did:key:z6MkAliceEphemeral",
+		Alias:         "alice",
+		Lifetime:      awid.LifetimeEphemeral,
+		IssuedAt:      "2026-04-21T00:00:00Z",
+		Signature:     "sig",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "alice",
+			WorkspaceID: "agent-alice",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
+		DID:       "did:key:z6MkAlicePersistent",
+		StableID:  "did:aw:alice",
+		Address:   "test.local/alice",
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-04-21T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.DID != "did:key:z6MkAliceEphemeral" {
+		t.Fatalf("did=%q want active certificate did:key", sel.DID)
+	}
+	if sel.StableID != "" {
+		t.Fatalf("stable_id=%q want empty for ephemeral active certificate", sel.StableID)
+	}
+	if sel.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("lifetime=%q want %q", sel.Lifetime, awid.LifetimeEphemeral)
+	}
+}
+
 func TestResolveLeavesAddressEmptyWhenIdentityAndActiveCertAddressMissing(t *testing.T) {
 	t.Parallel()
 

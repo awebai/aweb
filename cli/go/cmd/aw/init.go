@@ -535,34 +535,6 @@ func resolveRequestedRole(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
 }
 
-func promptIdentityLifetime(in io.Reader, out io.Writer, defaultPersistent bool) (bool, error) {
-	fmt.Fprintln(out, "Should this identity be persistent or ephemeral?")
-	if defaultPersistent {
-		fmt.Fprintln(out, "  1. Persistent — recommended; survives restarts, key rotations, and machine moves; has a public address")
-		fmt.Fprintln(out, "  2. Ephemeral — per-workspace, transient; lost if you reset .aw/ or move to another machine")
-	} else {
-		fmt.Fprintln(out, "  1. Ephemeral — per-workspace, transient; lost if you reset .aw/ or move to another machine")
-		fmt.Fprintln(out, "  2. Persistent — durable; survives restarts, key rotations, and machine moves; has a public address")
-	}
-	reader := bufferedPromptReader(in)
-	for {
-		fmt.Fprintf(out, "Identity type [1]: ")
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return false, err
-		}
-		line = strings.TrimSpace(line)
-		switch line {
-		case "", "1":
-			return defaultPersistent, nil
-		case "2":
-			return !defaultPersistent, nil
-		default:
-			fmt.Fprintln(out, "Enter 1 or 2.")
-		}
-	}
-}
-
 func runDefaultInitDocsInjection(workingDir string) bool {
 	if jsonFlag || initDoNotTouchAgentsMD || initInjectDocs {
 		return false

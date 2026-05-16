@@ -160,6 +160,13 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 			workspaceID = strings.TrimSpace(selectedMembership.WorkspaceID)
 			certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
 			if cert, err := awid.LoadTeamCertificate(certPath); err == nil {
+				if v := strings.TrimSpace(cert.MemberDIDKey); v != "" {
+					did = v
+				}
+				stableID = strings.TrimSpace(cert.MemberDIDAW)
+				if v := strings.TrimSpace(cert.Lifetime); v != "" {
+					lifetime = v
+				}
 				if v := strings.TrimSpace(cert.MemberAddress); v != "" {
 					address = v
 				}
@@ -173,16 +180,16 @@ func finalizeWorkspaceSelection(workingDir, workspacePath, serverName, baseURL s
 		if v := strings.TrimSpace(identity.Address); v != "" && address == "" {
 			address = v
 		}
-		if v := strings.TrimSpace(identity.DID); v != "" {
+		if v := strings.TrimSpace(identity.DID); v != "" && did == "" {
 			did = v
 		}
-		if v := strings.TrimSpace(identity.StableID); v != "" {
+		if v := strings.TrimSpace(identity.StableID); v != "" && stableID == "" && lifetime != awid.LifetimeEphemeral {
 			stableID = v
 		}
 		if v := strings.TrimSpace(identity.Custody); v != "" {
 			custody = v
 		}
-		if v := strings.TrimSpace(identity.Lifetime); v != "" {
+		if v := strings.TrimSpace(identity.Lifetime); v != "" && lifetime == "" {
 			lifetime = v
 		}
 		if v := strings.TrimSpace(identity.RegistryURL); v != "" {

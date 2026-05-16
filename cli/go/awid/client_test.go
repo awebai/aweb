@@ -2898,7 +2898,7 @@ func TestChatCreateSessionAddressTargetOmitsToAliasesKey(t *testing.T) {
 	}
 }
 
-func TestChatCreateSessionSingleAliasTargetSignsResolvedRecipientBinding(t *testing.T) {
+func TestChatCreateSessionBareAliasDoesNotResolveRecipientDID(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -2907,8 +2907,6 @@ func TestChatCreateSessionSingleAliasTargetSignsResolvedRecipientBinding(t *test
 	}
 	did := ComputeDIDKey(pub)
 	recipientAlias := "monitor"
-	recipientAddress := "myco/monitor"
-	recipientCurrentDID := "did:key:z6MkrRecipientCurrent"
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2927,13 +2925,8 @@ func TestChatCreateSessionSingleAliasTargetSignsResolvedRecipientBinding(t *test
 	c.SetAddress("myco/agent")
 	c.SetResolver(stubIdentityResolver{
 		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
-			if identifier != recipientAddress {
-				t.Fatalf("resolve identifier=%q", identifier)
-			}
-			return &ResolvedIdentity{
-				Address: recipientAddress,
-				DID:     recipientCurrentDID,
-			}, nil
+			t.Fatalf("bare team alias must not be resolved through the registry, got %q", identifier)
+			return nil, nil
 		},
 	})
 
@@ -2944,6 +2937,9 @@ func TestChatCreateSessionSingleAliasTargetSignsResolvedRecipientBinding(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if aliases, ok := gotBody["to_aliases"].([]any); !ok || len(aliases) != 1 || aliases[0] != recipientAlias {
+		t.Fatalf("to_aliases=%v, want [%s]", gotBody["to_aliases"], recipientAlias)
+	}
 
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
@@ -2953,8 +2949,11 @@ func TestChatCreateSessionSingleAliasTargetSignsResolvedRecipientBinding(t *test
 	if err := json.Unmarshal([]byte(sp), &env); err != nil {
 		t.Fatalf("unmarshal signed_payload: %v", err)
 	}
-	if env.ToDID != recipientCurrentDID {
-		t.Fatalf("signed payload to_did=%q, want resolved current did %q", env.ToDID, recipientCurrentDID)
+	if env.ToDID != "" {
+		t.Fatalf("signed payload to_did=%q, want empty for bare alias", env.ToDID)
+	}
+	if env.ToStableID != "" {
+		t.Fatalf("signed payload to_stable_id=%q, want empty for bare alias", env.ToStableID)
 	}
 	if env.To != recipientAlias {
 		t.Fatalf("signed payload to=%q, want %q", env.To, recipientAlias)
@@ -3811,6 +3810,72 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 	}
 	if status != Verified {
 		t.Fatalf("status=%s, want verified", status)
+	}
+}
+
+func TestSendMessageBareAliasDoesNotResolveRecipientDID(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/messages":
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"message_id":   "msg-1",
+				"status":       "delivered",
+				"delivered_at": "2026-02-22T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := NewWithIdentity(server.URL, priv, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/alice")
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+			t.Fatalf("bare team alias must not be resolved through the registry, got %q", identifier)
+			return nil, nil
+		},
+	})
+
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToAlias: "bob",
+		Body:    "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotBody["to_alias"] != "bob" {
+		t.Fatalf("to_alias=%v, want bob", gotBody["to_alias"])
+	}
+	if gotBody["to_did"] != nil {
+		t.Fatalf("to_did should be absent for a bare alias, got %v", gotBody["to_did"])
+	}
+	if gotBody["to_stable_id"] != nil {
+		t.Fatalf("to_stable_id should be absent for a bare alias, got %v", gotBody["to_stable_id"])
+	}
+	env := signedPayloadMap(t, gotBody)
+	if env["to"] != "bob" {
+		t.Fatalf("signed payload to=%v, want bob", env["to"])
+	}
+	if env["to_did"] != "" {
+		t.Fatalf("signed payload to_did=%v, want empty", env["to_did"])
+	}
+	if env["to_stable_id"] != nil {
+		t.Fatalf("signed payload to_stable_id=%v, want absent", env["to_stable_id"])
 	}
 }
 

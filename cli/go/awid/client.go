@@ -101,12 +101,14 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	}
 
 	// Resolve recipient DID for recipient binding when we have a stable
-	// identity target, or for mail when we only have a routable address.
+	// identity target or an explicit routable address. Bare aliases are
+	// team-scoped selectors; the server resolves them under the authenticated
+	// team certificate.
 	if c.resolver != nil && env.ToDID == "" {
 		target := strings.TrimSpace(env.ToStableID)
-		if target == "" && env.Type == "mail" {
+		if target == "" && env.Type == "mail" && isRoutableAddressTarget(env.To) {
 			target = c.canonicalTrustAddress(env.To)
-		} else if target == "" && env.Type == "chat" && !strings.Contains(env.To, ",") {
+		} else if target == "" && env.Type == "chat" && !strings.Contains(env.To, ",") && isRoutableAddressTarget(env.To) {
 			target = c.canonicalTrustAddress(env.To)
 		}
 		if target != "" {
@@ -144,6 +146,11 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 		MessageID:     env.MessageID,
 		SignedPayload: CanonicalJSON(env),
 	}, nil
+}
+
+func isRoutableAddressTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	return strings.Contains(target, "/") || strings.Contains(target, "~")
 }
 
 const (

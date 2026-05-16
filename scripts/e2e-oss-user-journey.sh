@@ -54,6 +54,7 @@ E2E_HOME="$(make_temp_dir aw-e2e-home)"
 E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
+EVE_DIR="$E2E_CWD/eve"
 CAROL_DIR="$E2E_CWD/carol"
 DAVE_DIR="$E2E_CWD/dave"
 GSK_DIR="$E2E_CWD/gsk"
@@ -66,10 +67,11 @@ WIZARD_BYOD_DIR="$E2E_CWD/wizard-byod"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
+mkdir -p "$ALICE_DIR" "$BOB_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
+EVE_DIR="$(canonicalize_dir "$EVE_DIR")"
 CAROL_DIR="$(canonicalize_dir "$CAROL_DIR")"
 DAVE_DIR="$(canonicalize_dir "$DAVE_DIR")"
 GSK_DIR="$(canonicalize_dir "$GSK_DIR")"
@@ -84,6 +86,7 @@ pass=0
 fail=0
 
 cleanup() {
+  local status=$?
   echo ""
   echo "--- Cleanup ---"
   if [[ -f "$SERVER_DIR/.env.e2e" ]]; then
@@ -95,6 +98,9 @@ cleanup() {
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
     exit 1
+  elif [[ $status -ne 0 ]]; then
+    echo "FAILED: script exited with status $status before recording an assertion failure ($pass passed)"
+    exit "$status"
   else
     echo "ALL PASSED: $pass tests"
   fi
@@ -547,6 +553,7 @@ echo "=== Phase 4: Alice joins team ==="
 alice_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
+  --persistent \
   --json 2>/dev/null)"
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
@@ -643,6 +650,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 bob_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
+  --persistent \
   --json 2>/dev/null)"
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
@@ -667,12 +675,18 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 10: Alice sends mail to bob ==="
 
-run_aw_in "$ALICE_DIR" mail send \
+if mail_send_out="$(run_aw_in "$ALICE_DIR" mail send \
   --to bob \
   --subject "E2E test" \
-  --body "Hello from alice" 2>/dev/null
-mail_send_exit=$?
+  --body "Hello from alice" 2>&1)"; then
+  mail_send_exit=0
+else
+  mail_send_exit=$?
+fi
 assert_eq "mail send exit" "0" "$mail_send_exit"
+if [[ "$mail_send_exit" != "0" ]]; then
+  echo "$mail_send_out"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -689,9 +703,58 @@ assert_eq "message body" "Hello from alice" "$bob_msg_body"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 11a: Cross-machine request/add-member/fetch-cert
+# Phase 11a: Bare alias to an ephemeral member with a registered identity
 # ---------------------------------------------------------------------------
-echo "=== Phase 11a: Cross-machine request/add-member/fetch-cert ==="
+echo "=== Phase 11a: Bare alias to registered ephemeral member ==="
+
+eve_create="$(run_aw_in "$EVE_DIR" id create \
+  --name eve \
+  --domain test.local \
+  --registry "$AWID_URL" \
+  --skip-dns-verify \
+  --json 2>/dev/null)"
+EVE_DID_AW="$(echo "$eve_create" | jq_field did_aw)"
+assert_not_empty "eve did_aw" "$EVE_DID_AW"
+
+eve_invite_out="$(run_aw_in "$ALICE_DIR" id team invite \
+  --team devteam \
+  --namespace test.local \
+  --json 2>/dev/null)"
+EVE_INVITE_TOKEN="$(echo "$eve_invite_out" | jq_field token)"
+assert_not_empty "eve ephemeral invite token" "$EVE_INVITE_TOKEN"
+
+eve_accept="$(run_aw_in "$EVE_DIR" id team accept-invite "$EVE_INVITE_TOKEN" \
+  --alias eve \
+  --json 2>/dev/null)"
+EVE_ACCEPT_STATUS="$(echo "$eve_accept" | jq_field status)"
+assert_eq "eve accepted default ephemeral invite" "accepted" "$EVE_ACCEPT_STATUS"
+
+run_aw_in "$EVE_DIR" init --url "$AWEB_URL" 2>/dev/null
+eve_init_exit=$?
+assert_eq "eve init exit" "0" "$eve_init_exit"
+
+if eve_mail_out="$(run_aw_in "$ALICE_DIR" mail send \
+  --to eve \
+  --subject "Registered ephemeral e2e" \
+  --body "Hello registered ephemeral eve" 2>&1)"; then
+  eve_mail_exit=0
+else
+  eve_mail_exit=$?
+fi
+assert_eq "alice mails registered ephemeral eve by bare alias" "0" "$eve_mail_exit"
+if [[ "$eve_mail_exit" != "0" ]]; then
+  echo "$eve_mail_out"
+fi
+
+eve_inbox="$(run_aw_in "$EVE_DIR" mail inbox --json 2>/dev/null)"
+eve_msg_body="$(echo "$eve_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Hello registered ephemeral eve'), ''))" 2>/dev/null || echo "")"
+assert_eq "eve receives bare-alias mail despite registered identity" "Hello registered ephemeral eve" "$eve_msg_body"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 11b: Cross-machine request/add-member/fetch-cert
+# ---------------------------------------------------------------------------
+echo "=== Phase 11b: Cross-machine request/add-member/fetch-cert ==="
 
 erin_create="$(run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" id create \
   --name erin \
@@ -792,9 +855,9 @@ assert_contains "wrong did fetch-cert explains auth" "$mallory_fetch_out" "403"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 11b: Cross-identity messaging via contacts
+# Phase 11c: Cross-identity messaging via contacts
 # ---------------------------------------------------------------------------
-echo "=== Phase 11b: Cross-identity messaging via contacts ==="
+echo "=== Phase 11c: Cross-identity messaging via contacts ==="
 
 carol_create="$(run_aw_in "$CAROL_DIR" id create \
   --name carol \
@@ -858,11 +921,17 @@ run_aw_in "$ALICE_DIR" contacts add "test.local/bob" --label "Bob" >/dev/null 2>
 contacts_add_exit=$?
 assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
 
-run_aw_in "$BOB_DIR" mail send \
+if bob_direct_out="$(run_aw_in "$BOB_DIR" mail send \
   --to-did "$ALICE_DID_AW" \
-  --body "Direct hello from bob" >/dev/null 2>&1
-bob_direct_exit=$?
+  --body "Direct hello from bob" 2>&1)"; then
+  bob_direct_exit=0
+else
+  bob_direct_exit=$?
+fi
 assert_eq "bob direct mail to alice did" "0" "$bob_direct_exit"
+if [[ "$bob_direct_exit" != "0" ]]; then
+  echo "$bob_direct_out"
+fi
 
 alice_contacts_inbox="$(run_aw_in "$ALICE_DIR" mail inbox --json 2>/dev/null)"
 alice_bob_message="$(echo "$alice_contacts_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('body')=='Direct hello from bob'), ''))" 2>/dev/null || echo "")"
@@ -1106,6 +1175,7 @@ assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 partner_bob_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
+  --persistent \
   --json 2>/dev/null)"
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
@@ -1123,6 +1193,7 @@ assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 partner_alice_invite_out="$(run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
+  --persistent \
   --json 2>/dev/null)"
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
@@ -1861,7 +1932,7 @@ assert_eq "awid team name" "devteam" "$team_get_name"
 
 certs_list="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 cert_count="$(echo "$certs_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "4 active certificates" "4" "$cert_count"
+assert_eq "5 active certificates" "5" "$cert_count"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1890,7 +1961,7 @@ assert_eq "1 revocation" "1" "$revocation_count"
 
 active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
-assert_eq "3 active certificates (alice, erin, and gsk)" "3" "$active_count"
+assert_eq "4 active certificates (alice, erin, eve, and gsk)" "4" "$active_count"
 echo ""
 
 # ---------------------------------------------------------------------------

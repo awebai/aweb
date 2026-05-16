@@ -24,7 +24,16 @@ func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespac
 	if strings.TrimSpace(namespace) == "" {
 		namespace = "demo"
 	}
-	return writeWorkspaceBindingForTest(t, workingDir, workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1"))
+	state := workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1")
+	activeMembership := activeMembershipForTest(t, &state)
+	writeTeamCertificateWorkspaceForTest(t, workingDir, state, &testSelectionFixture{
+		TeamID:      activeMembership.TeamID,
+		Alias:       activeMembership.Alias,
+		WorkspaceID: activeMembership.WorkspaceID,
+		Lifetime:    awid.LifetimeEphemeral,
+		CreatedAt:   "2026-04-04T00:00:00Z",
+	})
+	return writeWorkspaceBindingForTest(t, workingDir, state)
 }
 
 func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T) {

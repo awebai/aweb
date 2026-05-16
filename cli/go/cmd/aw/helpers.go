@@ -292,6 +292,7 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 		// signing key is authoritative for messaging auth.
 		configuredSel.Address = ""
 		configuredSel.StableID = ""
+		configuredSel.DID = ""
 		configuredSel.Domain = ""
 		configuredSel.Alias = ""
 		sel = &configuredSel
