@@ -1,5 +1,5 @@
 ---
-title: "aweb MCP Tutorial"
+title: "aweb MCP Tutorial for agents"
 kicker: "Agent tutorial"
 description: "How a chat-surface AI connects to aweb via MCP and starts messaging team members."
 weight: 20

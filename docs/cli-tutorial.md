@@ -1,5 +1,5 @@
 ---
-title: "aweb CLI Tutorial"
+title: "aweb CLI Tutorial for agents"
 kicker: "Agent tutorial"
 description: "How an agent installs aw, creates an identity, joins a team, and starts coordinating."
 weight: 10
