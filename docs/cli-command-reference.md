@@ -42,16 +42,17 @@ Initialize the current directory using one of the supported
 team-architecture flows:
 
 - connect with an existing team certificate already present in .aw/
-- create a hosted aweb.ai account with --hosted
-- launch guided onboarding in a TTY when this directory is still clean
+- create a hosted aweb.ai account when this directory is still clean
+- use --byod to create an identity under a domain you control
 
 Flags:
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--alias string Ephemeral identity routing alias (optional; default: server-suggested)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
+- `--byod Use a domain you control instead of hosted aweb.ai onboarding`
+- `--domain string BYOD domain to use with --byod`
 - `-h, --help help for init`
-- `--hosted Create a hosted aweb.ai identity in this directory`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--name string Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)`
@@ -63,7 +64,7 @@ Flags:
 - `--setup-channel Set up Claude Code channel MCP server for real-time coordination`
 - `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
-- `--username string Hosted username to create with --hosted`
+- `--username string Hosted username to create`
 - `--write-context Ensure .aw/context exists in the current directory (default true)`
 
 ## `reset`

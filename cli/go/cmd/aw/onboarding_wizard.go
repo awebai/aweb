@@ -32,8 +32,6 @@ var (
 )
 
 const guidedOnboardingDefaultTeamName = "default"
-const guidedOnboardingManagedDomainSuffix = ".aweb.ai"
-
 type guidedOnboardingRequest struct {
 	WorkingDir         string
 	PromptIn           io.Reader
@@ -41,6 +39,9 @@ type guidedOnboardingRequest struct {
 	BaseURL            string
 	RegistryURL        string
 	ServerName         string
+	BYOD               bool
+	Username           string
+	Domain             string
 	Alias              string
 	Name               string
 	Reachability       string
@@ -49,6 +50,7 @@ type guidedOnboardingRequest struct {
 	Role               string
 	Persistent         bool
 	AskPostCreateSetup bool
+	NonInteractive     bool
 }
 
 type guidedOnboardingResult struct {
@@ -59,13 +61,6 @@ type guidedBYODProvision struct {
 	Identity    *preparedIDCreate
 	Certificate *awid.TeamCertificate
 }
-
-type guidedOnboardingPath string
-
-const (
-	guidedOnboardingPathHosted guidedOnboardingPath = "Use the aweb.ai managed identity"
-	guidedOnboardingPathBYOD   guidedOnboardingPath = "I have a domain I control"
-)
 
 func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 	if strings.TrimSpace(req.WorkingDir) == "" {
@@ -78,24 +73,10 @@ func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardi
 		return executeReconnectPath(req)
 	}
 
-	path, err := promptGuidedOnboardingPath(req.PromptIn, req.PromptOut)
-	if err != nil {
-		return nil, err
+	if req.BYOD {
+		return guidedOnboardingExecuteBYODPath(req)
 	}
-
-	var result *guidedOnboardingResult
-	switch path {
-	case guidedOnboardingPathHosted:
-		result, err = guidedOnboardingExecuteHostedPath(req)
-	case guidedOnboardingPathBYOD:
-		result, err = guidedOnboardingExecuteBYODPath(req)
-	default:
-		return nil, fmt.Errorf("unsupported onboarding path %q", path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return guidedOnboardingExecuteHostedPath(req)
 }
 
 func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -122,13 +103,20 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
+	if err := validateHostedNonInteractiveRequired(req); err != nil {
+		return nil, err
+	}
+
 	serviceURLs, err := discoverOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
+		if req.NonInteractive {
+			return nil, usageError("hosted onboarding is not available on this server; use --byod with a domain you control")
+		}
 		fmt.Fprintln(req.PromptOut, "Managed onboarding is not available here. Switching to BYOD.")
 		return executeBYODPath(req)
 	}
 
-	username, err := promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.OnboardingURL)
+	username, err := resolveGuidedHostedUsername(req, serviceURLs.OnboardingURL)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +135,9 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
+				if req.NonInteractive {
+					return nil, usageError("username %q is not available (taken)", username)
+				}
 				fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
 				username, err = promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.OnboardingURL)
 				if err != nil {
@@ -182,13 +173,34 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	}
 	printOutput(result, formatConnect)
 
-	if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
-		return nil, err
-	}
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
 	}
+	if !req.NonInteractive {
+		if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
+			return nil, err
+		}
+	}
 	return &guidedOnboardingResult{}, nil
+}
+
+func validateHostedNonInteractiveRequired(req guidedOnboardingRequest) error {
+	if !req.NonInteractive {
+		return nil
+	}
+	if strings.TrimSpace(req.Username) == "" {
+		return usageError("missing required flag: --username")
+	}
+	if req.Persistent {
+		if strings.TrimSpace(req.Name) == "" && strings.TrimSpace(req.Alias) == "" {
+			return usageError("missing required flag: --name")
+		}
+		return nil
+	}
+	if strings.TrimSpace(req.Alias) == "" && strings.TrimSpace(req.Name) == "" {
+		return usageError("missing required flag: --alias")
+	}
+	return nil
 }
 
 func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -205,7 +217,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
-	domain, err := promptRequiredStringWithIO("Domain", "", req.PromptIn, req.PromptOut)
+	domain, err := resolveGuidedBYODDomain(req)
 	if err != nil {
 		return nil, err
 	}
@@ -251,29 +263,19 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 	return err == nil && len(stored) > 0
 }
 
-func promptGuidedOnboardingPath(in io.Reader, out io.Writer) (guidedOnboardingPath, error) {
-	fmt.Fprintln(out, "How should this agent get its identity?")
-	fmt.Fprintln(out, "  Hosted is the fastest path. The other option uses a domain you already control.")
-	choice, err := promptIndexedChoice(
-		"Choose onboarding path",
-		[]string{string(guidedOnboardingPathHosted), string(guidedOnboardingPathBYOD)},
-		0,
-		in,
-		out,
-	)
-	if err != nil {
-		return "", err
-	}
-	return guidedOnboardingPath(choice), nil
-}
-
 func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
 	if !req.AskPostCreateSetup {
 		return nil
 	}
 
 	repoRoot := resolveRepoRoot(req.WorkingDir)
-	if docs, err := promptYesNoWithIO("Inject agent docs into this repo?", false, req.PromptIn, req.PromptOut); err == nil && docs {
+	if docs, err := promptYesNoWithIO(
+		"Inject aw agent instructions into this repo?\n"+
+			"  They are clearly marked and only explain how agents should use aw.",
+		true,
+		req.PromptIn,
+		req.PromptOut,
+	); err == nil && docs {
 		printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
 	} else if err != nil {
 		return err
@@ -281,7 +283,7 @@ func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
 	if channel, err := promptYesNoWithIO(
 		"Set up Claude Code channel for real-time coordination?\n"+
 			"  (Alternative: install the plugin with /plugin install aweb-channel@awebai-marketplace)",
-		false, req.PromptIn, req.PromptOut,
+		true, req.PromptIn, req.PromptOut,
 	); err == nil && channel {
 		printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
 	} else if err != nil {
@@ -362,6 +364,12 @@ func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string
 		label = "Agent alias"
 	}
 	if name == "" {
+		if req.NonInteractive {
+			if persistent {
+				return "", usageError("missing required flag: --name")
+			}
+			return "", usageError("missing required flag: --alias")
+		}
 		prompted, err := promptRequiredStringWithIO(label, "", req.PromptIn, req.PromptOut)
 		if err != nil {
 			return "", err
@@ -369,6 +377,17 @@ func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string
 		name = prompted
 	}
 	return normalizeIDCreateName(name)
+}
+
+func resolveGuidedBYODDomain(req guidedOnboardingRequest) (string, error) {
+	domain := strings.TrimSpace(req.Domain)
+	if domain != "" {
+		return domain, nil
+	}
+	if req.NonInteractive {
+		return "", usageError("missing required flag: --domain")
+	}
+	return promptRequiredStringWithIO("Domain", "", req.PromptIn, req.PromptOut)
 }
 
 func printGuidedBYODIdentityPlan(out io.Writer, persistent bool, name, domain string) {
@@ -399,6 +418,9 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	prepared, err := prepareIDCreatePlan(req.WorkingDir, opts)
 	if err != nil {
 		return nil, err
+	}
+	if req.NonInteractive && prepared.Plan.NeedsDNSSetup && !opts.SkipDNSVerify {
+		return nil, usageError("BYOD DNS setup for %s requires a TTY; rerun `aw init --byod --domain %s` interactively after publishing the required TXT record", prepared.Plan.Domain, prepared.Plan.Domain)
 	}
 	if err := printIDCreateDNSInstructions(prepared.Plan, opts.PromptOut); err != nil {
 		return nil, err
@@ -525,7 +547,7 @@ func ensureHostedOnboardingAvailable(awebURL string) error {
 	var regErr *awid.RegistryError
 	if errors.As(err, &regErr) {
 		if regErr.StatusCode == http.StatusNotFound {
-			return usageError("hosted onboarding is not available on this server; rerun `aw init` and choose BYOD with a domain you control")
+			return usageError("hosted onboarding is not available on this server; rerun `aw init --byod` with a domain you control")
 		}
 		if hostedCheckUsernameReason(regErr.Detail) == "invalid_format" {
 			return nil
@@ -538,6 +560,15 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	alias := strings.TrimSpace(req.Alias)
 	if alias != "" {
 		return alias, nil
+	}
+	if name := strings.TrimSpace(req.Name); name != "" {
+		return name, nil
+	}
+	if req.NonInteractive {
+		if req.Persistent {
+			return "", usageError("missing required flag: --name")
+		}
+		return "", usageError("missing required flag: --alias")
 	}
 	// "alice" is the canonical first-agent name from introduction.md. The
 	// developer who hits Enter at the prompt lands at <username>.aweb.ai/alice
@@ -555,6 +586,39 @@ func defaultGuidedHostedAlias() string {
 	return "alice"
 }
 
+func resolveGuidedHostedUsername(req guidedOnboardingRequest, onboardingURL string) (string, error) {
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		if req.NonInteractive {
+			return "", usageError("missing required flag: --username")
+		}
+		return promptAvailableHostedUsername(req.PromptIn, req.PromptOut, onboardingURL)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	resp, err := guidedOnboardingCheckUsername(ctx, onboardingURL, username)
+	cancel()
+	if err != nil {
+		var regErr *awid.RegistryError
+		if errors.As(err, &regErr) && regErr.StatusCode == http.StatusNotFound {
+			return "", usageError("hosted onboarding is not available on this server; use --byod with a domain you control")
+		}
+		return "", err
+	}
+	if resp != nil && resp.Available {
+		return username, nil
+	}
+
+	reason := ""
+	if resp != nil {
+		reason = strings.TrimSpace(resp.Reason)
+	}
+	if reason == "" {
+		reason = "unavailable"
+	}
+	return "", usageError("username %q is not available (%s)", username, reason)
+}
+
 func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL string) (string, error) {
 	for {
 		username, err := promptRequiredStringWithIO("Username", "", in, out)
@@ -568,7 +632,7 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL st
 		if err != nil {
 			var regErr *awid.RegistryError
 			if errors.As(err, &regErr) && regErr.StatusCode == http.StatusNotFound {
-				return "", usageError("hosted onboarding is not available on this server; rerun `aw init` and choose BYOD with a domain you control")
+				return "", usageError("hosted onboarding is not available on this server; rerun `aw init --byod` with a domain you control")
 			}
 			return "", err
 		}
@@ -618,10 +682,8 @@ func provisionHostedIdentity(
 	}
 	didKey := awid.ComputeDIDKey(pub)
 	didAW := ""
-	memberAddress := ""
 	if persistent {
 		didAW = awid.ComputeStableID(pub)
-		memberAddress = username + guidedOnboardingManagedDomainSuffix + "/" + alias
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -645,7 +707,7 @@ func provisionHostedIdentity(
 		return hostedIdentityProvision{}, err
 	}
 
-	cert, err := validateHostedSignupResponse(resp, didKey, didAW, memberAddress, alias)
+	cert, err := validateHostedSignupResponse(resp, didKey, didAW, alias)
 	if err != nil {
 		return hostedIdentityProvision{}, err
 	}
@@ -659,7 +721,7 @@ func provisionHostedIdentity(
 		Certificate:   cert,
 		DIDKey:        didKey,
 		DIDAW:         didAW,
-		MemberAddress: memberAddress,
+		MemberAddress: strings.TrimSpace(cert.MemberAddress),
 		RegistryURL:   strings.TrimSpace(registry.DefaultRegistryURL),
 		APIKey:        apiKey,
 	}, nil
@@ -685,16 +747,13 @@ func registerHostedDID(
 
 func validateHostedSignupResponse(
 	resp *awid.CliSignupResponse,
-	didKey, didAW, memberAddress, alias string,
+	didKey, didAW, alias string,
 ) (*awid.TeamCertificate, error) {
 	if resp == nil {
 		return nil, fmt.Errorf("missing hosted signup response")
 	}
 	if strings.TrimSpace(resp.DIDAW) != strings.TrimSpace(didAW) {
 		return nil, fmt.Errorf("hosted signup returned did_aw %q, expected %q", resp.DIDAW, didAW)
-	}
-	if strings.TrimSpace(resp.MemberAddress) != strings.TrimSpace(memberAddress) {
-		return nil, fmt.Errorf("hosted signup returned member_address %q, expected %q", resp.MemberAddress, memberAddress)
 	}
 	if gotAlias := strings.TrimSpace(resp.Alias); gotAlias != "" && gotAlias != strings.TrimSpace(alias) {
 		return nil, fmt.Errorf("hosted signup returned alias %q, expected %q", resp.Alias, alias)
@@ -710,8 +769,14 @@ func validateHostedSignupResponse(
 	if cert.MemberDIDAW != didAW {
 		return nil, fmt.Errorf("hosted signup certificate member_did_aw %q does not match %q", cert.MemberDIDAW, didAW)
 	}
-	if cert.MemberAddress != memberAddress {
-		return nil, fmt.Errorf("hosted signup certificate member_address %q does not match %q", cert.MemberAddress, memberAddress)
+	if strings.TrimSpace(resp.MemberAddress) != strings.TrimSpace(cert.MemberAddress) {
+		return nil, fmt.Errorf("hosted signup certificate member_address %q does not match response member_address %q", cert.MemberAddress, resp.MemberAddress)
+	}
+	if strings.TrimSpace(didAW) != "" && strings.TrimSpace(cert.MemberAddress) == "" {
+		return nil, fmt.Errorf("hosted signup response missing member_address for persistent identity")
+	}
+	if strings.TrimSpace(didAW) == "" && strings.TrimSpace(cert.MemberAddress) != "" {
+		return nil, fmt.Errorf("hosted signup response returned member_address %q for ephemeral identity", cert.MemberAddress)
 	}
 	if cert.Alias != alias {
 		return nil, fmt.Errorf("hosted signup certificate alias %q does not match %q", cert.Alias, alias)

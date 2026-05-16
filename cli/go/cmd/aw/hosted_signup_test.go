@@ -163,7 +163,6 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 		bin,
 		"--json",
 		"init",
-		"--hosted",
 		"--persistent",
 		"--username", "juanre",
 		"--alias", "laptop",
@@ -173,7 +172,7 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("init --hosted failed: %v\n%s", err, string(out))
+		t.Fatalf("init failed: %v\n%s", err, string(out))
 	}
 
 	if signupBody["username"] != "juanre" {
@@ -203,14 +202,17 @@ func TestInitHostedPersistentWritesIdentityAndSignsCloudRequest(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("unmarshal output: %v", err)
 	}
-	if got["status"] != "signed_up" {
+	if got["status"] != "connected" {
 		t.Fatalf("status=%v", got["status"])
 	}
-	if got["member_address"] != "juanre.aweb.ai/laptop" {
-		t.Fatalf("member_address=%v", got["member_address"])
+	if got["team_id"] != "default:juanre.aweb.ai" {
+		t.Fatalf("team_id=%v", got["team_id"])
+	}
+	if got["alias"] != "laptop" {
+		t.Fatalf("alias=%v", got["alias"])
 	}
 	if _, ok := got["api_key"]; ok {
-		t.Fatalf("hosted init output leaked api_key")
+		t.Fatalf("init output leaked api_key")
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
@@ -438,11 +440,11 @@ func TestInitHostedThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey(t *testing.T) {
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/hosted-chain.git")
 	buildAwBinary(t, ctx, bin)
 
-	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--hosted", "--persistent", "--username", "hostedchain", "--alias", "laptop", "--url", server.URL)
+	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--persistent", "--username", "hostedchain", "--alias", "laptop", "--url", server.URL)
 	initCmd.Env = testCommandEnv(tmp)
 	initCmd.Dir = repo
 	if out, err := initCmd.CombinedOutput(); err != nil {
-		t.Fatalf("init --hosted failed: %v\n%s", err, string(out))
+		t.Fatalf("init failed: %v\n%s", err, string(out))
 	}
 
 	parentWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(repo, ".aw", "workspace.yaml"))
@@ -616,7 +618,6 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 		bin,
 		"--json",
 		"init",
-		"--hosted",
 		"--persistent",
 		"--username", "juanre",
 		"--alias", "laptop",
@@ -626,7 +627,7 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("init --hosted retry failed: %v\n%s", err, string(out))
+		t.Fatalf("init retry failed: %v\n%s", err, string(out))
 	}
 
 	if registerCalls != 1 {
@@ -649,7 +650,7 @@ func TestInitHostedPersistentTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("unmarshal output: %v", err)
 	}
-	if got["status"] != "signed_up" {
+	if got["status"] != "connected" {
 		t.Fatalf("status=%v", got["status"])
 	}
 }
@@ -742,7 +743,6 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 		bin,
 		"--json",
 		"init",
-		"--hosted",
 		"--username", "juanre",
 		"--alias", "laptop",
 		"--url", server.URL,
@@ -751,7 +751,7 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("init --hosted failed: %v\n%s", err, string(out))
+		t.Fatalf("init failed: %v\n%s", err, string(out))
 	}
 
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
@@ -784,7 +784,7 @@ func TestInitHostedEphemeralOmitsIdentityFile(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("unmarshal output: %v", err)
 	}
-	if got["status"] != "signed_up" {
+	if got["status"] != "connected" {
 		t.Fatalf("status=%v", got["status"])
 	}
 }

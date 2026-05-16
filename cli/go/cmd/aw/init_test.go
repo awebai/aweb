@@ -89,7 +89,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 }
 
-func TestInitFailsNonInteractiveWhenWorkspaceMissing(t *testing.T) {
+func TestInitFailsNonInteractiveHostedWhenRequiredFlagsMissing(t *testing.T) {
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldIsTTY := initIsTTY
@@ -119,7 +119,7 @@ func TestInitFailsNonInteractiveWhenWorkspaceMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected runInit to fail")
 	}
-	if !strings.Contains(err.Error(), "rerun `aw init` in a TTY for guided onboarding") {
+	if !strings.Contains(err.Error(), "missing required flag: --username") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -427,6 +427,178 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	}
 	if got.AgentType != "codex" {
 		t.Fatalf("agent_type=%q", got.AgentType)
+	}
+}
+
+func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t *testing.T) {
+	oldLocalFlow := initRunImplicitLocalFlow
+	oldWizard := guidedOnboardingWizard
+	oldIsTTY := initIsTTY
+	oldAwebURL := initAwebURL
+	oldRegistry := initAWIDRegistry
+	oldCompatURL := initURL
+	oldBYOD := initBYOD
+	oldUsername := initUsername
+	oldDomain := initDomain
+	oldAlias := initAlias
+	oldName := initName
+	oldReachability := initReachability
+	oldRole := initRole
+	oldPersistent := initPersistent
+	t.Cleanup(func() {
+		initRunImplicitLocalFlow = oldLocalFlow
+		guidedOnboardingWizard = oldWizard
+		initIsTTY = oldIsTTY
+		initAwebURL = oldAwebURL
+		initAWIDRegistry = oldRegistry
+		initURL = oldCompatURL
+		initBYOD = oldBYOD
+		initUsername = oldUsername
+		initDomain = oldDomain
+		initAlias = oldAlias
+		initName = oldName
+		initReachability = oldReachability
+		initRole = oldRole
+		initPersistent = oldPersistent
+	})
+
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	initIsTTY = func() bool { return false }
+	initAwebURL = "http://localhost:8100"
+	initAWIDRegistry = "http://127.0.0.1:8010"
+	initURL = ""
+	initBYOD = false
+	initUsername = "alice"
+	initDomain = ""
+	initAlias = "laptop"
+	initName = ""
+	initReachability = ""
+	initRole = "developer"
+	initPersistent = true
+
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		t.Fatalf("local flow should not run for explicit hosted args: %+v", req)
+		return connectOutput{}, nil
+	}
+
+	var got guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		got = req
+		return &guidedOnboardingResult{}, nil
+	}
+
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+
+	if err := runInit(&cmd.Command, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	if got.BaseURL != "http://localhost:8100" {
+		t.Fatalf("base_url=%q", got.BaseURL)
+	}
+	if got.RegistryURL != "http://127.0.0.1:8010" {
+		t.Fatalf("registry_url=%q", got.RegistryURL)
+	}
+	if got.Username != "alice" || got.Alias != "laptop" || !got.Persistent {
+		t.Fatalf("guided request lost hosted args: %+v", got)
+	}
+	if !got.NonInteractive {
+		t.Fatal("expected noninteractive guided request")
+	}
+}
+
+func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *testing.T) {
+	oldLocalFlow := initRunImplicitLocalFlow
+	oldWizard := guidedOnboardingWizard
+	oldIsTTY := initIsTTY
+	oldAwebURL := initAwebURL
+	oldRegistry := initAWIDRegistry
+	oldCompatURL := initURL
+	oldBYOD := initBYOD
+	oldUsername := initUsername
+	oldDomain := initDomain
+	oldAlias := initAlias
+	oldName := initName
+	oldReachability := initReachability
+	oldRole := initRole
+	oldPersistent := initPersistent
+	t.Cleanup(func() {
+		initRunImplicitLocalFlow = oldLocalFlow
+		guidedOnboardingWizard = oldWizard
+		initIsTTY = oldIsTTY
+		initAwebURL = oldAwebURL
+		initAWIDRegistry = oldRegistry
+		initURL = oldCompatURL
+		initBYOD = oldBYOD
+		initUsername = oldUsername
+		initDomain = oldDomain
+		initAlias = oldAlias
+		initName = oldName
+		initReachability = oldReachability
+		initRole = oldRole
+		initPersistent = oldPersistent
+	})
+
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	initIsTTY = func() bool { return false }
+	initAwebURL = "http://localhost:8100"
+	initAWIDRegistry = "http://127.0.0.1:8010"
+	initURL = ""
+	initBYOD = true
+	initUsername = ""
+	initDomain = "example.com"
+	initAlias = "alice"
+	initName = ""
+	initReachability = ""
+	initRole = "developer"
+	initPersistent = false
+
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		t.Fatalf("local flow should not run for explicit BYOD args: %+v", req)
+		return connectOutput{}, nil
+	}
+
+	var got guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		got = req
+		return &guidedOnboardingResult{}, nil
+	}
+
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+
+	if err := runInit(&cmd.Command, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	if got.BaseURL != "http://localhost:8100" {
+		t.Fatalf("base_url=%q", got.BaseURL)
+	}
+	if got.RegistryURL != "http://127.0.0.1:8010" {
+		t.Fatalf("registry_url=%q", got.RegistryURL)
+	}
+	if !got.BYOD || got.Domain != "example.com" || got.Alias != "alice" {
+		t.Fatalf("guided request lost BYOD args: %+v", got)
+	}
+	if !got.NonInteractive {
+		t.Fatal("expected noninteractive guided request")
 	}
 }
 

@@ -167,12 +167,12 @@ func TestGuidedOnboardingDefaultsToHostedPath(t *testing.T) {
 	if hostedReq.WorkingDir == "" {
 		t.Fatal("expected hosted path to receive request")
 	}
-	if !strings.Contains(out.String(), "Hosted is the fastest path") {
-		t.Fatalf("expected onboarding choice copy, got %q", out.String())
+	if strings.Contains(out.String(), "Hosted is the fastest path") || strings.Contains(out.String(), "Choose onboarding path") {
+		t.Fatalf("default hosted onboarding must not show a path chooser, got %q", out.String())
 	}
 }
 
-func TestGuidedOnboardingCanSelectBYODPath(t *testing.T) {
+func TestGuidedOnboardingCanUseExplicitBYODPath(t *testing.T) {
 	oldHosted := guidedOnboardingExecuteHostedPath
 	oldBYOD := guidedOnboardingExecuteBYODPath
 	t.Cleanup(func() {
@@ -192,7 +192,8 @@ func TestGuidedOnboardingCanSelectBYODPath(t *testing.T) {
 
 	result, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader("2\n"),
+		BYOD:       true,
+		PromptIn:   strings.NewReader(""),
 		PromptOut:  &bytes.Buffer{},
 	})
 	if err != nil {
@@ -254,7 +255,8 @@ func TestGuidedOnboardingBYODErrorsBubbleUpInsteadOfPanicking(t *testing.T) {
 	var out bytes.Buffer
 	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
-		PromptIn:   strings.NewReader("2\n\nalice\nacme.com\n"),
+		BYOD:       true,
+		PromptIn:   strings.NewReader("\nalice\nacme.com\n"),
 		PromptOut:  &out,
 	})
 	if err == nil {
@@ -1048,6 +1050,94 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
 		t.Fatalf("expected retry message, got %q", out.String())
+	}
+}
+
+func TestExecuteHostedPathDoesNotPromptForUsernameRetryWhenNonInteractive(t *testing.T) {
+	var signupCalls int
+	var onboardingURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   onboardingURL,
+				"version":        "1.7.0",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			signupCalls++
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"detail":"username taken"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			t.Fatal("connect must not run after signup conflict")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = server.URL
+
+	_, err := executeHostedPath(guidedOnboardingRequest{
+		WorkingDir:     t.TempDir(),
+		PromptIn:       strings.NewReader("should-not-be-read\n"),
+		PromptOut:      &bytes.Buffer{},
+		BaseURL:        server.URL,
+		Username:       "jack",
+		Alias:          "laptop",
+		NonInteractive: true,
+	})
+	if err == nil {
+		t.Fatal("expected non-interactive signup conflict to fail")
+	}
+	if !strings.Contains(err.Error(), `username "jack" is not available (taken)`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signupCalls != 1 {
+		t.Fatalf("signup calls=%d", signupCalls)
+	}
+}
+
+func TestExecuteBYODPathDoesNotPromptForDNSWhenNonInteractive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var discoveryCalls int
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			discoveryCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"aweb_url":     "http://" + r.Host,
+				"registry_url": "http://" + r.Host,
+			})
+		default:
+			t.Fatalf("non-interactive BYOD must fail before registry mutation or DNS prompt, got %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	var out bytes.Buffer
+	_, err := executeBYODPath(guidedOnboardingRequest{
+		WorkingDir:     t.TempDir(),
+		PromptIn:       strings.NewReader("should-not-be-read\n"),
+		PromptOut:      &out,
+		BaseURL:        server.URL,
+		Alias:          "alice",
+		Domain:         "acme.test",
+		NonInteractive: true,
+	})
+	if err == nil {
+		t.Fatal("expected non-interactive BYOD DNS setup to fail")
+	}
+	if !strings.Contains(err.Error(), "requires a TTY") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out.String(), "Verify this DNS TXT record now?") {
+		t.Fatalf("non-interactive BYOD must not prompt for DNS verification:\n%s", out.String())
+	}
+	if discoveryCalls != 1 {
+		t.Fatalf("discovery calls=%d", discoveryCalls)
 	}
 }
 
@@ -2041,6 +2131,182 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 	}
 	if hooksAsk {
 		t.Fatal("expected wizard to handle hooks confirmation before setup call")
+	}
+}
+
+func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
+	oldInjectDocs := guidedOnboardingInjectDocs
+	oldSetupHooks := guidedOnboardingSetupHooks
+	oldSetupChannel := guidedOnboardingSetupChannel
+	t.Cleanup(func() {
+		guidedOnboardingInjectDocs = oldInjectDocs
+		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingSetupChannel = oldSetupChannel
+	})
+
+	tmp := t.TempDir()
+	var docsCalls, channelCalls, hooksCalls int
+	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
+		docsCalls++
+		if repoRoot != tmp {
+			t.Fatalf("docs repo=%q", repoRoot)
+		}
+		return &injectDocsResult{}
+	}
+	guidedOnboardingSetupChannel = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		channelCalls++
+		if repoRoot != tmp {
+			t.Fatalf("channel repo=%q", repoRoot)
+		}
+		if askConfirmation {
+			t.Fatal("expected wizard to handle channel confirmation before setup call")
+		}
+		return &claudeHooksResult{}
+	}
+	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		hooksCalls++
+		return &claudeHooksResult{}
+	}
+
+	var out bytes.Buffer
+	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+		WorkingDir:         tmp,
+		PromptIn:           &singleByteReader{data: "\n\n"},
+		PromptOut:          &out,
+		AskPostCreateSetup: true,
+	})
+	if err != nil {
+		t.Fatalf("runGuidedPostInitSetup: %v", err)
+	}
+	if docsCalls != 1 {
+		t.Fatalf("docs calls=%d", docsCalls)
+	}
+	if channelCalls != 1 {
+		t.Fatalf("channel calls=%d", channelCalls)
+	}
+	if hooksCalls != 0 {
+		t.Fatalf("hooks calls=%d", hooksCalls)
+	}
+	output := out.String()
+	if !strings.Contains(output, "They are clearly marked and only explain how agents should use aw.") {
+		t.Fatalf("docs prompt did not explain scope:\n%s", output)
+	}
+	if !strings.Contains(output, "(y/n) [y]") {
+		t.Fatalf("expected yes defaults in prompts:\n%s", output)
+	}
+}
+
+func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
+	oldInjectDocs := guidedOnboardingInjectDocs
+	oldSetupHooks := guidedOnboardingSetupHooks
+	oldSetupChannel := guidedOnboardingSetupChannel
+	t.Cleanup(func() {
+		guidedOnboardingInjectDocs = oldInjectDocs
+		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingSetupChannel = oldSetupChannel
+	})
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var events []string
+	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
+		events = append(events, "docs")
+		return &injectDocsResult{}
+	}
+	guidedOnboardingSetupChannel = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		events = append(events, "channel")
+		return &claudeHooksResult{}
+	}
+	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		events = append(events, "hooks")
+		return &claudeHooksResult{}
+	}
+
+	var onboardingURL string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": onboardingURL,
+				"aweb_url":       onboardingURL,
+				"registry_url":   onboardingURL,
+				"version":        "1.7.0",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
+			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/cli-signup":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey := strings.TrimSpace(body["did_key"].(string))
+			alias := strings.TrimSpace(body["alias"].(string))
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+				Team:         "default:jack.aweb.ai",
+				MemberDIDKey: didKey,
+				Alias:        alias,
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encodedCert, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id":          "user-1",
+				"username":         "jack",
+				"org_id":           "org-1",
+				"namespace_domain": "jack.aweb.ai",
+				"team_id":          "default:jack.aweb.ai",
+				"api_key":          "aw_sk_guided_hosted",
+				"certificate":      encodedCert,
+				"did_aw":           "",
+				"member_address":   "",
+				"alias":            alias,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "default:jack.aweb.ai",
+				"alias":        "laptop",
+				"agent_id":     "agent-1",
+				"workspace_id": "ws-1",
+				"repo_id":      "repo-1",
+				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/claim-human":
+			events = append(events, "claim-human")
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "verification_sent", "email": "jack@example.com"})
+		default:
+			t.Fatalf("unexpected hosted onboarding request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	onboardingURL = server.URL
+
+	var out bytes.Buffer
+	_, err = executeHostedPath(guidedOnboardingRequest{
+		WorkingDir:         t.TempDir(),
+		PromptIn:           strings.NewReader("jack\nlaptop\n\n\ny\njack@example.com\n"),
+		PromptOut:          &out,
+		BaseURL:            server.URL,
+		AskPostCreateSetup: true,
+	})
+	if err != nil {
+		t.Fatalf("executeHostedPath: %v", err)
+	}
+
+	if got := strings.Join(events, ","); got != "docs,channel,claim-human" {
+		t.Fatalf("event order=%s", got)
+	}
+	output := out.String()
+	docsIndex := strings.Index(output, "Inject aw agent instructions")
+	claimIndex := strings.Index(output, "Run aw claim-human now?")
+	if docsIndex < 0 || claimIndex < 0 || claimIndex < docsIndex {
+		t.Fatalf("claim-human prompt must come after post-init setup prompts:\n%s", output)
 	}
 }
 

@@ -461,6 +461,9 @@ func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) 
 }
 
 func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) (string, error) {
+	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
+		return r.fallbackRegistryURL, nil
+	}
 	return r.discoverRegistry(ctx, domain)
 }
 

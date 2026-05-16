@@ -21,8 +21,8 @@ var initCmd = &cobra.Command{
 team-architecture flows:
 
 - connect with an existing team certificate already present in .aw/
-- create a hosted aweb.ai account with --hosted
-- launch guided onboarding in a TTY when this directory is still clean`,
+- create a hosted aweb.ai account when this directory is still clean
+- use --byod to create an identity under a domain you control`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		loadDotenvBestEffort()
 		maybeCheckLatestVersion(cmd)
@@ -32,23 +32,24 @@ team-architecture flows:
 }
 
 var (
-	initURL            string
-	initAwebURL        string
-	initAWIDRegistry   string
-	initHosted         bool
-	initHostedUsername string
-	initAlias          string
-	initName           string
-	initReachability   string
-	initInjectDocs     bool
-	initSetupHooks     bool
-	initSetupChannel   bool
-	initHumanName      string
-	initAgentType      string
-	initWriteContext   bool
-	initPrintExports   bool
-	initRole           string
-	initPersistent     bool
+	initURL          string
+	initAwebURL      string
+	initAWIDRegistry string
+	initBYOD         bool
+	initUsername     string
+	initDomain       string
+	initAlias        string
+	initName         string
+	initReachability string
+	initInjectDocs   bool
+	initSetupHooks   bool
+	initSetupChannel bool
+	initHumanName    string
+	initAgentType    string
+	initWriteContext bool
+	initPrintExports bool
+	initRole         string
+	initPersistent   bool
 )
 
 var (
@@ -73,8 +74,9 @@ func init() {
 	initCmd.Flags().StringVar(&initURL, "url", "", "Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows")
 	initCmd.Flags().StringVar(&initAwebURL, "aweb-url", "", "Base URL for the aweb server used by aw init (overrides AWEB_URL)")
 	initCmd.Flags().StringVar(&initAWIDRegistry, "awid-registry", "", "Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)")
-	initCmd.Flags().BoolVar(&initHosted, "hosted", false, "Create a hosted aweb.ai identity in this directory")
-	initCmd.Flags().StringVar(&initHostedUsername, "username", "", "Hosted username to create with --hosted")
+	initCmd.Flags().BoolVar(&initBYOD, "byod", false, "Use a domain you control instead of hosted aweb.ai onboarding")
+	initCmd.Flags().StringVar(&initUsername, "username", "", "Hosted username to create")
+	initCmd.Flags().StringVar(&initDomain, "domain", "", "BYOD domain to use with --byod")
 	initCmd.Flags().StringVar(&initAlias, "alias", "", "Ephemeral identity routing alias (optional; default: server-suggested)")
 	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (nobody|org-only|team-members-only|public)")
@@ -188,10 +190,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if hostedInitRequested() {
-		return runHostedInit(cmd)
-	}
-
 	wd, _ := os.Getwd()
 	workspaceMissing, err := initWorkspaceMissing(wd)
 	if err != nil {
@@ -206,7 +204,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if initRegistryIsLocalhost(registryURL) {
+		if initShouldUseImplicitLocalFlow(registryURL) {
 			result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 				WorkingDir:  wd,
 				AwebURL:     awebURL,
@@ -232,9 +230,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		if !initIsTTY() {
-			return usageError("current directory is not initialized for aw; rerun `aw init` in a TTY for guided onboarding, or join an existing team with `aw id team request` then the printed `aw id team fetch-cert` command")
-		}
+		interactive := initIsTTY() && !jsonFlag
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 			WorkingDir:  wd,
 			PromptIn:    os.Stdin,
@@ -242,6 +238,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			BaseURL:     awebURL,
 			RegistryURL: registryURL,
 			ServerName:  serverFlag,
+			BYOD:        initBYOD,
+			Username:    strings.TrimSpace(initUsername),
+			Domain:      strings.TrimSpace(initDomain),
 			Alias: func() string {
 				if initPersistent {
 					return strings.TrimSpace(initAlias)
@@ -254,7 +253,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 			Persistent:         initPersistent,
-			AskPostCreateSetup: true,
+			AskPostCreateSetup: interactive,
+			NonInteractive:     !interactive,
 		})
 		if err != nil {
 			return err
@@ -365,15 +365,26 @@ func initRegistryIsLocalhost(raw string) bool {
 	return initBaseURLIsLocalhost(raw)
 }
 
-func hostedInitRequested() bool {
-	return initHosted || strings.TrimSpace(initHostedUsername) != ""
+func initShouldUseImplicitLocalFlow(registryURL string) bool {
+	if !initRegistryIsLocalhost(registryURL) {
+		return false
+	}
+	// The implicit local flow is the compatibility path for a local aweb+awid
+	// stack. Explicit onboarding inputs mean the user is asking for hosted/BYOD
+	// semantics even if the test or dev stack happens to be on localhost.
+	return !initBYOD &&
+		strings.TrimSpace(initUsername) == "" &&
+		strings.TrimSpace(initDomain) == "" &&
+		strings.TrimSpace(initName) == "" &&
+		strings.TrimSpace(initReachability) == "" &&
+		!initPersistent
 }
 
 // initNeedsFullInitForAddonOnly returns true when an add-on request must
 // escalate to full init because it changes identity/team state or has no
 // existing workspace to operate on.
 func initNeedsFullInitForAddonOnly() bool {
-	if hostedInitRequested() || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
+	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initReachability != "" || initRole != "" || initPersistent {
 		return true
 	}
 	wd, _ := os.Getwd()

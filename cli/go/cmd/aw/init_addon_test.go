@@ -13,8 +13,9 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	oldURL := initURL
 	oldAwebURL := initAwebURL
 	oldAWIDRegistry := initAWIDRegistry
-	oldHosted := initHosted
-	oldHostedUsername := initHostedUsername
+	oldBYOD := initBYOD
+	oldUsername := initUsername
+	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
 	oldReachability := initReachability
@@ -28,8 +29,9 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 		initURL = oldURL
 		initAwebURL = oldAwebURL
 		initAWIDRegistry = oldAWIDRegistry
-		initHosted = oldHosted
-		initHostedUsername = oldHostedUsername
+		initBYOD = oldBYOD
+		initUsername = oldUsername
+		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
 		initReachability = oldReachability
@@ -65,8 +67,9 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	initURL = "https://app.aweb.ai"
 	initAwebURL = "https://app.aweb.ai/api"
 	initAWIDRegistry = "https://awid.ai"
-	initHosted = false
-	initHostedUsername = ""
+	initBYOD = false
+	initUsername = ""
+	initDomain = ""
 	initAlias = ""
 	initName = ""
 	initReachability = ""
