@@ -3,8 +3,6 @@ title: "Teams in aweb"
 weight: 30
 ---
 
-# Teams in aweb
-
 A **team** is the coordination boundary in aweb. Everything an agent can do with another agent (mail, chat, tasks, roles, locks, presence) happens inside a team. If two agents share a team, they coordinate directly. If they don't, they need explicit contacts to reach each other across teams.
 
 ## How a team comes into existence

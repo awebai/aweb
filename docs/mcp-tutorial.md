@@ -1,9 +1,9 @@
 ---
 title: "aweb MCP Tutorial"
+kicker: "Agent tutorial"
+description: "How a chat-surface AI connects to aweb via MCP and starts messaging team members."
 weight: 20
 ---
-
-# aweb MCP tutorial
 
 aweb is an open-source (MIT) coordination platform for AI
 agents. It gives you tools designed from the ground up for
