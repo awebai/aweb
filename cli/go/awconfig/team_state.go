@@ -12,10 +12,12 @@ import (
 )
 
 type TeamMembership struct {
-	TeamID   string `yaml:"team_id"`
-	Alias    string `yaml:"alias,omitempty"`
-	CertPath string `yaml:"cert_path"`
-	JoinedAt string `yaml:"joined_at,omitempty"`
+	TeamID      string `yaml:"team_id"`
+	Alias       string `yaml:"alias,omitempty"`
+	CertPath    string `yaml:"cert_path"`
+	JoinedAt    string `yaml:"joined_at,omitempty"`
+	RegistryURL string `yaml:"registry_url,omitempty"`
+	AwebURL     string `yaml:"aweb_url,omitempty"`
 }
 
 type TeamState struct {
@@ -29,10 +31,12 @@ type teamStateYAML struct {
 }
 
 type teamMembershipYAML struct {
-	TeamID   string `yaml:"team_id"`
-	Alias    string `yaml:"alias,omitempty"`
-	CertPath string `yaml:"cert_path"`
-	JoinedAt string `yaml:"joined_at,omitempty"`
+	TeamID      string `yaml:"team_id"`
+	Alias       string `yaml:"alias,omitempty"`
+	CertPath    string `yaml:"cert_path"`
+	JoinedAt    string `yaml:"joined_at,omitempty"`
+	RegistryURL string `yaml:"registry_url,omitempty"`
+	AwebURL     string `yaml:"aweb_url,omitempty"`
 }
 
 func (m *TeamMembership) normalize() {
@@ -43,6 +47,8 @@ func (m *TeamMembership) normalize() {
 	m.Alias = strings.TrimSpace(m.Alias)
 	m.CertPath = filepath.ToSlash(strings.TrimSpace(m.CertPath))
 	m.JoinedAt = strings.TrimSpace(m.JoinedAt)
+	m.RegistryURL = strings.TrimSpace(m.RegistryURL)
+	m.AwebURL = strings.TrimSpace(m.AwebURL)
 }
 
 func (s *TeamState) normalize() {
@@ -202,10 +208,12 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, TeamMembership{
-			TeamID:   membership.TeamID,
-			Alias:    membership.Alias,
-			CertPath: membership.CertPath,
-			JoinedAt: membership.JoinedAt,
+			TeamID:      membership.TeamID,
+			Alias:       membership.Alias,
+			CertPath:    membership.CertPath,
+			JoinedAt:    membership.JoinedAt,
+			RegistryURL: membership.RegistryURL,
+			AwebURL:     membership.AwebURL,
 		})
 	}
 	*s = TeamState{
@@ -224,10 +232,12 @@ func (s TeamState) MarshalYAML() (any, error) {
 	memberships := make([]teamMembershipYAML, 0, len(s.Memberships))
 	for _, membership := range s.Memberships {
 		memberships = append(memberships, teamMembershipYAML{
-			TeamID:   membership.TeamID,
-			Alias:    membership.Alias,
-			CertPath: membership.CertPath,
-			JoinedAt: membership.JoinedAt,
+			TeamID:      membership.TeamID,
+			Alias:       membership.Alias,
+			CertPath:    membership.CertPath,
+			JoinedAt:    membership.JoinedAt,
+			RegistryURL: membership.RegistryURL,
+			AwebURL:     membership.AwebURL,
 		})
 	}
 	return teamStateYAML{

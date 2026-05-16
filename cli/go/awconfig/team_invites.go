@@ -19,6 +19,7 @@ type TeamInvite struct {
 	Ephemeral   bool   `json:"ephemeral" yaml:"ephemeral"`
 	Secret      string `json:"secret" yaml:"secret"`
 	RegistryURL string `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
+	AwebURL     string `json:"aweb_url,omitempty" yaml:"aweb_url,omitempty"`
 	CreatedAt   string `json:"created_at" yaml:"created_at"`
 }
 
@@ -30,6 +31,7 @@ type TeamInviteToken struct {
 	TeamName    string `json:"t"`
 	Secret      string `json:"s"`
 	RegistryURL string `json:"r,omitempty"`
+	AwebURL     string `json:"a,omitempty"`
 }
 
 func DefaultTeamInvitesDir() (string, error) {
@@ -111,6 +113,7 @@ func EncodeInviteToken(invite *TeamInvite) (string, error) {
 		TeamName:    invite.TeamName,
 		Secret:      invite.Secret,
 		RegistryURL: invite.RegistryURL,
+		AwebURL:     invite.AwebURL,
 	}
 	data, err := json.Marshal(tok)
 	if err != nil {

@@ -3,6 +3,10 @@
 This directory holds the canonical protocol, identity, and user material for
 the public `aweb` repo.
 
+Public documentation should live under `https://aweb.ai/docs/`. Agent-facing
+Markdown is served as `https://aweb.ai/docs/<name>.md`, and the human-readable
+HTML rendering is served as `https://aweb.ai/docs/<name>/`.
+
 ## Source of truth
 
 These documents define the system:
@@ -23,6 +27,10 @@ These documents define the system:
 
 ## User guides
 
+- [cli-tutorial.md](cli-tutorial.md): first-run tutorial for agents using the
+  `aw` CLI
+- [mcp-tutorial.md](mcp-tutorial.md): first-run tutorial for agents using the
+  aweb MCP tools
 - [agent-guide.md](agent-guide.md): canonical onboarding guide delivered to
   agents by `aw run`
 - [aw-run.md](aw-run.md): `aw run` wizard, providers, session continuity, and

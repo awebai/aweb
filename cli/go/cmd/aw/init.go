@@ -22,7 +22,10 @@ team-architecture flows:
 
 - connect with an existing team certificate already present in .aw/
 - create a hosted aweb.ai account when this directory is still clean
-- use --byod to create an identity under a domain you control`,
+- use --byod to create an identity under a domain you control
+
+By default, init creates or updates the clearly marked aweb section in
+AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		loadDotenvBestEffort()
 		maybeCheckLatestVersion(cmd)
@@ -32,24 +35,25 @@ team-architecture flows:
 }
 
 var (
-	initURL          string
-	initAwebURL      string
-	initAWIDRegistry string
-	initBYOD         bool
-	initUsername     string
-	initDomain       string
-	initAlias        string
-	initName         string
-	initReachability string
-	initInjectDocs   bool
-	initSetupHooks   bool
-	initSetupChannel bool
-	initHumanName    string
-	initAgentType    string
-	initWriteContext bool
-	initPrintExports bool
-	initRole         string
-	initPersistent   bool
+	initURL                string
+	initAwebURL            string
+	initAWIDRegistry       string
+	initBYOD               bool
+	initUsername           string
+	initDomain             string
+	initAlias              string
+	initName               string
+	initReachability       string
+	initInjectDocs         bool
+	initSetupHooks         bool
+	initSetupChannel       bool
+	initDoNotTouchAgentsMD bool
+	initHumanName          string
+	initAgentType          string
+	initWriteContext       bool
+	initPrintExports       bool
+	initRole               string
+	initPersistent         bool
 )
 
 var (
@@ -81,6 +85,7 @@ func init() {
 	initCmd.Flags().StringVar(&initName, "name", "", "Persistent identity name (required with --persistent unless .aw/identity.yaml already exists)")
 	initCmd.Flags().StringVar(&initReachability, "reachability", "", "Persistent address reachability (nobody|org-only|team-members-only|public)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
+	initCmd.Flags().BoolVar(&initDoNotTouchAgentsMD, "do-not-touch-agents-md", false, "Do not create or update AGENTS.md or CLAUDE.md during init")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code channel MCP server for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
@@ -101,6 +106,9 @@ func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description strin
 func runInit(cmd *cobra.Command, args []string) error {
 	if initSetupChannel && initSetupHooks {
 		return fmt.Errorf("--setup-channel and --setup-hooks are mutually exclusive: the channel supersedes the notify hook")
+	}
+	if initInjectDocs && initDoNotTouchAgentsMD {
+		return fmt.Errorf("--inject-docs and --do-not-touch-agents-md are mutually exclusive")
 	}
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
@@ -149,13 +157,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		printOutput(result, formatConnect)
+		didInjectDocs := runDefaultInitDocsInjection(wd)
 		if !jsonFlag {
 			printPostInitActions(&initResult{
 				ServerName:    hostFromBaseURL(result.AwebURL),
 				ExportBaseURL: result.AwebURL,
 				Alias:         strings.TrimSpace(result.Alias),
 				APIKeyAuth:    true,
-			}, wd)
+			}, wd, didInjectDocs)
 		}
 		return nil
 	}
@@ -179,12 +188,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			printOutput(result, formatConnect)
+			didInjectDocs := runDefaultInitDocsInjection(wd)
 			if !jsonFlag {
 				printPostInitActions(&initResult{
 					ServerName:    hostFromBaseURL(serviceURLs.AwebURL),
 					ExportBaseURL: serviceURLs.AwebURL,
 					Alias:         strings.TrimSpace(result.Alias),
-				}, wd)
+				}, wd, didInjectDocs)
 			}
 			return nil
 		}
@@ -221,16 +231,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			printOutput(result, formatConnect)
+			didInjectDocs := runDefaultInitDocsInjection(wd)
 			if !jsonFlag {
 				printPostInitActions(&initResult{
 					ServerName:    hostFromBaseURL(awebURL),
 					ExportBaseURL: awebURL,
 					Alias:         strings.TrimSpace(result.Alias),
-				}, wd)
+				}, wd, didInjectDocs)
 			}
 			return nil
 		}
-		interactive := initIsTTY() && !jsonFlag
+		canPrompt := initIsTTY() && !jsonFlag
+		askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 			WorkingDir:  wd,
 			PromptIn:    os.Stdin,
@@ -253,8 +265,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 			Persistent:         initPersistent,
-			AskPostCreateSetup: interactive,
-			NonInteractive:     !interactive,
+			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
+			DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
+			AskPostCreateSetup: askPostCreateSetup,
+			NonInteractive:     !canPrompt,
 		})
 		if err != nil {
 			return err
@@ -265,6 +279,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return usageError("this directory already has a workspace; use a fresh directory")
+}
+
+func initHasExplicitOnboardingArgs() bool {
+	values := []string{
+		initUsername,
+		initDomain,
+		initAlias,
+		initName,
+		initReachability,
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return initBYOD || initPersistent
 }
 
 func resolveInitAwebURL() (string, error) {
@@ -305,6 +335,32 @@ func resolveDefaultCertificateInitAwebURL(workingDir string) (string, bool, erro
 	teamDomain, _, err := awid.ParseTeamID(strings.TrimSpace(cert.Team))
 	if err != nil {
 		return "", false, fmt.Errorf("current team certificate has invalid team_id %q: %w", cert.Team, err)
+	}
+	if workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir); err == nil && workspace != nil {
+		if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
+			if workspace.Membership(strings.TrimSpace(cert.Team)) != nil || len(workspace.Memberships) == 0 {
+				normalized, err := normalizeAwebBaseURL(awebURL)
+				if err != nil {
+					return "", false, fmt.Errorf("invalid aweb_url for team %s: %w", cert.Team, err)
+				}
+				return normalized, true, nil
+			}
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", false, err
+	}
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+		if membership := teamState.Membership(strings.TrimSpace(cert.Team)); membership != nil {
+			if awebURL := strings.TrimSpace(membership.AwebURL); awebURL != "" {
+				normalized, err := normalizeAwebBaseURL(awebURL)
+				if err != nil {
+					return "", false, fmt.Errorf("invalid aweb_url for team %s: %w", cert.Team, err)
+				}
+				return normalized, true, nil
+			}
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", false, err
 	}
 	registryURL, err := resolveWorkspaceTeamRegistryURL(workingDir, "", teamDomain)
 	if err != nil {
@@ -410,7 +466,7 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	fmt.Println()
 	fmt.Println("Workspace ready.")
 	fmt.Println()
-	fmt.Println("Tell your agent: please read https://aweb.ai/introduction.md")
+	fmt.Println("Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
 	fmt.Println()
 	printChannelLaunchInstructions(os.Stdout)
 }
@@ -507,7 +563,16 @@ func promptIdentityLifetime(in io.Reader, out io.Writer, defaultPersistent bool)
 	}
 }
 
-func printPostInitActions(result *initResult, workingDir string) {
+func runDefaultInitDocsInjection(workingDir string) bool {
+	if jsonFlag || initDoNotTouchAgentsMD || initInjectDocs {
+		return false
+	}
+	repoRoot := resolveRepoRoot(workingDir)
+	printInjectDocsResult(InjectAgentDocs(repoRoot))
+	return true
+}
+
+func printPostInitActions(result *initResult, workingDir string, didDefaultInjectDocs bool) {
 	if initPrintExports {
 		fmt.Println("")
 		fmt.Println("# Copy/paste to configure your shell:")
@@ -529,7 +594,7 @@ func printPostInitActions(result *initResult, workingDir string) {
 		printClaudeHooksResult(hookResult)
 	}
 	if !jsonFlag {
-		printInitNextSteps(result, workingDir, initInjectDocs, initSetupHooks, initSetupChannel)
+		printInitNextSteps(result, workingDir, initInjectDocs || didDefaultInjectDocs, initSetupHooks, initSetupChannel)
 	}
 }
 
@@ -566,7 +631,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "  Then start Claude Code with the channel enabled:")
 	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
-	lines = append(lines, "  Tell your agent: please read https://aweb.ai/introduction.md")
+	lines = append(lines, "  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
 	return lines
 }
 

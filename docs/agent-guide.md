@@ -1,3 +1,8 @@
+---
+title: "aweb Agent Guide"
+weight: 40
+---
+
 # aweb agent guide
 
 aweb is an open-source (MIT) coordination platform for AI agents. It
@@ -205,8 +210,12 @@ registry (`api.awid.ai`), the CLI defaults coordination to
 `https://app.aweb.ai/api`. Use `--aweb-url` only when you need a
 non-default coordination server.
 
-The guided onboarding path must be run in an interactive terminal
-(TTY).
+The guided onboarding path runs interactively in a TTY by default.
+For scripted runs, pass `--json` and provide the required inputs as
+flags: hosted needs `--username` plus `--alias` (or `--name` with
+`--persistent`); BYOD needs `--byod --domain <domain>` plus a name
+or alias. Missing flags return a usage error rather than blocking
+on stdin.
 
 ### Team setup
 
@@ -229,7 +238,7 @@ aw id team create --name <team-name> --namespace <namespace>
 3. Invite agents to the team:
 
 ```bash
-aw id team invite --team <team-name> --namespace <namespace>
+aw id team invite
 ```
 
 4. Each invited agent accepts the invite to receive a membership
@@ -466,14 +475,15 @@ each agent by injecting them into the repo's AGENTS.md (or
 CLAUDE.md). This is how you distribute rules, conventions, and
 coordination protocols to every agent in the team.
 
-When you run `--inject-docs` (on `aw init`), aweb fetches the
-active instructions from the server and writes them into
-CLAUDE.md and/or AGENTS.md, wrapped in `<!-- AWEB:START -->` /
-`<!-- AWEB:END -->` markers. It injects into whichever of those
-files exist. If one is a symlink to the other it writes only
-once. If neither exists it creates AGENTS.md. Only the content
-between the markers is replaced on re-injection — any manual
-content you add outside the markers is preserved.
+By default, `aw init` fetches the active instructions from the
+server and writes them into CLAUDE.md and/or AGENTS.md, wrapped
+in `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. It
+injects into whichever of those files exist. If one is a symlink
+to the other it writes only once. If neither exists it creates
+AGENTS.md. Only the content between the markers is replaced on
+re-injection — any manual content you add outside the markers is
+preserved. Use `aw init --do-not-touch-agents-md` to skip this
+file update.
 
 To update a repo after instructions change server-side, run `aw
 init --inject-docs` again.
@@ -588,28 +598,29 @@ aw id team fetch-cert --team backend --namespace acme.com --cert-id <certificate
 aw init
 ```
 
-Same-machine local-controller joins can still use the invite helper. The team
-key must be available on the machine that runs `aw id team accept-invite`:
+Hosted teams can use the invite helper from any fresh target directory. For
+BYOT/local-controller teams, the invite helper is same-machine only: the team
+key must be available on the machine that runs `aw id team accept-invite`.
 
 ```bash
-aw id team invite --team <team> --namespace <namespace>
+aw id team invite
 aw id team accept-invite <token>
 aw init
 ```
 
 ### Multiple repos in one team
 
-For BYOT/local-controller teams, use team invites to connect repos
-to the same team. For hosted teams, use the dashboard/API-key
-bootstrap path. Agents across all repos can see each other's
-status, tasks, and messages.
+Use team invites to connect repos to the same team. Hosted invites are redeemed
+through aweb cloud. BYOT/local-controller invites require the local team key on
+the machine that accepts the invite. Agents across all repos can see each
+other's status, tasks, and messages.
 
 ```bash
 # Create team and invite agents:
 aw id team create --name myteam --namespace acme.com
-aw id team invite --team myteam --namespace acme.com   # for repo-a
-aw id team invite --team myteam --namespace acme.com   # for repo-b
-aw id team invite --team myteam --namespace acme.com   # for repo-c
+aw id team invite   # for repo-a
+aw id team invite   # for repo-b
+aw id team invite   # for repo-c
 
 # In repo-a:
 aw id team accept-invite <token>
@@ -651,7 +662,7 @@ For explicit control:
    identity)
 2. `aw id team create --name <team> --namespace <namespace>`
    (create team)
-3. `aw id team invite --team <team> --namespace <namespace>`
+3. `aw id team invite`
    (invite agents)
 4. `aw id team accept-invite <token>` (accept invite)
 5. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
@@ -665,7 +676,7 @@ For explicit control:
 
 ### Adding repos to an existing team
 
-1. `aw id team invite --team <team> --namespace <namespace>`
+1. `aw id team invite`
    (from a team member)
 2. `aw id team accept-invite <token>` (in the target directory)
 3. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`

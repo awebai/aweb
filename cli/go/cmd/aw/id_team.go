@@ -135,6 +135,7 @@ type acceptedTeamInvite struct {
 	Output      *teamAcceptInviteOutput
 	Certificate *awid.TeamCertificate
 	RegistryURL string
+	AwebURL     string
 	Domain      string
 	TeamName    string
 }
@@ -147,9 +148,10 @@ var (
 	teamCreateDisplayName string
 	teamCreateRegistryURL string
 
-	teamInviteTeam      string
-	teamInviteNamespace string
-	teamInviteEphemeral bool
+	teamInviteTeam       string
+	teamInviteNamespace  string
+	teamInviteEphemeral  bool
+	teamInvitePersistent bool
 
 	teamAcceptAlias   string
 	teamAcceptAddress string
@@ -201,17 +203,26 @@ var teamCreateCmd = &cobra.Command{
 var teamInviteCmd = &cobra.Command{
 	Use:   "invite",
 	Short: "Generate an invite token for a team",
-	RunE:  runTeamInvite,
+	Long: "Generate an invite token for a team.\n\n" +
+		"Defaults to the active local team when --team and --namespace are omitted.\n" +
+		"Invites are ephemeral unless --persistent is set. Hosted teams use cloud\n" +
+		"invite authority; local-controller teams use the local team controller key.",
+	RunE: runTeamInvite,
 }
 
 var teamAcceptInviteCmd = &cobra.Command{
 	Use:   "accept-invite <token>",
-	Short: "Accept a local controller invite and receive a membership certificate",
-	Long: "Accept a local controller invite and receive a membership certificate.\n\n" +
-		"This command is a same-machine helper: it requires the local invite record\n" +
-		"and the local team controller key. For cross-machine BYOIT joins, use\n" +
-		"`aw id team request`, have the controller run `aw id team add-member`,\n" +
-		"then install with `aw id team fetch-cert` on the joining machine.",
+	Short: "Accept a team invite and receive a membership certificate",
+	Long: "Accept a team invite and receive a membership certificate.\n\n" +
+		"Hosted aw_inv_ tokens are redeemed through the cloud, generate a fresh local\n" +
+		"identity, and refuse to overwrite an existing .aw identity in the target\n" +
+		"directory. After accepting, run `aw init` in that directory to connect the\n" +
+		"workspace.\n\n" +
+		"Local-controller invite tokens are same-machine helpers: they require the\n" +
+		"local invite record and local team controller key. For cross-machine BYOT\n" +
+		"joins, use `aw id team request`, have the controller run\n" +
+		"`aw id team add-member`, then install with `aw id team fetch-cert` on the\n" +
+		"joining machine.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamAcceptInvite,
 }
@@ -293,7 +304,8 @@ func init() {
 
 	teamInviteCmd.Flags().StringVar(&teamInviteTeam, "team", "", "Team name")
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
-	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Create ephemeral member invite")
+	teamInviteCmd.Flags().BoolVar(&teamInviteEphemeral, "ephemeral", false, "Create ephemeral member invite (default)")
+	teamInviteCmd.Flags().BoolVar(&teamInvitePersistent, "persistent", false, "Create persistent member invite")
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Alias for the accepting agent (defaults to identity name)")
@@ -399,29 +411,34 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamInvite(cmd *cobra.Command, args []string) error {
-	team := strings.ToLower(strings.TrimSpace(teamInviteTeam))
-	domain := awconfig.NormalizeDomain(teamInviteNamespace)
-	if team == "" {
-		return usageError("--team is required")
-	}
-	if domain == "" {
-		return usageError("--namespace is required")
-	}
-
-	// Read registry URL from the identity in the working directory
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	var registryURL string
-	identity, _, identErr := awconfig.LoadWorktreeIdentityFromDir(workingDir)
-	if identErr == nil && identity != nil {
-		registryURL = strings.TrimSpace(identity.RegistryURL)
+	if teamInvitePersistent && teamInviteEphemeral {
+		return usageError("--persistent and --ephemeral cannot be used together")
 	}
-
-	inviteID, token, err := createTeamInviteToken(domain, team, registryURL, teamInviteEphemeral)
+	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(workingDir)
 	if err != nil {
 		return err
+	}
+
+	ephemeral := !teamInvitePersistent
+	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	if err != nil {
+		return err
+	}
+	var inviteID, token string
+	if hasTeamKey {
+		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, ephemeral)
+		if err != nil {
+			return err
+		}
+	} else {
+		inviteID, token, err = createHostedTeamInviteToken(workingDir, awid.BuildTeamID(domain, team), ephemeral)
+		if err != nil {
+			return err
+		}
 	}
 
 	printOutput(teamInviteOutput{
@@ -430,6 +447,90 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 		Token:    token,
 	}, formatTeamInvite)
 	return nil
+}
+
+func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, awebURL string, err error) {
+	team = strings.ToLower(strings.TrimSpace(teamInviteTeam))
+	domain = awconfig.NormalizeDomain(teamInviteNamespace)
+
+	rootDir := strings.TrimSpace(workingDir)
+	if team == "" || domain == "" {
+		teamState, loadedRoot, loadErr := loadTeamStateForInvite(workingDir)
+		if loadErr != nil {
+			missing := "--team and --namespace"
+			if team != "" {
+				missing = "--namespace"
+			} else if domain != "" {
+				missing = "--team"
+			}
+			return "", "", "", "", usageError("%s required when no active team can be inferred from this workspace: %v", missing, loadErr)
+		}
+		rootDir = loadedRoot
+		activeDomain, activeTeam, parseErr := awid.ParseTeamID(strings.TrimSpace(teamState.ActiveTeam))
+		if parseErr != nil {
+			return "", "", "", "", fmt.Errorf("invalid active team %q: %w", teamState.ActiveTeam, parseErr)
+		}
+		if team == "" {
+			team = activeTeam
+		}
+		if domain == "" {
+			domain = activeDomain
+		}
+	}
+	if team == "" {
+		return "", "", "", "", usageError("--team is required")
+	}
+	if domain == "" {
+		return "", "", "", "", usageError("--namespace is required")
+	}
+	awebURL = awebURLForTeamInvite(rootDir, awid.BuildTeamID(domain, team))
+	registryURL = registryURLForTeamInvite(rootDir, domain, awebURL)
+	return team, domain, registryURL, awebURL, nil
+}
+
+func loadTeamStateForInvite(workingDir string) (*awconfig.TeamState, string, error) {
+	_, teamState, rootDir, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	if err == nil {
+		return teamState, rootDir, nil
+	}
+	teamState, stateErr := awconfig.LoadTeamState(workingDir)
+	if stateErr == nil {
+		return teamState, workingDir, nil
+	}
+	return nil, "", err
+}
+
+func registryURLForTeamInvite(workingDir, domain, awebURL string) string {
+	if meta, err := awconfig.LoadControllerMeta(domain); err == nil && meta != nil {
+		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
+			return registryURL
+		}
+	}
+	if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
+		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
+			return registryURL
+		}
+	}
+	if strings.TrimSpace(awebURL) != "" {
+		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
+			return strings.TrimSpace(discovered.RegistryURL)
+		}
+	}
+	return ""
+}
+
+func awebURLForTeamInvite(workingDir, teamID string) string {
+	if workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir); err == nil && workspace != nil {
+		if membership := workspace.Membership(teamID); membership != nil {
+			if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
+				return awebURL
+			}
+		}
+		if awconfig.ActiveMembershipFor(workspace, teamState) != nil {
+			return strings.TrimSpace(workspace.AwebURL)
+		}
+	}
+	return ""
 }
 
 func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
@@ -441,7 +542,7 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, true); err != nil {
+	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, true); err != nil {
 		return err
 	}
 	printOutput(*accepted.Output, formatTeamAcceptInvite)
@@ -468,7 +569,7 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	if teamState.Membership(accepted.Output.TeamID) != nil {
 		return rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
 	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, false); err != nil {
+	if err := upsertAcceptedTeamMembershipState(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, false); err != nil {
 		return rollbackAddedTeamCertificate(workingDir, accepted, err)
 	}
 	printOutput(teamAddOutput{
@@ -574,7 +675,7 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createTeamInviteToken(domain, team, registryURL string, ephemeral bool) (string, string, error) {
+func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral bool) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -608,6 +709,7 @@ func createTeamInviteToken(domain, team, registryURL string, ephemeral bool) (st
 		Ephemeral:   ephemeral,
 		Secret:      secret,
 		RegistryURL: registryURL,
+		AwebURL:     awebURL,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
@@ -620,7 +722,38 @@ func createTeamInviteToken(domain, team, registryURL string, ephemeral bool) (st
 	return inviteID, token, nil
 }
 
+func createHostedTeamInviteToken(workingDir, teamID string, ephemeral bool) (string, string, error) {
+	if !ephemeral {
+		return "", "", usageError("--persistent is not supported for hosted team invites")
+	}
+	client, _, err := resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
+	if err != nil {
+		return "", "", fmt.Errorf(
+			"no local team controller key for %s and cloud-hosted invite authority is unavailable: %w",
+			teamID,
+			err,
+		)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
+		AccessMode: "open",
+		MaxUses:    1,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("create hosted team invite: %w", err)
+	}
+	if strings.TrimSpace(created.Token) == "" {
+		return "", "", fmt.Errorf("hosted team invite response is missing token")
+	}
+	return strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), nil
+}
+
 func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
+	if awid.IsHostedSpawnInviteToken(token) {
+		return acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride)
+	}
+
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
 		return nil, err
@@ -724,9 +857,113 @@ func acceptTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride s
 		},
 		Certificate: cert,
 		RegistryURL: registryURL,
+		AwebURL:     strings.TrimSpace(decoded.AwebURL),
 		Domain:      invite.Domain,
 		TeamName:    invite.TeamName,
 	}, nil
+}
+
+func acceptHostedTeamInviteWithDetails(workingDir, token, aliasHint, addressOverride string) (*acceptedTeamInvite, error) {
+	if strings.TrimSpace(addressOverride) != "" {
+		return nil, usageError("--address is only valid for persistent invites")
+	}
+	if err := ensureConnectTargetClean(workingDir); err != nil {
+		return nil, err
+	}
+	alias := strings.TrimSpace(aliasHint)
+	if alias == "" {
+		return nil, usageError("--alias is required for hosted team invites")
+	}
+
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		return nil, err
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	awebURL := strings.TrimSpace(resolveInitAwebURLOverride())
+	if awebURL == "" {
+		awebURL = DefaultAwebURL
+	}
+	awebURL, err = normalizeAwebBaseURL(awebURL)
+	if err != nil {
+		return nil, err
+	}
+	client, err := awid.NewWithIdentity(awebURL, signingKey, didKey)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := client.AcceptSpawnInvite(ctx, &awid.SpawnAcceptInviteRequest{
+		Token:     strings.TrimSpace(token),
+		Alias:     alias,
+		DID:       didKey,
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimeEphemeral,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("accept hosted team invite: %w", err)
+	}
+	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias)
+	if err != nil {
+		return nil, err
+	}
+	if err := persistLocalSigningKeyAndCertificate(workingDir, signingKey, cert); err != nil {
+		return nil, err
+	}
+
+	return &acceptedTeamInvite{
+		Output: &teamAcceptInviteOutput{
+			Status:   "accepted",
+			TeamID:   cert.Team,
+			Alias:    strings.TrimSpace(cert.Alias),
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+		},
+		Certificate: cert,
+		AwebURL:     serverURL,
+		Domain:      strings.TrimSpace(resp.Namespace),
+		TeamName:    strings.TrimSpace(resp.TeamSlug),
+	}, nil
+}
+
+func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias string) (*awid.TeamCertificate, string, error) {
+	if resp == nil {
+		return nil, "", fmt.Errorf("missing hosted team invite response")
+	}
+	serverURL, err := normalizeBootstrapServerURL(strings.TrimSpace(resp.ServerURL))
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid hosted team invite server_url: %w", err)
+	}
+	encodedCert := strings.TrimSpace(resp.TeamCert)
+	if encodedCert == "" {
+		return nil, "", fmt.Errorf("hosted team invite response is missing team_cert")
+	}
+	cert, err := awid.DecodeTeamCertificateHeader(encodedCert)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode hosted team invite certificate: %w", err)
+	}
+	teamPub, err := awid.ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
+	if err != nil {
+		return nil, "", fmt.Errorf("hosted team invite certificate has invalid team_did_key %q: %w", cert.TeamDIDKey, err)
+	}
+	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+		return nil, "", fmt.Errorf("hosted team invite certificate signature verification failed: %w", err)
+	}
+	if strings.TrimSpace(cert.MemberDIDKey) != strings.TrimSpace(didKey) {
+		return nil, "", fmt.Errorf("hosted team invite certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
+	}
+	if strings.TrimSpace(cert.Alias) != strings.TrimSpace(requestedAlias) {
+		return nil, "", fmt.Errorf("hosted team invite certificate alias %q does not match requested alias %q", cert.Alias, requestedAlias)
+	}
+	if strings.TrimSpace(cert.Lifetime) != awid.LifetimeEphemeral {
+		return nil, "", fmt.Errorf("hosted team invite certificate lifetime %q does not match %q", cert.Lifetime, awid.LifetimeEphemeral)
+	}
+	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
+		return nil, "", fmt.Errorf("hosted ephemeral team invite certificate unexpectedly contains persistent identity fields")
+	}
+	return cert, serverURL, nil
 }
 
 func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
@@ -947,7 +1184,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 				TeamID:   teamID,
 				Alias:    strings.TrimSpace(existingCert.Alias),
 				CertPath: certPath,
-			}, existingCert, false); err != nil {
+			}, existingCert, "", "", false); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -1005,7 +1242,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		TeamID:   teamID,
 		Alias:    strings.TrimSpace(cert.Alias),
 		CertPath: certPath,
-	}, cert, false); err != nil {
+	}, cert, registryURL, "", false); err != nil {
 		return err
 	}
 
@@ -1259,7 +1496,7 @@ func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvit
 	return cause
 }
 
-func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, setActive bool) error {
+func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool) error {
 	if output == nil || cert == nil {
 		return fmt.Errorf("accepted team membership is required")
 	}
@@ -1270,11 +1507,21 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 	if teamState == nil {
 		teamState = &awconfig.TeamState{}
 	}
+	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
+		if strings.TrimSpace(registryURL) == "" {
+			registryURL = strings.TrimSpace(existing.RegistryURL)
+		}
+		if strings.TrimSpace(awebURL) == "" {
+			awebURL = strings.TrimSpace(existing.AwebURL)
+		}
+	}
 	teamState.AddMembership(awconfig.TeamMembership{
-		TeamID:   strings.TrimSpace(output.TeamID),
-		Alias:    strings.TrimSpace(output.Alias),
-		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)),
-		JoinedAt: strings.TrimSpace(cert.IssuedAt),
+		TeamID:      strings.TrimSpace(output.TeamID),
+		Alias:       strings.TrimSpace(output.Alias),
+		CertPath:    filepath.ToSlash(strings.TrimSpace(output.CertPath)),
+		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
+		RegistryURL: strings.TrimSpace(registryURL),
+		AwebURL:     strings.TrimSpace(awebURL),
 	})
 	if setActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)

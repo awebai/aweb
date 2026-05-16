@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from aweb.mcp.auth import AuthContext
+from aweb.mcp import server as mcp_server
 from aweb.mcp.server import register_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
@@ -25,11 +26,13 @@ class DBInfra:
 class ToolCollector:
     def __init__(self) -> None:
         self.names: list[str] = []
+        self.funcs: dict[str, object] = {}
 
     def tool(self, *, name: str, description: str):
         self.names.append(name)
 
         def decorator(func):
+            self.funcs[name] = func
             return func
 
         return decorator
@@ -101,7 +104,7 @@ async def _seed_hosted_target(aweb_db) -> str:
     return c3po_agent_id
 
 
-def test_consumer_contact_mcp_tool_names_are_registered():
+def test_clean_mcp_tool_names_are_registered_without_legacy_duplicates():
     collector = ToolCollector()
 
     register_tools(
@@ -111,17 +114,71 @@ def test_consumer_contact_mcp_tool_names_are_registered():
         registry_client=object(),  # type: ignore[arg-type]
     )
 
-    for name in {
+    expected = {
+        "send_mail",
+        "check_mail",
+        "send_chat",
+        "check_chats",
+        "read_chat",
+        "mark_chat_read",
         "list_contacts",
-        "send_message_to_contact",
-        "read_messages_from_contact",
-        "add_contact_by_email",
+        "add_contact",
         "add_contact_by_handle",
+        "remove_contact",
+        "read_contact_messages",
+    }
+    legacy = {
+        "check_inbox",
+        "chat_send",
+        "chat_pending",
+        "chat_history",
+        "chat_read",
         "contacts_list",
         "contacts_add",
         "contacts_remove",
-    }:
+        "add_contact_by_email",
+        "send_message_to_contact",
+        "read_messages_from_contact",
+    }
+    for name in expected:
         assert name in collector.names
+    for name in legacy:
+        assert name not in collector.names
+
+
+@pytest.mark.asyncio
+async def test_send_chat_public_tool_maps_to_unified_recipient_args(monkeypatch):
+    collector = ToolCollector()
+    calls: list[dict] = []
+
+    async def fake_chat_send_impl(*args, **kwargs):
+        calls.append(kwargs)
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(mcp_server, "_chat_send_impl", fake_chat_send_impl)
+    register_tools(
+        collector,  # type: ignore[arg-type]
+        db_infra=object(),  # type: ignore[arg-type]
+        redis=None,
+        registry_client=object(),  # type: ignore[arg-type]
+    )
+
+    send_chat = collector.funcs["send_chat"]
+    await send_chat(message="hello", to="aweb.ai/aida")  # type: ignore[operator]
+    await send_chat(message="hello", to="did:aw:target")  # type: ignore[operator]
+    await send_chat(message="hello", to="bob")  # type: ignore[operator]
+    await send_chat(message="hello", conversation_id="conv-1")  # type: ignore[operator]
+
+    assert calls[0]["to_address"] == "aweb.ai/aida"
+    assert calls[0]["to_alias"] == ""
+    assert calls[0]["to_did"] == ""
+    assert calls[0]["session_id"] == ""
+    assert calls[1]["to_did"] == "did:aw:target"
+    assert calls[2]["to_alias"] == "bob"
+    assert calls[3]["session_id"] == "conv-1"
+    assert calls[3]["to_address"] == ""
+    assert calls[3]["to_alias"] == ""
+    assert calls[3]["to_did"] == ""
 
 
 @pytest.mark.asyncio

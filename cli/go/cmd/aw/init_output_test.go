@@ -19,7 +19,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"/plugin marketplace add awebai/claude-plugins",
 		"/plugin install aweb-channel@awebai-marketplace",
 		"claude --dangerously-load-development-channels",
-		"https://aweb.ai/introduction.md",
+		"https://aweb.ai/docs/cli-tutorial.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
@@ -42,8 +42,8 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	if !strings.Contains(text, "claude --dangerously-load-development-channels") {
 		t.Fatalf("missing channel launch instruction:\n%s", text)
 	}
-	if !strings.Contains(text, "https://aweb.ai/introduction.md") {
-		t.Fatalf("missing introduction URL:\n%s", text)
+	if !strings.Contains(text, "https://aweb.ai/docs/cli-tutorial.md") {
+		t.Fatalf("missing CLI tutorial URL:\n%s", text)
 	}
 	for _, unwanted := range []string{"aw init --inject-docs", "aw init --setup-channel", "aw claim-human", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
@@ -66,7 +66,7 @@ func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
 	for _, want := range []string{
 		"aw init --setup-channel",
 		"aw init --inject-docs",
-		"https://aweb.ai/introduction.md",
+		"https://aweb.ai/docs/cli-tutorial.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)

@@ -375,7 +375,7 @@ func addWorktreeViaLocalTeamKey(
 		return connectOutput{}, err
 	}
 
-	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, true)
+	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, sourceServerURL, true)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create ephemeral team invite for %s: %w", teamID, err)
@@ -664,7 +664,7 @@ func formatWorkspaceAddWorktree(v any) string {
 	sb.WriteString("State:      .aw/ in that worktree stores the local identity and workspace binding\n")
 	sb.WriteString("\nTo use:\n")
 	sb.WriteString(fmt.Sprintf("  cd %s\n", abbreviateUserHome(out.WorktreePath)))
-	sb.WriteString("  Tell your agent: please read https://aweb.ai/introduction.md\n")
+	sb.WriteString("  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md\n")
 	return sb.String()
 }
 
@@ -829,6 +829,21 @@ func resolveWorkspaceTeamRegistryURL(workingDir, awebURL, teamDomain string) (st
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("load controller metadata for %s: %w", teamDomain, err)
+	}
+	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+		for _, membership := range teamState.Memberships {
+			membershipDomain, _, parseErr := awid.ParseTeamID(strings.TrimSpace(membership.TeamID))
+			if parseErr != nil {
+				continue
+			}
+			if strings.EqualFold(membershipDomain, awconfig.NormalizeDomain(teamDomain)) {
+				if registryURL := strings.TrimSpace(membership.RegistryURL); registryURL != "" {
+					return registryURL, nil
+				}
+			}
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("load team state: %w", err)
 	}
 	if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
 		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {

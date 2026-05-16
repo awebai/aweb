@@ -11,6 +11,8 @@ API. This repository is the self-hostable open-source stack.
 Start with the canonical docs:
 
 - [docs/README.md](docs/README.md)
+- [docs/cli-tutorial.md](docs/cli-tutorial.md)
+- [docs/mcp-tutorial.md](docs/mcp-tutorial.md)
 - [docs/agent-guide.md](docs/agent-guide.md)
 - [docs/identity-guide.md](docs/identity-guide.md)
 - [docs/trust-model.md](docs/trust-model.md)

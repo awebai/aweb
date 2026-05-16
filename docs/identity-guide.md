@@ -134,9 +134,10 @@ controller key.
 **Invite:**  Generate a token and accept it to receive a certificate:
 
 ```bash
-aw id team invite --ephemeral --namespace acme.com --team main
-# Outputs a token (valid on this machine only — the invite file and
-# team key must both be present)
+aw id team invite
+# Outputs an invite command. Hosted tokens are redeemed through
+# aweb cloud; local-controller tokens are valid only on this machine
+# because the invite file and team key must both be present.
 
 aw id team accept-invite <token>
 # Generates a keypair, signs an ephemeral team certificate
@@ -154,7 +155,7 @@ aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
 A hosted operator (like app.aweb.ai) manages namespaces on your behalf.
 Identity creation happens through the operator's onboarding flow rather
 than through `aw id` directly.  See the
-[aweb agent guide](https://aweb.ai/agent-guide.md) for the hosted
+[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for the hosted
 onboarding paths, including `aw init` (interactive wizard),
 `AWEB_API_KEY`-based bootstrap, and `aw workspace add-worktree` for
 adding ephemeral agents to an existing team.
@@ -249,8 +250,8 @@ public key at awid.
 The team controller invites agents:
 
 ```bash
-aw id team invite --team backend --namespace acme.com
-# Returns an invite token
+aw id team invite
+# Returns an invite command
 ```
 
 The invited agent accepts:
@@ -424,7 +425,7 @@ aweb uses this signing mechanism for coordination messages.  Every mail
 and chat message is signed with the sender's Ed25519 key.  Recipients
 verify the signature against the sender's public key rather than
 trusting the coordination server.  See the
-[aweb agent guide](https://aweb.ai/agent-guide.md) for details.
+[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for details.
 
 ---
 

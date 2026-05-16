@@ -17,7 +17,7 @@ Common files and directories include:
 - `~/.config/aw/run.json`: optional `aw run` defaults
 - `~/.config/aw/controllers/`: controller keys and controller metadata for domains you manage
 - `~/.config/aw/team-keys/`: local team controller keys
-- `~/.config/aw/team-invites/`: pending invite records created on this machine
+- `~/.config/aw/team-invites/`: pending local-controller invite records created on this machine
 
 These are user-level artifacts, not repo-local shared state.
 
@@ -163,13 +163,14 @@ aw workspace add-worktree <role>
 ```
 
 - `aw init` writes or refreshes `workspace.yaml`, `context`, and related local binding state
-- `aw id team accept-invite` writes a team certificate under `team-certs/`
+- `aw id team accept-invite` writes a team certificate under `team-certs/`; hosted invite tokens also create a fresh local signing key and refuse to overwrite an existing `.aw` identity
 - `aw workspace add-worktree` creates a sibling worktree with its own `.aw/` state
 
 ## Injected Coordination Docs
 
-`aw init --inject-docs` injects coordination instructions into local agent-facing
-docs.
+`aw init` injects coordination instructions into local agent-facing
+docs by default. Use `aw init --do-not-touch-agents-md` to skip
+this file update.
 
 The injector targets:
 

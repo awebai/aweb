@@ -969,20 +969,14 @@ binding, CLI writes `.aw/workspace.yaml`. No prompts.
 **Case B — directory has no identity yet:**
 The CLI runs the wizard to create the identity, then connects.
 
-The wizard offers two paths:
+Hosted is the default path; `--byod` is the explicit opt-in.
+There is no interactive path-chooser — plain `aw init` on a clean
+directory goes to the hosted flow against the configured aweb
+server.
 
-PATH 1 — BYOD (you have a domain):
-- Wizard asks "Do you have a domain you control?"
-- User says yes, provides domain
-- CLI generates a controller keypair locally
-- CLI prints the DNS TXT record the user must add: `_awid.<domain> TXT "awid=v1; controller=<did:key>"`
-- User adds the DNS record
-- CLI verifies the record, registers the namespace at awid, creates a default team, signs a certificate
-- Proceeds to connect
-
-PATH 2 — Hosted (use a managed namespace from a hosted operator):
-- Wizard asks "Use a managed identity from a hosted operator?"
-- User picks a username
+DEFAULT — Hosted (use a managed namespace from a hosted operator):
+- User picks a username (`--username` flag in noninteractive mode,
+  prompted in a TTY)
 - CLI calls the hosted operator's onboarding endpoints to check
   username availability and request a managed namespace + default
   team + initial team certificate. The wire shape of those endpoints
@@ -992,6 +986,23 @@ PATH 2 — Hosted (use a managed namespace from a hosted operator):
   signs a team certificate, and returns the certificate to the CLI.
 - CLI saves the certificate under `.aw/team-certs/<team>.pem`.
 - Proceeds to connect.
+
+`--byod` — Bring Your Own Domain (you control the namespace):
+- User passes `--byod` and a `--domain` (the controllable namespace,
+  e.g. `acme.com`) — both required in noninteractive mode, prompted
+  in a TTY
+- CLI generates a controller keypair locally
+- CLI prints the DNS TXT record the user must add: `_awid.<domain> TXT "awid=v1; controller=<did:key>"`
+- User adds the DNS record
+- CLI verifies the record, registers the namespace at awid, creates a default team, signs a certificate
+- Proceeds to connect
+
+In noninteractive mode (`--json` or no TTY), every required input
+must come from a flag — the wizard does not prompt. Missing
+`--username` (hosted) or `--byod --domain` (BYOD) returns a usage
+error rather than hanging on stdin. DNS verification for BYOD also
+requires a TTY; noninteractive BYOD signups must publish the TXT
+record before running.
 
 After either path, the connect step is the same:
 - CLI calls server `POST /v1/connect` with the team certificate
@@ -1014,7 +1025,7 @@ namespace family.
    → identity created at awid (did:aw, did:key, address)
 
 2. Team controller invites alice:
-   aw id team invite --team backend --namespace acme.com
+   aw id team invite --persistent
    → returns invite token
 
 3. Alice accepts:
@@ -1036,7 +1047,7 @@ own server URL for self-hosted aweb.)
 
 ```
 1. Team controller creates invite for ephemeral member:
-   aw id team invite --team backend --namespace acme.com --ephemeral
+   aw id team invite
 
 2. New agent accepts:
    aw id team accept-invite <token>
@@ -1095,8 +1106,8 @@ relies on are:
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; persistent when `--address` is supplied, ephemeral otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite --team X --namespace Y [--ephemeral]` | Create invite token |
-| `aw id team accept-invite <token>` | Accept a same-machine local controller invite, receive certificate |
+| `aw id team invite [--team X --namespace Y] [--persistent]` | Create invite token; defaults to the active team and an ephemeral invite |
+| `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate |
 | `aw id team add <token>` | Add another team membership to the current local identity and workspace without switching active team |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
@@ -1360,13 +1371,13 @@ families are:
 | Family | Tools |
 |---|---|
 | Identity | `whoami` |
-| Mail | `send_mail`, `check_inbox` |
-| Chat | `chat_send`, `chat_pending`, `chat_history`, `chat_read` |
+| Mail | `send_mail`, `check_mail` |
+| Chat | `send_chat`, `check_chats`, `read_chat`, `mark_chat_read` |
 | Tasks | `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_close`, `task_reopen`, `task_comment_add`, `task_comment_list`, `task_ready` |
 | Work discovery | `work_ready`, `work_active`, `work_blocked` |
 | Roles | `roles_show`, `roles_list` |
 | Instructions | `instructions_show`, `instructions_history` |
-| Contacts | `contacts_list`, `contacts_add`, `contacts_remove` |
+| Contacts | `list_contacts`, `add_contact`, `add_contact_by_handle`, `remove_contact`, `read_contact_messages` |
 | Presence | `list_agents`, `heartbeat` |
 | Workspace | `workspace_status` |
 

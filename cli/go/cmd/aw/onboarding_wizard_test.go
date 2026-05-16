@@ -765,18 +765,20 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: username, agent name, claim-human=y, email. No lifetime prompt.
+	// stdin: username, agent name, channel setup=y, claim-human=y, email.
+	// No lifetime prompt.
 	// Persistent: true is explicit — the wizard defaults to ephemeral; this
 	// test exercises the --persistent flag's promotion to a durable identity.
 	_, err = executeHostedPath(guidedOnboardingRequest{
-		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\nlaptop\ny\njack@example.com\n"),
-		PromptOut:  &out,
-		BaseURL:    onboardingServer.URL + "/api",
-		Role:       "developer",
-		HumanName:  "Operator Jane",
-		AgentType:  "codex",
-		Persistent: true,
+		WorkingDir:         tmp,
+		PromptIn:           strings.NewReader("jack\nlaptop\ny\ny\njack@example.com\n"),
+		PromptOut:          &out,
+		BaseURL:            onboardingServer.URL + "/api",
+		Role:               "developer",
+		HumanName:          "Operator Jane",
+		AgentType:          "codex",
+		Persistent:         true,
+		AskPostCreateSetup: true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1014,11 +1016,11 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	tmp := t.TempDir()
 	var out bytes.Buffer
-	// stdin: first username, agent name, retry username after conflict, claim-human=n.
+	// stdin: first username, agent name, retry username after conflict.
 	// No lifetime prompt. Persistent: true exercises --persistent flag promotion.
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir: tmp,
-		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\nn\n"),
+		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
 		Persistent: true,
@@ -1044,9 +1046,6 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); err != nil {
 		t.Fatalf("identity.yaml must exist for persistent hosted onboarding retry: %v", err)
-	}
-	if !strings.Contains(out.String(), "Run aw claim-human now?") {
-		t.Fatalf("expected claim-human prompt in hosted retry output: %q", out.String())
 	}
 	if !strings.Contains(out.String(), `Username "jack" was taken during signup.`) {
 		t.Fatalf("expected retry message, got %q", out.String())
@@ -1309,7 +1308,7 @@ func TestExecuteHostedPathWithPersistentFlagShipsPersistentSignup(t *testing.T) 
 // TestExecuteHostedPathDefaultsToEphemeralWithAliceAlias locks in the
 // Juan-directive default for `aw init`: without --persistent, the wizard
 // signs up an ephemeral identity. With no --alias either, the prompt's
-// default is "alice" (the introduction.md canonical name) so a developer
+// default is "alice" (the cli-tutorial.md canonical name) so a developer
 // reaches a working identity in one Enter keystroke. No lifetime prompt
 // fires; no did:aw is registered; identity.yaml is not written.
 func TestExecuteHostedPathDefaultsToEphemeralWithAliceAlias(t *testing.T) {
@@ -2065,9 +2064,10 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 
 	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir:         tmp,
-		PromptIn:           &singleByteReader{data: "y\nn\nn\n"},
+		PromptIn:           &singleByteReader{data: "n\nn\n"},
 		PromptOut:          &bytes.Buffer{},
 		BaseURL:            "https://app.example",
+		InjectAgentDocs:    true,
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
@@ -2113,8 +2113,9 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 
 	err := runGuidedPostInitSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
-		PromptIn:           &singleByteReader{data: "y\nn\ny\n"},
+		PromptIn:           &singleByteReader{data: "n\ny\n"},
 		PromptOut:          &bytes.Buffer{},
+		InjectAgentDocs:    true,
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
@@ -2173,6 +2174,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "\n\n"},
 		PromptOut:          &out,
+		InjectAgentDocs:    true,
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
@@ -2188,11 +2190,55 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 		t.Fatalf("hooks calls=%d", hooksCalls)
 	}
 	output := out.String()
-	if !strings.Contains(output, "They are clearly marked and only explain how agents should use aw.") {
-		t.Fatalf("docs prompt did not explain scope:\n%s", output)
-	}
 	if !strings.Contains(output, "(y/n) [y]") {
 		t.Fatalf("expected yes defaults in prompts:\n%s", output)
+	}
+}
+
+func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
+	oldInjectDocs := guidedOnboardingInjectDocs
+	oldSetupHooks := guidedOnboardingSetupHooks
+	oldSetupChannel := guidedOnboardingSetupChannel
+	t.Cleanup(func() {
+		guidedOnboardingInjectDocs = oldInjectDocs
+		guidedOnboardingSetupHooks = oldSetupHooks
+		guidedOnboardingSetupChannel = oldSetupChannel
+	})
+
+	tmp := t.TempDir()
+	var docsCalls, channelCalls, hooksCalls int
+	guidedOnboardingInjectDocs = func(repoRoot string) *injectDocsResult {
+		docsCalls++
+		return &injectDocsResult{}
+	}
+	guidedOnboardingSetupChannel = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		channelCalls++
+		return &claudeHooksResult{}
+	}
+	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+		hooksCalls++
+		return &claudeHooksResult{}
+	}
+
+	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+		WorkingDir:         tmp,
+		PromptIn:           &singleByteReader{data: "\n"},
+		PromptOut:          &bytes.Buffer{},
+		InjectAgentDocs:    true,
+		DoNotTouchAgentsMD: true,
+		AskPostCreateSetup: true,
+	})
+	if err != nil {
+		t.Fatalf("runGuidedPostInitSetup: %v", err)
+	}
+	if docsCalls != 0 {
+		t.Fatalf("docs calls=%d", docsCalls)
+	}
+	if channelCalls != 1 {
+		t.Fatalf("channel calls=%d", channelCalls)
+	}
+	if hooksCalls != 0 {
+		t.Fatalf("hooks calls=%d", hooksCalls)
 	}
 }
 
@@ -2290,9 +2336,10 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 	var out bytes.Buffer
 	_, err = executeHostedPath(guidedOnboardingRequest{
 		WorkingDir:         t.TempDir(),
-		PromptIn:           strings.NewReader("jack\nlaptop\n\n\ny\njack@example.com\n"),
+		PromptIn:           strings.NewReader("jack\nlaptop\n\ny\njack@example.com\n"),
 		PromptOut:          &out,
 		BaseURL:            server.URL,
+		InjectAgentDocs:    true,
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
@@ -2303,9 +2350,9 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 		t.Fatalf("event order=%s", got)
 	}
 	output := out.String()
-	docsIndex := strings.Index(output, "Inject aw agent instructions")
+	channelIndex := strings.Index(output, "Set up Claude Code channel")
 	claimIndex := strings.Index(output, "Run aw claim-human now?")
-	if docsIndex < 0 || claimIndex < 0 || claimIndex < docsIndex {
+	if channelIndex < 0 || claimIndex < 0 || claimIndex < channelIndex {
 		t.Fatalf("claim-human prompt must come after post-init setup prompts:\n%s", output)
 	}
 }

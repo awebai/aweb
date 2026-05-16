@@ -129,6 +129,8 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		if strings.TrimSpace(existing.JoinedAt) != "" {
 			membership.JoinedAt = existing.JoinedAt
 		}
+		membership.RegistryURL = strings.TrimSpace(existing.RegistryURL)
+		membership.AwebURL = strings.TrimSpace(existing.AwebURL)
 		*existing = membership
 	} else {
 		teamState.AddMembership(membership)

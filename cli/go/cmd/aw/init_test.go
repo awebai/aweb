@@ -45,7 +45,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	var readyCalls int
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
 		captured = req
-		return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/agent-guide.md before doing anything else."}, nil
+		return &guidedOnboardingResult{InitialPrompt: "Download and study the agent guide at https://aweb.ai/docs/agent-guide.md before doing anything else."}, nil
 	}
 	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {
 		readyCalls++
@@ -86,6 +86,79 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 	if readyCalls != 1 {
 		t.Fatalf("expected post-wizard ready message once, got %d", readyCalls)
+	}
+}
+
+func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T) {
+	// Cannot use t.Parallel() — needs cwd and globals.
+
+	oldWizard := guidedOnboardingWizard
+	oldIsTTY := initIsTTY
+	oldPrintReady := initPrintGuidedOnboardingReady
+	oldUsername := initUsername
+	oldAlias := initAlias
+	oldName := initName
+	oldDomain := initDomain
+	oldReachability := initReachability
+	oldBYOD := initBYOD
+	oldPersistent := initPersistent
+	oldURL := initURL
+	t.Cleanup(func() {
+		guidedOnboardingWizard = oldWizard
+		initIsTTY = oldIsTTY
+		initPrintGuidedOnboardingReady = oldPrintReady
+		initUsername = oldUsername
+		initAlias = oldAlias
+		initName = oldName
+		initDomain = oldDomain
+		initReachability = oldReachability
+		initBYOD = oldBYOD
+		initPersistent = oldPersistent
+		initURL = oldURL
+	})
+
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	initIsTTY = func() bool { return true }
+	initURL = "https://app.aweb.ai"
+	initUsername = "jane"
+	initAlias = "alice"
+	initName = ""
+	initDomain = ""
+	initReachability = ""
+	initBYOD = false
+	initPersistent = false
+
+	var captured guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		captured = req
+		return &guidedOnboardingResult{}, nil
+	}
+	initPrintGuidedOnboardingReady = func(result *guidedOnboardingResult) {}
+
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+
+	if err := runInit(&cmd.Command, nil); err != nil {
+		t.Fatalf("runInit returned error: %v", err)
+	}
+	if captured.Username != "jane" || captured.Alias != "alice" {
+		t.Fatalf("explicit args not passed through: %+v", captured)
+	}
+	if captured.NonInteractive {
+		t.Fatal("TTY command should still be allowed to prompt for missing required values")
+	}
+	if captured.AskPostCreateSetup {
+		t.Fatal("explicit command-mode init must not run optional post-create prompts")
 	}
 }
 

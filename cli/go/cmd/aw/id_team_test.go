@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,6 +455,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
 		"--namespace", "acme.com",
+		"--persistent",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = tmp
@@ -533,6 +536,425 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	teamPub := teamKey.Public().(ed25519.PublicKey)
 	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
 		t.Fatalf("verify certificate: %v", err)
+	}
+}
+
+func TestTeamInviteDefaultsToActiveTeamAndEphemeral(t *testing.T) {
+	t.Parallel()
+
+	var registeredCert map[string]any
+	var connectCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
+			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      "backend:acme.com",
+				"alias":        "bob",
+				"agent_id":     "agent-bob",
+				"workspace_id": "workspace-bob",
+				"repo_id":      "",
+				"team_did_key": "did:key:z6MkiTeam",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id":        "instructions-1",
+				"active_team_instructions_id": "instructions-1",
+				"version":                     1,
+				"document": map[string]any{
+					"body_md": "Use aw mail inbox and aw chat pending.",
+				},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	home := t.TempDir()
+	inviterDir := filepath.Join(home, "alice")
+	acceptDir := filepath.Join(home, "bob")
+	if err := os.MkdirAll(inviterDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, home, "acme.com", "backend", teamKey)
+	writeWorkspaceBindingForTest(t, inviterDir, awconfig.WorktreeWorkspace{
+		AwebURL: server.URL,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      "backend:acme.com",
+			Alias:       "alice",
+			WorkspaceID: "workspace-alice",
+			CertPath:    awconfig.TeamCertificateRelativePath("backend:acme.com"),
+			JoinedAt:    "2026-05-16T00:00:00Z",
+		}},
+	})
+	writeIdentityForTest(t, inviterDir, awconfig.WorktreeIdentity{
+		DID:         "did:key:z6MkiR5hWfjt7SeH1Zs3xJMp5YowQbK5xkYH5BXMxHnXj1aA",
+		StableID:    "did:aw:alice",
+		Address:     "acme.com/alice",
+		Custody:     awid.CustodySelf,
+		Lifetime:    awid.LifetimePersistent,
+		RegistryURL: server.URL,
+		CreatedAt:   "2026-05-16T00:00:00Z",
+	})
+
+	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite")
+	runInvite.Env = testCommandEnv(home)
+	runInvite.Dir = inviterDir
+	inviteOut, err := runInvite.CombinedOutput()
+	if err != nil {
+		t.Fatalf("team invite failed: %v\n%s", err, string(inviteOut))
+	}
+	token := ""
+	for _, line := range strings.Split(string(inviteOut), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Command:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 6 && fields[1] == "aw" && fields[4] == "accept-invite" {
+			token = fields[5]
+		}
+	}
+	if token == "" {
+		t.Fatalf("invite output did not include accept command with token:\n%s", string(inviteOut))
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--alias", "bob", "--json")
+	runAccept.Env = testCommandEnv(home)
+	runAccept.Dir = acceptDir
+	acceptOut, err := runAccept.CombinedOutput()
+	if err != nil {
+		t.Fatalf("accept-invite failed: %v\n%s", err, string(acceptOut))
+	}
+	var acceptGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, acceptOut), &acceptGot); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, string(acceptOut))
+	}
+	if acceptGot["team_id"] != "backend:acme.com" {
+		t.Fatalf("team_id=%v", acceptGot["team_id"])
+	}
+	if acceptGot["alias"] != "bob" {
+		t.Fatalf("alias=%v", acceptGot["alias"])
+	}
+
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(acceptDir, "backend:acme.com"))
+	if err != nil {
+		t.Fatalf("load certificate: %v", err)
+	}
+	if cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("lifetime=%q want %q", cert.Lifetime, awid.LifetimeEphemeral)
+	}
+	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
+		t.Fatalf("ephemeral cert should not include persistent identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
+	}
+	if registeredCert["lifetime"] != awid.LifetimeEphemeral {
+		t.Fatalf("registry lifetime=%v", registeredCert["lifetime"])
+	}
+	teamState, err := awconfig.LoadTeamState(acceptDir)
+	if err != nil {
+		t.Fatalf("load teams state: %v", err)
+	}
+	membership := teamState.Membership("backend:acme.com")
+	if membership == nil {
+		t.Fatal("accepted invite did not write team membership")
+	}
+	if membership.RegistryURL != server.URL {
+		t.Fatalf("membership registry_url=%q want %q", membership.RegistryURL, server.URL)
+	}
+	if membership.AwebURL != server.URL {
+		t.Fatalf("membership aweb_url=%q want %q", membership.AwebURL, server.URL)
+	}
+
+	runInit := exec.CommandContext(ctx, bin, "init")
+	runInit.Env = testCommandEnv(home)
+	runInit.Dir = acceptDir
+	initOut, err := runInit.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init after accept-invite failed: %v\n%s", err, string(initOut))
+	}
+	if connectCalls != 1 {
+		t.Fatalf("connect calls=%d", connectCalls)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(acceptDir, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if workspace.AwebURL != server.URL {
+		t.Fatalf("workspace aweb_url=%q want %q", workspace.AwebURL, server.URL)
+	}
+	agentsDoc, err := os.ReadFile(filepath.Join(acceptDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("expected aw init to create AGENTS.md by default: %v\n%s", err, string(initOut))
+	}
+	if !strings.Contains(string(agentsDoc), awDocsMarkerStart) || !strings.Contains(string(agentsDoc), "Use aw mail inbox and aw chat pending.") {
+		t.Fatalf("AGENTS.md missing marked aw instructions:\n%s", string(agentsDoc))
+	}
+}
+
+func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	teamID := "default:gracehosted.aweb.ai"
+	var createAuthHadCert bool
+	var acceptVerifiedDID bool
+	var connectCalls int
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var server *httptest.Server
+	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID {
+				t.Fatalf("create invite cert team=%q want %q", cert.Team, teamID)
+			}
+			createAuthHadCert = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"invite_id":      "invite-hosted-1",
+				"token":          "aw_inv_hosted_test_token",
+				"token_prefix":   "hosted_t",
+				"access_mode":    "open",
+				"max_uses":       1,
+				"expires_at":     "2026-05-17T00:00:00Z",
+				"namespace_slug": "gracehosted",
+				"namespace":      "gracehosted.aweb.ai",
+				"server_url":     server.URL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			if didKey == "" {
+				t.Fatal("accept request missing did")
+			}
+			timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
+			parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+			if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != didKey {
+				t.Fatalf("bad accept auth header %q", r.Header.Get("Authorization"))
+			}
+			if !verifyCloudDIDPayload(t, mustExtractPublicKey(t, didKey), http.MethodPost, "/api/v1/spawn/accept-invite", timestamp, body, parts[2]) {
+				t.Fatal("accept invite signature did not verify")
+			}
+			acceptVerifiedDID = true
+
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
+				Team:         teamID,
+				MemberDIDKey: didKey,
+				Alias:        "bob",
+				Lifetime:     awid.LifetimeEphemeral,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "server-team-id",
+				"team_slug":      "default",
+				"namespace_slug": "gracehosted",
+				"namespace":      "gracehosted.aweb.ai",
+				"identity_id":    "agent-bob",
+				"alias":          "bob",
+				"api_key":        "aw_sk_child_not_printed",
+				"server_url":     server.URL,
+				"did":            didKey,
+				"custody":        "self",
+				"lifetime":       "ephemeral",
+				"access_mode":    "open",
+				"created":        true,
+				"team_cert":      encoded,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        "bob",
+				"agent_id":     "agent-bob",
+				"workspace_id": "workspace-bob",
+				"repo_id":      "",
+				"team_did_key": "did:key:z6MkiTeam",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id":        "instructions-1",
+				"active_team_instructions_id": "instructions-1",
+				"version":                     1,
+				"document": map[string]any{
+					"body_md": "Use aw mail inbox and aw chat pending.",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": server.URL,
+				"aweb_url":       server.URL,
+				"registry_url":   server.URL,
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	home := t.TempDir()
+	inviterDir := filepath.Join(home, "alice")
+	acceptDir := filepath.Join(home, "bob")
+	if err := os.MkdirAll(inviterDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(acceptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeWorkspaceBindingForTest(t, inviterDir, awconfig.WorktreeWorkspace{
+		AwebURL: server.URL,
+		Memberships: []awconfig.WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "alice",
+			WorkspaceID: "workspace-alice",
+			CertPath:    awconfig.TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-05-16T00:00:00Z",
+		}},
+	})
+
+	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite", "--json")
+	runInvite.Env = testCommandEnv(home)
+	runInvite.Dir = inviterDir
+	inviteOut, err := runInvite.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hosted team invite failed: %v\n%s", err, string(inviteOut))
+	}
+	var inviteGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, inviteOut), &inviteGot); err != nil {
+		t.Fatalf("invalid invite json: %v\n%s", err, string(inviteOut))
+	}
+	if inviteGot["token"] != "aw_inv_hosted_test_token" {
+		t.Fatalf("token=%v", inviteGot["token"])
+	}
+	if !createAuthHadCert {
+		t.Fatal("hosted create-invite did not use certificate auth")
+	}
+
+	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_hosted_test_token", "--alias", "bob", "--json")
+	runAccept.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL)
+	runAccept.Dir = acceptDir
+	acceptOut, err := runAccept.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hosted accept-invite failed: %v\n%s", err, string(acceptOut))
+	}
+	var acceptGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, acceptOut), &acceptGot); err != nil {
+		t.Fatalf("invalid accept json: %v\n%s", err, string(acceptOut))
+	}
+	if acceptGot["team_id"] != teamID {
+		t.Fatalf("team_id=%v", acceptGot["team_id"])
+	}
+	if acceptGot["alias"] != "bob" {
+		t.Fatalf("alias=%v", acceptGot["alias"])
+	}
+	if strings.Contains(string(acceptOut), "aw_sk_child_not_printed") {
+		t.Fatalf("accept output leaked child api key:\n%s", string(acceptOut))
+	}
+	if !acceptVerifiedDID {
+		t.Fatal("hosted accept-invite did not prove DID possession")
+	}
+
+	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(acceptDir, teamID))
+	if err != nil {
+		t.Fatalf("load accepted hosted cert: %v", err)
+	}
+	if cert.Alias != "bob" || cert.Lifetime != awid.LifetimeEphemeral {
+		t.Fatalf("unexpected cert alias/lifetime: %q/%q", cert.Alias, cert.Lifetime)
+	}
+	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
+		t.Fatalf("hosted ephemeral cert has persistent fields: %q %q", cert.MemberDIDAW, cert.MemberAddress)
+	}
+	if _, err := os.Stat(filepath.Join(acceptDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
+		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
+	}
+
+	runInit := exec.CommandContext(ctx, bin, "init")
+	runInit.Env = testCommandEnv(home)
+	runInit.Dir = acceptDir
+	initOut, err := runInit.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init after hosted accept-invite failed: %v\n%s", err, string(initOut))
+	}
+	if connectCalls != 1 {
+		t.Fatalf("connect calls=%d", connectCalls)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(acceptDir, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load accepted workspace: %v", err)
+	}
+	if workspace.AwebURL != server.URL {
+		t.Fatalf("workspace aweb_url=%q want %q", workspace.AwebURL, server.URL)
+	}
+}
+
+func TestHostedTeamAcceptInviteRefusesExistingIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), signingKey); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", "aw_inv_refuse_existing", "--alias", "bob")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=http://127.0.0.1:1")
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected hosted accept-invite to refuse existing identity:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "refusing to overwrite existing") || !strings.Contains(string(out), ".aw/signing.key") {
+		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
 
@@ -1811,7 +2233,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "ops", teamKey)
-	_, token, err := createTeamInviteToken("acme.com", "ops", server.URL, false)
+	_, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

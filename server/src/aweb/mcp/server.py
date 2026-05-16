@@ -28,14 +28,11 @@ from aweb.mcp.tools.chat import chat_history as _chat_history_impl
 from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
 from aweb.mcp.tools.chat import chat_read as _chat_read_impl
 from aweb.mcp.tools.chat import chat_send as _chat_send_impl
-from aweb.mcp.tools.contacts import add_contact_by_email as _add_contact_by_email_impl
 from aweb.mcp.tools.contacts import add_contact_by_handle as _add_contact_by_handle_impl
-from aweb.mcp.tools.contacts import contacts_list as _contacts_list_impl
 from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
 from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
 from aweb.mcp.tools.contacts import list_contacts_tool as _list_contacts_tool_impl
 from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages_from_contact_impl
-from aweb.mcp.tools.contacts import send_message_to_contact as _send_message_to_contact_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
@@ -167,8 +164,8 @@ def register_tools(
         description="Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id.",
     )
     async def send_mail(
-        body: str,
         to: str = "",
+        body: str = "",
         conversation_id: str = "",
         subject: str = "",
         priority: str = "normal",
@@ -185,10 +182,10 @@ def register_tools(
         )
 
     @mcp.tool(
-        name="check_inbox",
-        description="Check the agent's inbox for messages from other agents.",
+        name="check_mail",
+        description="Check the agent's mail inbox for messages from other agents.",
     )
-    async def check_inbox(
+    async def check_mail(
         unread_only: bool = True, limit: int = 50, include_bodies: bool = True
     ) -> str:
         return await _check_inbox_impl(
@@ -217,24 +214,33 @@ def register_tools(
     # -- Chat --
 
     @mcp.tool(
-        name="chat_send",
+        name="send_chat",
         description=(
-            "Send a real-time chat message. Provide to_alias for a new conversation "
-            "or session_id to reply in an existing one. Set wait=true to block until "
+            "Send a real-time chat message. Provide to for a routable address, "
+            "DID, hosted handle, or same-team local alias, or conversation_id "
+            "to reply in an existing conversation. Set wait=true to block until "
             "the other agent replies (recommended for conversations)."
         ),
     )
-    async def chat_send(
-        message: str,
-        to_alias: str = "",
-        to_did: str = "",
-        to_address: str = "",
-        session_id: str = "",
+    async def send_chat(
+        to: str = "",
+        message: str = "",
+        conversation_id: str = "",
         wait: bool = False,
         wait_seconds: int = 120,
         leaving: bool = False,
         hang_on: bool = False,
     ) -> str:
+        recipient_ref = to.strip()
+        to_alias = ""
+        to_did = ""
+        to_address = ""
+        if recipient_ref.startswith("did:aw:") or recipient_ref.startswith("did:key:"):
+            to_did = recipient_ref
+        elif "/" in recipient_ref or recipient_ref.startswith("@"):
+            to_address = recipient_ref
+        else:
+            to_alias = recipient_ref
         return await _chat_send_impl(
             db_infra,
             redis,
@@ -244,7 +250,7 @@ def register_tools(
             to_alias=to_alias,
             to_did=to_did,
             to_address=to_address,
-            session_id=session_id,
+            session_id=conversation_id,
             wait=wait,
             wait_seconds=wait_seconds,
             leaving=leaving,
@@ -252,32 +258,32 @@ def register_tools(
         )
 
     @mcp.tool(
-        name="chat_pending",
-        description="List conversations with unread messages waiting for you.",
+        name="check_chats",
+        description="List chat conversations with unread messages waiting for you.",
     )
-    async def chat_pending() -> str:
+    async def check_chats() -> str:
         return await _chat_pending_impl(db_infra, redis)
 
     @mcp.tool(
-        name="chat_history",
+        name="read_chat",
         description="Get message history for a chat session.",
     )
-    async def chat_history(
-        session_id: str,
+    async def read_chat(
+        conversation_id: str,
         unread_only: bool = False,
         limit: int = 50,
     ) -> str:
         return await _chat_history_impl(
-            db_infra, session_id=session_id, unread_only=unread_only, limit=limit
+            db_infra, session_id=conversation_id, unread_only=unread_only, limit=limit
         )
 
     @mcp.tool(
-        name="chat_read",
+        name="mark_chat_read",
         description="Mark chat messages as read up to a given message ID.",
     )
-    async def chat_read(session_id: str, up_to_message_id: str) -> str:
+    async def mark_chat_read(conversation_id: str, up_to_message_id: str) -> str:
         return await _chat_read_impl(
-            db_infra, session_id=session_id, up_to_message_id=up_to_message_id
+            db_infra, session_id=conversation_id, up_to_message_id=up_to_message_id
         )
 
     # -- Tasks --
@@ -472,32 +478,18 @@ def register_tools(
     # -- Contacts --
 
     @mcp.tool(
-        name="contacts_list",
-        description="List all contacts in the team's address book.",
-    )
-    async def contacts_list() -> str:
-        return await _contacts_list_impl(db_infra)
-
-    @mcp.tool(
-        name="contacts_add",
-        description="Add a contact address to the team's address book.",
-    )
-    async def contacts_add(contact_address: str, label: str = "") -> str:
-        return await _contacts_add_impl(db_infra, contact_address=contact_address, label=label)
-
-    @mcp.tool(
-        name="contacts_remove",
-        description="Remove a contact from the team's address book.",
-    )
-    async def contacts_remove(contact_id: str) -> str:
-        return await _contacts_remove_impl(db_infra, contact_id=contact_id)
-
-    @mcp.tool(
         name="list_contacts",
         description="List saved contacts for the authenticated identity.",
     )
     async def list_contacts() -> str:
         return await _list_contacts_tool_impl(db_infra)
+
+    @mcp.tool(
+        name="add_contact",
+        description="Add a contact by routable address.",
+    )
+    async def add_contact(address: str, label: str = "") -> str:
+        return await _contacts_add_impl(db_infra, contact_address=address, label=label)
 
     @mcp.tool(
         name="add_contact_by_handle",
@@ -507,44 +499,17 @@ def register_tools(
         return await _add_contact_by_handle_impl(db_infra, handle=handle, label=label)
 
     @mcp.tool(
-        name="add_contact_by_email",
-        description="Add a pending contact by email address.",
+        name="remove_contact",
+        description="Remove a saved contact.",
     )
-    async def add_contact_by_email(email: str, label: str = "") -> str:
-        return await _add_contact_by_email_impl(db_infra, email=email, label=label)
+    async def remove_contact(contact_id: str) -> str:
+        return await _contacts_remove_impl(db_infra, contact_id=contact_id)
 
     @mcp.tool(
-        name="send_message_to_contact",
-        description="Send mail or chat to a saved contact.",
-    )
-    async def send_message_to_contact(
-        contact_id: str,
-        message: str,
-        subject: str = "",
-        channel: str = "mail",
-        priority: str = "normal",
-        wait: bool = False,
-        wait_seconds: int = 120,
-    ) -> str:
-        return await _send_message_to_contact_impl(
-            db_infra,
-            redis,
-            registry_client=registry_client,
-            hosted_signer=hosted_signer,
-            contact_id=contact_id,
-            message=message,
-            subject=subject,
-            channel=channel,
-            priority=priority,
-            wait=wait,
-            wait_seconds=wait_seconds,
-        )
-
-    @mcp.tool(
-        name="read_messages_from_contact",
+        name="read_contact_messages",
         description="Read mail or chat messages exchanged with a saved contact.",
     )
-    async def read_messages_from_contact(
+    async def read_contact_messages(
         contact_id: str,
         channel: str = "mail",
         limit: int = 50,

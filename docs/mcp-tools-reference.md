@@ -1,9 +1,9 @@
 # MCP Tools Reference
 
 This reference is maintained against the live MCP registration in
-[`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
+[`server/src/aweb/mcp/server.py`](https://github.com/awebai/aweb/blob/main/server/src/aweb/mcp/server.py).
 For the canonical contract, see the MCP section of
-[`aweb-sot.md`](aweb-sot.md).
+[`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 
 ## Transport and Auth
 
@@ -11,7 +11,7 @@ For the canonical contract, see the MCP section of
 - With the default `streamable_http_path="/"`, clients should use `/mcp/`
 - The transport is Streamable HTTP via FastMCP with `stateless_http=True`
 - The canonical auth contract lives in the MCP and Authentication sections of
-  [`aweb-sot.md`](aweb-sot.md); this reference does not restate the request
+  [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md); this reference does not restate the request
   headers or signature envelope
 - Tools run in the caller's authenticated team scope
 - All registered tools currently return strings, so callers should treat results as human-readable output rather than a stable JSON contract
@@ -26,8 +26,8 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `send_mail` | `to`, `body`, `subject=""`, `priority="normal"` | Send asynchronous mail to another agent by alias or address. |
-| `check_inbox` | `unread_only=True`, `limit=50`, `include_bodies=True` | Read inbox mail. |
+| `send_mail` | `to`, `body`, `conversation_id=""`, `subject=""`, `priority="normal"` | Send asynchronous mail by routable address, DID, hosted handle, or same-team alias; or continue an existing mail conversation by `conversation_id`. |
+| `check_mail` | `unread_only=True`, `limit=50`, `include_bodies=True` | Read inbox mail. |
 
 ## Presence
 
@@ -40,10 +40,10 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `chat_send` | `message`, `to_alias=""`, `session_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False` | Send a chat message, optionally wait for a reply, or continue an existing session. |
-| `chat_pending` | none | List unread conversations waiting for you. |
-| `chat_history` | `session_id`, `unread_only=False`, `limit=50` | Read chat history for a session. |
-| `chat_read` | `session_id`, `up_to_message_id` | Mark session messages as read. |
+| `send_chat` | `to`, `message`, `conversation_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False` | Send a chat message by routable address, DID, hosted handle, or same-team alias; optionally wait for a reply; or continue an existing chat conversation by `conversation_id`. |
+| `check_chats` | none | List unread chat conversations waiting for you. |
+| `read_chat` | `conversation_id`, `unread_only=False`, `limit=50` | Read chat history for a conversation. |
+| `mark_chat_read` | `conversation_id`, `up_to_message_id` | Mark chat messages as read. |
 
 ## Tasks
 
@@ -92,12 +92,24 @@ For the canonical contract, see the MCP section of
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `contacts_list` | none | List team contacts. |
-| `contacts_add` | `contact_address`, `label=""` | Add a contact. |
-| `contacts_remove` | `contact_id` | Remove a contact. |
+| `list_contacts` | none | List contacts for the authenticated identity. |
+| `add_contact` | `address`, `label=""` | Add a contact by routable address. |
+| `add_contact_by_handle` | `handle`, `label=""` | Add a pending contact by hosted handle such as `@jane` or `@jane/alice`. |
+| `remove_contact` | `contact_id` | Remove a saved contact. |
+| `read_contact_messages` | `contact_id`, `channel="mail"`, `limit=50` | Read mail or chat exchanged with a saved contact. |
+
+## Hosted MCP Tools
+
+Hosted OAuth MCP clients may expose additional hosted MCP-only tools on top of
+the OSS core MCP server:
+
+| Tool | Parameters | Purpose |
+| --- | --- | --- |
+| `aweb_welcome_guide` | none | Show the hosted MCP welcome guide for a newly connected identity. |
+| `create_invite_link` | none | Create an invite link the human can share with another person. |
 
 ## Mapping to the REST API
 
 - Tools are thin wrappers over the same coordination primitives exposed by the REST API.
-- Tool auth resolves caller context through [`server/src/aweb/mcp/auth.py`](../server/src/aweb/mcp/auth.py); the canonical contract remains [`aweb-sot.md`](aweb-sot.md).
-- If you add a new MCP tool, implement the behavior under [`server/src/aweb/mcp/tools/`](../server/src/aweb/mcp/tools/) and register it in [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
+- Tool auth resolves caller context through [`server/src/aweb/mcp/auth.py`](https://github.com/awebai/aweb/blob/main/server/src/aweb/mcp/auth.py); the canonical contract remains [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
+- If you add a new MCP tool, implement the behavior under [`server/src/aweb/mcp/tools/`](https://github.com/awebai/aweb/tree/main/server/src/aweb/mcp/tools) and register it in [`server/src/aweb/mcp/server.py`](https://github.com/awebai/aweb/blob/main/server/src/aweb/mcp/server.py).

@@ -45,12 +45,16 @@ team-architecture flows:
 - create a hosted aweb.ai account when this directory is still clean
 - use --byod to create an identity under a domain you control
 
+By default, init creates or updates the clearly marked aweb section in
+AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
+
 Flags:
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--alias string Ephemeral identity routing alias (optional; default: server-suggested)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`
+- `--do-not-touch-agents-md Do not create or update AGENTS.md or CLAUDE.md during init`
 - `--domain string BYOD domain to use with --byod`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
@@ -325,7 +329,7 @@ Flags:
 Team management (create, invite, membership)
 
 Subcommands:
-- `accept-invite` Accept a local controller invite and receive a membership certificate
+- `accept-invite` Accept a team invite and receive a membership certificate
 - `add` Join another team with the current identity
 - `add-member` Add a member directly to a team (controller signs certificate)
 - `create` Create a team at awid
@@ -345,12 +349,18 @@ Flags:
 
 ### `id team accept-invite`
 
-Accept a local controller invite and receive a membership certificate.
+Accept a team invite and receive a membership certificate.
 
-This command is a same-machine helper: it requires the local invite record
-and the local team controller key. For cross-machine BYOIT joins, use
-`aw id team request`, have the controller run `aw id team add-member`,
-then install with `aw id team fetch-cert` on the joining machine.
+Hosted aw_inv_ tokens are redeemed through the cloud, generate a fresh local
+identity, and refuse to overwrite an existing .aw identity in the target
+directory. After accepting, run `aw init` in that directory to connect the
+workspace.
+
+Local-controller invite tokens are same-machine helpers: they require the
+local invite record and local team controller key. For cross-machine BYOT
+joins, use `aw id team request`, have the controller run
+`aw id team add-member`, then install with `aw id team fetch-cert` on the
+joining machine.
 
 Flags:
 - `--address string Registered address to place in the persistent member certificate`
@@ -373,15 +383,6 @@ Flags:
 ### `id team add-member`
 
 Add a member directly to a team (controller signs certificate)
-
-This is a raw AWID/local-controller command. It requires the local team
-controller key at `~/.config/aw/team-keys/<namespace>/<team>.key`, signs and
-registers an AWID team certificate, and does not create a cloud/aweb runtime
-projection by itself. For hosted aweb.ai teams where the controller key is
-cloud-held, use the hosted dashboard Add existing identity action. For
-cross-machine BYOIDT/BYOD joins, use `aw id team request`, have the controller
-run `aw id team add-member`, then install the certificate with
-`aw id team fetch-cert`.
 
 Flags:
 - `--address string Persistent member address when using --did; must resolve to --did-aw`
@@ -421,27 +422,15 @@ Flags:
 - `--registry string Registry origin override`
 - `--team string Team name`
 
-## `id team invite`
-
-### `id team invite`
-
-Generate an invite token for a team
-
-Flags:
-- `--ephemeral Create ephemeral member invite`
-- `-h, --help help for invite`
-- `--namespace string Namespace domain`
-- `--team string Team name`
-
 ## `id team import-request`
 
 ### `id team import-request`
 
 Create a signed BYOT import request for aweb cloud.
 
-This command signs the canonical import payload with the local BYOT team
+This command signs the canonical import payload with your local BYOT team
 controller key. It prints the request body expected by
-`POST /api/v1/teams/byoidt/import` and never uploads or prints namespace or
+POST /api/v1/teams/byoidt/import. It never uploads or prints namespace or
 team controller private keys. The cloud import endpoint accepts the signed
 timestamp for five minutes; regenerate the request body after it expires.
 
@@ -454,6 +443,23 @@ Flags:
 - `--organization-id string AC organization id for a new imported team`
 - `--team string Team name`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
+
+## `id team invite`
+
+### `id team invite`
+
+Generate an invite token for a team.
+
+Defaults to the active local team when --team and --namespace are omitted.
+Invites are ephemeral unless --persistent is set. Hosted teams use cloud
+invite authority; local-controller teams use the local team controller key.
+
+Flags:
+- `--ephemeral Create ephemeral member invite (default)`
+- `-h, --help help for invite`
+- `--namespace string Namespace domain`
+- `--persistent Create persistent member invite`
+- `--team string Team name`
 
 ## `id team leave`
 
@@ -609,6 +615,7 @@ Send a message and leave the conversation
 
 Flags:
 - `-h, --help help for send-and-leave`
+- `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
 
@@ -786,7 +793,9 @@ Agent messaging
 
 Subcommands:
 - `inbox` List inbox messages (unread only by default)
+- `reply` Reply to an existing mail conversation
 - `send` Send a message to another agent
+- `show` Show a mail conversation
 
 Flags:
 - `-h, --help help for mail`
@@ -803,6 +812,19 @@ Flags:
 - `--limit int Max messages (default 50)`
 - `--show-all Show all messages including already-read`
 
+## `mail reply`
+
+### `mail reply`
+
+Reply to an existing mail conversation
+
+Flags:
+- `--body string Body (mutually exclusive with --body-file)`
+- `--body-file string Read body from file`
+- `-h, --help help for reply`
+- `--priority string Priority: low|normal|high|urgent (default "normal")`
+- `--subject string Subject`
+
 ## `mail send`
 
 ### `mail send`
@@ -810,14 +832,27 @@ Flags:
 Send a message to another agent
 
 Flags:
-- `--body string Body`
-- `--conversation-id string Existing conversation id to continue`
+- `--body string Body (mutually exclusive with --body-file)`
+- `--body-file string Read body from file (use this for markdown with backticks; bypasses shell interpolation)`
+- `--conversation-id string Existing mail conversation to continue`
 - `-h, --help help for send`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 - `--to string Recipient alias within the active team`
 - `--to-address string Recipient address (domain/name)`
 - `--to-did string Recipient stable identity (did:aw:...)`
+
+## `mail show`
+
+### `mail show`
+
+Show a mail conversation
+
+Flags:
+- `--conversation-id string Mail conversation to inspect`
+- `-h, --help help for show`
+- `--limit int Max messages (default 200)`
+- `--message-id string Legacy mail message to inspect`
 
 ## `instructions`
 
@@ -1068,10 +1103,6 @@ Flags:
 ### `roles set`
 
 Create and activate a new team roles bundle version
-
-Bundle files use the canonical shape `{ "roles": { "<role-name>": { "title": "...", "playbook_md": "..." } } }`.
-For convenience, `aw roles set` also accepts an array of role objects with
-a `name` field and normalizes it before sending it to the server.
 
 Flags:
 - `--bundle-file string Read team roles bundle JSON from file ('-' for stdin)`

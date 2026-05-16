@@ -32,6 +32,7 @@ var (
 )
 
 const guidedOnboardingDefaultTeamName = "default"
+
 type guidedOnboardingRequest struct {
 	WorkingDir         string
 	PromptIn           io.Reader
@@ -49,6 +50,8 @@ type guidedOnboardingRequest struct {
 	AgentType          string
 	Role               string
 	Persistent         bool
+	InjectAgentDocs    bool
+	DoNotTouchAgentsMD bool
 	AskPostCreateSetup bool
 	NonInteractive     bool
 }
@@ -176,7 +179,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
 	}
-	if !req.NonInteractive {
+	if req.AskPostCreateSetup && !req.NonInteractive {
 		if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
 			return nil, err
 		}
@@ -264,21 +267,12 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 }
 
 func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
+	repoRoot := resolveRepoRoot(req.WorkingDir)
+	if req.InjectAgentDocs && !req.DoNotTouchAgentsMD {
+		printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
+	}
 	if !req.AskPostCreateSetup {
 		return nil
-	}
-
-	repoRoot := resolveRepoRoot(req.WorkingDir)
-	if docs, err := promptYesNoWithIO(
-		"Inject aw agent instructions into this repo?\n"+
-			"  They are clearly marked and only explain how agents should use aw.",
-		true,
-		req.PromptIn,
-		req.PromptOut,
-	); err == nil && docs {
-		printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
-	} else if err != nil {
-		return err
 	}
 	if channel, err := promptYesNoWithIO(
 		"Set up Claude Code channel for real-time coordination?\n"+
@@ -570,7 +564,7 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 		}
 		return "", usageError("missing required flag: --alias")
 	}
-	// "alice" is the canonical first-agent name from introduction.md. The
+	// "alice" is the canonical first-agent name from cli-tutorial.md. The
 	// developer who hits Enter at the prompt lands at <username>.aweb.ai/alice
 	// for persistent or inside the local team for ephemeral. Sibling worktrees
 	// for a second identity pass --alias explicitly (e.g., "bob"). $USER is

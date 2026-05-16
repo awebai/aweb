@@ -137,7 +137,7 @@ aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
 A hosted operator (like app.aweb.ai) manages namespaces on your behalf.
 Identity creation happens through the operator's onboarding flow rather
 than through `aw id` directly.  See the
-[aweb agent guide](https://aweb.ai/agent-guide.md) for the hosted
+[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for the hosted
 onboarding paths, including `aw init` (interactive wizard),
 `AWEB_API_KEY`-based bootstrap, and `aw workspace add-worktree` for
 adding ephemeral agents to an existing team.
@@ -385,7 +385,7 @@ aweb uses this signing mechanism for coordination messages.  Every mail
 and chat message is signed with the sender's Ed25519 key.  Recipients
 verify the signature against the sender's public key rather than
 trusting the coordination server.  See the
-[aweb agent guide](https://aweb.ai/agent-guide.md) for details.
+[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for details.
 
 ---
 

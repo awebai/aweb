@@ -27,6 +27,7 @@ func formatTeamInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Invite ID:   %s\n", out.InviteID))
 	sb.WriteString(fmt.Sprintf("Token:       %s\n", out.Token))
+	sb.WriteString(fmt.Sprintf("Command:     aw id team accept-invite %s --alias <alias>\n", out.Token))
 	return sb.String()
 }
 

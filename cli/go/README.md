@@ -191,7 +191,7 @@ aw id team create                     # Create a team at awid
 aw id team request                    # Print the controller-side add-member command
 aw id team add-member                 # Add a member to a team and publish a fetchable cert
 aw id team fetch-cert                 # Fetch and install an approved team certificate
-aw id team accept-invite <token>      # Same-machine local-controller invite helper
+aw id team accept-invite <token>      # Accept hosted aw_inv_ or local-controller team invite
 aw id team remove-member              # Remove a member from a team
 aw id access-mode [open|contacts_only] # Get/set identity access mode
 aw id rotate-key                      # Rotate the local signing key

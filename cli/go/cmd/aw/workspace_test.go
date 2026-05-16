@@ -1306,6 +1306,15 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 			t.Fatal("mail inbox should use discovered /api aweb_url")
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
 			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "acked"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id":        "instructions-1",
+				"active_team_instructions_id": "instructions-1",
+				"version":                     1,
+				"document": map[string]any{
+					"body_md": "Use aw for coordination.",
+				},
+			})
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -1615,6 +1624,15 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(resp)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
 			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "acked"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id":        "instructions-1",
+				"active_team_instructions_id": "instructions-1",
+				"version":                     1,
+				"document": map[string]any{
+					"body_md": "Use aw for coordination.",
+				},
+			})
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}

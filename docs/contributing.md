@@ -86,7 +86,6 @@ GOCACHE=/tmp/go-build-aweb go test ./...
 ## Migrations
 
 - Server schema migrations live under:
-  - [`server/src/aweb/migrations/server/`](../server/src/aweb/migrations/server)
   - [`server/src/aweb/migrations/aweb/`](../server/src/aweb/migrations/aweb)
 - Preserve old migrations once shipped.
 - Add new migrations for schema changes instead of editing existing historical
