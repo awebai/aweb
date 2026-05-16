@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -74,21 +73,7 @@ func runTaskCommentList(cmd *cobra.Command, args []string) error {
 
 	printOutput(resp, func(v any) string {
 		r := v.(*aweb.TaskCommentListResponse)
-		if len(r.Comments) == 0 {
-			return "No comments.\n"
-		}
-		var sb strings.Builder
-		for _, c := range r.Comments {
-			author := strings.TrimSpace(c.AuthorAlias)
-			if author == "" && c.AuthorAgentID != nil {
-				author = *c.AuthorAgentID
-			}
-			if strings.TrimSpace(author) == "" {
-				author = "(unknown)"
-			}
-			sb.WriteString(fmt.Sprintf("[%s] %s:\n  %s\n", formatDate(c.CreatedAt), author, c.Body))
-		}
-		return sb.String()
+		return formatTaskComments(r.Comments)
 	})
 	return nil
 }

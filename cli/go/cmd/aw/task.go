@@ -65,6 +65,27 @@ func formatTaskDetail(t *aweb.Task) string {
 		}
 	}
 
+	sb.WriteString("\nCOMMENTS\n")
+	sb.WriteString(formatTaskComments(t.Comments))
+
+	return sb.String()
+}
+
+func formatTaskComments(comments []aweb.TaskComment) string {
+	if len(comments) == 0 {
+		return "No comments.\n"
+	}
+	var sb strings.Builder
+	for _, c := range comments {
+		author := strings.TrimSpace(c.AuthorAlias)
+		if author == "" && c.AuthorAgentID != nil {
+			author = *c.AuthorAgentID
+		}
+		if strings.TrimSpace(author) == "" {
+			author = "(unknown)"
+		}
+		sb.WriteString(fmt.Sprintf("[%s] %s:\n  %s\n", formatDate(c.CreatedAt), author, c.Body))
+	}
 	return sb.String()
 }
 

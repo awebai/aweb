@@ -35,6 +35,11 @@ func runTaskShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("getting task %s: %w", ref, err)
 	}
+	comments, err := client.TaskCommentList(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("getting comments for task %s: %w", ref, err)
+	}
+	task.Comments = comments.Comments
 
 	printOutput(task, func(v any) string {
 		return formatTaskDetail(v.(*aweb.Task))

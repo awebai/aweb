@@ -307,6 +307,16 @@ func TestAwTaskShowSuccess(t *testing.T) {
 					{"task_ref": "PROJ-000", "title": "Prerequisite", "status": "open"},
 				},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/PROJ-001/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"comments": []map[string]any{{
+					"comment_id":   "comment-1",
+					"task_id":      "tid-1",
+					"author_alias": "bob",
+					"body":         "This matches what we agreed.",
+					"created_at":   "2026-03-21T10:30:00Z",
+				}},
+			})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -331,7 +341,57 @@ func TestAwTaskShowSuccess(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 	text := string(out)
-	for _, want := range []string{"PROJ-001", "Fix the bug", "DESCRIPTION", "A detailed description", "BLOCKED BY", "Prerequisite"} {
+	for _, want := range []string{"PROJ-001", "Fix the bug", "DESCRIPTION", "A detailed description", "BLOCKED BY", "Prerequisite", "COMMENTS", "bob:", "This matches what we agreed."} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestAwTaskShowIncludesEmptyCommentsSection(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/PROJ-001":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"task_id":     "tid-1",
+				"task_ref":    "PROJ-001",
+				"task_number": 1,
+				"title":       "Fix the bug",
+				"status":      "open",
+				"priority":    1,
+				"task_type":   "bug",
+				"created_at":  "2026-03-21T10:00:00Z",
+				"updated_at":  "2026-03-21T10:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/PROJ-001/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{"comments": []map[string]any{}})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "task", "show", "PROJ-001")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	for _, want := range []string{"COMMENTS", "No comments."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}

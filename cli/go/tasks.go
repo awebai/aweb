@@ -20,40 +20,41 @@ type TaskDepView struct {
 }
 
 type Task struct {
-	TaskID           string        `json:"task_id"`
-	TaskRef          string        `json:"task_ref"`
-	TaskNumber       int           `json:"task_number"`
-	Title            string        `json:"title"`
-	Description      string        `json:"description,omitempty"`
-	Notes            string        `json:"notes,omitempty"`
-	Status           string        `json:"status"`
-	Priority         int           `json:"priority"`
-	TaskType         string        `json:"task_type"`
-	Labels           []string      `json:"labels,omitempty"`
-	ParentTaskID     *string       `json:"parent_task_id"`
+	TaskID         string        `json:"task_id"`
+	TaskRef        string        `json:"task_ref"`
+	TaskNumber     int           `json:"task_number"`
+	Title          string        `json:"title"`
+	Description    string        `json:"description,omitempty"`
+	Notes          string        `json:"notes,omitempty"`
+	Status         string        `json:"status"`
+	Priority       int           `json:"priority"`
+	TaskType       string        `json:"task_type"`
+	Labels         []string      `json:"labels,omitempty"`
+	ParentTaskID   *string       `json:"parent_task_id"`
 	AssigneeAlias  *string       `json:"assignee_alias"`
 	CreatedByAlias *string       `json:"created_by_alias"`
 	ClosedByAlias  *string       `json:"closed_by_alias"`
-	BlockedBy        []TaskDepView `json:"blocked_by,omitempty"`
-	Blocks           []TaskDepView `json:"blocks,omitempty"`
-	CreatedAt        string        `json:"created_at"`
-	UpdatedAt        string        `json:"updated_at"`
-	ClosedAt         *string       `json:"closed_at"`
+	BlockedBy      []TaskDepView `json:"blocked_by,omitempty"`
+	Blocks         []TaskDepView `json:"blocks,omitempty"`
+	CreatedAt      string        `json:"created_at"`
+	UpdatedAt      string        `json:"updated_at"`
+	ClosedAt       *string       `json:"closed_at"`
+	Comments       []TaskComment `json:"comments,omitempty"`
 }
 
 type TaskSummary struct {
-	TaskID           string   `json:"task_id"`
-	TaskRef          string   `json:"task_ref"`
-	TaskNumber       int      `json:"task_number"`
-	Title            string   `json:"title"`
-	Status           string   `json:"status"`
-	Priority         int      `json:"priority"`
-	TaskType         string   `json:"task_type"`
+	TaskID         string   `json:"task_id"`
+	TaskRef        string   `json:"task_ref"`
+	TaskNumber     int      `json:"task_number"`
+	Title          string   `json:"title"`
+	Status         string   `json:"status"`
+	Priority       int      `json:"priority"`
+	TaskType       string   `json:"task_type"`
 	AssigneeAlias  *string  `json:"assignee_alias"`
 	CreatedByAlias *string  `json:"created_by_alias"`
-	Labels           []string `json:"labels,omitempty"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	Labels         []string `json:"labels,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
 }
 
 // Request/response types
@@ -81,11 +82,11 @@ type TaskUpdateRequest struct {
 }
 
 type TaskListParams struct {
-	Status          string
+	Status        string
 	AssigneeAlias string
-	TaskType        string
-	Priority        *int
-	Labels          []string
+	TaskType      string
+	Priority      *int
+	Labels        []string
 }
 
 type TaskAddDepRequest struct {
@@ -97,24 +98,24 @@ type TaskListResponse struct {
 }
 
 type ActiveTaskSummary struct {
-	TaskID           string   `json:"task_id"`
-	TaskRef          string   `json:"task_ref"`
-	TaskNumber       int      `json:"task_number"`
-	Title            string   `json:"title"`
-	Status           string   `json:"status"`
-	Priority         int      `json:"priority"`
-	TaskType         string   `json:"task_type"`
-	AssigneeAlias  *string  `json:"assignee_alias"`
-	CreatedByAlias *string  `json:"created_by_alias"`
-	ParentTaskID     *string  `json:"parent_task_id"`
-	Labels           []string `json:"labels,omitempty"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
-	WorkspaceID      *string  `json:"workspace_id,omitempty"`
-	OwnerAlias       *string  `json:"owner_alias,omitempty"`
-	ClaimedAt        *string  `json:"claimed_at,omitempty"`
-	CanonicalOrigin  *string  `json:"canonical_origin,omitempty"`
-	Branch           *string  `json:"branch,omitempty"`
+	TaskID          string   `json:"task_id"`
+	TaskRef         string   `json:"task_ref"`
+	TaskNumber      int      `json:"task_number"`
+	Title           string   `json:"title"`
+	Status          string   `json:"status"`
+	Priority        int      `json:"priority"`
+	TaskType        string   `json:"task_type"`
+	AssigneeAlias   *string  `json:"assignee_alias"`
+	CreatedByAlias  *string  `json:"created_by_alias"`
+	ParentTaskID    *string  `json:"parent_task_id"`
+	Labels          []string `json:"labels,omitempty"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
+	WorkspaceID     *string  `json:"workspace_id,omitempty"`
+	OwnerAlias      *string  `json:"owner_alias,omitempty"`
+	ClaimedAt       *string  `json:"claimed_at,omitempty"`
+	CanonicalOrigin *string  `json:"canonical_origin,omitempty"`
+	Branch          *string  `json:"branch,omitempty"`
 }
 
 type ActiveTaskListResponse struct {
@@ -131,8 +132,8 @@ type TaskUpdateResponse struct {
 // TaskHeldError is returned when a task status transition to in_progress
 // fails because another agent already holds it.
 type TaskHeldError struct {
-	Detail          string `json:"detail"`
-	HolderAgentID   string `json:"holder_agent_id"`
+	Detail        string `json:"detail"`
+	HolderAgentID string `json:"holder_agent_id"`
 	AssigneeAlias string `json:"assignee_alias"`
 }
 
