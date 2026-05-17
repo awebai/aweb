@@ -1,0 +1,13 @@
+export { APIClient, APIError } from "./api/client.js";
+export { streamAgentEvents, parseAgentEvent } from "./api/events.js";
+export { ackMessage, fetchInbox } from "./api/mail.js";
+export { fetchHistory, markRead } from "./api/chat.js";
+export { resolveConfig } from "./config.js";
+export { PinStore } from "./identity/pinstore.js";
+export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL } from "./identity/registry.js";
+export { SenderTrustManager } from "./identity/trust.js";
+export { computeDIDKey, extractPublicKey } from "./identity/did.js";
+export { loadSigningKey } from "./identity/keys.js";
+export { loadTeamCertificate, encodeTeamCertificateHeader } from "./identity/certificate.js";
+export { verifyMessage, verifySignedPayload } from "./identity/signing.js";
+export { DEFAULT_PIN_STORE_PATH, createChannelClient, createRegistryResolver, dispatchAgentEvent, formatAwakeningForAgent, isTrustedVerificationStatus, loadPinStore, resolveRegistryFallbackURL, startChannelLoop, trustWarningLine, } from "./channel.js";

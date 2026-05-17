@@ -1,0 +1,139 @@
+import type { APIClient } from "./client.js";
+import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
+import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
+import {
+  signedPayloadConversationStatus,
+  verifyMessage,
+  verifySignedPayload,
+} from "../identity/signing.js";
+
+export interface ChatMessage {
+  message_id: string;
+  conversation_id?: string;
+  from_agent: string;
+  from_address?: string;
+  to_address?: string;
+  body: string;
+  timestamp: string;
+  sender_leaving: boolean;
+  from_did?: string;
+  to_did?: string;
+  from_stable_id?: string;
+  to_stable_id?: string;
+  signature?: string;
+  signing_key_id?: string;
+  signed_payload?: string;
+  signed_from?: string;
+  rotation_announcement?: RotationAnnouncement;
+  replacement_announcement?: ReplacementAnnouncement;
+  is_contact?: boolean;
+  verification_status?: VerificationStatus;
+}
+
+export async function fetchHistory(
+  client: APIClient,
+  sessionId: string,
+  unreadOnly: boolean = false,
+  limit: number = 50,
+  messageID?: string,
+): Promise<ChatMessage[]> {
+  const params = new URLSearchParams();
+  if (unreadOnly) params.set("unread_only", "true");
+  if (limit > 0) params.set("limit", String(limit));
+  if ((messageID || "").trim()) params.set("message_id", messageID!.trim());
+
+  const resp = await client.get<{ messages: ChatMessage[] }>(
+    `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?${params}`,
+  );
+
+  for (const msg of resp.messages) {
+    hydrateAddressesFromSignedPayload(msg);
+    msg.verification_status = await verifyChatMessage(msg);
+  }
+
+  return resp.messages;
+}
+
+function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
+  if (!msg.signed_payload) return;
+  try {
+    const payload = JSON.parse(msg.signed_payload) as {
+      from?: string;
+      from_did?: string;
+      to_did?: string;
+      from_stable_id?: string;
+      to_stable_id?: string;
+      conversation_id?: string;
+    };
+    if (typeof payload.from_did === "string" && payload.from_did.trim()) {
+      msg.from_did = payload.from_did;
+    }
+    if (typeof payload.from === "string" && payload.from.trim()) {
+      msg.signed_from = payload.from;
+    }
+    if (typeof payload.to_did === "string" && payload.to_did.trim()) {
+      msg.to_did = payload.to_did;
+    }
+    if (!msg.from_stable_id && typeof payload.from_stable_id === "string") {
+      msg.from_stable_id = payload.from_stable_id;
+    }
+    if (!msg.to_stable_id && typeof payload.to_stable_id === "string") {
+      msg.to_stable_id = payload.to_stable_id;
+    }
+    if (!msg.conversation_id && typeof payload.conversation_id === "string") {
+      msg.conversation_id = payload.conversation_id;
+    }
+  } catch {
+    // Signature verification will fail if the payload is malformed.
+  }
+}
+
+export async function markRead(
+  client: APIClient,
+  sessionId: string,
+  upToMessageId: string,
+): Promise<void> {
+  await client.post(
+    `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`,
+    { up_to_message_id: upToMessageId },
+  );
+}
+
+async function verifyChatMessage(msg: ChatMessage): Promise<VerificationStatus> {
+  if (msg.signed_payload && msg.signature && msg.from_did) {
+    const status = await verifySignedPayload(
+      msg.signed_payload,
+      msg.signature,
+      msg.from_did,
+      msg.signing_key_id || "",
+    );
+    if (status !== "verified") return status;
+    return signedPayloadConversationStatus(msg.signed_payload, msg.conversation_id);
+  }
+
+  const from = msg.from_address || msg.from_agent;
+
+  const env: MessageEnvelope = {
+    from,
+    from_did: msg.from_did || "",
+    to: msg.to_address || "",
+    to_did: msg.to_did || "",
+    type: "chat",
+    subject: "",
+    body: msg.body,
+    timestamp: msg.timestamp,
+    from_stable_id: msg.from_stable_id,
+    to_stable_id: msg.to_stable_id,
+    message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
+    signature: msg.signature,
+    signing_key_id: msg.signing_key_id,
+  };
+
+  const status = await verifyMessage(env);
+  if (status === "failed" && msg.conversation_id) {
+    const legacyStatus = await verifyMessage({ ...env, conversation_id: undefined });
+    return legacyStatus === "verified" ? "verified_legacy" : legacyStatus;
+  }
+  return status;
+}
