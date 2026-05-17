@@ -106,6 +106,43 @@ mentally:
 
 If either column has a blank, the review isn't done yet.
 
+## Gate-shape sanity check
+
+A passing CI gate is evidence of source-code correctness only when the gate
+actually exercises the code-under-test. The gate path can silently decouple
+the test environment from current source via Docker image builds, lockfile-
+pinned dependencies, cached test fixtures, or stale container layers.
+
+**Test before treating a gate signal as evidence**: would this gate fail if I
+broke X in the source? If not, the gate isn't measuring X. The signal is
+decorative for the question "did my change work."
+
+**Specific failure modes seen**:
+
+- Docker build + `uv sync` from lockfile → tests against pinned PyPI version,
+  not local source. The aweb 1.23.0 federation work surfaced this: the
+  aweb-cloud release image copied sibling aweb sources, but `uv sync` still
+  installed PyPI `aweb==1.22.0` from `uv.lock`. The Docker user-journey gate
+  ran against the stale package for the duration of the federation work; all
+  "Docker e2e green" signals were false-evidence for source-level correctness.
+- Test fixtures hard-coding mocked behavior in places that should be live →
+  test passes against stub, not implementation. (Related to the
+  subagent-confidence pattern above: confidence in a validation signal needs
+  the validation to actually measure the thing.)
+- Container build cache reuse → tests against pre-build state when the build
+  step is the change-under-test.
+
+**When loading this section**: any review of CI gate failures or successes
+where the change touches a dependency-resolution path (Docker, lockfiles,
+container builds, npm registry resolution, cached fixtures). Also when a
+gate has been green for N runs and the change-under-test is non-trivial —
+ask: "what would have made it red?"
+
+The discipline applies symmetrically to red and green signals. A red gate
+isn't evidence of broken code if the gate doesn't actually exercise the
+broken path; a green gate isn't evidence of working code if the gate
+doesn't actually exercise the changed code.
+
 ## When to load this skill
 
 - Taking a code-review assignment that involves a wire protocol, an
@@ -116,3 +153,6 @@ If either column has a blank, the review isn't done yet.
   near-miss surfaced.
 - Reviewing a multi-commit bundle where a helper was introduced in one commit
   and consumed in subsequent commits.
+- Interpreting a CI gate signal where the change touches Docker images,
+  lockfiles, container builds, package-manager resolution, or cached
+  fixtures — verify the gate actually exercises the changed code.
