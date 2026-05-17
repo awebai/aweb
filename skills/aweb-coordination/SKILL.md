@@ -69,17 +69,7 @@ When taking a lock, choose a clear resource key and a realistic TTL. Renew if st
 
 ## Mail vs chat policy
 
-Use mail for non-blocking coordination:
-
-- review requests
-- status updates
-- handoffs
-- FYI decisions
-- questions that can wait
-
-Use chat only when the sender or recipient is blocked on a near-term answer. Chat creates synchronous pressure. If a chat arrives and more time is needed, send a short status update or `extend-wait` rather than leaving the sender waiting silently.
-
-For exact mail/chat response mechanics, load `aweb-messaging`.
+For the mail-vs-chat decision policy, load `aweb-messaging`. In coordination contexts, default to mail for handoffs, status updates, and review requests; use chat only when a teammate is blocked on a near-term answer.
 
 ## Handoffs and review requests
 

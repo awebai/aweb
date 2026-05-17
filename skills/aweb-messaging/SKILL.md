@@ -75,7 +75,7 @@ Before replying to a confusing chat, inspect pending/open/history state. Do not 
 
 ## Harness surfaces
 
-Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat. Use the harness-native surface, but keep the same decision policy:
+Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat. For Claude Code, do not use deprecated `aw run claude`; install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
 
 - async update → mail
 - synchronous blocker → chat
