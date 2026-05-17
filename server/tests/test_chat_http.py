@@ -732,6 +732,174 @@ async def test_receive_federated_chat_stores_session_message_and_reply_route(awe
 
 
 @pytest.mark.asyncio
+async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
+                'persistent', 'developer', 'everyone')
+        """,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-local-chat",
+            domain="beta.example",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://recipient.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_chat_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/federation/messages", json=payload)
+        second = await client.post("/v1/federation/messages", json=payload)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["message_id"] == payload["envelope"]["message_id"]
+    message_count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(payload["envelope"]["message_id"]),
+    )
+    delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.federated_message_deliveries}}
+        WHERE message_type = 'chat' AND message_id = $1
+        """,
+        UUID(payload["envelope"]["message_id"]),
+    )
+    assert message_count == 1
+    assert delivery_count == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    closed_conversation_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, lifetime, role, messaging_policy)
+        VALUES ('backend:beta.example', 'bob', $1, 'did:aw:bob', 'beta.example/bob',
+                'persistent', 'developer', 'everyone')
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, status, team_id, created_by_did)
+        VALUES ($1, 'chat', 'closed', 'backend:beta.example', 'did:aw:someone-else')
+        """,
+        closed_conversation_id,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-local-chat",
+            domain="beta.example",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://recipient.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_chat_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+        conversation_id=str(closed_conversation_id),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        closed = await client.post("/v1/federation/messages", json=payload)
+
+    assert closed.status_code == 403, closed.text
+    assert "not active" in closed.json()["detail"]
+    delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.federated_message_deliveries}}
+        WHERE message_type = 'chat' AND message_id = $1
+        """,
+        UUID(payload["envelope"]["message_id"]),
+    )
+    assert delivery_count == 0
+
+    mismatched_conversation_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, status, team_id, created_by_did)
+        VALUES ($1, 'chat', 'active', 'backend:beta.example', 'did:aw:alice')
+        """,
+        mismatched_conversation_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, transport_hint, role)
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'chat', 'initiator'),
+            ($1, 'did:aw:carol', NULL, 'carol', 'beta.example/carol', 'chat', 'participant')
+        """,
+        mismatched_conversation_id,
+    )
+    mismatched_payload = _federated_chat_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+        conversation_id=str(mismatched_conversation_id),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        mismatched = await client.post("/v1/federation/messages", json=mismatched_payload)
+
+    assert mismatched.status_code == 403, mismatched.text
+    assert "participants mismatch" in mismatched.json()["detail"]
+    mismatch_delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.federated_message_deliveries}}
+        WHERE message_type = 'chat' AND message_id = $1
+        """,
+        UUID(mismatched_payload["envelope"]["message_id"]),
+    )
+    assert mismatch_delivery_count == 0
+
+
+@pytest.mark.asyncio
 async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
