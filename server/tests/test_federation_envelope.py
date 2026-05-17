@@ -104,6 +104,16 @@ def test_verify_federation_envelope_rejects_behavior_field_mismatch():
         verify_federation_envelope(envelope, signature, expected={"body": "changed"})
 
 
+def test_verify_federation_envelope_rejects_sender_address_mismatch():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key) | {"sender_address": "alpha.example/mallory"}
+    signature = _sign(envelope, signing_key)
+
+    with pytest.raises(FederationEnvelopeError, match="from does not match"):
+        verify_federation_envelope(envelope, signature)
+
+
 def test_verify_federation_envelope_rejects_invalid_signature():
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)

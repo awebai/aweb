@@ -172,6 +172,7 @@ When Alice sends to `beta.example/bob`:
    - message body, message id, conversation id if present, and timestamp
 6. Alice's aweb server wraps that preserved signed payload in a federation
    transport envelope that adds:
+   - sender delivery origin, as route metadata for replies
    - sender active team id, if any
    - sender active team certificate, when it was presented to awid to satisfy
      non-public target reachability
@@ -227,9 +228,13 @@ transport_hint
 ```
 
 When the recipient replies, their server sends to the sender's stored
-`delivery_origin` with the stored participant identity binding. The reply still
-carries a preserved sender-signed message payload inside a federation transport
-envelope and is verified by the original sender's server.
+`delivery_origin` route hint with the stored participant identity binding. The
+reply still carries a preserved sender-signed message payload inside a
+federation transport envelope and is verified by the original sender's server.
+
+The sender delivery origin carried in the federation transport envelope is
+route metadata, not identity authority. The sender identity authority remains
+the preserved sender-signed mail/chat payload and AWID current-key check.
 
 This is what lets a non-public address reply after an authorized first contact:
 conversation participation authorizes the reply path; address reachability only
@@ -341,6 +346,10 @@ Add remote delivery capability for mail and chat:
   continuation.
 - Store participant route metadata for replies.
 - Preserve existing fail-closed recipient-binding checks.
+
+Each aweb server must be configured with its public federation origin
+(`AWEB_PUBLIC_ORIGIN`). Recipient-side federation endpoints reject envelopes
+whose target delivery origin does not match this configured origin.
 
 The endpoint can be new (`/v1/federation/messages`,
 `/v1/federation/chat/...`) or folded into existing `/v1/messages` and

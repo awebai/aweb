@@ -39,6 +39,7 @@ class FederationEnvelope(BaseModel):
     sender_did_aw: str = Field(..., min_length=1, max_length=256)
     sender_current_did_key: str = Field(..., min_length=1, max_length=256)
     sender_address: str | None = Field(default=None, min_length=1, max_length=256)
+    sender_delivery_origin: str | None = Field(default=None, min_length=1, max_length=512)
     sender_active_team_id: str | None = Field(default=None, min_length=1, max_length=512)
     sender_team_certificate: dict[str, Any] | None = None
     target_address: str = Field(..., min_length=1, max_length=256)
@@ -72,6 +73,13 @@ class FederationEnvelope(BaseModel):
     @field_validator("target_delivery_origin")
     @classmethod
     def _validate_delivery_origin(cls, value: str) -> str:
+        return canonical_server_origin(value)
+
+    @field_validator("sender_delivery_origin")
+    @classmethod
+    def _validate_optional_delivery_origin(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return canonical_server_origin(value)
 
     @field_validator("message_id", "conversation_id")
@@ -200,6 +208,8 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
     _expect_signed_value(payload, "to_stable_id", model.target_did_aw)
     if model.sender_did_aw:
         _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)
+    if model.sender_address is not None:
+        _expect_signed_value(payload, "from", model.sender_address)
     if model.conversation_id is not None:
         _expect_signed_value(payload, "conversation_id", model.conversation_id)
     elif payload.get("conversation_id"):

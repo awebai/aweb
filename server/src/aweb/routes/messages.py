@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aweb.deps import get_db
+from aweb.config import get_settings
 from aweb.federation.envelope import (
     FederationEnvelope,
     FederationEnvelopeError,
@@ -588,6 +589,13 @@ def _remote_delivery_origin(recipient: dict | None) -> str:
     return str((recipient or {}).get("delivery_origin") or "").strip()
 
 
+def _local_public_origin(request: Request) -> str:
+    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
+    if configured:
+        return configured
+    return get_settings().public_origin
+
+
 async def _deliver_remote_mail_and_project_locally(
     request: Request,
     payload: SendMessageRequest,
@@ -640,6 +648,7 @@ async def _deliver_remote_mail_and_project_locally(
             sender_did_aw=sender_did_aw,
             sender_current_did_key=sender_current_did,
             sender_address=sender_address,
+            sender_delivery_origin=_local_public_origin(request),
             sender_active_team_id=auth.team_id,
             sender_team_certificate=sender_team_certificate,
             target_address=target_address,
