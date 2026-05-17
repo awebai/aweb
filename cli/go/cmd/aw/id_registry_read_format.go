@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/awebai/aw/awid"
 )
 
 func formatRegistryRead(out registryReadEnvelope) string {
@@ -37,6 +39,7 @@ func formatRegistryRead(out registryReadEnvelope) string {
 			sb.WriteString(fmt.Sprintf("Domain:      %s\n", out.Payload.Namespace.Domain))
 			sb.WriteString(fmt.Sprintf("Controller:  %s\n", firstNonEmpty(out.Payload.Namespace.ControllerDID, "(none)")))
 			sb.WriteString(fmt.Sprintf("Verified:    %s\n", out.Payload.Namespace.VerificationStatus))
+			sb.WriteString(fmt.Sprintf("Delivery:    %s\n", firstNonEmpty(out.Payload.Namespace.DefaultDeliveryOrigin, "(none)")))
 		}
 	case "resolve-address":
 		if out.Payload.Address != nil {
@@ -44,6 +47,7 @@ func formatRegistryRead(out registryReadEnvelope) string {
 			sb.WriteString(fmt.Sprintf("did:aw:      %s\n", out.Payload.Address.DIDAW))
 			sb.WriteString(fmt.Sprintf("did:key:     %s\n", out.Payload.Address.CurrentDIDKey))
 			sb.WriteString(fmt.Sprintf("Reachable:   %s\n", out.Payload.Address.Reachability))
+			sb.WriteString(fmt.Sprintf("Delivery:    %s\n", firstNonEmpty(registryAddressDeliveryOrigin(out.Payload.Address), "(none)")))
 		}
 	case "list-did-addresses", "list-addresses":
 		if len(out.Payload.Addresses) == 0 {
@@ -52,14 +56,22 @@ func formatRegistryRead(out registryReadEnvelope) string {
 		}
 		sb.WriteString("Addresses:\n")
 		for _, address := range out.Payload.Addresses {
-			sb.WriteString(fmt.Sprintf("- %s/%s -> %s (%s, %s)\n",
+			sb.WriteString(fmt.Sprintf("- %s/%s -> %s (%s, %s, delivery %s)\n",
 				address.Domain,
 				address.Name,
 				address.DIDAW,
 				address.CurrentDIDKey,
 				address.Reachability,
+				firstNonEmpty(registryAddressDeliveryOrigin(&address), "none"),
 			))
 		}
 	}
 	return sb.String()
+}
+
+func registryAddressDeliveryOrigin(address *awid.RegistryAddress) string {
+	if address == nil || address.Delivery == nil {
+		return ""
+	}
+	return strings.TrimSpace(address.Delivery.Origin)
 }

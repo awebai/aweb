@@ -116,6 +116,7 @@ func formatIDNamespace(v any) string {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
 		sb.WriteString(fmt.Sprintf("Controller:  %s\n", firstNonEmpty(out.Namespace.ControllerDID, "(none)")))
 		sb.WriteString(fmt.Sprintf("Verified:    %s\n", out.Namespace.VerificationStatus))
+		sb.WriteString(fmt.Sprintf("Delivery:    %s\n", firstNonEmpty(out.Namespace.DefaultDeliveryOrigin, "(none)")))
 	} else {
 		sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
 	}
@@ -125,12 +126,13 @@ func formatIDNamespace(v any) string {
 	}
 	sb.WriteString("Addresses:\n")
 	for _, address := range out.Addresses {
-		sb.WriteString(fmt.Sprintf("- %s/%s → %s (%s, %s)\n",
+		sb.WriteString(fmt.Sprintf("- %s/%s → %s (%s, %s, delivery %s)\n",
 			address.Domain,
 			address.Name,
 			address.DIDAW,
 			address.CurrentDIDKey,
 			address.Reachability,
+			firstNonEmpty(registryAddressDeliveryOrigin(&address), "none"),
 		))
 	}
 	return sb.String()

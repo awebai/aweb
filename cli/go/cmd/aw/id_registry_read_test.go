@@ -197,11 +197,12 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"addresses": []map[string]any{registryAddressJSON(stableID, did)}})
 		case "/v1/namespaces/acme.com":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"namespace_id":        "ns-1",
-				"domain":              "acme.com",
-				"controller_did":      controllerDID,
-				"verification_status": "verified",
-				"created_at":          "2026-04-04T00:00:00Z",
+				"namespace_id":            "ns-1",
+				"domain":                  "acme.com",
+				"controller_did":          controllerDID,
+				"verification_status":     "verified",
+				"default_delivery_origin": "https://messages.example.com",
+				"created_at":              "2026-04-04T00:00:00Z",
 			})
 		case "/v1/namespaces/acme.com/addresses":
 			_ = json.NewEncoder(w).Encode(map[string]any{"addresses": []map[string]any{registryAddressJSON(stableID, did)}})
@@ -252,6 +253,9 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 	if namespace.Payload.Operation != "namespace-state" || namespace.Payload.Namespace == nil {
 		t.Fatalf("namespace payload=%+v", namespace.Payload)
 	}
+	if namespace.Payload.Namespace.DefaultDeliveryOrigin != "https://messages.example.com" {
+		t.Fatalf("namespace delivery origin=%q", namespace.Payload.Namespace.DefaultDeliveryOrigin)
+	}
 	if len(namespace.Payload.Addresses) != 0 {
 		t.Fatalf("namespace-state should not include address listing: %+v", namespace.Payload.Addresses)
 	}
@@ -286,6 +290,9 @@ func TestAwIDRegistryReadCommandsUseSupportContractEnvelope(t *testing.T) {
 	}
 	if controllerAddress.Payload.Address == nil || controllerAddress.Payload.Address.DIDAW != stableID {
 		t.Fatalf("address payload=%+v", controllerAddress.Payload.Address)
+	}
+	if controllerAddress.Payload.Address.Delivery == nil || controllerAddress.Payload.Address.Delivery.Origin != "https://messages.example.com" {
+		t.Fatalf("address delivery=%+v", controllerAddress.Payload.Address.Delivery)
 	}
 	if !controllerAddress.Payload.OwnershipProof {
 		t.Fatal("namespace-controller address resolve must be reported as ownership proof")
@@ -448,7 +455,11 @@ func registryAddressJSON(stableID, did string) map[string]any {
 		"did_aw":          stableID,
 		"current_did_key": did,
 		"reachability":    "public",
-		"created_at":      "2026-04-04T00:00:00Z",
+		"delivery": map[string]any{
+			"origin": "https://messages.example.com",
+			"source": "namespace_default",
+		},
+		"created_at": "2026-04-04T00:00:00Z",
 	}
 }
 

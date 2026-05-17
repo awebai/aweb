@@ -43,23 +43,30 @@ type DIDMapping struct {
 }
 
 type RegistryNamespace struct {
-	NamespaceID        string `json:"namespace_id"`
-	Domain             string `json:"domain"`
-	ControllerDID      string `json:"controller_did,omitempty"`
-	VerificationStatus string `json:"verification_status"`
-	LastVerifiedAt     string `json:"last_verified_at,omitempty"`
-	CreatedAt          string `json:"created_at"`
+	NamespaceID           string `json:"namespace_id"`
+	Domain                string `json:"domain"`
+	ControllerDID         string `json:"controller_did,omitempty"`
+	VerificationStatus    string `json:"verification_status"`
+	DefaultDeliveryOrigin string `json:"default_delivery_origin,omitempty"`
+	LastVerifiedAt        string `json:"last_verified_at,omitempty"`
+	CreatedAt             string `json:"created_at"`
+}
+
+type RegistryDelivery struct {
+	Origin string `json:"origin,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 type RegistryAddress struct {
-	AddressID       string  `json:"address_id"`
-	Domain          string  `json:"domain"`
-	Name            string  `json:"name"`
-	DIDAW           string  `json:"did_aw"`
-	CurrentDIDKey   string  `json:"current_did_key"`
-	Reachability    string  `json:"reachability"`
-	VisibleToTeamID *string `json:"visible_to_team_id,omitempty"`
-	CreatedAt       string  `json:"created_at"`
+	AddressID       string            `json:"address_id"`
+	Domain          string            `json:"domain"`
+	Name            string            `json:"name"`
+	DIDAW           string            `json:"did_aw"`
+	CurrentDIDKey   string            `json:"current_did_key"`
+	Reachability    string            `json:"reachability"`
+	VisibleToTeamID *string           `json:"visible_to_team_id,omitempty"`
+	Delivery        *RegistryDelivery `json:"delivery,omitempty"`
+	CreatedAt       string            `json:"created_at"`
 }
 
 type RegistryAddressList struct {

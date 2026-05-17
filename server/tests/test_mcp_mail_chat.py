@@ -5,11 +5,12 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.registry import Address
+from awid.registry import Address, AddressDelivery
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
@@ -530,6 +531,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
         )
     )
 
+    assert "error" not in result, result
     assert result["status"] == "delivered"
     assert result["conversation_id"]
     assert len(seen) == 1
@@ -812,7 +814,6 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
-    del alice_sk
     alice_did = did_from_public_key(alice_pub)
 
     await aweb_cloud_db.aweb_db.execute(
@@ -842,12 +843,12 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
         lambda: AuthContext(
             team_id=team_id,
             agent_id=str(alice_agent_id),
-            workspace_id="",
+            workspace_id="workspace-alice",
             alias="alice",
             did_key=alice_did,
             did_aw="did:aw:alice",
             address="acme.com/alice",
-            trusted_proxy=False,
+            trusted_proxy=True,
         ),
     )
 
@@ -861,22 +862,61 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
                 did_aw="did:aw:bob",
                 current_did_key="did:key:bob",
                 reachability="public",
+                delivery=AddressDelivery(origin="https://remote.example"),
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/federation/messages"
+        body = json.loads(request.content.decode("utf-8"))
+        remote_calls.append(body)
+        envelope = body["envelope"]
+        assert envelope["type"] == "mail"
+        assert envelope["sender_delivery_origin"] == "https://local.example"
+        assert envelope["target_delivery_origin"] == "https://remote.example"
+        assert envelope["target_address"] == "otherco.com/bob"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
+
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did,
+        )
 
     result = json.loads(
         await mail_tools.send_mail(
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=_Registry(),
-            hosted_signer=None,
+            hosted_signer=_signer,
             to="otherco.com/bob",
             subject="external",
             body="hello external bob",
+            federation_transport=httpx.MockTransport(_remote_handler),
+            public_origin="https://local.example",
         )
     )
 
+    assert "error" not in result, result
     assert result["status"] == "delivered"
     assert result["to"] == "bob"
+    assert len(remote_calls) == 1
+    assert len(seen) == 1
     message = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT from_did, to_did, to_agent_id, to_alias, from_address
@@ -884,7 +924,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
         WHERE subject = 'external'
         """
     )
-    assert message["from_did"] == "did:aw:alice"
+    assert message["from_did"] == alice_did
     assert message["to_did"] == "did:aw:bob"
     assert message["to_agent_id"] is None
     assert message["to_alias"] == "bob"
@@ -1260,6 +1300,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
         )
     )
 
+    assert "error" not in result, result
     assert result["delivered"] is True
     assert result["conversation_id"] == result["session_id"]
     assert len(seen) == 1
@@ -1286,7 +1327,6 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
-    del alice_sk
     alice_did = did_from_public_key(alice_pub)
 
     await aweb_cloud_db.aweb_db.execute(
@@ -1316,12 +1356,12 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
         lambda: AuthContext(
             team_id=team_id,
             agent_id=str(alice_agent_id),
-            workspace_id="",
+            workspace_id="workspace-alice",
             alias="alice",
             did_key=alice_did,
             did_aw="did:aw:alice",
             address="acme.com/alice",
-            trusted_proxy=False,
+            trusted_proxy=True,
         ),
     )
 
@@ -1335,21 +1375,59 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
                 did_aw="did:aw:bob",
                 current_did_key="did:key:bob",
                 reachability="public",
+                delivery=AddressDelivery(origin="https://remote.example"),
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/federation/messages"
+        body = json.loads(request.content.decode("utf-8"))
+        remote_calls.append(body)
+        envelope = body["envelope"]
+        assert envelope["type"] == "chat"
+        assert envelope["sender_delivery_origin"] == "https://local.example"
+        assert envelope["target_delivery_origin"] == "https://remote.example"
+        assert envelope["target_address"] == "otherco.com/bob"
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+            },
+        )
+
+    seen: list[dict] = []
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        seen.append(kwargs)
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did,
+        )
 
     result = json.loads(
         await chat_tools.chat_send(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=_Registry(),
-            hosted_signer=None,
+            hosted_signer=_signer,
             to_address="otherco.com/bob",
             message="hello external bob",
+            federation_transport=httpx.MockTransport(_remote_handler),
+            public_origin="https://local.example",
         )
     )
 
+    assert "error" not in result, result
     assert result["delivered"] is True
+    assert len(remote_calls) == 1
+    assert len(seen) == 1
     participant = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT did, agent_id, alias, address
@@ -1363,7 +1441,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     message = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_did, from_address FROM {{tables.chat_messages}}"
     )
-    assert message["from_did"] == "did:aw:alice"
+    assert message["from_did"] == alice_did
     assert message["from_address"] == "acme.com/alice"
 
 

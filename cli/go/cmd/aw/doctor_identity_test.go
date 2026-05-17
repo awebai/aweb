@@ -123,6 +123,7 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 					"did_aw":          didAW,
 					"current_did_key": current,
 					"reachability":    "public",
+					"delivery":        doctorAWIDAddressDeliveryForTest(opts),
 					"created_at":      "2026-04-04T00:00:00Z",
 				})
 			}
@@ -140,6 +141,7 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 					"did_aw":          fixture.StableID,
 					"current_did_key": fixture.DID,
 					"reachability":    "public",
+					"delivery":        doctorAWIDAddressDeliveryForTest(opts),
 					"created_at":      "2026-04-04T00:00:00Z",
 				}}})
 			default:
@@ -150,6 +152,7 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 					"did_aw":          fixture.StableID,
 					"current_did_key": fixture.DID,
 					"reachability":    "public",
+					"delivery":        doctorAWIDAddressDeliveryForTest(opts),
 					"created_at":      "2026-04-04T00:00:00Z",
 				}}})
 			}
@@ -159,6 +162,13 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 	}))
 	t.Cleanup(server.Close)
 	return server, &hits
+}
+
+func doctorAWIDAddressDeliveryForTest(opts map[string]string) map[string]any {
+	if opts["delivery"] == "missing" {
+		return map[string]any{"origin": nil, "source": "namespace_default"}
+	}
+	return map[string]any{"origin": "https://messages.example.com", "source": "namespace_default"}
 }
 
 func TestAwDoctorIdentityOfflineDoesNotContactAWID(t *testing.T) {
@@ -230,6 +240,7 @@ func TestAwDoctorIdentityPersistentHappyPath(t *testing.T) {
 		doctorCheckAWIDAddressResolve,
 		doctorCheckAWIDAddressStableID,
 		doctorCheckAWIDAddressCurrentKey,
+		doctorCheckAWIDAddressDeliveryOrigin,
 		doctorCheckAWIDAddressReverseListing,
 	} {
 		requireDoctorCheckStatus(t, got, id, doctorStatusOK)
@@ -428,7 +439,29 @@ func TestAwDoctorIdentityAddressInconsistencyWarns(t *testing.T) {
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckAWIDAddressStableID, doctorStatusWarn)
 	requireDoctorCheckStatus(t, got, doctorCheckAWIDAddressCurrentKey, doctorStatusOK)
+	requireDoctorCheckStatus(t, got, doctorCheckAWIDAddressDeliveryOrigin, doctorStatusOK)
 	requireDoctorCheckStatus(t, got, doctorCheckAWIDAddressReverseListing, doctorStatusWarn)
+}
+
+func TestAwDoctorIdentityMissingDeliveryOriginWarns(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeDoctorIdentityFixture(t, "")
+	server, _ := newDoctorAWIDServer(t, &fixture, map[string]string{"delivery": "missing"})
+	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
+
+	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckAWIDAddressDeliveryOrigin, doctorStatusWarn)
+	if check.Detail["address"] != fixture.Address {
+		t.Fatalf("address detail=%v", check.Detail["address"])
+	}
+	if check.Detail["delivery_origin"] != "" {
+		t.Fatalf("delivery_origin detail=%v", check.Detail["delivery_origin"])
+	}
 }
 
 func TestAwDoctorIdentityNoPublicDiscoveryProof(t *testing.T) {

@@ -13,6 +13,11 @@ from aweb.mcp.signing import (
     HostedMessageSigningError,
     sign_hosted_message,
 )
+from aweb.mcp.tools.federation import (
+    mcp_federation_request,
+    mcp_messaging_auth,
+    registry_delivery_origin,
+)
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -39,6 +44,7 @@ from aweb.messaging.verification import (
     message_verification_status,
     require_conversation_not_legacy_bound,
 )
+from aweb.routes.messages import SendMessageRequest, _deliver_remote_mail_and_project_locally
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
@@ -46,6 +52,7 @@ VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-
 
 def _external_recipient_from_address(address: str, resolution) -> dict:
     _, name = address.split("/", 1)
+    delivery_origin = registry_delivery_origin(resolution)
     return {
         "agent_id": None,
         "team_id": None,
@@ -53,6 +60,8 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "address": address,
         "did_aw": resolution.did_aw.strip(),
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
+        "delivery_origin": delivery_origin,
+        "reachability": (getattr(resolution, "reachability", "") or "public").strip() or "public",
         "messaging_policy": None,
         "external": True,
     }
@@ -85,6 +94,8 @@ async def send_mail(
     subject: str = "",
     body: str = "",
     priority: str = "normal",
+    federation_transport=None,
+    public_origin: str | None = None,
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
@@ -277,10 +288,15 @@ async def send_mail(
     to_stable_id = (recipient.get("did_aw") or "").strip()
     to_current_did = (recipient.get("did_key") or "").strip()
     signed_to = recipient_ref if recipient_ref.startswith("did:") or "/" in recipient_ref else recipient_alias
+    signed_from = (
+        sender_address
+        if (recipient or {}).get("external") and sender_address
+        else (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip()
+    )
     signed_fields = {
         "body": body,
         "conversation_id": str(initial_conversation_id),
-        "from": (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
+        "from": signed_from,
         "from_did": (auth.did_key or "").strip(),
         "message_id": str(message_id),
         "subject": subject,
@@ -318,6 +334,48 @@ async def send_mail(
                 recipient_agent=recipient,
                 sender_did=sender_did,
                 sender_address=sender_address,
+            )
+        if (recipient or {}).get("external"):
+            if not (recipient or {}).get("delivery_origin"):
+                return json.dumps({"error": "Recipient address has no federated delivery origin"})
+            payload = SendMessageRequest(
+                to_address=recipient.get("address") or recipient_ref,
+                conversation_id=str(initial_conversation_id),
+                subject=subject,
+                body=body,
+                priority=cast(MessagePriority, priority),
+                message_id=str(message_id),
+                timestamp=_utc_iso(created_at),
+                from_did=sender_did,
+                signature=signature,
+                signed_payload=signed_payload,
+            )
+            response = await _deliver_remote_mail_and_project_locally(
+                mcp_federation_request(
+                    public_origin=public_origin,
+                    mail_transport=federation_transport,
+                ),
+                payload,
+                db_infra,
+                auth=mcp_messaging_auth(auth),
+                registry_client=registry_client,
+                sender_address=sender_address,
+                sender_did=sender_did,
+                recipient=recipient,
+                recipient_did=recipient_did,
+                to_agent_id=None,
+                to_alias=recipient_alias,
+                created_at=created_at,
+                msg_uuid=message_id,
+            )
+            return json.dumps(
+                {
+                    "message_id": response.message_id,
+                    "conversation_id": response.conversation_id,
+                    "status": response.status,
+                    "delivered_at": response.delivered_at,
+                    "to": recipient_alias,
+                }
             )
         conversation = await create_conversation(
             db_infra,

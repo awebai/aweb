@@ -30,6 +30,7 @@ const (
 	doctorCheckAWIDAddressResolve        = "awid.address.resolve"
 	doctorCheckAWIDAddressStableID       = "awid.address.matches_local_stable_id"
 	doctorCheckAWIDAddressCurrentKey     = "awid.address.current_key_matches_local"
+	doctorCheckAWIDAddressDeliveryOrigin = "awid.address.delivery_origin"
 	doctorCheckAWIDAddressReverseListing = "awid.address.reverse_listing"
 )
 
@@ -337,6 +338,7 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 		doctorCheckAWIDAddressResolve,
 		doctorCheckAWIDAddressStableID,
 		doctorCheckAWIDAddressCurrentKey,
+		doctorCheckAWIDAddressDeliveryOrigin,
 		doctorCheckAWIDAddressReverseListing,
 	}
 	if strings.TrimSpace(state.lifetime) == awid.LifetimeEphemeral {
@@ -484,6 +486,7 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 			r.add(awidCheck(doctorCheckAWIDAddressResolve, doctorStatusBlocked, "Caller lacks visibility to read this address.", "Retry with the identity that has visibility or escalate with the support bundle.", map[string]any{"reason": "caller_lacks_visibility", "status_code": statusCode}))
 			r.add(awidCheck(doctorCheckAWIDAddressStableID, doctorStatusBlocked, "Address stable-id comparison requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
 			r.add(awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusBlocked, "Address current-key comparison requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
+			r.add(awidCheck(doctorCheckAWIDAddressDeliveryOrigin, doctorStatusBlocked, "Address delivery-origin check requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
 			r.add(awidCheck(doctorCheckAWIDAddressReverseListing, doctorStatusBlocked, "Caller lacks visibility to read this address; reverse listing was not attempted.", "Retry with the identity that has visibility or escalate with the support bundle.", map[string]any{"reason": "caller_lacks_visibility", "prerequisite": doctorCheckAWIDAddressResolve}))
 			return
 		case hasStatus && statusCode >= 500:
@@ -493,6 +496,7 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 		}
 		r.add(awidCheck(doctorCheckAWIDAddressStableID, doctorStatusBlocked, "Address stable-id comparison requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
 		r.add(awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusBlocked, "Address current-key comparison requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
+		r.add(awidCheck(doctorCheckAWIDAddressDeliveryOrigin, doctorStatusBlocked, "Address delivery-origin check requires resolved address data.", "Resolve awid.address.resolve first.", map[string]any{"prerequisite": doctorCheckAWIDAddressResolve}))
 		r.addAddressReverseListingCheck(ctx, state, client)
 		return
 	}
@@ -513,7 +517,33 @@ func (r *doctorRunner) addAddressChecks(ctx context.Context, state *doctorIdenti
 	} else {
 		r.add(awidCheck(doctorCheckAWIDAddressCurrentKey, doctorStatusOK, "Registered address current did:key matches local identity did.", "", map[string]any{"did_key": state.did}))
 	}
+	r.addAddressDeliveryOriginCheck(state, address)
 	r.addAddressReverseListingCheck(ctx, state, client)
+}
+
+func (r *doctorRunner) addAddressDeliveryOriginCheck(state *doctorIdentityState, address *awid.RegistryAddress) {
+	origin := registryAddressDeliveryOrigin(address)
+	if origin == "" {
+		r.add(awidCheck(
+			doctorCheckAWIDAddressDeliveryOrigin,
+			doctorStatusWarn,
+			"Registered address does not inherit a federated delivery origin.",
+			"Set the namespace default_delivery_origin before expecting other aweb servers to start mail or chat with this address.",
+			map[string]any{"address": state.address, "delivery_origin": ""},
+		))
+		return
+	}
+	source := ""
+	if address != nil && address.Delivery != nil {
+		source = strings.TrimSpace(address.Delivery.Source)
+	}
+	r.add(awidCheck(
+		doctorCheckAWIDAddressDeliveryOrigin,
+		doctorStatusOK,
+		"Registered address has a federated delivery origin.",
+		"",
+		map[string]any{"address": state.address, "delivery_origin": origin, "source": source},
+	))
 }
 
 func (r *doctorRunner) addAddressReverseListingCheck(ctx context.Context, state *doctorIdentityState, client doctorRegistryClient) {
@@ -573,6 +603,7 @@ func (r *doctorRunner) addBlockedAddressChecks(message, prerequisite string) {
 		doctorCheckAWIDAddressResolve,
 		doctorCheckAWIDAddressStableID,
 		doctorCheckAWIDAddressCurrentKey,
+		doctorCheckAWIDAddressDeliveryOrigin,
 		doctorCheckAWIDAddressReverseListing,
 	} {
 		r.add(awidCheck(id, doctorStatusBlocked, message, "Resolve the prerequisite identity state first.", map[string]any{"prerequisite": prerequisite}))

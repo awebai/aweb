@@ -36,6 +36,16 @@ from aweb.mcp.signing import (
     HostedMessageSigningError,
     sign_hosted_message,
 )
+from aweb.mcp.tools.federation import (
+    mcp_federation_request,
+    mcp_messaging_auth,
+    registry_delivery_origin,
+)
+from aweb.routes.chat import (
+    CreateSessionRequest,
+    SendMessageRequest as ChatSendMessageRequest,
+    _deliver_federated_chat,
+)
 from aweb.service_errors import ServiceError
 
 MAX_TOTAL_WAIT_SECONDS = 600
@@ -283,6 +293,8 @@ async def chat_send(
     wait_seconds: int = 120,
     leaving: bool = False,
     hang_on: bool = False,
+    federation_transport=None,
+    public_origin: str | None = None,
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
@@ -336,6 +348,9 @@ async def chat_send(
                         "address": to_address.strip(),
                         "did_aw": resolved.did_aw.strip(),
                         "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
+                        "delivery_origin": registry_delivery_origin(resolved),
+                        "reachability": (getattr(resolved, "reachability", "") or "public").strip()
+                        or "public",
                         "messaging_policy": None,
                         "external": True,
                     }
@@ -395,6 +410,7 @@ async def chat_send(
                         "agent_id": str(target["agent_id"]) if target.get("agent_id") else None,
                         "alias": (target.get("alias") or target.get("address") or target_did).strip(),
                         "address": (target.get("address") or "").strip() or None,
+                        "delivery_origin": (target.get("delivery_origin") or "").strip() or None,
                     },
                 ],
                 created_by=actor_alias,
@@ -413,10 +429,15 @@ async def chat_send(
         msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         to_value, to_current_did, to_stable_id = _recipient_signed_fields([target])
+        from_value = (
+            sender_address
+            if target.get("external") and sender_address
+            else _signed_from(auth, actor_alias)
+        )
         signed_fields = {
             "body": message,
             "conversation_id": str(sid),
-            "from": _signed_from(auth, actor_alias),
+            "from": from_value,
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),
             "subject": "",
@@ -444,6 +465,63 @@ async def chat_send(
             )
         except HostedMessageSigningError as exc:
             return json.dumps({"error": str(exc)})
+        if target.get("external"):
+            if not (target.get("delivery_origin") or "").strip():
+                return json.dumps({"error": "Recipient address has no federated delivery origin"})
+            if hang_on and wait:
+                return json.dumps({"error": "Federated first contact cannot combine wait and hang_on"})
+            route = {
+                "address": (target.get("address") or "").strip(),
+                "did_aw": (target.get("did_aw") or target_did).strip(),
+                "current_did_key": (target.get("did_key") or "").strip(),
+                "delivery_origin": (target.get("delivery_origin") or "").strip(),
+                "requires_team_certificate": (target.get("reachability") or "public") != "public",
+            }
+            if hang_on:
+                payload = ChatSendMessageRequest(
+                    body=message,
+                    leaving=leaving,
+                    hang_on=True,
+                    message_id=str(pre_message_id),
+                    timestamp=_signed_timestamp(msg_created_at),
+                    from_did=signed.from_did if signed else actor_did,
+                    signature=signed.signature if signed else None,
+                    signed_payload=signed.signed_payload if signed else None,
+                )
+            else:
+                payload = CreateSessionRequest(
+                    session_id=str(sid),
+                    to_addresses=[route["address"]],
+                    message=message,
+                    leaving=leaving,
+                    wait_seconds=wait_seconds if wait else None,
+                    message_id=str(pre_message_id),
+                    timestamp=_signed_timestamp(msg_created_at),
+                    from_did=signed.from_did if signed else actor_did,
+                    signature=signed.signature if signed else None,
+                    signed_payload=signed.signed_payload if signed else None,
+                )
+            try:
+                remote = await _deliver_federated_chat(
+                    mcp_federation_request(
+                        public_origin=public_origin,
+                        chat_transport=federation_transport,
+                    ),
+                    payload,
+                    auth=mcp_messaging_auth(auth),
+                    sender_address=sender_address,
+                    route=route,
+                    session_id=str(sid),
+                )
+            except Exception as exc:
+                detail = getattr(exc, "detail", None)
+                return json.dumps({"error": detail or str(exc)})
+            remote_session_id = str(remote.get("session_id") or remote.get("conversation_id") or "").strip()
+            remote_message_id = str(remote.get("message_id") or "").strip()
+            if remote_session_id != str(sid):
+                return json.dumps({"error": "Federated chat response session_id mismatch"})
+            if remote_message_id != str(pre_message_id):
+                return json.dumps({"error": "Federated chat response message_id mismatch"})
         msg = await send_in_session(
             db_infra,
             session_id=sid,

@@ -140,6 +140,9 @@ def register_tools(
     redis: Optional[Redis],
     registry_client: RegistryClient,
     hosted_signer: HostedMessageSigner | None = None,
+    federation_mail_transport=None,
+    federation_chat_transport=None,
+    public_origin: str | None = None,
 ) -> None:
     """Register all aweb MCP tools on *mcp*.
 
@@ -179,6 +182,8 @@ def register_tools(
             subject=subject,
             body=body,
             priority=priority,
+            federation_transport=federation_mail_transport,
+            public_origin=public_origin,
         )
 
     @mcp.tool(
@@ -255,6 +260,8 @@ def register_tools(
             wait_seconds=wait_seconds,
             leaving=leaving,
             hang_on=hang_on,
+            federation_transport=federation_chat_transport,
+            public_origin=public_origin,
         )
 
     @mcp.tool(
@@ -530,6 +537,9 @@ def create_mcp_app(
     redis: Optional[Redis] = None,
     registry_client: RegistryClient | None = None,
     hosted_signer: HostedMessageSigner | None = None,
+    federation_mail_transport=None,
+    federation_chat_transport=None,
+    public_origin: str | None = None,
     streamable_http_path: str = "/",
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
@@ -561,7 +571,16 @@ def create_mcp_app(
     if registry_client is None:
         registry_client = RegistryClient(registry_url=get_awid_registry_url())
 
-    register_tools(mcp, db_infra, redis, registry_client, hosted_signer=hosted_signer)
+    register_tools(
+        mcp,
+        db_infra,
+        redis,
+        registry_client,
+        hosted_signer=hosted_signer,
+        federation_mail_transport=federation_mail_transport,
+        federation_chat_transport=federation_chat_transport,
+        public_origin=public_origin,
+    )
 
     # streamable_http_app() returns a Starlette app with its own lifespan, but
     # mounted sub-applications do not receive lifespan events from FastAPI.

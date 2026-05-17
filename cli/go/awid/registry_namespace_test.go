@@ -155,6 +155,65 @@ func TestListDIDAddressesAtReadsReverseAddressList(t *testing.T) {
 	}
 }
 
+func TestRegistryNamespaceAndAddressDecodeDeliveryOrigin(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"namespace_id":            "ns-1",
+				"domain":                  "acme.com",
+				"controller_did":          "did:key:z6Mkcontroller",
+				"verification_status":     "verified",
+				"default_delivery_origin": "https://messages.example.com",
+				"created_at":              "2026-04-04T00:00:00Z",
+			})
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "acme.com",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"delivery": map[string]any{
+					"origin": "https://messages.example.com",
+					"source": "namespace_default",
+				},
+				"created_at": "2026-04-04T00:00:00Z",
+			})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	namespace, _, err := client.GetNamespaceAt(context.Background(), server.URL, "acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespace.DefaultDeliveryOrigin != "https://messages.example.com" {
+		t.Fatalf("DefaultDeliveryOrigin=%q", namespace.DefaultDeliveryOrigin)
+	}
+
+	address, _, err := client.GetNamespaceAddressAt(context.Background(), server.URL, "acme.com", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if address.Delivery == nil || address.Delivery.Origin != "https://messages.example.com" || address.Delivery.Source != "namespace_default" {
+		t.Fatalf("delivery=%#v", address.Delivery)
+	}
+}
+
 func TestRegisterAddressAtRequiresControllerSigningKey(t *testing.T) {
 	t.Parallel()
 
