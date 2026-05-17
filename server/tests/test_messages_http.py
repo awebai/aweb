@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import Address, AddressDelivery, KeyResolution
+from awid.registry import Address, AddressDelivery, KeyResolution, TeamCertificate
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import (
     IDENTITY_DID_AW_HEADER,
@@ -2610,6 +2610,7 @@ async def test_receive_federated_mail_requires_and_verifies_cert_for_private_tar
         )
     )
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.list_team_certificates = AsyncMock(return_value=[])
     registry.get_team_revocations = AsyncMock(return_value=set())
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://recipient.example"
@@ -2630,7 +2631,85 @@ async def test_receive_federated_mail_requires_and_verifies_cert_for_private_tar
     assert missing_cert.status_code == 403, missing_cert.text
     assert accepted.status_code == 200, accepted.text
     registry.get_team_public_key.assert_awaited()
-    registry.get_team_revocations.assert_awaited()
+    registry.list_team_certificates.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_receive_federated_mail_accepts_cert_revoked_after_message_timestamp(aweb_cloud_db):
+    alice_sk, _, alice_did_key = _make_keypair()
+    team_sk, _, team_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:beta.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="beta.example/bob",
+    )
+    issued_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    revoked_at = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        alice_did_key,
+        team_id="default:alpha.example",
+        member_did_aw="did:aw:alice",
+        member_address="alpha.example/alice",
+        alias="alice",
+        issued_at=issued_at,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id=str(uuid4()),
+            domain="beta.example",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="team_members_only",
+            visible_to_team_id="default:alpha.example",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://recipient.example"),
+        )
+    )
+    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.list_team_certificates = AsyncMock(
+        return_value=[
+            TeamCertificate(
+                certificate_id=cert["certificate_id"],
+                member_did_key=alice_did_key,
+                member_did_aw="did:aw:alice",
+                member_address="alpha.example/alice",
+                alias="alice",
+                lifetime="persistent",
+                issued_at=issued_at,
+                revoked_at=revoked_at,
+            )
+        ]
+    )
+    registry.get_team_revocations = AsyncMock(return_value={cert["certificate_id"]})
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_mail_payload(
+        sender_sk=alice_sk,
+        sender_did_key=alice_did_key,
+        target_did_key=bob_did_key,
+        sender_team_certificate=cert,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        accepted = await client.post("/v1/federation/messages", json=payload)
+
+    assert accepted.status_code == 200, accepted.text
+    registry.list_team_certificates.assert_awaited_once_with(
+        "alpha.example",
+        "default",
+        active_only=False,
+    )
+    registry.get_team_revocations.assert_not_awaited()
 
 
 @pytest.mark.asyncio

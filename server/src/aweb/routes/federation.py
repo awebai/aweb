@@ -138,21 +138,17 @@ async def _verify_team_certificate(registry_client, envelope: FederationEnvelope
             raise ValueError("Unknown team")
         return key
 
-    async def _revoked(team_id: str) -> set[str]:
-        domain, name = parse_team_id(team_id)
-        return await registry_client.get_team_revocations(domain, name)
-
     try:
         team_id = str(envelope.sender_team_certificate.get("team_id") or "")
         if envelope.sender_active_team_id and team_id != envelope.sender_active_team_id:
             raise ValueError("Certificate team_id mismatch")
         team_did_key = await _team_key(team_id)
-        revoked = await _revoked(team_id)
+        revoked = await _certificate_revoked_at_message_time(registry_client, envelope, team_id)
         cert_info = parse_and_verify_certificate(
             cert_header,
             request_did_key=envelope.sender_current_did_key,
             team_public_key_resolver=lambda _team_id: team_did_key,
-            revocation_checker=lambda _team_id, certificate_id: certificate_id in revoked,
+            revocation_checker=lambda _team_id, _certificate_id: revoked,
         )
     except Exception as exc:
         raise HTTPException(status_code=403, detail="Invalid federation team certificate") from exc
@@ -180,6 +176,44 @@ def _verify_certificate_time(envelope: FederationEnvelope) -> None:
         raise HTTPException(status_code=403, detail="Federation team certificate has invalid issued_at") from exc
     if issued > message_time:
         raise HTTPException(status_code=403, detail="Federation team certificate was issued after message timestamp")
+
+
+async def _certificate_revoked_at_message_time(
+    registry_client,
+    envelope: FederationEnvelope,
+    team_id: str,
+) -> bool:
+    certificate_id = str((envelope.sender_team_certificate or {}).get("certificate_id") or "").strip()
+    if not certificate_id:
+        return True
+    domain, name = parse_team_id(team_id)
+    message_time = _parse_timestamp(envelope.timestamp)
+    list_certificates = getattr(registry_client, "list_team_certificates", None)
+    if callable(list_certificates):
+        try:
+            certificates = await list_certificates(domain, name, active_only=False)
+        except (AttributeError, TypeError):
+            certificates = None
+        if certificates is not None:
+            for cert in certificates:
+                if str(getattr(cert, "certificate_id", "") or "") != certificate_id:
+                    continue
+                revoked_at = str(getattr(cert, "revoked_at", "") or "").strip()
+                if not revoked_at:
+                    return False
+                try:
+                    revoked_time = datetime.fromisoformat(
+                        revoked_at.replace("Z", "+00:00")
+                    ).astimezone(timezone.utc)
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Federation team certificate has invalid revoked_at",
+                    ) from exc
+                return revoked_time <= message_time
+
+    revoked = await registry_client.get_team_revocations(domain, name)
+    return certificate_id in revoked
 
 
 def _require_target_origin_here(request: Request, envelope: FederationEnvelope) -> None:
