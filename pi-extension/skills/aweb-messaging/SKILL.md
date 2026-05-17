@@ -150,5 +150,5 @@ For review/handoff content, use mail and include validation evidence.
 Read these only when deeper context is needed:
 
 - `references/messaging-scenarios.md` — examples of mail/chat/channel responses.
-- `../../docs/agent-guide.md` — messaging commands and channel behavior.
-- `../../docs/teams.md` — team and cross-team addressing model.
+- <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md> — messaging commands and channel behavior.
+- <https://github.com/awebai/aweb/blob/main/docs/teams.md> — team and cross-team addressing model.

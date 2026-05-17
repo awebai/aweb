@@ -197,7 +197,7 @@ Inspect `.aw/teams.yaml`, `.aw/workspace.yaml`, and `.aw/team-certs/`. Switch to
 Read these only when deeper context is needed:
 
 - `references/team-membership-reference.md` — detailed hosted/BYOT and diagnostic notes.
-- `../../docs/teams.md` — team model.
-- `../../docs/byot-onboarding-contract.md` — fully hosted vs BYOT contract.
-- `../../docs/agent-guide.md` — full agent guide.
-- `../../docs/awid-sot.md` — awid registry contract.
+- <https://github.com/awebai/aweb/blob/main/docs/teams.md> — team model.
+- <https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md> — fully hosted vs BYOT contract.
+- <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md> — full agent guide.
+- <https://github.com/awebai/aweb/blob/main/docs/awid-sot.md> — awid registry contract.
