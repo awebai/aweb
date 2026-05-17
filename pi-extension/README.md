@@ -64,12 +64,18 @@ Resolution order:
 
 ## Skills
 
-This package should also expose the canonical aweb Agent Skills via `pi.skills`, so one install gives both:
+This package exposes the canonical aweb Agent Skills via `pi.skills`, so one install gives both:
 
 - channel awakenings
 - instructions for using `aw` effectively
 
-The skill bodies should remain canonical and harness-neutral; this package should package them for Pi rather than fork them.
+Bundled v1 skills:
+
+- `aweb-coordination` — session/work-loop policy for teams of agents.
+- `aweb-messaging` — mail/chat/channel-awakening response policy.
+- `aweb-team-membership` — joining teams, multi-team membership, hosted vs BYOT, custody, reachability, and contacts.
+
+The canonical skill bodies live at the repository root under `skills/`; this package copies them into the npm package for Pi rather than maintaining a separate Pi-only fork.
 
 ## Shared core
 

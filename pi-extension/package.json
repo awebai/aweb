@@ -6,6 +6,7 @@
   "main": "./dist/index.js",
   "files": [
     "dist",
+    "skills",
     "README.md",
     "package.json"
   ],
@@ -17,7 +18,8 @@
     "channel"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
+    "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership skills/",
+    "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@awebai/aw",
     "prepublishOnly": "npm run build",
     "start": "tsx src/index.ts"
   },
@@ -38,6 +40,9 @@
   "pi": {
     "extensions": [
       "./dist/index.js"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "license": "MIT",
