@@ -131,7 +131,7 @@ For review/handoff content, use mail and include validation evidence.
 
 Read these only when deeper context is needed:
 
-- `references/messaging-scenarios.md` — examples of mail/chat/channel responses.
-- <https://aweb.ai/docs/agent-guide/> — messaging commands and channel behavior.
-- <https://aweb.ai/docs/teams/> — team and cross-team addressing model.
-- <https://github.com/awebai/aweb/blob/main/docs/channel.md> — channel install and runtime details.
+- `references/messaging-scenarios.md`: examples of mail/chat/channel responses.
+- <https://aweb.ai/docs/agent-guide/>: messaging commands and channel behavior.
+- <https://aweb.ai/docs/teams/>: team and cross-team addressing model.
+- <https://github.com/awebai/aweb/blob/main/docs/channel.md>: channel install and runtime details.

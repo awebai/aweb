@@ -133,6 +133,6 @@ Before marking work done:
 
 Read these only when deeper context is needed:
 
-- `references/coordination-patterns.md` — detailed coordination scenarios and anti-patterns.
-- <https://aweb.ai/docs/agent-guide/> — full aweb agent guide.
-- <https://aweb.ai/docs/teams/> — team model and cross-team coordination.
+- `references/coordination-patterns.md`: detailed coordination scenarios and anti-patterns.
+- <https://aweb.ai/docs/agent-guide/>: full aweb agent guide.
+- <https://aweb.ai/docs/teams/>: team model and cross-team coordination.
