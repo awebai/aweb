@@ -475,21 +475,24 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	// (aweb returns to_address for reconstruction; we sign the same value.)
 	to := ""
 	from := c.address
+	targetIsAddress := false
 	if c.signingKey != nil {
 		if toAddr, err := c.toAddressForSession(ctx, sessionID); err == nil {
 			to = toAddr
 		}
-		from = c.signedPayloadFrom(false, true)
+		targetIsAddress = isRoutableAddressTarget(to) && !strings.Contains(to, ",")
+		from = c.signedPayloadFrom(false, !targetIsAddress)
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
-		From:           from,
-		To:             to,
-		Type:           "chat",
-		Body:           payload.Body,
-		ConversationID: strings.TrimSpace(sessionID),
-		ReplyTo:        payload.ReplyTo,
-		SenderLeaving:  payload.Leaving,
-		HangOn:         payload.ExtendWait,
+		From:                    from,
+		To:                      to,
+		Type:                    "chat",
+		Body:                    payload.Body,
+		ConversationID:          strings.TrimSpace(sessionID),
+		ReplyTo:                 payload.ReplyTo,
+		SenderLeaving:           payload.Leaving,
+		HangOn:                  payload.ExtendWait,
+		RequireRecipientBinding: targetIsAddress && c.requireRecipientBinding,
 	})
 	if err != nil {
 		return nil, err

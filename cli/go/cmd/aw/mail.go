@@ -120,6 +120,18 @@ func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, age
 	return "", nil
 }
 
+func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
+	if strings.TrimSpace(teamFlag) != "" {
+		return resolveClientSelection()
+	}
+	c, sel, err := resolveClientSelection()
+	if err == nil {
+		return c, sel, nil
+	}
+	debugLog("resolve certificate messaging client for mail: %v", err)
+	return resolveIdentityMessagingClientSelection()
+}
+
 func agentMatchesSelection(agent awid.AgentView, sel *awconfig.Selection) bool {
 	if sel == nil {
 		return false
@@ -218,11 +230,7 @@ var mailSendCmd = &cobra.Command{
 		}
 		switch targetKind {
 		case "conversation":
-			if strings.TrimSpace(teamFlag) != "" {
-				c, sel, err = resolveClientSelection()
-			} else {
-				c, sel, err = resolveIdentityMessagingClientSelection()
-			}
+			c, sel, err = resolveMailMessagingClientSelection()
 			if err != nil {
 				return err
 			}
@@ -243,6 +251,15 @@ var mailSendCmd = &cobra.Command{
 					targetKind = "conversation"
 					targetValue = conversationID
 					req.ConversationID = conversationID
+					if value := strings.TrimSpace(agent.Address); value != "" {
+						req.ToAddress = value
+					} else if value := strings.TrimSpace(agent.DIDAW); value != "" {
+						req.ToStableID = value
+					} else if value := strings.TrimSpace(agent.DIDKey); value != "" {
+						req.ToDID = value
+					} else {
+						req.ToAlias = strings.TrimSpace(agent.Alias)
+					}
 				} else {
 					req.ToAlias = targetValue
 				}
@@ -250,38 +267,38 @@ var mailSendCmd = &cobra.Command{
 				req.ToAlias = targetValue
 			}
 		case "did":
-			if strings.TrimSpace(teamFlag) != "" {
-				c, sel, err = resolveClientSelection()
-			} else {
-				c, sel, err = resolveIdentityMessagingClientSelection()
-			}
+			c, sel, err = resolveMailMessagingClientSelection()
 			if err != nil {
 				return err
 			}
+			recipientDID := targetValue
 			if conversationID, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
 			} else if conversationID != "" {
 				targetKind = "conversation"
 				targetValue = conversationID
 				req.ConversationID = conversationID
+				if strings.HasPrefix(recipientDID, "did:aw:") {
+					req.ToStableID = recipientDID
+				} else {
+					req.ToDID = recipientDID
+				}
 			} else {
 				req.ToDID = targetValue
 			}
 		case "address":
-			if strings.TrimSpace(teamFlag) != "" {
-				c, sel, err = resolveClientSelection()
-			} else {
-				c, sel, err = resolveIdentityMessagingClientSelection()
-			}
+			c, sel, err = resolveMailMessagingClientSelection()
 			if err != nil {
 				return err
 			}
+			recipientAddress := targetValue
 			if conversationID, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
 			} else if conversationID != "" {
 				targetKind = "conversation"
 				targetValue = conversationID
 				req.ConversationID = conversationID
+				req.ToAddress = recipientAddress
 			} else {
 				req.ToAddress = targetValue
 			}
@@ -371,11 +388,7 @@ var mailReplyCmd = &cobra.Command{
 
 		var c *aweb.Client
 		var sel *awconfig.Selection
-		if strings.TrimSpace(teamFlag) != "" {
-			c, sel, err = resolveClientSelection()
-		} else {
-			c, sel, err = resolveIdentityMessagingClientSelection()
-		}
+		c, sel, err = resolveMailMessagingClientSelection()
 		if err != nil {
 			return err
 		}

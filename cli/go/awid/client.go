@@ -320,12 +320,12 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 		}
 		return from
 	}
-	if c.teamCertHeader != "" {
-		if alias := c.certAlias; alias != "" {
-			return alias
-		}
-	}
 	if preferAlias {
+		if c.teamCertHeader != "" {
+			if alias := c.certAlias; alias != "" {
+				return alias
+			}
+		}
 		if alias := c.addressAlias(); alias != "" {
 			return alias
 		}

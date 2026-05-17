@@ -924,6 +924,11 @@ async def _send_mail_conversation_continuation(
             recipient_participant = recipients[0]
         else:
             raise ValidationError("Mail conversation continuation requires exactly one recipient")
+        if recipient_participant.get("delivery_origin"):
+            raise HTTPException(
+                status_code=422,
+                detail="Federated mail continuation requires a target-bound recipient address",
+            )
         recipient = _participant_recipient(recipient_participant)
         message_id, created_at = await deliver_message(
             db,

@@ -956,7 +956,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 	}
 }
 
-func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
+func TestAwMailSendToDIDUsesTeamCertificateWhenAvailable(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -1049,11 +1049,11 @@ func TestAwMailSendToDIDUsesIdentityAuth(t *testing.T) {
 	if gotBody["to_stable_id"] != recipientDID {
 		t.Fatalf("to_stable_id=%v, want %s", gotBody["to_stable_id"], recipientDID)
 	}
-	if gotTeamCert != "" {
-		t.Fatalf("expected identity auth without team certificate, got %q", gotTeamCert)
+	if gotTeamCert == "" {
+		t.Fatal("expected team certificate auth")
 	}
-	if gotStableID != stableID {
-		t.Fatalf("X-AWEB-DID-AW=%q want %q", gotStableID, stableID)
+	if gotStableID != "" {
+		t.Fatalf("X-AWEB-DID-AW=%q, want empty with team certificate auth", gotStableID)
 	}
 	if !strings.HasPrefix(gotAuth, "DIDKey ") {
 		t.Fatalf("Authorization=%q", gotAuth)
@@ -1332,7 +1332,7 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 		t.Fatalf("chat lookup proof auth=%q timestamp=%q", chatLookupAuth, chatLookupTimestamp)
 	}
 	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
-	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
+	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "aweb.ai/amy")
 }
 
 func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
@@ -1463,14 +1463,14 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	if registryHits.Load() == 0 {
 		t.Fatal("registry was not attempted before known-agent fallback")
 	}
-	if mailTeamCert != "" {
-		t.Fatalf("mail --to-address should use identity auth without --team, got cert header")
+	if mailTeamCert == "" {
+		t.Fatal("mail --to-address should use certificate auth")
 	}
 	if chatTeamCert == "" {
 		t.Fatal("chat send-and-leave should use certificate auth")
 	}
 	requireSignedPayloadBindingForTest(t, mailBody["signed_payload"], "mail", recipientDID, recipientStableID, "aweb.ai/amy")
-	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "")
+	requireSignedPayloadBindingForTest(t, chatBody["signed_payload"], "chat", recipientDID, recipientStableID, "aweb.ai/amy")
 }
 
 func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {

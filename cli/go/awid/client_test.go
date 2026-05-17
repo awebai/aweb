@@ -592,7 +592,7 @@ func TestChatSendMessagePrefersParticipantAddressesForDeterministicTo(t *testing
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		To:             "otherco/monitor",
 		Type:           "chat",
@@ -877,7 +877,7 @@ func TestChatSendMessageRemovesOneSelfAddressFromDeterministicTo(t *testing.T) {
 	}
 
 	env := &MessageEnvelope{
-		From:           "rose",
+		From:           "example.com/rose",
 		FromDID:        did,
 		To:             "otherco/monitor",
 		Type:           "chat",

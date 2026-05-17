@@ -324,7 +324,7 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	}
 }
 
-func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
+func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -348,6 +348,16 @@ func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
+				{
+					ConversationType:     "mail",
+					ConversationID:       conversationID,
+					Participants:         []string{"alice", "bob"},
+					ParticipantDIDs:      []string{stableID, "did:aw:bob"},
+					ParticipantAddresses: []string{"test.local/alice", "otherco.com/bob"},
+				},
+			}})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode body: %v", err)
@@ -374,9 +384,9 @@ func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:       did,
-		StableID:  stableID,
+		Address:   "test.local/alice",
 		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
+		Lifetime:  awid.LifetimeEphemeral,
 		CreatedAt: "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
@@ -400,8 +410,11 @@ func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
-	if got.ToAlias != "" || got.ToDID != "" || got.ToAddress != "" {
-		t.Fatalf("continuation leaked recipient fields: %+v", got)
+	if got.ToAlias != "" || got.ToDID != "" {
+		t.Fatalf("continuation used unexpected recipient fields: %+v", got)
+	}
+	if got.ToAddress != "otherco.com/bob" {
+		t.Fatalf("to_address=%q, want otherco.com/bob", got.ToAddress)
 	}
 	if got.Subject != "Re" || got.Body != "reply" {
 		t.Fatalf("unexpected message body: %+v", got)
@@ -413,8 +426,8 @@ func TestAwMailSendConversationIDSignsPayloadAndOmitsRecipient(t *testing.T) {
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "" || signed["to_did"] != "" {
-		t.Fatalf("signed continuation should not bind rediscovered recipient: %+v", signed)
+	if signed["to"] != "otherco.com/bob" {
+		t.Fatalf("signed continuation did not bind rediscovered recipient: %+v", signed)
 	}
 }
 
@@ -480,10 +493,9 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:       did,
-		StableID:  stableID,
 		Address:   "acme.com/alice",
 		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
+		Lifetime:  awid.LifetimeEphemeral,
 		CreatedAt: "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
@@ -507,8 +519,8 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
-	if got.ToAddress != "" {
-		t.Fatalf("auto-threaded reply leaked to_address=%q", got.ToAddress)
+	if got.ToAddress != "otherco.com/bob" {
+		t.Fatalf("to_address=%q, want otherco.com/bob", got.ToAddress)
 	}
 	var signed map[string]any
 	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
@@ -517,8 +529,8 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "" || signed["to_did"] != "" {
-		t.Fatalf("signed threaded reply should not bind direct recipient: %+v", signed)
+	if signed["to"] != "otherco.com/bob" {
+		t.Fatalf("signed threaded reply did not bind direct recipient: %+v", signed)
 	}
 }
 
@@ -584,7 +596,6 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:       did,
-		StableID:  stableID,
 		Address:   "test.local/gsk",
 		Custody:   awid.CustodySelf,
 		Lifetime:  awid.LifetimeEphemeral,
@@ -614,8 +625,8 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
-	if got.ToAddress != "" {
-		t.Fatalf("auto-threaded sent-side reply leaked to_address=%q", got.ToAddress)
+	if got.ToAddress != "test.local/alice" {
+		t.Fatalf("to_address=%q, want test.local/alice", got.ToAddress)
 	}
 	var signed map[string]any
 	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
@@ -624,8 +635,8 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "" || signed["to_did"] != "" {
-		t.Fatalf("signed threaded sent-side reply should not bind direct recipient: %+v", signed)
+	if signed["to"] != "test.local/alice" {
+		t.Fatalf("signed threaded sent-side reply did not bind direct recipient: %+v", signed)
 	}
 }
 
@@ -642,6 +653,7 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 
 	type captured struct {
 		ToAlias        string `json:"to_alias"`
+		ToAddress      string `json:"to_address"`
 		ConversationID string `json:"conversation_id"`
 		SignedPayload  string `json:"signed_payload"`
 	}
@@ -708,7 +720,6 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 		Alias:       "gsk",
 		WorkspaceID: "workspace-1",
 		DID:         did,
-		StableID:    stableID,
 		Address:     "test.local/gsk",
 		Custody:     awid.CustodySelf,
 		Lifetime:    awid.LifetimeEphemeral,
@@ -739,6 +750,9 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 	if got.ToAlias != "" {
 		t.Fatalf("auto-threaded alias reply leaked to_alias=%q", got.ToAlias)
 	}
+	if got.ToAddress != "test.local/alice" {
+		t.Fatalf("to_address=%q, want test.local/alice", got.ToAddress)
+	}
 	var signed map[string]any
 	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
 		t.Fatalf("decode signed_payload: %v", err)
@@ -746,8 +760,8 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
 	}
-	if signed["to"] != "" || signed["to_did"] != "" {
-		t.Fatalf("signed threaded alias reply should not bind direct recipient: %+v", signed)
+	if signed["to"] != "test.local/alice" {
+		t.Fatalf("signed threaded alias reply did not bind direct recipient: %+v", signed)
 	}
 }
 
@@ -864,6 +878,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	conversationID := "66666666-6666-4666-8666-666666666666"
 
 	type captured struct {
+		ToAddress      string `json:"to_address"`
 		ConversationID string `json:"conversation_id"`
 		Body           string `json:"body"`
 		SignedPayload  string `json:"signed_payload"`
@@ -884,6 +899,16 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 					Subject:        "hello",
 					Body:           "hi",
 					CreatedAt:      "2026-05-02T00:00:00Z",
+				},
+			}})
+		case "/v1/conversations":
+			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
+				{
+					ConversationType:     "mail",
+					ConversationID:       conversationID,
+					Participants:         []string{"alice", "bob"},
+					ParticipantDIDs:      []string{stableID, "did:aw:bob"},
+					ParticipantAddresses: []string{"acme.com/alice", "otherco.com/bob"},
 				},
 			}})
 		case "/v1/messages":
@@ -912,10 +937,9 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:       did,
-		StableID:  stableID,
 		Address:   "acme.com/alice",
 		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
+		Lifetime:  awid.LifetimeEphemeral,
 		CreatedAt: "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
@@ -935,12 +959,18 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	if got.ConversationID != conversationID || got.Body != "reply" {
 		t.Fatalf("unexpected body: %+v", got)
 	}
+	if got.ToAddress != "otherco.com/bob" {
+		t.Fatalf("to_address=%q, want otherco.com/bob", got.ToAddress)
+	}
 	var signed map[string]any
 	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
 		t.Fatalf("decode signed_payload: %v", err)
 	}
 	if signed["conversation_id"] != conversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
+	}
+	if signed["to"] != "otherco.com/bob" {
+		t.Fatalf("signed reply did not bind rediscovered recipient: %+v", signed)
 	}
 }
 
@@ -957,6 +987,8 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations", "/v1/messages/conversations/" + conversationID:
+			http.NotFound(w, r)
 		case "/v1/messages":
 			http.Error(w, `{"detail":"Authenticated identity is not a participant in this conversation"}`, http.StatusForbidden)
 		case "/v1/agents/heartbeat":
@@ -1011,6 +1043,8 @@ func TestAwMailSendConversationIDSurfacesMissingConversation(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/conversations", "/v1/messages/conversations/" + conversationID:
+			http.NotFound(w, r)
 		case "/v1/messages":
 			http.Error(w, `{"detail":"Conversation not found"}`, http.StatusNotFound)
 		case "/v1/agents/heartbeat":

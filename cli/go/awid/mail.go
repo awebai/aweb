@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 )
 
@@ -57,6 +58,29 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		strings.TrimSpace(payload.ToDID) != "" ||
 		strings.TrimSpace(payload.ToStableID) != "" ||
 		strings.TrimSpace(payload.ToAddress) != ""
+	if !hasRecipient && strings.TrimSpace(payload.ConversationID) != "" {
+		target, err := c.targetForMailConversation(ctx, strings.TrimSpace(payload.ConversationID))
+		if err != nil {
+			return nil, err
+		}
+		switch target.kind {
+		case "address":
+			payload.ToAddress = target.value
+		case "did":
+			if strings.HasPrefix(target.value, "did:aw:") {
+				payload.ToStableID = target.value
+			} else {
+				payload.ToDID = target.value
+			}
+		case "alias":
+			payload.ToAlias = target.value
+		}
+		hasRecipient = strings.TrimSpace(payload.ToAlias) != "" ||
+			strings.TrimSpace(payload.ToAgentID) != "" ||
+			strings.TrimSpace(payload.ToDID) != "" ||
+			strings.TrimSpace(payload.ToStableID) != "" ||
+			strings.TrimSpace(payload.ToAddress) != ""
+	}
 	if c.signingKey != nil && strings.TrimSpace(payload.ConversationID) == "" && hasRecipient {
 		conversationID, err := GenerateUUID4()
 		if err != nil {
@@ -117,6 +141,84 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return nil, err
 	}
 	return &out, nil
+}
+
+type mailConversationTarget struct {
+	kind  string
+	value string
+}
+
+func (c *Client) targetForMailConversation(ctx context.Context, conversationID string) (mailConversationTarget, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return mailConversationTarget{}, nil
+	}
+	if resp, err := c.ListConversationsWithParams(ctx, ConversationListParams{
+		Limit:            100,
+		ConversationType: "mail",
+	}); err == nil {
+		for _, item := range resp.Conversations {
+			if strings.TrimSpace(item.ConversationID) != conversationID {
+				continue
+			}
+			if target := c.mailConversationItemTarget(item); target.value != "" {
+				return target, nil
+			}
+			break
+		}
+	} else if !httpStatusIs(err, http.StatusNotFound) && !httpStatusIs(err, http.StatusUnprocessableEntity) {
+		return mailConversationTarget{}, err
+	}
+	if resp, err := c.MailConversation(ctx, conversationID, 50); err == nil {
+		if target := c.mailInboxTarget(resp.Messages); target.value != "" {
+			return target, nil
+		}
+	} else if !httpStatusIs(err, http.StatusNotFound) && !httpStatusIs(err, http.StatusForbidden) {
+		return mailConversationTarget{}, err
+	}
+	return mailConversationTarget{}, nil
+}
+
+func httpStatusIs(err error, status int) bool {
+	code, ok := HTTPStatusCode(err)
+	return ok && code == status
+}
+
+func (c *Client) mailConversationItemTarget(item ConversationItem) mailConversationTarget {
+	if value := deterministicTargetList(removeOneSelfIdentifier(item.ParticipantAddresses, c.address)); value != "" {
+		return mailConversationTarget{kind: "address", value: value}
+	}
+	if value := deterministicTargetList(removeOneSelfIdentifier(item.ParticipantDIDs, c.stableID, c.did)); value != "" {
+		return mailConversationTarget{kind: "did", value: value}
+	}
+	selfAlias := c.addressAlias()
+	if selfAlias == "" {
+		return mailConversationTarget{}
+	}
+	if value := deterministicTargetList(removeOneSelfIdentifier(item.Participants, selfAlias)); value != "" {
+		return mailConversationTarget{kind: "alias", value: value}
+	}
+	return mailConversationTarget{}
+}
+
+func (c *Client) mailInboxTarget(messages []InboxMessage) mailConversationTarget {
+	for _, msg := range messages {
+		for _, candidate := range []string{msg.FromAddress, msg.ToAddress} {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" && !strings.EqualFold(candidate, strings.TrimSpace(c.address)) {
+				return mailConversationTarget{kind: "address", value: candidate}
+			}
+		}
+		for _, candidate := range []string{msg.FromStableID, msg.ToStableID, msg.FromDID, msg.ToDID} {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" &&
+				!strings.EqualFold(candidate, strings.TrimSpace(c.stableID)) &&
+				!strings.EqualFold(candidate, strings.TrimSpace(c.did)) {
+				return mailConversationTarget{kind: "did", value: candidate}
+			}
+		}
+	}
+	return mailConversationTarget{}
 }
 
 type InboxMessage struct {
