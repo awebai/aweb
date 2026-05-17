@@ -1,4 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  createChannelClient,
+  createRegistryResolver,
+  formatAwakeningForAgent,
+  loadPinStore,
+  resolveConfig,
+  SenderTrustManager,
+  startChannelLoop,
+  type ChannelAwakening,
+} from "@awebai/channel-core";
 import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -93,6 +103,24 @@ function onboardingMessage(reason: string): string {
   return `aweb channel is installed but not ready.\n\n${reason}\n\nTo enable aweb awakenings in pi:\n\n1. Initialize this worktree for aweb:\n\n   aw init\n\n2. Then restart pi or run /reload.\n\nOnce initialized, incoming aweb mail/chat/control events will wake this pi session with message contents and sender verification status. Use the aw CLI from pi's bash tool to respond.`;
 }
 
+function sendAwakening(pi: ExtensionAPI, awakening: ChannelAwakening): void {
+  const options = awakening.deliveryIntent === "ambient"
+    ? { deliverAs: "nextTurn" as const }
+    : awakening.deliveryIntent === "steer"
+      ? { deliverAs: "steer" as const, triggerTurn: true }
+      : { triggerTurn: true };
+
+  pi.sendMessage(
+    {
+      customType: "aweb-channel",
+      content: formatAwakeningForAgent(awakening),
+      display: true,
+      details: awakening.meta,
+    },
+    options,
+  );
+}
+
 export default function awebPiExtension(pi: ExtensionAPI) {
   let abortController: AbortController | undefined;
 
@@ -130,11 +158,59 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       return;
     }
 
+    let config;
+    try {
+      config = await resolveConfig(ctx.cwd);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: onboardingMessage(`aw is available (${aw.source}) but aweb channel configuration could not be loaded.\n\n${message}`),
+        display: true,
+      });
+      return;
+    }
+
+    const client = createChannelClient(config);
+    const pinStore = await loadPinStore();
+    const registry = createRegistryResolver(config.registryURL);
+    const trust = new SenderTrustManager(
+      client,
+      registry,
+      config.teamID,
+      config.did,
+      config.stableID,
+    );
+
     if (ctx.hasUI) {
       ctx.ui.setStatus("aweb-channel", `aweb channel: ready (${aw.source})`);
     }
 
-    // The SSE subscription and pi awakening adapter land in the next tasks.
-    // Keep the scaffold useful by proving dependency resolution + workspace readiness now.
+    const signal = abortController.signal;
+    void startChannelLoop({
+      client,
+      pinStore,
+      trust,
+      self: {
+        alias: config.alias,
+        address: config.address,
+        did: config.did,
+        stableID: config.stableID,
+      },
+      signal,
+      onAwakening: (awakening) => sendAwakening(pi, awakening),
+      log: (message) => {
+        if (ctx.hasUI) ctx.ui.notify(message, "warning");
+      },
+    }).catch((error) => {
+      if (signal.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: `aweb channel stopped: ${message}`,
+        display: true,
+      });
+      if (ctx.hasUI) ctx.ui.setStatus("aweb-channel", "aweb channel: stopped");
+    });
   });
 }

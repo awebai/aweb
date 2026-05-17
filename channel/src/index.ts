@@ -7,14 +7,21 @@ import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { resolveConfig } from "./config.js";
-import { APIClient } from "./api/client.js";
-import { streamAgentEvents, type AgentEvent } from "./api/events.js";
-import { fetchInbox, ackMessage, type InboxMessage } from "./api/mail.js";
-import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
-import { PinStore } from "./identity/pinstore.js";
-import { RegistryResolver } from "./identity/registry.js";
-import { SenderTrustManager } from "./identity/trust.js";
+import {
+  APIClient,
+  ackMessage,
+  fetchHistory,
+  fetchInbox,
+  markRead,
+  PinStore,
+  RegistryResolver,
+  resolveConfig,
+  SenderTrustManager,
+  streamAgentEvents,
+  type AgentEvent,
+  type ChatMessage,
+  type InboxMessage,
+} from "@awebai/channel-core";
 
 const PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 const MAX_DISPATCHED_IDS = 2000;

@@ -22,7 +22,8 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@awebai/aw": "^1.22.1"
+    "@awebai/aw": "^1.22.1",
+    "@awebai/channel-core": "file:../channel-core"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",

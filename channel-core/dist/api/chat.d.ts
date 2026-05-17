@@ -1,0 +1,27 @@
+import type { APIClient } from "./client.js";
+import type { VerificationStatus } from "../identity/signing.js";
+import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
+export interface ChatMessage {
+    message_id: string;
+    conversation_id?: string;
+    from_agent: string;
+    from_address?: string;
+    to_address?: string;
+    body: string;
+    timestamp: string;
+    sender_leaving: boolean;
+    from_did?: string;
+    to_did?: string;
+    from_stable_id?: string;
+    to_stable_id?: string;
+    signature?: string;
+    signing_key_id?: string;
+    signed_payload?: string;
+    signed_from?: string;
+    rotation_announcement?: RotationAnnouncement;
+    replacement_announcement?: ReplacementAnnouncement;
+    is_contact?: boolean;
+    verification_status?: VerificationStatus;
+}
+export declare function fetchHistory(client: APIClient, sessionId: string, unreadOnly?: boolean, limit?: number, messageID?: string): Promise<ChatMessage[]>;
+export declare function markRead(client: APIClient, sessionId: string, upToMessageId: string): Promise<void>;

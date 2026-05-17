@@ -1,0 +1,35 @@
+{
+  "name": "@awebai/channel-core",
+  "version": "0.1.0",
+  "description": "Shared aweb channel core for agent host adapters such as Claude Code and pi.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.2.3",
+    "@noble/hashes": "^2.0.1",
+    "bs58": "^6.0.0",
+    "js-yaml": "^4.1.0",
+    "tldts": "^7.0.27"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/awebai/aweb.git",
+    "directory": "channel-core"
+  }
+}

@@ -21,6 +21,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@awebai/channel-core": "file:../channel-core",
     "tldts": "^7.0.27"
   },
   "devDependencies": {

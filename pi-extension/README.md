@@ -38,6 +38,12 @@ When aweb channel events arrive, the extension wakes the running pi session with
 - sender/authorship verification status
 - a prominent warning if verification fails or is unknown
 
+Delivery behavior:
+
+- mail and chat wake the LLM
+- waiting chat and control signals steer the active turn
+- ambient work/claim notifications are queued for the next natural turn
+
 The agent responds with normal shell commands, for example:
 
 ```bash
@@ -56,10 +62,12 @@ Resolution order:
 2. bundled `@awebai/aw` dependency binary
 3. friendly onboarding message if neither is available
 
-## Status
+## Shared core
 
-v0.1.0 work in progress:
+The extension uses `@awebai/channel-core`, shared with `@awebai/claude-channel`, for:
 
-- package scaffold and aw readiness checks
-- shared channel core extraction from `@awebai/claude-channel`
-- pi-specific awakening adapter
+- aweb signed API calls
+- SSE event subscription and reconnect
+- mail/chat fetch and read/ack behavior
+- sender signature verification and trust normalization
+- formatting awakenings with trust warnings
