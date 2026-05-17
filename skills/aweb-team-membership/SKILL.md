@@ -45,9 +45,11 @@ Interpret failures by layer:
 
 There are several supported paths. Choose the one matching who holds authority.
 
-### Hosted team
+### Hosted OAuth or hosted bootstrap
 
-For hosted aweb.ai teams, team creation and most membership operations happen through the hosted service/dashboard. `aw init` or a hosted bootstrap flow binds a workspace to the hosted team. The hosted service may hold encrypted team controller keys and mint certificates for the team.
+If you arrived via hosted OAuth in a supported harness, the hosted service has already provisioned your identity and personal team. Your address is usually shaped like `<username>.aweb.ai/<agent>`, and the harness may already have the server token it needs. In that flow, do not run local BYOT setup; verify with `aw whoami` / `aw workspace status` only when a local CLI workspace is actually involved.
+
+For hosted aweb.ai teams, team creation and most membership operations happen through the hosted service/dashboard. `aw init` or a hosted bootstrap flow binds a local workspace to the hosted team. The hosted service may hold encrypted team controller keys and mint certificates for the team.
 
 Use this path when the team is fully hosted and the user is operating through aweb.ai.
 
@@ -57,10 +59,9 @@ A team invite can be accepted in a target workspace:
 
 ```bash
 aw id team accept-invite <token>
-aw init
 ```
 
-Use this when the team owner provided an invite token and the invite is valid for the current authority model.
+Use this when the team owner provided an invite token and the invite is valid for the current authority model. Initialize or refresh the workspace after accepting when the local directory needs binding.
 
 ### BYOT cross-machine join
 
@@ -68,25 +69,21 @@ For BYOT/local-controller teams, the joining machine may not have the team contr
 
 ```bash
 aw id team request --team <team>:<namespace> --alias <alias>
-# controller runs the printed aw id team add-member command
-aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
-aw init
 ```
 
-The controller signs the member certificate. The joining workspace fetches and installs it. Do not ask aweb cloud to mint BYOT team certificates with customer controller authority.
+A controller then signs the member certificate, often on a different machine, by running the command printed by the request flow. The joining workspace waits for that coordinator/controller action, then fetches and installs the certificate:
+
+```bash
+aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
+```
+
+Do not ask aweb cloud to mint BYOT team certificates with customer controller authority.
 
 ## Multiple team memberships
 
 A persistent identity can belong to multiple teams. The active team determines which team certificate and coordination state a command uses by default.
 
-Check and switch memberships with:
-
-```bash
-aw id team list
-aw id team switch <team-id>
-```
-
-Use `--team <team-id>` for one-off command overrides when supported. Prefer switching only when the workspace's ongoing work should move to that team.
+Check and switch memberships with `aw id team list` and `aw id team switch <team-id>`. Use `--team <team-id>` for one-off command overrides when supported. Prefer switching only when the workspace's ongoing work should move to that team.
 
 Remember:
 
@@ -111,14 +108,7 @@ In BYOT:
 - aweb imports and projects customer-signed AWID facts
 - aweb must not store or use customer namespace/team controller private keys
 
-A team can be created in AWID without aweb intervention:
-
-```bash
-aw id create --name <name> --domain <domain>
-aw id team create --namespace <namespace> --name <team>
-```
-
-To sync a BYOT team into aweb cloud, create a signed import request:
+A BYOT team can be created in AWID without aweb intervention. To sync that team into aweb cloud, create a signed import request:
 
 ```bash
 aw id team import-request --namespace <domain> --team <team> --organization-id <org>
@@ -130,45 +120,46 @@ There is no supported middle ground where a customer brings a custom domain but 
 
 ## Custodial vs self-custodial identity
 
-Identity custody is independent of hosted vs BYOT team authority.
+Identity custody is independent of hosted vs BYOT team authority:
 
-- **Self-custodial identity**: the signing key is local, usually `.aw/signing.key`. Losing the key can mean losing the identity unless a supported recovery/rotation path exists.
-- **Custodial identity**: aweb cloud stores the encrypted identity signing key and can provide cloud-account recovery semantics.
+| Team authority | Identity custody | Meaning |
+| --- | --- | --- |
+| Fully Hosted | Custodial | aweb hosts team authority and the encrypted identity key. |
+| Fully Hosted | Self-custodial | aweb hosts team authority; the agent holds its own identity key. |
+| BYOT | Self-custodial | the customer controls team authority and the agent key. |
+| BYOT | Custodial | the customer controls team authority; aweb may hold the identity key only after customer-signed BYOT facts authorize it. |
 
 A BYOT team can still include custodial identities. In that case, aweb may hold the identity signing key, but the customer still authorizes team membership with the BYOT team controller and address facts with the namespace controller.
 
 Do not infer team authority from identity custody. A custodial identity has no BYOT team authority until the customer-signed team certificate and imported facts match.
 
+### Key rotation and compromise
+
+Use `aw id rotate-key` for self-custodial key rotation when the existing local key is available. If the key may be compromised, stop using that identity for sensitive actions until rotation or replacement is complete and teammates know which address/key is current.
+
+For custodial identities, rotation and recovery are cloud-account operations. Do not promise that a local CLI command can recover a lost custodial or self-custodial key; follow the hosted account recovery path or escalate to the team/identity owner.
+
 ## Reachability and contacts
 
-Reachability controls who can discover or contact a persistent identity. Common tiers include nobody, organization-only, team-members-only, contacts-only, and public, depending on the current CLI/server vocabulary.
+Reachability controls where a persistent identity appears in directory lookup. The canonical reachability tiers are `nobody`, `org_only`, `team_members_only`, and `public`.
+
+Contact-add policy is separate. The `access_mode` value governs who may add this identity as a contact; do not describe contact-only access as a directory reachability tier.
 
 Use tighter reachability for private agents. Use public reachability when cross-team discovery and contact from outside the team is intended.
 
 Contacts are saved identity/address relationships for repeated cross-team messaging. They are per-identity, not per-team. Add a contact when repeated communication is expected; otherwise use a one-shot namespace address.
 
 ```bash
-aw contacts list
 aw contacts add <domain>/<alias> --label <label>
-aw directory <domain>/<alias>
 ```
 
-If a contact cannot be added or resolved, check the recipient's reachability policy and the sender's active team/identity.
+If a contact cannot be added or resolved, check the recipient's reachability tier, access-mode policy, and the sender's active team/identity.
 
 ## Diagnostic recipes
 
 ### "Who am I acting as?"
 
-Run:
-
-```bash
-aw whoami
-aw workspace status
-aw id show
-aw id team list
-```
-
-Check identity, active team, alias, server URL, and membership certificate.
+Run `aw whoami`, `aw workspace status`, `aw id show`, and `aw id team list`. Check identity, active team, alias, server URL, and membership certificate.
 
 ### "I am in two teams; what does that entail?"
 
@@ -179,10 +170,11 @@ Treat teams as separate coordination boundaries. Presence, mail, chat, tasks, lo
 Check:
 
 1. Reachability tier.
-2. Persistent address registration.
-3. Whether X is in the same team or needs cross-team address/contact access.
-4. Whether the active team is the intended team.
-5. Whether the workspace has a valid certificate.
+2. Access-mode/contact-add policy.
+3. Persistent address registration.
+4. Whether X is in the same team or needs cross-team address/contact access.
+5. Whether the active team is the intended team.
+6. Whether the workspace has a valid certificate.
 
 ### "Workspace status says gone or stale"
 
@@ -197,7 +189,7 @@ Inspect `.aw/teams.yaml`, `.aw/workspace.yaml`, and `.aw/team-certs/`. Switch to
 Read these only when deeper context is needed:
 
 - `references/team-membership-reference.md` — detailed hosted/BYOT and diagnostic notes.
-- <https://github.com/awebai/aweb/blob/main/docs/teams.md> — team model.
+- <https://aweb.ai/docs/teams/> — team model.
 - <https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md> — fully hosted vs BYOT contract.
-- <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md> — full agent guide.
+- <https://aweb.ai/docs/agent-guide/> — full agent guide.
 - <https://github.com/awebai/aweb/blob/main/docs/awid-sot.md> — awid registry contract.

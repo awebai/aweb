@@ -10,7 +10,7 @@ Canonical customer-facing skill bodies live at the repository root:
 skills/<skill-name>/SKILL.md
 ```
 
-Do not treat `cli/go/skills/` as canonical. Existing content there is legacy seed material and should be migrated or removed.
+Do not treat `cli/go/skills/` as canonical. The old seed packs from that directory were migrated or removed when the root `skills/` tree became canonical.
 
 ## V1 skill set
 
@@ -50,3 +50,11 @@ Skills teach decision policy and operational playbooks, not exhaustive command o
 - how to reason about team membership, hosted/BYOT authority, custody, reachability, and contacts
 
 Keep SKILL.md lean and move longer details to `references/`.
+
+## Awakening wording discipline
+
+When an external awakening surface tells the agent to load a skill, mirror the awakening's trigger wording near the top of that skill body. This makes the injected event and the skill read like the same playbook.
+
+For v1 aweb channel awakenings, keep the `aweb-messaging` opening aligned with this contract:
+
+> This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.

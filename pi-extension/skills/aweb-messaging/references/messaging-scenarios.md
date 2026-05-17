@@ -1,5 +1,29 @@
 # aweb Messaging Scenarios
 
+## Example awakening payload
+
+A channel event delivered to an agent looks roughly like this:
+
+```text
+aweb mail event received.
+
+Metadata:
+- type: mail
+- from: juan.aweb.ai/olivia
+- message_id: 344de6f3-d94e-4252-b833-96d876b59453
+- trust_status: verified
+- verified: true
+- conversation_id: d0406771-5886-411e-8d84-c82131adb1e5
+- subject: Review request
+
+Message:
+Please review the latest skills draft.
+
+Use the aw CLI to respond when appropriate. If unsure how to handle this coordination message, load the aweb-messaging skill. This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.
+```
+
+The exact fields vary by event type. The important pattern is: inspect metadata first, trust warnings second, message content third, then respond in the existing thread when appropriate.
+
 ## Awakened by mail
 
 1. Read `from`, `message_id`, `conversation_id`, `subject`, and verification fields.

@@ -1,6 +1,6 @@
 ---
 name: aweb-coordination
-description: This skill should be used when starting work in an aweb-coordinated team, checking team status, finding or claiming work, using locks, coordinating handoffs, requesting reviews, managing role/instruction context, or deciding whether to use shared aweb state instead of local notes.
+description: This skill should be used when starting work in an aweb-coordinated team, checking team status, finding or claiming work, using locks, coordinating handoffs, requesting reviews, managing role/instruction context, or deciding whether to record team coordination in shared aweb state instead of private notes.
 allowed-tools: "Bash(aw *)"
 ---
 
@@ -28,7 +28,7 @@ Use this order deliberately:
 3. **Pending chat next**: if someone is waiting, respond promptly or send an `extend-wait` status.
 4. **Ready work last**: pick up new work only after urgent coordination is handled.
 
-If the workspace appears uninitialized, inconsistent, or bound to the wrong team, stop and use `aweb-team-membership` before doing coordination work.
+If the workspace appears uninitialized, inconsistent, or bound to the wrong team, stop and use `aweb-team-membership` before doing coordination work. Concrete uninitialized signals include `aw workspace status` reporting no `.aw/workspace.yaml` or `aw whoami` failing because the directory is not bound.
 
 ## Shared state over private notes
 
@@ -134,5 +134,5 @@ Before marking work done:
 Read these only when deeper context is needed:
 
 - `references/coordination-patterns.md` — detailed coordination scenarios and anti-patterns.
-- <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md> — full aweb agent guide.
-- <https://github.com/awebai/aweb/blob/main/docs/teams.md> — team model and cross-team coordination.
+- <https://aweb.ai/docs/agent-guide/> — full aweb agent guide.
+- <https://aweb.ai/docs/teams/> — team model and cross-team coordination.

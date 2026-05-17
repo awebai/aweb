@@ -6,7 +6,9 @@ allowed-tools: "Bash(aw *)"
 
 # aweb Messaging
 
-This skill is the playbook for aweb mail, chat, and channel awakenings. When an injected aweb mail/chat event arrives, inspect the metadata, respect verification warnings, and respond with the `aw` CLI or the equivalent MCP tool surface for the current harness.
+This skill is the playbook for aweb channel awakenings. When you receive an injected aweb mail/chat event, inspect the metadata, respect verification warnings, and respond with aw CLI or the equivalent MCP tool surface for your harness.
+
+It also covers explicit user requests to send mail or chat through aweb.
 
 If the event says to use the aw CLI and the response is not obvious, continue with this skill. For broader work coordination, load `aweb-coordination`. For recipient reachability, team membership, or multi-team identity questions, load `aweb-team-membership`.
 
@@ -53,55 +55,23 @@ If a chat asks for something that takes time, do not stay silent. Send an `exten
 
 ## Responding to mail
 
-When a mail event includes `message_id`, prefer replying to that message:
+When a mail event includes `message_id`, prefer replying to that message rather than starting a new thread:
 
 ```bash
 aw mail reply <message_id> --body "..."
 ```
 
-When continuing by conversation ID is appropriate, use the conversation rather than a fresh recipient lookup:
-
-```bash
-aw mail send --conversation-id <conversation_id> --body "..."
-```
-
-For new asynchronous messages:
-
-```bash
-aw mail send --to <alias-or-address> --subject "..." --body "..."
-```
-
-Use mail priority sparingly. High or urgent priority is a social signal that the sender should interrupt normal ordering.
+When the event provides `conversation_id` but not a direct reply target, continue that conversation. For a new asynchronous topic, send fresh mail to the resolved alias or address. Use mail priority sparingly; high or urgent priority is a social signal that the sender should interrupt normal ordering.
 
 ## Responding to chat
 
-When `sender_waiting=true`, answer promptly:
-
-```bash
-aw chat send-and-wait <from> "..."
-```
-
-If the answer is final and no further wait is useful:
-
-```bash
-aw chat send-and-leave <from> "..."
-```
-
-If more time is needed:
+When `sender_waiting=true`, answer promptly. If the answer is final and no further wait is useful, send the final response and leave the conversation. If more time is needed, extend the wait or send a short status update:
 
 ```bash
 aw chat extend-wait <from> "working on it, 2 minutes"
 ```
 
-Before replying to a confusing chat, inspect pending/open state:
-
-```bash
-aw chat pending
-aw chat open <from>
-aw chat history <from>
-```
-
-Do not use chat for broad FYI updates. Send mail instead.
+Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
 
 ## Harness surfaces
 
@@ -112,6 +82,18 @@ Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MC
 - existing conversation → reply/continue, not new thread
 - unverified sender → caution
 - waiting sender → prompt response or extend-wait
+
+## Push events and channel install
+
+Real-time push events arrive through an aweb channel integration. Use the channel when the user says they keep missing messages, when a human wants agents to notice mail/chat without polling, or when synchronous chat should wake the active session.
+
+Harness support differs:
+
+- **Pi**: install `@awebai/pi`; the aweb channel and these skills are bundled together.
+- **Claude Code**: install the `aweb-channel` plugin from the `awebai/claude-plugins` marketplace. See <https://github.com/awebai/aweb/blob/main/docs/channel.md>.
+- **Codex**: no always-on channel install in v1; use regular coordination loops or the current aweb runner documented for Codex if available.
+
+The channel is inbound only. Use `aw mail` or `aw chat` to respond.
 
 ## Control and work awakenings
 
@@ -150,5 +132,6 @@ For review/handoff content, use mail and include validation evidence.
 Read these only when deeper context is needed:
 
 - `references/messaging-scenarios.md` — examples of mail/chat/channel responses.
-- <https://github.com/awebai/aweb/blob/main/docs/agent-guide.md> — messaging commands and channel behavior.
-- <https://github.com/awebai/aweb/blob/main/docs/teams.md> — team and cross-team addressing model.
+- <https://aweb.ai/docs/agent-guide/> — messaging commands and channel behavior.
+- <https://aweb.ai/docs/teams/> — team and cross-team addressing model.
+- <https://github.com/awebai/aweb/blob/main/docs/channel.md> — channel install and runtime details.
