@@ -2432,6 +2432,18 @@ async def test_receive_federated_mail_duplicate_message_id_is_idempotent(aweb_cl
         UUID(payload["envelope"]["message_id"]),
     )
     assert count == 1
+    claims = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.federated_message_deliveries}}
+        WHERE message_type = 'mail'
+          AND sender_did_aw = 'did:aw:alice'
+          AND target_did_aw = 'did:aw:bob'
+          AND message_id = $1
+        """,
+        UUID(payload["envelope"]["message_id"]),
+    )
+    assert claims == 1
 
 
 @pytest.mark.asyncio

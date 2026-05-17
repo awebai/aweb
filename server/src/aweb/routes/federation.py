@@ -247,6 +247,43 @@ async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tupl
     return str(row["conversation_id"]), row["created_at"]
 
 
+async def _claim_federated_delivery(db, envelope: FederationEnvelope) -> bool:
+    aweb_db = db.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.federated_message_deliveries}} (
+            message_type, sender_did_aw, target_did_aw, message_id, conversation_id
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (message_type, sender_did_aw, target_did_aw, message_id) DO NOTHING
+        RETURNING message_id
+        """,
+        envelope.type,
+        envelope.sender_did_aw,
+        envelope.target_did_aw,
+        UUID(envelope.message_id),
+        UUID(envelope.conversation_id) if envelope.conversation_id else None,
+    )
+    return row is not None
+
+
+async def _release_federated_delivery_claim(db, envelope: FederationEnvelope) -> None:
+    aweb_db = db.get_manager("aweb")
+    await aweb_db.execute(
+        """
+        DELETE FROM {{tables.federated_message_deliveries}}
+        WHERE message_type = $1
+          AND sender_did_aw = $2
+          AND target_did_aw = $3
+          AND message_id = $4
+        """,
+        envelope.type,
+        envelope.sender_did_aw,
+        envelope.target_did_aw,
+        UUID(envelope.message_id),
+    )
+
+
 async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, recipient: dict) -> str:
     if not envelope.conversation_id:
         raise HTTPException(status_code=422, detail="Federated mail requires conversation_id")
@@ -362,6 +399,8 @@ async def receive_federated_message(
             "status": "delivered",
             "delivered_at": utc_iso(created_at),
         }
+    if not await _claim_federated_delivery(db, envelope):
+        raise HTTPException(status_code=409, detail="Federated message delivery is already in progress")
 
     try:
         conversation_id = await _ensure_federated_mail_conversation(db, envelope, recipient)
@@ -395,7 +434,11 @@ async def receive_federated_message(
         )
         await touch_conversation_activity(db, conversation_id=conversation_id)
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
+        await _release_federated_delivery_claim(db, envelope)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception:
+        await _release_federated_delivery_claim(db, envelope)
+        raise
 
     await fire_mutation_hook(
         request,
